@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { usePayment } from '../context/PaymentContext'
-import { useAllocation } from '../context/AllocationContext'
+import { useAllocation } from '../context/TenantAllocationContext'
 import { useAuth } from '../context/AuthContext'
 
 const TenantPayment = () => {
