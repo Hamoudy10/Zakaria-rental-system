@@ -1,5 +1,5 @@
-import React from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import React, { useState } from 'react'
+import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { PropertyProvider } from './context/PropertyContext'
 import { AllocationProvider } from './context/TenantAllocationContext'
@@ -24,11 +24,11 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   return <Layout>{children}</Layout>
 }
 
-
 // Layout component with notification bell
 const Layout = ({ children }) => {
   const { user, logout } = useAuth()
   const { unreadCount } = useNotification()
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false)
 
   const handleLogout = () => {
     logout()
@@ -51,18 +51,18 @@ const Layout = ({ children }) => {
 
               {/* Navigation */}
               <nav className="hidden md:flex space-x-4">
-                <a 
-                  href={`/${user?.role}`} 
+                <Link 
+                  to={`/${user?.role}`} 
                   className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200"
                 >
                   Dashboard
-                </a>
-                <a 
-                  href={`/${user?.role}/notifications`} 
+                </Link>
+                <Link 
+                  to={`/${user?.role}/notifications`} 
                   className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200"
                 >
                   Notifications
-                </a>
+                </Link>
               </nav>
             </div>
 
@@ -78,7 +78,7 @@ const Layout = ({ children }) => {
               {/* Notification Bell */}
               <div className="relative">
                 <button
-                  onClick={() => setIsOpen(!isOpen)}
+                  onClick={() => setIsNotificationOpen(!isNotificationOpen)}
                   className="relative p-2 text-gray-600 hover:text-gray-900 focus:outline-none transition-colors duration-200"
                 >
                   {/* Real Bell Icon - Yellow */}
@@ -96,6 +96,44 @@ const Layout = ({ children }) => {
                     </span>
                   )}
                 </button>
+
+                {/* Notification Dropdown */}
+                {isNotificationOpen && (
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                    <div className="p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <h3 className="text-lg font-semibold">Notifications</h3>
+                        <Link 
+                          to={`/${user?.role}/notifications`}
+                          className="text-sm text-blue-600 hover:text-blue-800"
+                          onClick={() => setIsNotificationOpen(false)}
+                        >
+                          View All
+                        </Link>
+                      </div>
+                      
+                      {/* Notification List - Placeholder */}
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        <div className="p-3 bg-blue-50 rounded-lg">
+                          <p className="text-sm font-medium">Payment Received</p>
+                          <p className="text-xs text-gray-600">Rent payment confirmed for April</p>
+                          <p className="text-xs text-gray-500">2 hours ago</p>
+                        </div>
+                        <div className="p-3 bg-yellow-50 rounded-lg">
+                          <p className="text-sm font-medium">Maintenance Update</p>
+                          <p className="text-xs text-gray-600">Your complaint has been assigned</p>
+                          <p className="text-xs text-gray-500">1 day ago</p>
+                        </div>
+                      </div>
+                      
+                      {unreadCount === 0 && (
+                        <div className="text-center py-4 text-gray-500">
+                          <p>No new notifications</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               
               {/* User menu */}
@@ -126,12 +164,20 @@ const Layout = ({ children }) => {
                       </p>
                     </div>
                     
-                    <a href={`/${user?.role}/profile`} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-150">
+                    <Link 
+                      to={`/${user?.role}/profile`} 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-150"
+                      onClick={() => setIsNotificationOpen(false)}
+                    >
                       Your Profile
-                    </a>
-                    <a href={`/${user?.role}/settings`} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-150">
+                    </Link>
+                    <Link 
+                      to={`/${user?.role}/settings`} 
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-150"
+                      onClick={() => setIsNotificationOpen(false)}
+                    >
                       Settings
-                    </a>
+                    </Link>
                     <div className="border-t border-gray-100"></div>
                     <button
                       onClick={handleLogout}
@@ -148,18 +194,20 @@ const Layout = ({ children }) => {
           {/* Mobile Navigation - Show on small screens */}
           <div className="md:hidden border-t border-gray-200 mt-2 pt-2">
             <nav className="flex space-x-4">
-              <a 
-                href={`/${user?.role}`} 
+              <Link 
+                to={`/${user?.role}`} 
                 className="text-gray-600 hover:text-gray-900 px-2 py-1 rounded text-sm font-medium"
+                onClick={() => setIsNotificationOpen(false)}
               >
                 Dashboard
-              </a>
-              <a 
-                href={`/${user?.role}/notifications`} 
+              </Link>
+              <Link 
+                to={`/${user?.role}/notifications`} 
                 className="text-gray-600 hover:text-gray-900 px-2 py-1 rounded text-sm font-medium"
+                onClick={() => setIsNotificationOpen(false)}
               >
                 Notifications
-              </a>
+              </Link>
             </nav>
           </div>
         </div>
@@ -172,6 +220,7 @@ const Layout = ({ children }) => {
     </div>
   )
 }
+
 // Dashboard components
 import AdminDashboard from './pages/AdminDashboard'
 import AgentDashboard from './pages/AgentDashboard'

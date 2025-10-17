@@ -13,7 +13,7 @@ const Layout = ({ children }) => {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
               <span className="text-xl font-bold text-primary-600">
-                Abdallah Rentals
+                Zakaria Rental Agency System
               </span>
             </div>
             <div className="flex items-center space-x-4">
