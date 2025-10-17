@@ -1,0 +1,24 @@
+backend/
+├── config/
+│   └── database.js
+├── controllers/
+│   ├── authController.js
+│   ├── userController.js
+│   ├── propertyController.js
+│   ├── paymentController.js
+│   └── complaintController.js
+├── middleware/
+│   ├── authMiddleware.js
+│   └── validationMiddleware.js
+├── routes/
+│   ├── auth.js
+│   ├── users.js
+│   ├── properties.js
+│   ├── payments.js
+│   └── complaints.js
+├── utils/
+│   ├── database.js
+│   └── helpers.js
+├── .env
+├── server.js
+└── package.json

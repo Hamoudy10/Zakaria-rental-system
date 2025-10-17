@@ -1,123 +1,96 @@
-import React, { createContext, useState, useContext, useCallback, useEffect } from 'react'
+import React, { createContext, useState, useContext, useEffect } from 'react';
+import { authAPI } from '../services/api';
 
-const AuthContext = createContext(undefined)
+const AuthContext = createContext();
 
 export const useAuth = () => {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider')
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
   }
-  return context
-}
+  return context;
+};
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [users, setUsers] = useState([])
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Mock data - in real app, this would come from API
   useEffect(() => {
-    const mockUsers = [
-      {
-        id: '1',
-        national_id: '00000000',
-        first_name: 'System',
-        last_name: 'Administrator',
-        email: 'admin@abdallah.co.ke',
-        phone_number: '254700000000',
-        role: 'admin',
-        is_active: true,
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: '2',
-        national_id: '11111111',
-        first_name: 'John',
-        last_name: 'Kamau',
-        email: 'agent@abdallah.co.ke',
-        phone_number: '254711111111',
-        role: 'agent',
-        is_active: true,
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: '3',
-        national_id: '22222222',
-        first_name: 'Mary',
-        last_name: 'Wanjiku',
-        email: 'tenant@abdallah.co.ke',
-        phone_number: '254722222222',
-        role: 'tenant',
-        is_active: true,
-        created_at: new Date().toISOString(),
-      }
-    ]
-    setUsers(mockUsers)
-  }, [])
+    checkAuth();
+  }, []);
 
-  const login = useCallback(async (email, password) => {
-    setLoading(true)
+  const checkAuth = async () => {
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      const token = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
       
-      // Find user in mock data
-      const foundUser = users.find(u => u.email === email)
-      
-      if (foundUser) {
-        const userWithAvatar = {
-          ...foundUser,
-          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(foundUser.first_name + ' ' + foundUser.last_name)}&background=0ea5e9&color=fff`
-        }
-        setUser(userWithAvatar)
-        return { success: true, user: userWithAvatar }
-      } else {
-        return { success: false, error: 'Invalid email or password' }
+      if (token && storedUser) {
+        setUser(JSON.parse(storedUser));
       }
     } catch (error) {
-      return { success: false, error: error.message }
+      console.error('Auth check failed:', error);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [users])
+  };
 
-  const logout = useCallback(() => {
-    setUser(null)
-  }, [])
-
-  const addUser = useCallback((userData) => {
-    const newUser = {
-      id: Math.random().toString(36).substr(2, 9),
-      ...userData,
-      is_active: true,
-      created_at: new Date().toISOString(),
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.first_name + ' ' + userData.last_name)}&background=0ea5e9&color=fff`
+  const login = async (email, password) => {
+    try {
+      const response = await authAPI.login({ email, password });
+      const { user, token } = response.data;
+      
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(user));
+      setUser(user);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Login failed:', error);
+      return { 
+        success: false, 
+        message: error.response?.data?.message || 'Login failed' 
+      };
     }
-    setUsers(prev => [...prev, newUser])
-    return newUser
-  }, [])
+  };
 
-  const updateUser = useCallback((userId, updates) => {
-    setUsers(prev => prev.map(user => 
-      user.id === userId ? { ...user, ...updates } : user
-    ))
-  }, [])
+  const register = async (userData) => {
+    try {
+      const response = await authAPI.register(userData);
+      const { user, token } = response.data;
+      
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(user));
+      setUser(user);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Registration failed:', error);
+      return { 
+        success: false, 
+        message: error.response?.data?.message || 'Registration failed' 
+      };
+    }
+  };
 
-  const deleteUser = useCallback((userId) => {
-    setUsers(prev => prev.filter(user => user.id !== userId))
-  }, [])
+  const logout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setUser(null);
+  };
 
-  const value = React.useMemo(() => ({
+  const value = {
     user,
-    users,
     login,
+    register,
     logout,
-    loading,
-    addUser,
-    updateUser,
-    deleteUser,
-    isAuthenticated: !!user
-  }), [user, users, login, logout, loading, addUser, updateUser, deleteUser])
+    loading
+  };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
