@@ -112,7 +112,9 @@ const UnitManagement = ({ property }) => {
     }).format(amount)
   }
 
+  
   return (
+
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h4 className="font-semibold text-gray-900">Units in {property.name}</h4>

@@ -1,12 +1,21 @@
 import React, { useState, useEffect } from 'react'
 import { useAllocation } from '../context/TenantAllocationContext'
 import { useProperty } from '../context/PropertyContext'
-import { useAuth } from '../context/AuthContext'
+import { useUser } from '../context/UserContext'
 
 const TenantAllocation = () => {
-  const { users } = useAuth()
-  const { properties, updateUnit } = useProperty()
-  const { allocations, allocateTenant, deallocateTenant, getActiveAllocations } = useAllocation()
+  const { users, loading: usersLoading } = useUser()
+  const { properties, updateUnit, loading: propertiesLoading } = useProperty()
+  const { 
+    allocations, 
+    loading: allocationsLoading, 
+    error, 
+    allocateTenant, 
+    deallocateTenant, 
+    getActiveAllocations,
+    fetchAllocations,
+    clearError 
+  } = useAllocation()
   
   const [showAllocationModal, setShowAllocationModal] = useState(false)
   const [selectedTenant, setSelectedTenant] = useState('')
@@ -20,16 +29,28 @@ const TenantAllocation = () => {
     grace_period_days: 7
   })
 
+  // SAFE CHECK: Ensure data is always arrays
+  const safeUsers = Array.isArray(users) ? users : []
+  const safeProperties = Array.isArray(properties) ? properties : []
+  const safeAllocations = Array.isArray(allocations) ? allocations : []
+
   // Get available tenants (users with role 'tenant' and not currently allocated)
-  const availableTenants = users.filter(user => 
-    user.role === 'tenant' && 
-    !getActiveAllocations().some(allocation => allocation.tenant_id === user.id)
-  )
+  const availableTenants = safeUsers.filter(user => {
+    const isTenant = user.role === 'tenant'
+    const isAllocated = getActiveAllocations().some(allocation => allocation.tenant_id === user.id)
+    return isTenant && !isAllocated
+  })
 
   // Get available units (units that are not occupied)
-  const availableUnits = properties.flatMap(property => 
-    property.units.filter(unit => !unit.is_occupied)
-  )
+  const availableUnits = safeProperties.flatMap(property => {
+    const propertyUnits = Array.isArray(property.units) ? property.units : []
+    return propertyUnits.filter(unit => !unit.is_occupied)
+  })
+
+  // Load allocations on component mount
+  useEffect(() => {
+    fetchAllocations()
+  }, [fetchAllocations])
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -54,8 +75,8 @@ const TenantAllocation = () => {
       if (unit) {
         setLeaseData(prev => ({
           ...prev,
-          monthly_rent: unit.rent_amount,
-          security_deposit: unit.deposit_amount
+          monthly_rent: unit.rent_amount || '',
+          security_deposit: unit.deposit_amount || ''
         }))
       }
     }
@@ -63,6 +84,8 @@ const TenantAllocation = () => {
 
   const handleAllocateTenant = async (e) => {
     e.preventDefault()
+    clearError()
+    
     try {
       const tenant = availableTenants.find(t => t.id === selectedTenant)
       const unit = availableUnits.find(u => u.id === selectedUnit)
@@ -77,12 +100,12 @@ const TenantAllocation = () => {
         tenant_id: selectedTenant,
         unit_id: selectedUnit,
         ...leaseData,
-        monthly_rent: parseFloat(leaseData.monthly_rent),
-        security_deposit: parseFloat(leaseData.security_deposit)
+        monthly_rent: parseFloat(leaseData.monthly_rent) || 0,
+        security_deposit: parseFloat(leaseData.security_deposit) || 0
       })
 
       // Update unit occupancy status
-      const property = properties.find(p => p.units.some(u => u.id === selectedUnit))
+      const property = safeProperties.find(p => p.units?.some(u => u.id === selectedUnit))
       if (property) {
         updateUnit(property.id, selectedUnit, { is_occupied: true })
       }
@@ -91,17 +114,17 @@ const TenantAllocation = () => {
       setShowAllocationModal(false)
     } catch (error) {
       console.error('Error allocating tenant:', error)
-      alert('Error allocating tenant. Please try again.')
+      // Error is already set in context, no need for additional alert
     }
   }
 
   const handleDeallocate = async (allocationId, unitId) => {
     if (window.confirm('Are you sure you want to deallocate this tenant? This will end their lease.')) {
       try {
-        deallocateTenant(allocationId)
+        await deallocateTenant(allocationId)
         
         // Update unit occupancy status
-        const property = properties.find(p => p.units.some(u => u.id === unitId))
+        const property = safeProperties.find(p => p.units?.some(u => u.id === unitId))
         if (property) {
           updateUnit(property.id, unitId, { is_occupied: false })
         }
@@ -109,7 +132,7 @@ const TenantAllocation = () => {
         alert('Tenant deallocated successfully!')
       } catch (error) {
         console.error('Error deallocating tenant:', error)
-        alert('Error deallocating tenant. Please try again.')
+        // Error is already set in context
       }
     }
   }
@@ -119,17 +142,33 @@ const TenantAllocation = () => {
       style: 'currency',
       currency: 'KES',
       minimumFractionDigits: 0
-    }).format(amount)
+    }).format(amount || 0)
   }
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-KE')
+    if (!dateString) return 'N/A'
+    try {
+      return new Date(dateString).toLocaleDateString('en-KE')
+    } catch {
+      return 'Invalid Date'
+    }
   }
 
   const activeAllocations = getActiveAllocations()
 
+  // Combined loading state
+  const isLoading = usersLoading || propertiesLoading || allocationsLoading
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-gray-500">Loading tenant allocations...</div>
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Tenant Allocation</h2>
@@ -137,37 +176,49 @@ const TenantAllocation = () => {
         </div>
         <button
           onClick={() => setShowAllocationModal(true)}
-          className="btn-primary"
+          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={availableTenants.length === 0 || availableUnits.length === 0}
         >
           Allocate Tenant
         </button>
       </div>
 
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+          <button 
+            onClick={clearError}
+            className="float-right text-red-800 font-bold"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="card">
+        <div className="bg-white p-6 rounded-lg shadow-md">
           <div className="text-center">
             <div className="text-2xl font-bold text-blue-600">{activeAllocations.length}</div>
             <div className="text-sm text-gray-600">Active Allocations</div>
           </div>
         </div>
-        <div className="card">
+        <div className="bg-white p-6 rounded-lg shadow-md">
           <div className="text-center">
             <div className="text-2xl font-bold text-green-600">{availableTenants.length}</div>
             <div className="text-sm text-gray-600">Available Tenants</div>
           </div>
         </div>
-        <div className="card">
+        <div className="bg-white p-6 rounded-lg shadow-md">
           <div className="text-center">
             <div className="text-2xl font-bold text-purple-600">{availableUnits.length}</div>
             <div className="text-sm text-gray-600">Available Units</div>
           </div>
         </div>
-        <div className="card">
+        <div className="bg-white p-6 rounded-lg shadow-md">
           <div className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              {properties.reduce((total, property) => total + property.units.length, 0)}
+              {safeProperties.reduce((total, property) => total + (property.units?.length || 0), 0)}
             </div>
             <div className="text-sm text-gray-600">Total Units</div>
           </div>
@@ -186,13 +237,13 @@ const TenantAllocation = () => {
                 <select
                   value={selectedTenant}
                   onChange={(e) => setSelectedTenant(e.target.value)}
-                  className="input-primary"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 >
                   <option value="">Choose a tenant</option>
                   {availableTenants.map(tenant => (
                     <option key={tenant.id} value={tenant.id}>
-                      {tenant.first_name} {tenant.last_name} - {tenant.email}
+                      {tenant.first_name || ''} {tenant.last_name || ''} - {tenant.email || ''}
                     </option>
                   ))}
                 </select>
@@ -207,15 +258,15 @@ const TenantAllocation = () => {
                 <select
                   value={selectedUnit}
                   onChange={(e) => setSelectedUnit(e.target.value)}
-                  className="input-primary"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 >
                   <option value="">Choose a unit</option>
                   {availableUnits.map(unit => {
-                    const property = properties.find(p => p.id === unit.property_id)
+                    const property = safeProperties.find(p => p.id === unit.property_id)
                     return (
                       <option key={unit.id} value={unit.id}>
-                        {property?.name} - {unit.unit_code} ({unit.unit_type}) - {formatCurrency(unit.rent_amount)}/month
+                        {property?.name || 'Unknown Property'} - {unit.unit_code || ''} ({unit.unit_type || ''}) - {formatCurrency(unit.rent_amount)}
                       </option>
                     )
                   })}
@@ -233,7 +284,7 @@ const TenantAllocation = () => {
                     type="date"
                     value={leaseData.lease_start_date}
                     onChange={(e) => setLeaseData({...leaseData, lease_start_date: e.target.value})}
-                    className="input-primary"
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
@@ -243,7 +294,7 @@ const TenantAllocation = () => {
                     type="date"
                     value={leaseData.lease_end_date}
                     onChange={(e) => setLeaseData({...leaseData, lease_end_date: e.target.value})}
-                    className="input-primary"
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
@@ -258,7 +309,7 @@ const TenantAllocation = () => {
                     step="1000"
                     value={leaseData.monthly_rent}
                     onChange={(e) => setLeaseData({...leaseData, monthly_rent: e.target.value})}
-                    className="input-primary"
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
@@ -270,7 +321,7 @@ const TenantAllocation = () => {
                     step="1000"
                     value={leaseData.security_deposit}
                     onChange={(e) => setLeaseData({...leaseData, security_deposit: e.target.value})}
-                    className="input-primary"
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
@@ -284,8 +335,8 @@ const TenantAllocation = () => {
                     min="1"
                     max="28"
                     value={leaseData.rent_due_day}
-                    onChange={(e) => setLeaseData({...leaseData, rent_due_day: parseInt(e.target.value)})}
-                    className="input-primary"
+                    onChange={(e) => setLeaseData({...leaseData, rent_due_day: parseInt(e.target.value) || 5})}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
@@ -296,21 +347,24 @@ const TenantAllocation = () => {
                     min="0"
                     max="15"
                     value={leaseData.grace_period_days}
-                    onChange={(e) => setLeaseData({...leaseData, grace_period_days: parseInt(e.target.value)})}
-                    className="input-primary"
+                    onChange={(e) => setLeaseData({...leaseData, grace_period_days: parseInt(e.target.value) || 7})}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
               </div>
 
               <div className="flex space-x-4 pt-4">
-                <button type="submit" className="btn-primary flex-1">
+                <button 
+                  type="submit" 
+                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 flex-1"
+                >
                   Allocate Tenant
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowAllocationModal(false)}
-                  className="btn-secondary flex-1"
+                  className="bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 flex-1"
                 >
                   Cancel
                 </button>
@@ -321,7 +375,7 @@ const TenantAllocation = () => {
       )}
 
       {/* Active Allocations List */}
-      <div className="card">
+      <div className="bg-white rounded-lg shadow-md p-6">
         <h3 className="text-lg font-semibold mb-4">Active Allocations ({activeAllocations.length})</h3>
         
         {activeAllocations.length === 0 ? (
@@ -335,22 +389,22 @@ const TenantAllocation = () => {
             <table className="min-w-full divide-y divide-gray-200">
               <thead>
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Tenant
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Unit
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Lease Period
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Rent
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Actions
                   </th>
                 </tr>
@@ -361,24 +415,24 @@ const TenantAllocation = () => {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-10 w-10 bg-green-500 rounded-full flex items-center justify-center text-white font-bold">
-                          {allocation.tenant.first_name[0]}{allocation.tenant.last_name[0]}
+                          {(allocation.tenant?.first_name?.[0] || 'T')}{(allocation.tenant?.last_name?.[0] || 'U')}
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900">
-                            {allocation.tenant.first_name} {allocation.tenant.last_name}
+                          <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                            {allocation.tenant?.first_name || 'Unknown'} {allocation.tenant?.last_name || 'Tenant'}
                           </div>
-                          <div className="text-sm text-gray-500">
-                            {allocation.tenant.phone_number}
+                          <div className="text-sm text-gray-500 whitespace-nowrap">
+                            {allocation.tenant?.phone_number || 'N/A'}
                           </div>
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
-                        {allocation.unit.unit_code}
+                      <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                        {allocation.unit?.unit_code || 'Unknown Unit'}
                       </div>
-                      <div className="text-sm text-gray-500">
-                        {allocation.unit.property.name}
+                      <div className="text-sm text-gray-500 whitespace-nowrap">
+                        {allocation.unit?.property?.name || 'Unknown Property'}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -396,7 +450,7 @@ const TenantAllocation = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <button
                         onClick={() => handleDeallocate(allocation.id, allocation.unit_id)}
-                        className="text-red-600 hover:text-red-900"
+                        className="text-red-600 hover:text-red-900 whitespace-nowrap"
                       >
                         Deallocate
                       </button>
@@ -412,7 +466,7 @@ const TenantAllocation = () => {
       {/* Available Resources */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Available Tenants */}
-        <div className="card">
+        <div className="bg-white rounded-lg shadow-md p-6">
           <h3 className="text-lg font-semibold mb-4">Available Tenants ({availableTenants.length})</h3>
           {availableTenants.length === 0 ? (
             <p className="text-gray-500 text-center py-4">No available tenants</p>
@@ -421,12 +475,12 @@ const TenantAllocation = () => {
               {availableTenants.map(tenant => (
                 <div key={tenant.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
                   <div>
-                    <div className="font-medium text-gray-900">
+                    <div className="font-medium text-gray-900 whitespace-nowrap">
                       {tenant.first_name} {tenant.last_name}
                     </div>
-                    <div className="text-sm text-gray-500">{tenant.email}</div>
+                    <div className="text-sm text-gray-500 whitespace-nowrap">{tenant.email}</div>
                   </div>
-                  <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                  <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800 whitespace-nowrap">
                     Available
                   </span>
                 </div>
@@ -436,25 +490,25 @@ const TenantAllocation = () => {
         </div>
 
         {/* Available Units */}
-        <div className="card">
+        <div className="bg-white rounded-lg shadow-md p-6">
           <h3 className="text-lg font-semibold mb-4">Available Units ({availableUnits.length})</h3>
           {availableUnits.length === 0 ? (
             <p className="text-gray-500 text-center py-4">No available units</p>
           ) : (
             <div className="space-y-3">
               {availableUnits.map(unit => {
-                const property = properties.find(p => p.id === unit.property_id)
+                const property = safeProperties.find(p => p.id === unit.property_id)
                 return (
                   <div key={unit.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
                     <div>
-                      <div className="font-medium text-gray-900">
+                      <div className="font-medium text-gray-900 whitespace-nowrap">
                         {unit.unit_code} - {unit.unit_type}
                       </div>
-                      <div className="text-sm text-gray-500">
-                        {property?.name} • {formatCurrency(unit.rent_amount)}/month
+                      <div className="text-sm text-gray-500 whitespace-nowrap">
+                        {property?.name || 'Unknown Property'} • {formatCurrency(unit.rent_amount)}/month
                       </div>
                     </div>
-                    <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                    <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800 whitespace-nowrap">
                       Available
                     </span>
                   </div>

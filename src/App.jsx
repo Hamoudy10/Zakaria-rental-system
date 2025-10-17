@@ -6,8 +6,12 @@ import { AllocationProvider } from './context/TenantAllocationContext'
 import { PaymentProvider } from './context/PaymentContext'
 import { ReportProvider } from './context/ReportContext'
 import { NotificationProvider, useNotification } from './context/NotificationContext'
+import { UserProvider } from './context/UserContext' // ADDED: Import UserProvider
 import NotificationBell from './components/NotificationBell'
 import Login from './components/Login'
+import { SalaryPaymentProvider } from './context/SalaryPaymentContext' // ADD THIS
+import { ComplaintProvider } from './context/ComplaintContext';
+import { SystemSettingsProvider } from './context/SystemSettingsContext';
 
 // Protected Route component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -328,17 +332,27 @@ function App() {
       }}
     >
       <AuthProvider>
-        <PropertyProvider>
-          <AllocationProvider>
-            <PaymentProvider>
-              <ReportProvider>
-                <NotificationProvider>
-                  <AppRoutes />
-                </NotificationProvider>
-              </ReportProvider>
-            </PaymentProvider>
-          </AllocationProvider>
-        </PropertyProvider>
+        <UserProvider> {/* ADDED: Wrap with UserProvider */}
+          <PropertyProvider>
+            <AllocationProvider>
+              <PaymentProvider>
+                <ReportProvider>
+                  <NotificationProvider>
+                   <SalaryPaymentProvider> {/* ADD THIS */}
+                      <ComplaintProvider>
+                        <ReportProvider>
+                          <SystemSettingsProvider>
+                            <AppRoutes />
+                          </SystemSettingsProvider>
+                        </ReportProvider>
+                      </ComplaintProvider>
+                    </SalaryPaymentProvider> {/* ADD THIS */}
+                  </NotificationProvider>
+                </ReportProvider>
+              </PaymentProvider>
+            </AllocationProvider>
+          </PropertyProvider>
+        </UserProvider> {/* ADDED: Close UserProvider */}
       </AuthProvider>
     </Router>
   )

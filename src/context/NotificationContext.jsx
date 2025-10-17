@@ -1,177 +1,171 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
-import { useAuth } from './AuthContext';
+import React, { createContext, useState, useContext, useCallback } from 'react';
+import { notificationAPI } from '../services/api';
 
-const NotificationContext = createContext();
+const NotificationContext = createContext(undefined);
 
 export const useNotification = () => {
   const context = useContext(NotificationContext);
-  if (!context) {
+  if (context === undefined) {
     throw new Error('useNotification must be used within a NotificationProvider');
   }
   return context;
 };
 
 export const NotificationProvider = ({ children }) => {
-  const { user } = useAuth();
   const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [preferences, setPreferences] = useState({
-    smsEnabled: true,
-    emailEnabled: true,
-    paymentAlerts: true,
-    maintenanceAlerts: true,
-    announcementAlerts: true,
-    reminderAlerts: true
-  });
+  const [error, setError] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  useEffect(() => {
-    if (user) {
-      fetchNotifications();
-      fetchPreferences();
-    }
-  }, [user]);
-
-  const fetchNotifications = async () => {
+  // Fetch all notifications
+  const fetchNotifications = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      const response = await fetch('/api/notifications', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      
-      setNotifications(data.notifications);
-      setUnreadCount(data.unreadCount);
-    } catch (error) {
-      console.error('Error fetching notifications:', error);
+      const response = await notificationAPI.getNotifications();
+      setNotifications(response.data.notifications || []);
+      setUnreadCount(response.data.notifications?.filter(n => !n.is_read).length || 0);
+    } catch (err) {
+      console.error('Error fetching notifications:', err);
+      setError('Failed to fetch notifications');
+      setNotifications([]);
+      setUnreadCount(0);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchPreferences = async () => {
+  // Fetch announcements
+  const fetchAnnouncements = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const response = await fetch('/api/notifications/preferences', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      
-      setPreferences(data.preferences);
-    } catch (error) {
-      console.error('Error fetching preferences:', error);
+      const response = await notificationAPI.getAnnouncements();
+      setAnnouncements(response.data.announcements || []);
+    } catch (err) {
+      console.error('Error fetching announcements:', err);
+      setError('Failed to fetch announcements');
+      setAnnouncements([]);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const markAsRead = async (notificationId) => {
+  // Mark notification as read
+  const markAsRead = useCallback(async (notificationId) => {
+    setLoading(true);
+    setError(null);
     try {
-      const response = await fetch(`/api/notifications/${notificationId}/read`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      setNotifications(prev => prev.map(notification => 
+        notification.id === notificationId 
+          ? { ...notification, is_read: true, read_at: new Date().toISOString() }
+          : notification
+      ));
       
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      
-      setNotifications(prev => 
-        prev.map(notif => 
-          notif.id === notificationId ? { ...notif, is_read: true } : notif
-        )
-      );
       setUnreadCount(prev => Math.max(0, prev - 1));
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
+    } catch (err) {
+      console.error('Error marking notification as read:', err);
+      setError('Failed to mark notification as read');
+      throw err;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const markAllAsRead = async () => {
+  // Mark all notifications as read
+  const markAllAsRead = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const response = await fetch('/api/notifications/read-all', {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      setNotifications(prev => prev.map(notification => 
+        ({ ...notification, is_read: true, read_at: new Date().toISOString() })
+      ));
       
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      
-      setNotifications(prev => 
-        prev.map(notif => ({ ...notif, is_read: true }))
-      );
       setUnreadCount(0);
-    } catch (error) {
-      console.error('Error marking all notifications as read:', error);
+    } catch (err) {
+      console.error('Error marking all notifications as read:', err);
+      setError('Failed to mark all notifications as read');
+      throw err;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const updatePreferences = async (newPreferences) => {
+  // Create new announcement
+  const createAnnouncement = useCallback(async (announcementData) => {
+    setLoading(true);
+    setError(null);
     try {
-      const response = await fetch('/api/notifications/preferences', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({ preferences: newPreferences })
-      });
+      const newAnnouncement = {
+        id: Math.random().toString(36).substr(2, 9),
+        ...announcementData,
+        is_published: true,
+        published_at: new Date().toISOString(),
+        created_at: new Date().toISOString()
+      };
       
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      
-      setPreferences(newPreferences);
-      return data;
-    } catch (error) {
-      console.error('Error updating preferences:', error);
-      throw error;
+      setAnnouncements(prev => [...prev, newAnnouncement]);
+      return newAnnouncement;
+    } catch (err) {
+      console.error('Error creating announcement:', err);
+      setError('Failed to create announcement');
+      throw err;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const sendTestNotification = async (type) => {
+  // Create notification
+  const createNotification = useCallback(async (notificationData) => {
+    setLoading(true);
+    setError(null);
     try {
-      const response = await fetch('/api/notifications/test', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({ type })
-      });
+      const newNotification = {
+        id: Math.random().toString(36).substr(2, 9),
+        ...notificationData,
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
       
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      
-      return data;
-    } catch (error) {
-      console.error('Error sending test notification:', error);
-      throw error;
+      setNotifications(prev => [newNotification, ...prev]);
+      setUnreadCount(prev => prev + 1);
+      return newNotification;
+    } catch (err) {
+      console.error('Error creating notification:', err);
+      setError('Failed to create notification');
+      throw err;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const value = {
+  const value = React.useMemo(() => ({
     notifications,
-    unreadCount,
+    announcements,
     loading,
-    preferences,
+    error,
+    unreadCount,
+    fetchNotifications,
+    fetchAnnouncements,
     markAsRead,
     markAllAsRead,
-    updatePreferences,
-    sendTestNotification,
-    refreshNotifications: fetchNotifications
-  };
+    createAnnouncement,
+    createNotification,
+    clearError: () => setError(null)
+  }), [
+    notifications,
+    announcements,
+    loading,
+    error,
+    unreadCount,
+    fetchNotifications,
+    fetchAnnouncements,
+    markAsRead,
+    markAllAsRead,
+    createAnnouncement,
+    createNotification
+  ]);
 
-  return (
-    <NotificationContext.Provider value={value}>
-      {children}
-    </NotificationContext.Provider>
-  );
+  return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>;
 };

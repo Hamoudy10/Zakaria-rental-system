@@ -1,128 +1,132 @@
 import React, { useState, useEffect } from 'react';
-import { usePayment } from '../context/PaymentContext';
-import { useAllocation } from '../context/TenantAllocationContext';
+import { useSalaryPayment } from '../context/SalaryPaymentContext';
+import { useUser } from '../context/UserContext';
+import { useAuth } from '../context/AuthContext';
 
-const PaymentManagement = () => {
+const SalaryPayment = () => {
+  const { users } = useUser();
+  const { user: currentUser } = useAuth();
   const {
-    payments,
+    salaryPayments,
     loading,
     error,
-    fetchPayments,
-    createPayment,
-    confirmPayment,
-    deletePayment,
+    fetchSalaryPayments,
+    createSalaryPayment,
+    updateSalaryPayment,
+    deleteSalaryPayment,
+    markAsCompleted,
+    getAgentPayments,
+    getPaymentsByStatus,
     getMonthlySummary,
     clearError
-  } = usePayment();
-
-  const { allocations } = useAllocation();
+  } = useSalaryPayment();
 
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [selectedAllocation, setSelectedAllocation] = useState('');
+  const [selectedAgent, setSelectedAgent] = useState('');
   const [paymentData, setPaymentData] = useState({
     amount: '',
     payment_month: '',
+    phone_number: '',
     mpesa_transaction_id: '',
-    mpesa_receipt_number: '',
-    phone_number: ''
+    mpesa_receipt_number: ''
   });
   const [filterMonth, setFilterMonth] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
   // SAFE CHECK: Ensure data is always arrays
-  const safePayments = Array.isArray(payments) ? payments : [];
-  const safeAllocations = Array.isArray(allocations) ? allocations : [];
+  const safeUsers = Array.isArray(users) ? users : [];
+  const safeSalaryPayments = Array.isArray(salaryPayments) ? salaryPayments : [];
 
-  // Get active allocations for payment
-  const activeAllocations = safeAllocations.filter(allocation => allocation.is_active);
+  // Get available agents (users with role 'agent')
+  const availableAgents = safeUsers.filter(user => user.role === 'agent' && user.is_active);
 
   // Filter payments based on selected filters
-  const filteredPayments = safePayments.filter(payment => {
+  const filteredPayments = safeSalaryPayments.filter(payment => {
     const matchesMonth = !filterMonth || payment.payment_month?.includes(filterMonth);
     const matchesStatus = !filterStatus || payment.status === filterStatus;
     return matchesMonth && matchesStatus;
   });
 
-  // Current month for default value
+  // Get current month for default value (YYYY-MM format)
   const currentMonth = new Date().toISOString().slice(0, 7);
 
-  // Load payments on component mount
+  // Load salary payments on component mount
   useEffect(() => {
-    fetchPayments();
-  }, [fetchPayments]);
+    fetchSalaryPayments();
+  }, [fetchSalaryPayments]);
 
   // Reset form when modal opens/closes
   useEffect(() => {
     if (!showPaymentModal) {
-      setSelectedAllocation('');
+      setSelectedAgent('');
       setPaymentData({
         amount: '',
         payment_month: currentMonth,
+        phone_number: '',
         mpesa_transaction_id: '',
-        mpesa_receipt_number: '',
-        phone_number: ''
+        mpesa_receipt_number: ''
       });
     }
   }, [showPaymentModal, currentMonth]);
 
-  // When allocation is selected, auto-fill amount and phone
+  // When agent is selected, auto-fill phone number
   useEffect(() => {
-    if (selectedAllocation) {
-      const allocation = activeAllocations.find(a => a.id === selectedAllocation);
-      if (allocation) {
+    if (selectedAgent) {
+      const agent = availableAgents.find(a => a.id === selectedAgent);
+      if (agent) {
         setPaymentData(prev => ({
           ...prev,
-          amount: allocation.monthly_rent || '',
-          phone_number: allocation.tenant?.phone_number || ''
+          phone_number: agent.phone_number || ''
         }));
       }
     }
-  }, [selectedAllocation, activeAllocations]);
+  }, [selectedAgent, availableAgents]);
 
   const handleCreatePayment = async (e) => {
     e.preventDefault();
     clearError();
     
     try {
-      const allocation = activeAllocations.find(a => a.id === selectedAllocation);
+      const agent = availableAgents.find(a => a.id === selectedAgent);
 
-      if (!allocation) {
-        alert('Please select a tenant allocation');
-        return;
+      if (!agent) {
+        alert('Please select an agent');
+        return
       }
 
-      await createPayment({
-        tenant_id: allocation.tenant_id,
-        unit_id: allocation.unit_id,
+      await createSalaryPayment({
+        agent_id: selectedAgent,
+        paid_by: currentUser?.id,
         ...paymentData,
         amount: parseFloat(paymentData.amount) || 0,
         payment_month: paymentData.payment_month ? `${paymentData.payment_month}-01` : `${currentMonth}-01`
       });
 
-      alert('Payment recorded successfully!');
+      alert('Salary payment recorded successfully!');
       setShowPaymentModal(false);
     } catch (error) {
-      console.error('Error creating payment:', error);
-    }
-  };
-
-  const handleConfirmPayment = async (paymentId) => {
-    try {
-      await confirmPayment(paymentId);
-      alert('Payment confirmed successfully!');
-    } catch (error) {
-      console.error('Error confirming payment:', error);
+      console.error('Error creating salary payment:', error);
+      // Error is already set in context
     }
   };
 
   const handleDeletePayment = async (paymentId) => {
-    if (window.confirm('Are you sure you want to delete this payment record?')) {
+    if (window.confirm('Are you sure you want to delete this salary payment record?')) {
       try {
-        await deletePayment(paymentId);
-        alert('Payment record deleted successfully!');
+        await deleteSalaryPayment(paymentId);
+        alert('Salary payment record deleted successfully!');
       } catch (error) {
-        console.error('Error deleting payment:', error);
+        console.error('Error deleting salary payment:', error);
       }
+    }
+  };
+
+  const handleMarkAsCompleted = async (paymentId) => {
+    try {
+      await markAsCompleted(paymentId);
+      alert('Payment marked as completed!');
+    } catch (error) {
+      console.error('Error marking payment as completed:', error);
     }
   };
 
@@ -146,6 +150,15 @@ const PaymentManagement = () => {
     }
   };
 
+  const formatPaymentDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleDateString('en-KE');
+    } catch {
+      return 'Invalid Date';
+    }
+  };
+
   // Get current month summary
   const currentDate = new Date();
   const currentMonthSummary = getMonthlySummary(currentDate.getFullYear(), currentDate.getMonth() + 1);
@@ -153,7 +166,7 @@ const PaymentManagement = () => {
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="text-gray-500">Loading payments...</div>
+        <div className="text-gray-500">Loading salary payments...</div>
       </div>
     );
   }
@@ -162,15 +175,15 @@ const PaymentManagement = () => {
     <div className="space-y-6 p-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Payment Management</h2>
-          <p className="text-gray-600">Manage tenant rent payments and records</p>
+          <h2 className="text-2xl font-bold text-gray-900">Salary Payments</h2>
+          <p className="text-gray-600">Manage agent salary payments and records</p>
         </div>
         <button
           onClick={() => setShowPaymentModal(true)}
           className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={activeAllocations.length === 0}
+          disabled={availableAgents.length === 0}
         >
-          Record Payment
+          Record Salary Payment
         </button>
       </div>
 
@@ -190,7 +203,7 @@ const PaymentManagement = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{safePayments.length}</div>
+            <div className="text-2xl font-bold text-blue-600">{safeSalaryPayments.length}</div>
             <div className="text-sm text-gray-600">Total Payments</div>
           </div>
         </div>
@@ -202,8 +215,8 @@ const PaymentManagement = () => {
         </div>
         <div className="bg-white p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">{activeAllocations.length}</div>
-            <div className="text-sm text-gray-600">Active Tenants</div>
+            <div className="text-2xl font-bold text-purple-600">{availableAgents.length}</div>
+            <div className="text-sm text-gray-600">Active Agents</div>
           </div>
         </div>
         <div className="bg-white p-6 rounded-lg shadow-md">
@@ -211,7 +224,46 @@ const PaymentManagement = () => {
             <div className="text-2xl font-bold text-orange-600">
               {formatCurrency(currentMonthSummary.totalAmount)}
             </div>
-            <div className="text-sm text-gray-600">Collected This Month</div>
+            <div className="text-sm text-gray-600">Paid This Month</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white p-4 rounded-lg shadow-md">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Month</label>
+            <input
+              type="month"
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Status</label>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">All Status</option>
+              <option value="pending">Pending</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={() => {
+                setFilterMonth('');
+                setFilterStatus('');
+              }}
+              className="bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 h-[42px]"
+            >
+              Clear Filters
+            </button>
           </div>
         </div>
       </div>
@@ -220,28 +272,26 @@ const PaymentManagement = () => {
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-4">Record Rent Payment</h3>
+            <h3 className="text-xl font-bold mb-4">Record Salary Payment</h3>
             <form onSubmit={handleCreatePayment} className="space-y-4">
-              {/* Tenant Selection */}
+              {/* Agent Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700">Select Tenant *</label>
+                <label className="block text-sm font-medium text-gray-700">Select Agent *</label>
                 <select
-                  value={selectedAllocation}
-                  onChange={(e) => setSelectedAllocation(e.target.value)}
+                  value={selectedAgent}
+                  onChange={(e) => setSelectedAgent(e.target.value)}
                   className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 >
-                  <option value="">Choose a tenant</option>
-                  {activeAllocations.map(allocation => (
-                    <option key={allocation.id} value={allocation.id}>
-                      {allocation.tenant?.first_name || 'Unknown'} {allocation.tenant?.last_name || 'Tenant'} - 
-                      {allocation.unit?.unit_code || 'Unknown Unit'} - 
-                      {formatCurrency(allocation.monthly_rent)}
+                  <option value="">Choose an agent</option>
+                  {availableAgents.map(agent => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.first_name || ''} {agent.last_name || ''} - {agent.phone_number || ''}
                     </option>
                   ))}
                 </select>
-                {activeAllocations.length === 0 && (
-                  <p className="text-sm text-red-600 mt-1">No active tenant allocations found.</p>
+                {availableAgents.length === 0 && (
+                  <p className="text-sm text-red-600 mt-1">No active agents found. Please add agents first.</p>
                 )}
               </div>
 
@@ -327,45 +377,26 @@ const PaymentManagement = () => {
         </div>
       )}
 
-      {/* Payments List */}
+      {/* Salary Payments List */}
       <div className="bg-white rounded-lg shadow-md p-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-semibold">
-            Payment Records ({filteredPayments.length})
+            Salary Payments ({filteredPayments.length})
             {(filterMonth || filterStatus) && ' (Filtered)'}
           </h3>
-          <div className="flex space-x-4">
-            <input
-              type="month"
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="p-2 border border-gray-300 rounded-md text-sm"
-              placeholder="Filter by month"
-            />
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="p-2 border border-gray-300 rounded-md text-sm"
-            >
-              <option value="">All Status</option>
-              <option value="pending">Pending</option>
-              <option value="completed">Completed</option>
-            </select>
-            <button
-              onClick={() => { setFilterMonth(''); setFilterStatus(''); }}
-              className="bg-gray-500 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-600"
-            >
-              Clear
-            </button>
+          <div className="text-sm text-gray-500">
+            {filterMonth && `Month: ${filterMonth}`}
+            {filterMonth && filterStatus && ' • '}
+            {filterStatus && `Status: ${filterStatus}`}
           </div>
         </div>
         
         {filteredPayments.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-2">💳</div>
-            <p>No payment records found</p>
+            <div className="text-4xl mb-2">💰</div>
+            <p>No salary payments found</p>
             <p className="text-sm">
-              {filterMonth || filterStatus ? 'Try changing your filters' : 'Record payments to get started'}
+              {filterMonth || filterStatus ? 'Try changing your filters' : 'Record salary payments to get started'}
             </p>
           </div>
         ) : (
@@ -374,7 +405,7 @@ const PaymentManagement = () => {
               <thead>
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Tenant & Unit
+                    Agent
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Payment Details
@@ -396,14 +427,14 @@ const PaymentManagement = () => {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-10 w-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
-                          {(payment.tenant?.first_name?.[0] || 'T')}{(payment.tenant?.last_name?.[0] || 'U')}
+                          {(payment.agent?.first_name?.[0] || 'A')}{(payment.agent?.last_name?.[0] || 'G')}
                         </div>
                         <div className="ml-4">
                           <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                            {payment.tenant?.first_name || 'Unknown'} {payment.tenant?.last_name || 'Tenant'}
+                            {payment.agent?.first_name || 'Unknown'} {payment.agent?.last_name || 'Agent'}
                           </div>
                           <div className="text-sm text-gray-500 whitespace-nowrap">
-                            {payment.unit?.unit_code || 'Unknown Unit'}
+                            {payment.agent?.phone_number || 'N/A'}
                           </div>
                         </div>
                       </div>
@@ -415,6 +446,9 @@ const PaymentManagement = () => {
                       <div className="text-sm text-gray-500 whitespace-nowrap">
                         {formatDate(payment.payment_month)}
                       </div>
+                      <div className="text-xs text-gray-400 whitespace-nowrap">
+                        Paid by: {payment.paid_by_user?.first_name || 'Admin'}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900 whitespace-nowrap">
@@ -423,21 +457,25 @@ const PaymentManagement = () => {
                       <div className="text-sm text-gray-500 whitespace-nowrap">
                         {payment.mpesa_receipt_number || 'N/A'}
                       </div>
+                      <div className="text-xs text-gray-400 whitespace-nowrap">
+                        {formatPaymentDate(payment.payment_date)}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
                         ${payment.status === 'completed' ? 'bg-green-100 text-green-800' : 
-                          'bg-yellow-100 text-yellow-800'}`}>
+                          payment.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
+                          'bg-red-100 text-red-800'}`}>
                         {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1) || 'Unknown'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                       {payment.status !== 'completed' && (
                         <button
-                          onClick={() => handleConfirmPayment(payment.id)}
+                          onClick={() => handleMarkAsCompleted(payment.id)}
                           className="text-green-600 hover:text-green-900 whitespace-nowrap"
                         >
-                          Confirm
+                          Mark Complete
                         </button>
                       )}
                       <button
@@ -454,8 +492,43 @@ const PaymentManagement = () => {
           </div>
         )}
       </div>
+
+      {/* Available Agents */}
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <h3 className="text-lg font-semibold mb-4">Active Agents ({availableAgents.length})</h3>
+        {availableAgents.length === 0 ? (
+          <p className="text-gray-500 text-center py-4">No active agents found</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {availableAgents.map(agent => {
+              const agentPayments = getAgentPayments(agent.id);
+              const totalPaid = agentPayments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
+              
+              return (
+                <div key={agent.id} className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium text-gray-900 whitespace-nowrap">
+                        {agent.first_name} {agent.last_name}
+                      </div>
+                      <div className="text-sm text-gray-500 whitespace-nowrap">{agent.phone_number}</div>
+                      <div className="text-sm text-gray-500 whitespace-nowrap">{agent.email}</div>
+                    </div>
+                    <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800 whitespace-nowrap">
+                      {agentPayments.length} payments
+                    </span>
+                  </div>
+                  <div className="mt-2 text-sm text-gray-600">
+                    Total paid: {formatCurrency(totalPaid)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
-export default PaymentManagement;
+export default SalaryPayment;
