@@ -1,112 +1,144 @@
-import React, { createContext, useState, useContext, useCallback } from 'react'
+import React, { createContext, useState, useContext, useCallback } from 'react';
+import { tenantAllocationAPI } from '../services/api';
 
-const AllocationContext = createContext(undefined)
+const TenantAllocationContext = createContext(undefined);
 
 export const useAllocation = () => {
-  const context = useContext(AllocationContext)
+  const context = useContext(TenantAllocationContext);
   if (context === undefined) {
-    throw new Error('useAllocation must be used within an AllocationProvider')
+    throw new Error('useAllocation must be used within an AllocationProvider');
   }
-  return context
-}
+  return context;
+};
 
 export const AllocationProvider = ({ children }) => {
-  const [allocations, setAllocations] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [allocations, setAllocations] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [selectedAllocation, setSelectedAllocation] = useState(null);
 
-  // Mock data - in real app, this would come from API
-  const mockAllocations = [
-    {
-      id: '1',
-      tenant_id: '3', // Mary Wanjiku
-      unit_id: '1-2', // WL001-102 (two_bedroom)
-      lease_start_date: '2024-01-01',
-      lease_end_date: '2024-12-31',
-      monthly_rent: 65000,
-      security_deposit: 130000,
-      rent_due_day: 5,
-      grace_period_days: 7,
-      allocated_by: '1', // Admin user
-      allocation_date: new Date('2024-01-01').toISOString(),
-      is_active: true,
-      tenant: {
-        id: '3',
-        first_name: 'Mary',
-        last_name: 'Wanjiku',
-        email: 'tenant@abdallah.co.ke',
-        phone_number: '254722222222'
-      },
-      unit: {
-        id: '1-2',
-        unit_code: 'WL001-102',
-        unit_type: 'two_bedroom',
-        unit_number: '102',
-        property: {
-          id: '1',
-          name: 'Westlands Apartments',
-          address: '123 Westlands Road, Nairobi'
+  // Fetch all allocations
+  const fetchAllocations = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await tenantAllocationAPI.getAllocations();
+      setAllocations(response.data.allocations || []);
+    } catch (err) {
+      console.error('Error fetching allocations:', err);
+      setError('Failed to fetch allocations');
+      setAllocations([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Create new allocation
+  const allocateTenant = useCallback(async (allocationData) => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Simulate API call until backend is implemented
+      const newAllocation = {
+        id: Math.random().toString(36).substr(2, 9),
+        ...allocationData,
+        is_active: true,
+        allocation_date: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        tenant: {
+          id: allocationData.tenant_id,
+          first_name: 'Tenant',
+          last_name: 'User',
+          phone_number: '254700000000'
+        },
+        unit: {
+          id: allocationData.unit_id,
+          unit_code: 'UNIT001',
+          property: {
+            name: 'Sample Property'
+          }
         }
-      }
+      };
+      
+      setAllocations(prev => [...prev, newAllocation]);
+      return newAllocation;
+    } catch (err) {
+      console.error('Error creating allocation:', err);
+      setError('Failed to create allocation');
+      throw err;
+    } finally {
+      setLoading(false);
     }
-  ]
+  }, []);
 
-  // Initialize with mock data
-  React.useEffect(() => {
-    setAllocations(mockAllocations)
-  }, [])
-
-  const allocateTenant = useCallback((allocationData) => {
-    const newAllocation = {
-      id: Math.random().toString(36).substr(2, 9),
-      ...allocationData,
-      allocation_date: new Date().toISOString(),
-      is_active: true
+  // Deallocate tenant (soft delete)
+  const deallocateTenant = useCallback(async (allocationId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      setAllocations(prev => prev.map(allocation => 
+        allocation.id === allocationId 
+          ? { ...allocation, is_active: false, lease_end_date: new Date().toISOString() }
+          : allocation
+      ));
+    } catch (err) {
+      console.error('Error deallocating tenant:', err);
+      setError('Failed to deallocate tenant');
+      throw err;
+    } finally {
+      setLoading(false);
     }
-    setAllocations(prev => [...prev, newAllocation])
-    return newAllocation
-  }, [])
+  }, []);
 
-  const updateAllocation = useCallback((allocationId, updates) => {
-    setAllocations(prev => prev.map(allocation => 
-      allocation.id === allocationId ? { ...allocation, ...updates } : allocation
-    ))
-  }, [])
-
-  const deallocateTenant = useCallback((allocationId) => {
-    updateAllocation(allocationId, { is_active: false })
-  }, [updateAllocation])
-
+  // Get active allocations
   const getActiveAllocations = useCallback(() => {
-    return allocations.filter(allocation => allocation.is_active)
-  }, [allocations])
+    return allocations.filter(allocation => allocation.is_active);
+  }, [allocations]);
 
-  const getAllocationByUnitId = useCallback((unitId) => {
-    return allocations.find(allocation => allocation.unit_id === unitId && allocation.is_active)
-  }, [allocations])
-
-  const getAllocationByTenantId = useCallback((tenantId) => {
-    return allocations.find(allocation => allocation.tenant_id === tenantId && allocation.is_active)
-  }, [allocations])
+  // Update allocation
+  const updateAllocation = useCallback(async (allocationId, updates) => {
+    setLoading(true);
+    setError(null);
+    try {
+      setAllocations(prev => prev.map(allocation => 
+        allocation.id === allocationId ? { ...allocation, ...updates } : allocation
+      ));
+    } catch (err) {
+      console.error('Error updating allocation:', err);
+      setError('Failed to update allocation');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const value = React.useMemo(() => ({
     allocations,
     loading,
+    error,
+    selectedAllocation,
+    setSelectedAllocation,
+    fetchAllocations,
     allocateTenant,
-    updateAllocation,
     deallocateTenant,
     getActiveAllocations,
-    getAllocationByUnitId,
-    getAllocationByTenantId
+    updateAllocation,
+    clearError: () => setError(null)
   }), [
     allocations,
     loading,
+    error,
+    selectedAllocation,
+    fetchAllocations,
     allocateTenant,
-    updateAllocation,
     deallocateTenant,
     getActiveAllocations,
-    getAllocationByUnitId,
-    getAllocationByTenantId
-  ])
+    updateAllocation
+  ]);
 
-  return <AllocationContext.Provider value={value}>{children}</AllocationContext.Provider>
-}
+  return (
+    <TenantAllocationContext.Provider value={value}>
+      {children}
+    </TenantAllocationContext.Provider>
+  );
+};

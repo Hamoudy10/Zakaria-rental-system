@@ -17,11 +17,18 @@ const Login = () => {
     setError('');
 
     try {
+      console.log('Starting login process...');
+      
       const result = await login(email, password);
+      console.log('Login result:', result);
       
       if (result.success) {
+        console.log('Login successful, redirecting...');
+        
+        // Use the user from the result instead of localStorage
+        const user = result.user;
+        
         // Redirect based on user role
-        const user = JSON.parse(localStorage.getItem('user'));
         if (user.role === 'admin') {
           navigate('/admin');
         } else if (user.role === 'agent') {
@@ -30,11 +37,11 @@ const Login = () => {
           navigate('/tenant');
         }
       } else {
-        setError(result.message);
+        setError(result.message || 'Login failed');
       }
     } catch (err) {
-      setError('An unexpected error occurred');
       console.error('Login error:', err);
+      setError('An unexpected error occurred during login');
     } finally {
       setLoading(false);
     }

@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import UserManagement from '../components/UserManagement'
 import PropertyManagement from '../components/PropertyManagement'
 import Reports from '../components/Reports'
-import SalaryPayments from '../components/SalaryPayments'
+import SalaryPayment from '../components/SalaryPayment'
 import SystemSettings from '../components/systemSettings'
 import TenantAllocation from '../components/TenantAllocation'
 import PaymentManagement from '../components/PaymentManagement'
@@ -34,7 +34,7 @@ const AdminDashboard = () => {
       case 'payments':
         return <PaymentManagement />
       case 'salaries':
-        return <SalaryPayments />
+        return <SalaryPayment />
       case 'complaints':
         return <ComplaintManagement />
       case 'reports':
