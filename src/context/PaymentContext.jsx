@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useCallback } from 'react';
-import { paymentAPI } from '../services/api';
+import { enhancedPaymentAPI, mpesaUtils, mockMpesaAPI } from '../services/api';
 
 const PaymentContext = createContext(undefined);
 
@@ -13,6 +13,8 @@ export const usePayment = () => {
 
 export const PaymentProvider = ({ children }) => {
   const [payments, setPayments] = useState([]);
+  const [allocations, setAllocations] = useState([]);
+  const [paymentNotifications, setPaymentNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
@@ -22,7 +24,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await paymentAPI.getPayments();
+      const response = await enhancedPaymentAPI.getPayments();
       setPayments(response.data.payments || []);
     } catch (err) {
       console.error('Error fetching payments:', err);
@@ -33,34 +35,184 @@ export const PaymentProvider = ({ children }) => {
     }
   }, []);
 
-  // Create new payment
+  // Get payments by tenant ID
+  const getPaymentsByTenant = useCallback(async (tenantId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await enhancedPaymentAPI.getTenantPayments(tenantId);
+      return response.data.payments || [];
+    } catch (err) {
+      console.error('Error fetching tenant payments:', err);
+      setError('Failed to fetch tenant payments');
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Get allocation by tenant ID
+  const getAllocationByTenantId = useCallback(async (tenantId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await enhancedPaymentAPI.getTenantAllocations(tenantId);
+      const allocations = response.data.allocations || [];
+      // Return the first active allocation
+      return allocations.find(allocation => allocation.is_active) || allocations[0] || null;
+    } catch (err) {
+      console.error('Error fetching allocation:', err);
+      setError('Failed to fetch allocation details');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Process M-Pesa payment with real API integration
+  const processMpesaPayment = useCallback(async (paymentData) => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Format phone number for M-Pesa
+      const formattedPaymentData = {
+        ...paymentData,
+        phone_number: mpesaUtils.formatPhoneNumber(paymentData.phone_number),
+        amount: mpesaUtils.formatAmount(paymentData.amount)
+      };
+
+      // Check if we're in development mode (mock API) or production (real API)
+      const isDevelopment = process.env.NODE_ENV === 'development';
+      
+      let result;
+      
+      if (isDevelopment) {
+        // Use mock API for development
+        console.log('Using mock M-Pesa API for development');
+        result = await processMockMpesaPayment(formattedPaymentData);
+      } else {
+        // Use real M-Pesa API for production
+        console.log('Using real M-Pesa API for production');
+        result = await enhancedPaymentAPI.processMpesaPayment(formattedPaymentData);
+      }
+
+      if (result.success) {
+        // Refresh payments list
+        await fetchPayments();
+        return {
+          success: true,
+          mpesa_receipt: result.mpesa_receipt || result.payment?.mpesa_receipt_number,
+          transactionId: result.transactionId || result.checkoutRequestId,
+          message: result.message || 'Payment initiated successfully'
+        };
+      } else {
+        throw new Error(result.error || result.message || 'Payment processing failed');
+      }
+      
+    } catch (err) {
+      console.error('Error processing M-Pesa payment:', err);
+      const errorMsg = err.response?.data?.message || err.message || 'M-Pesa payment failed';
+      setError(errorMsg);
+      return {
+        success: false,
+        error: errorMsg
+      };
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchPayments]);
+
+  // Process mock M-Pesa payment for development
+  const processMockMpesaPayment = useCallback(async (paymentData) => {
+    try {
+      // Simulate M-Pesa STK push
+      const stkResponse = await mockMpesaAPI.stkPush(paymentData);
+      
+      // Simulate payment confirmation after delay
+      return new Promise((resolve) => {
+        setTimeout(async () => {
+          // Create payment record with completed status for mock
+          const paymentRecord = {
+            ...paymentData,
+            mpesa_transaction_id: stkResponse.data.CheckoutRequestID,
+            mpesa_receipt_number: `RC${Date.now()}`,
+            status: 'completed',
+            payment_date: new Date().toISOString()
+          };
+
+          try {
+            const response = await enhancedPaymentAPI.createPayment(paymentRecord);
+            resolve({
+              success: true,
+              mpesa_receipt: paymentRecord.mpesa_receipt_number,
+              transactionId: paymentRecord.mpesa_transaction_id,
+              message: 'Mock payment completed successfully',
+              payment: response.data
+            });
+          } catch (error) {
+            resolve({
+              success: false,
+              error: 'Failed to create payment record'
+            });
+          }
+        }, 3000);
+      });
+    } catch (err) {
+      return {
+        success: false,
+        error: 'Mock payment simulation failed'
+      };
+    }
+  }, []);
+
+  // Check M-Pesa payment status
+  const checkMpesaPaymentStatus = useCallback(async (checkoutRequestId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await enhancedPaymentAPI.checkPaymentStatus(checkoutRequestId);
+      return response.data;
+    } catch (err) {
+      console.error('Error checking payment status:', err);
+      setError('Failed to check payment status');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Get upcoming payments
+  const getUpcomingPayments = useCallback((allocations) => {
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth();
+    
+    return allocations.map(allocation => {
+      const paidThisMonth = payments.some(payment => 
+        payment.unit_id === allocation.unit_id &&
+        new Date(payment.payment_month).getFullYear() === currentYear &&
+        new Date(payment.payment_month).getMonth() === currentMonth &&
+        payment.status === 'completed'
+      );
+      
+      return {
+        ...allocation,
+        paidThisMonth
+      };
+    });
+  }, [payments]);
+
+  // Create payment (for other payment methods)
   const createPayment = useCallback(async (paymentData) => {
     setLoading(true);
     setError(null);
     try {
-      // Simulate API call until backend is implemented
-      const newPayment = {
-        id: Math.random().toString(36).substr(2, 9),
-        ...paymentData,
-        status: 'completed',
-        payment_date: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        tenant: {
-          id: paymentData.tenant_id,
-          first_name: 'Tenant',
-          last_name: 'User'
-        },
-        unit: {
-          id: paymentData.unit_id,
-          unit_code: 'UNIT001',
-          property: {
-            name: 'Sample Property'
-          }
-        }
-      };
-      
-      setPayments(prev => [...prev, newPayment]);
-      return newPayment;
+      const response = await enhancedPaymentAPI.createPayment(paymentData);
+      if (response.success) {
+        await fetchPayments();
+        return response.data;
+      }
+      throw new Error(response.message || 'Failed to create payment');
     } catch (err) {
       console.error('Error creating payment:', err);
       setError('Failed to create payment');
@@ -68,16 +220,19 @@ export const PaymentProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchPayments]);
 
   // Update payment
   const updatePayment = useCallback(async (paymentId, updates) => {
     setLoading(true);
     setError(null);
     try {
-      setPayments(prev => prev.map(payment => 
-        payment.id === paymentId ? { ...payment, ...updates } : payment
-      ));
+      const response = await enhancedPaymentAPI.updatePayment(paymentId, updates);
+      if (response.success) {
+        await fetchPayments();
+        return response.data;
+      }
+      throw new Error(response.message || 'Failed to update payment');
     } catch (err) {
       console.error('Error updating payment:', err);
       setError('Failed to update payment');
@@ -85,33 +240,19 @@ export const PaymentProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  // Delete payment
-  const deletePayment = useCallback(async (paymentId) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setPayments(prev => prev.filter(payment => payment.id !== paymentId));
-    } catch (err) {
-      console.error('Error deleting payment:', err);
-      setError('Failed to delete payment');
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  }, [fetchPayments]);
 
   // Confirm payment
   const confirmPayment = useCallback(async (paymentId) => {
     setLoading(true);
     setError(null);
     try {
-      setPayments(prev => prev.map(payment => 
-        payment.id === paymentId 
-          ? { ...payment, status: 'completed', confirmed_at: new Date().toISOString() }
-          : payment
-      ));
+      const response = await enhancedPaymentAPI.confirmPayment(paymentId);
+      if (response.success) {
+        await fetchPayments();
+        return response.data;
+      }
+      throw new Error(response.message || 'Failed to confirm payment');
     } catch (err) {
       console.error('Error confirming payment:', err);
       setError('Failed to confirm payment');
@@ -119,64 +260,84 @@ export const PaymentProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchPayments]);
 
-  // Get payments by tenant
-  const getTenantPayments = useCallback((tenantId) => {
-    return payments.filter(payment => payment.tenant_id === tenantId);
-  }, [payments]);
-
-  // Get payments by property
-  const getPropertyPayments = useCallback((propertyId) => {
-    return payments.filter(payment => payment.unit?.property_id === propertyId);
-  }, [payments]);
-
-  // Get monthly summary
-  const getMonthlySummary = useCallback((year, month) => {
-    const monthPayments = payments.filter(payment => {
-      const paymentDate = new Date(payment.payment_month);
-      return paymentDate.getFullYear() === year && paymentDate.getMonth() + 1 === month;
-    });
+  // Get payment summary
+  const getPaymentSummary = useCallback((tenantId) => {
+    const tenantPayments = payments.filter(payment => payment.tenant_id === tenantId);
+    const totalPaid = tenantPayments
+      .filter(p => p.status === 'completed')
+      .reduce((sum, payment) => sum + (payment.amount || 0), 0);
     
-    const totalAmount = monthPayments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
-    const completedPayments = monthPayments.filter(p => p.status === 'completed').length;
+    const pendingPayments = tenantPayments.filter(p => p.status === 'pending');
     
     return {
-      totalPayments: monthPayments.length,
-      completedPayments,
-      pendingPayments: monthPayments.length - completedPayments,
-      totalAmount
+      totalPayments: tenantPayments.length,
+      completedPayments: tenantPayments.filter(p => p.status === 'completed').length,
+      pendingPayments: pendingPayments.length,
+      totalAmount: totalPaid
     };
   }, [payments]);
 
+  // Validate M-Pesa phone number
+  const validateMpesaPhone = useCallback((phoneNumber) => {
+    return mpesaUtils.isValidMpesaPhone(phoneNumber);
+  }, []);
+
+  // Format phone number for M-Pesa
+  const formatMpesaPhone = useCallback((phoneNumber) => {
+    return mpesaUtils.formatPhoneNumber(phoneNumber);
+  }, []);
+
   const value = React.useMemo(() => ({
+    // State
     payments,
+    allocations,
+    paymentNotifications,
     loading,
     error,
     selectedPayment,
+    
+    // Setters
     setSelectedPayment,
+    
+    // Payment functions
     fetchPayments,
+    getPaymentsByTenant,
     createPayment,
     updatePayment,
-    deletePayment,
     confirmPayment,
-    getTenantPayments,
-    getPropertyPayments,
-    getMonthlySummary,
+    processMpesaPayment,
+    checkMpesaPaymentStatus,
+    
+    // Allocation functions
+    getAllocationByTenantId,
+    getUpcomingPayments,
+    
+    // Utility functions
+    getPaymentSummary,
+    validateMpesaPhone,
+    formatMpesaPhone,
     clearError: () => setError(null)
   }), [
     payments,
+    allocations,
+    paymentNotifications,
     loading,
     error,
     selectedPayment,
     fetchPayments,
+    getPaymentsByTenant,
     createPayment,
     updatePayment,
-    deletePayment,
     confirmPayment,
-    getTenantPayments,
-    getPropertyPayments,
-    getMonthlySummary
+    processMpesaPayment,
+    checkMpesaPaymentStatus,
+    getAllocationByTenantId,
+    getUpcomingPayments,
+    getPaymentSummary,
+    validateMpesaPhone,
+    formatMpesaPhone
   ]);
 
   return (

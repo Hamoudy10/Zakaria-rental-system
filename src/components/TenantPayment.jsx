@@ -1,20 +1,26 @@
 import React, { useState, useEffect } from 'react'
 import { usePayment } from '../context/PaymentContext'
-import { useAllocation } from '../context/TenantAllocationContext'
 import { useAuth } from '../context/AuthContext'
 
 const TenantPayment = () => {
   const { user } = useAuth()
-  const { getAllocationByTenantId } = useAllocation()
   const { 
     payments, 
     paymentNotifications,
     loading, 
+    error,
     processMpesaPayment, 
     getPaymentsByTenant,
-    getUpcomingPayments 
+    getAllocationByTenantId,
+    getUpcomingPayments,
+    validateMpesaPhone,
+    formatMpesaPhone,
+    clearError
   } = usePayment()
   
+  const [allocation, setAllocation] = useState(null)
+  const [tenantPayments, setTenantPayments] = useState([])
+  const [upcomingPayments, setUpcomingPayments] = useState([])
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [paymentData, setPaymentData] = useState({
     amount: '',
@@ -22,41 +28,106 @@ const TenantPayment = () => {
     phone_number: ''
   })
   const [paymentStatus, setPaymentStatus] = useState(null)
+  const [phoneError, setPhoneError] = useState('')
 
-  const allocation = getAllocationByTenantId(user?.id)
-  const tenantPayments = getPaymentsByTenant(user?.id)
-  const upcomingPayments = getUpcomingPayments(allocation ? [allocation] : [])
+  // Load allocation and payments when component mounts
+  useEffect(() => {
+    const loadData = async () => {
+      if (user?.id) {
+        try {
+          const allocationData = await getAllocationByTenantId(user.id)
+          setAllocation(allocationData)
+          
+          const paymentsData = await getPaymentsByTenant(user.id)
+          setTenantPayments(paymentsData)
+          
+          if (allocationData) {
+            const upcoming = getUpcomingPayments([allocationData])
+            setUpcomingPayments(upcoming)
+          }
+        } catch (err) {
+          console.error('Error loading payment data:', err)
+        }
+      }
+    }
 
+    loadData()
+  }, [user, getAllocationByTenantId, getPaymentsByTenant, getUpcomingPayments])
+
+  // Update payment data when allocation changes
   useEffect(() => {
     if (allocation) {
+      const currentDate = new Date()
+      const currentMonth = currentDate.toISOString().slice(0, 7) // YYYY-MM
+      
       setPaymentData(prev => ({
         ...prev,
-        amount: allocation.monthly_rent,
+        amount: allocation.monthly_rent?.toString() || '',
         phone_number: user?.phone_number || '',
-        payment_month: new Date().toISOString().slice(0, 7) // Current month YYYY-MM
+        payment_month: currentMonth
       }))
     }
   }, [allocation, user])
 
+  // Validate phone number on change
+  useEffect(() => {
+    if (paymentData.phone_number) {
+      const formattedPhone = formatMpesaPhone(paymentData.phone_number)
+      if (!validateMpesaPhone(formattedPhone)) {
+        setPhoneError('Please enter a valid Kenyan phone number (e.g., 0712345678)')
+      } else {
+        setPhoneError('')
+      }
+    } else {
+      setPhoneError('')
+    }
+  }, [paymentData.phone_number, validateMpesaPhone, formatMpesaPhone])
+
   const handleMpesaPayment = async (e) => {
     e.preventDefault()
-    setPaymentStatus({ type: 'processing', message: 'Processing M-Pesa payment...' })
+    
+    // Validate phone number
+    const formattedPhone = formatMpesaPhone(paymentData.phone_number)
+    if (!validateMpesaPhone(formattedPhone)) {
+      setPhoneError('Please enter a valid Kenyan phone number')
+      return
+    }
+
+    setPaymentStatus({ type: 'processing', message: 'Initiating M-Pesa payment...' })
+    clearError()
+    setPhoneError('')
     
     try {
-      const result = await processMpesaPayment({
+      const paymentPayload = {
         tenant_id: user.id,
         unit_id: allocation.unit_id,
         amount: parseFloat(paymentData.amount),
-        payment_month: paymentData.payment_month + '-01', // First day of month
-        phone_number: paymentData.phone_number
-      })
+        payment_month: `${paymentData.payment_month}-01`,
+        phone_number: formattedPhone,
+        property_name: allocation.property_name,
+        unit_number: allocation.unit_number
+      }
+
+      const result = await processMpesaPayment(paymentPayload)
       
       if (result.success) {
         setPaymentStatus({ 
           type: 'success', 
-          message: `Payment successful! M-Pesa Receipt: ${result.mpesa_receipt}`,
-          receipt: result.mpesa_receipt
+          message: result.message || 'Payment initiated successfully! Check your phone for M-Pesa prompt.',
+          receipt: result.mpesa_receipt,
+          transactionId: result.transactionId
         })
+        
+        // Refresh payments data
+        const updatedPayments = await getPaymentsByTenant(user.id)
+        setTenantPayments(updatedPayments)
+        
+        // Reset form on success
+        setPaymentData(prev => ({
+          ...prev,
+          phone_number: user?.phone_number || ''
+        }))
+        
         setTimeout(() => {
           setShowPaymentModal(false)
           setPaymentStatus(null)
@@ -64,13 +135,13 @@ const TenantPayment = () => {
       } else {
         setPaymentStatus({ 
           type: 'error', 
-          message: result.error 
+          message: result.error || 'Payment failed. Please try again.' 
         })
       }
     } catch (error) {
       setPaymentStatus({ 
         type: 'error', 
-        message: 'Payment failed. Please try again.' 
+        message: error.message || 'Payment processing failed. Please try again.' 
       })
     }
   }
@@ -80,14 +151,18 @@ const TenantPayment = () => {
       style: 'currency',
       currency: 'KES',
       minimumFractionDigits: 0
-    }).format(amount)
+    }).format(amount || 0)
   }
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-KE', {
-      year: 'numeric',
-      month: 'long'
-    })
+    try {
+      return new Date(dateString).toLocaleDateString('en-KE', {
+        year: 'numeric',
+        month: 'long'
+      })
+    } catch {
+      return 'Invalid date'
+    }
   }
 
   const getPaymentStatus = (payment) => {
@@ -103,6 +178,22 @@ const TenantPayment = () => {
     }
   }
 
+  const handlePhoneChange = (e) => {
+    const value = e.target.value
+    setPaymentData(prev => ({ ...prev, phone_number: value }))
+  }
+
+  const currentMonthPaid = upcomingPayments[0]?.paidThisMonth || false
+  const isDevelopment = process.env.NODE_ENV === 'development'
+
+  if (loading && !allocation) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    )
+  }
+
   if (!allocation) {
     return (
       <div className="card text-center py-12">
@@ -113,10 +204,28 @@ const TenantPayment = () => {
     )
   }
 
-  const currentMonthPaid = upcomingPayments[0]?.paidThisMonth || false
-
   return (
     <div className="space-y-6">
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+          {error}
+          <button onClick={clearError} className="float-right font-bold">×</button>
+        </div>
+      )}
+
+      {/* Development Mode Banner */}
+      {isDevelopment && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <div className="text-yellow-600 mr-2">🛠️</div>
+            <div className="text-sm text-yellow-800">
+              <strong>Development Mode:</strong> Using mock M-Pesa API. No real payments will be processed.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Payment Overview */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="card">
@@ -157,7 +266,7 @@ const TenantPayment = () => {
           <div className="text-right">
             <div className="text-sm text-gray-600">Due Date</div>
             <div className="font-semibold">
-              {new Date(new Date().getFullYear(), new Date().getMonth(), allocation.rent_due_day).toLocaleDateString('en-KE')}
+              {new Date(new Date().getFullYear(), new Date().getMonth(), allocation.rent_due_day || 5).toLocaleDateString('en-KE')}
             </div>
           </div>
         </div>
@@ -174,7 +283,7 @@ const TenantPayment = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold text-gray-900">
-                    {allocation.unit.property.name} - {allocation.unit.unit_code}
+                    {allocation.property_name} - {allocation.unit_number}
                   </div>
                   <div className="text-sm text-gray-600">
                     Rent for {formatDate(paymentData.payment_month)}
@@ -191,8 +300,9 @@ const TenantPayment = () => {
             <button
               onClick={() => setShowPaymentModal(true)}
               className="btn-primary w-full py-3 text-lg"
+              disabled={loading}
             >
-              Pay with M-Pesa
+              {loading ? 'Processing...' : 'Pay with M-Pesa'}
             </button>
 
             <div className="text-center text-sm text-gray-500">
@@ -240,7 +350,7 @@ const TenantPayment = () => {
                   return (
                     <tr key={payment.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {new Date(payment.payment_date).toLocaleDateString('en-KE')}
+                        {payment.payment_date ? new Date(payment.payment_date).toLocaleDateString('en-KE') : 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {formatDate(payment.payment_month)}
@@ -249,7 +359,7 @@ const TenantPayment = () => {
                         {formatCurrency(payment.amount)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {payment.mpesa_receipt_number}
+                        {payment.mpesa_receipt_number || 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${status.bg} ${status.color}`}>
@@ -264,32 +374,6 @@ const TenantPayment = () => {
           </div>
         )}
       </div>
-
-      {/* Recent Notifications */}
-      {paymentNotifications.filter(n => n.recipient_id === user.id).length > 0 && (
-        <div className="card">
-          <h3 className="text-lg font-semibold mb-4">Recent Notifications</h3>
-          <div className="space-y-3">
-            {paymentNotifications
-              .filter(n => n.recipient_id === user.id)
-              .slice(0, 3)
-              .map(notification => (
-                <div key={notification.id} className="flex items-start space-x-3 p-3 bg-blue-50 rounded-lg">
-                  <div className="flex-shrink-0 w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
-                  <div className="flex-1">
-                    <p className="text-sm text-gray-900">{notification.message_content}</p>
-                    <p className="text-xs text-gray-500">
-                      {new Date(notification.sent_at).toLocaleDateString('en-KE', { 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
-                      })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
 
       {/* M-Pesa Payment Modal */}
       {showPaymentModal && (
@@ -314,15 +398,16 @@ const TenantPayment = () => {
                 )}
                 <p className="text-lg font-semibold mb-2">
                   {paymentStatus.type === 'processing' ? 'Processing Payment...' :
-                   paymentStatus.type === 'success' ? 'Payment Successful!' :
+                   paymentStatus.type === 'success' ? 'Payment Initiated!' :
                    'Payment Failed'}
                 </p>
                 <p className="text-sm">{paymentStatus.message}</p>
                 
-                {paymentStatus.type === 'processing' && (
-                  <div className="mt-4 text-xs text-gray-500">
-                    <p>Simulating M-Pesa payment processing...</p>
-                    <p>In a real system, you would receive an M-Pesa prompt</p>
+                {paymentStatus.type === 'success' && (
+                  <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                    <p className="text-sm font-semibold">Transaction Details:</p>
+                    <p className="text-xs">Receipt: {paymentStatus.receipt}</p>
+                    <p className="text-xs">Transaction ID: {paymentStatus.transactionId}</p>
                   </div>
                 )}
               </div>
@@ -331,11 +416,11 @@ const TenantPayment = () => {
                 <div className="p-4 bg-gray-50 rounded-lg">
                   <div className="flex justify-between items-center mb-2">
                     <span className="font-semibold">Property:</span>
-                    <span>{allocation.unit.property.name}</span>
+                    <span>{allocation.property_name}</span>
                   </div>
                   <div className="flex justify-between items-center mb-2">
                     <span className="font-semibold">Unit:</span>
-                    <span>{allocation.unit.unit_code}</span>
+                    <span>{allocation.unit_number}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="font-semibold">Amount:</span>
@@ -350,11 +435,17 @@ const TenantPayment = () => {
                   <input
                     type="tel"
                     value={paymentData.phone_number}
-                    onChange={(e) => setPaymentData({...paymentData, phone_number: e.target.value})}
-                    className="input-primary"
-                    placeholder="254712345678"
+                    onChange={handlePhoneChange}
+                    className={`input-primary ${phoneError ? 'border-red-500' : ''}`}
+                    placeholder="0712345678"
                     required
                   />
+                  {phoneError && (
+                    <p className="text-red-500 text-xs mt-1">{phoneError}</p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Format: 0712345678 or 254712345678
+                  </p>
                 </div>
 
                 <div>
@@ -370,11 +461,11 @@ const TenantPayment = () => {
                   />
                 </div>
 
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="flex items-center">
-                    <div className="text-yellow-600 mr-2">⚠️</div>
-                    <div className="text-sm text-yellow-800">
-                      <strong>Demo Mode:</strong> This simulates M-Pesa payment. No actual payment will be processed.
+                    <div className="text-blue-600 mr-2">ℹ️</div>
+                    <div className="text-sm text-blue-800">
+                      <strong>M-Pesa Instructions:</strong> You will receive a prompt on your phone to enter your M-Pesa PIN.
                     </div>
                   </div>
                 </div>
@@ -382,14 +473,19 @@ const TenantPayment = () => {
                 <div className="flex space-x-4 pt-4">
                   <button
                     type="submit"
-                    disabled={loading}
-                    className="btn-primary flex-1"
+                    disabled={loading || phoneError}
+                    className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {loading ? 'Processing...' : 'Confirm Payment'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowPaymentModal(false)}
+                    onClick={() => {
+                      setShowPaymentModal(false)
+                      setPaymentStatus(null)
+                      setPhoneError('')
+                      clearError()
+                    }}
                     className="btn-secondary flex-1"
                   >
                     Cancel

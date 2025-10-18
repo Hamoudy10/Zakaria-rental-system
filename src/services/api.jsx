@@ -112,8 +112,6 @@ export const propertyAPI = {
   deleteUnit: (propertyId, unitId) => api.delete(`/properties/${propertyId}/units/${unitId}`),
 };
 
-// Add to your existing api.js file
-
 export const salaryPaymentAPI = {
   getSalaryPayments: () => api.get('/salary-payments'),
   getSalaryPayment: (id) => api.get(`/salary-payments/${id}`),
@@ -124,12 +122,218 @@ export const salaryPaymentAPI = {
   markAsCompleted: (id) => api.post(`/salary-payments/${id}/complete`),
 };
 
-// Add to existing api.js exports
 export const settingsAPI = {
-  getSettings: () => api.get('/settings'),
-  updateSetting: (key, value) => api.put(`/settings/${key}`, { value }),
-  updateMultipleSettings: (settings) => api.put('/settings/bulk', { settings }),
-  resetSettings: () => api.post('/settings/reset'),
+  getSettings: () => api.get('/admin/settings'),
+  updateSetting: (key, value) => api.put(`/admin/settings/${key}`, { value }),
+  updateMultipleSettings: (settings) => api.put('/admin/settings', settings),
+  resetSettings: () => api.post('/admin/settings/reset-defaults'),
+};
+
+// M-Pesa API Integration
+export const mpesaAPI = {
+  // Initiate STK Push (Lipa Na M-Pesa)
+  stkPush: (paymentData) => {
+    // In a real implementation, this would call your backend M-Pesa endpoint
+    // For now, we'll simulate the M-Pesa API response
+    return api.post('/mpesa/stk-push', paymentData);
+  },
+
+  // Query transaction status
+  queryTransaction: (transactionId) => {
+    return api.get(`/mpesa/transaction/${transactionId}`);
+  },
+
+  // Register C2B URLs (for paybill confirmation)
+  registerUrls: (urlData) => {
+    return api.post('/mpesa/register-urls', urlData);
+  },
+
+  // Simulate C2B payment (for testing)
+  simulateC2B: (paymentData) => {
+    return api.post('/mpesa/simulate-c2b', paymentData);
+  },
+
+  // Get M-Pesa balance
+  getBalance: () => {
+    return api.get('/mpesa/balance');
+  },
+
+  // Reverse transaction
+  reverseTransaction: (transactionData) => {
+    return api.post('/mpesa/reverse', transactionData);
+  }
+};
+
+// Enhanced payment API with M-Pesa integration
+export const enhancedPaymentAPI = {
+  ...paymentAPI,
+  
+  // Process M-Pesa payment
+  processMpesaPayment: async (paymentData) => {
+    try {
+      // Step 1: Initiate M-Pesa STK Push
+      const stkResponse = await mpesaAPI.stkPush({
+        BusinessShortCode: process.env.REACT_APP_MPESA_SHORTCODE || '123456',
+        Amount: paymentData.amount,
+        PhoneNumber: paymentData.phone_number,
+        CallBackURL: `${API_BASE_URL}/mpesa/callback`,
+        AccountReference: `RENT_${paymentData.unit_id}`,
+        TransactionDesc: `Rent payment for ${paymentData.payment_month}`
+      });
+
+      if (stkResponse.data.success) {
+        // Step 2: Create payment record with pending status
+        const paymentRecord = {
+          ...paymentData,
+          mpesa_transaction_id: stkResponse.data.CheckoutRequestID,
+          mpesa_receipt_number: null,
+          status: 'pending',
+          payment_date: new Date().toISOString()
+        };
+
+        const paymentResponse = await paymentAPI.createPayment(paymentRecord);
+        
+        return {
+          success: true,
+          message: 'M-Pesa payment initiated successfully. Check your phone for STK prompt.',
+          checkoutRequestId: stkResponse.data.CheckoutRequestID,
+          merchantRequestId: stkResponse.data.MerchantRequestID,
+          payment: paymentResponse.data
+        };
+      } else {
+        throw new Error(stkResponse.data.errorMessage || 'Failed to initiate M-Pesa payment');
+      }
+    } catch (error) {
+      console.error('M-Pesa payment error:', error);
+      throw error;
+    }
+  },
+
+  // Check payment status
+  checkPaymentStatus: async (checkoutRequestId) => {
+    try {
+      const response = await mpesaAPI.queryTransaction(checkoutRequestId);
+      return response.data;
+    } catch (error) {
+      console.error('Error checking payment status:', error);
+      throw error;
+    }
+  },
+
+  // Confirm payment manually (for admin)
+  confirmMpesaPayment: async (paymentId, mpesaData) => {
+    try {
+      const response = await api.post(`/payments/${paymentId}/confirm-mpesa`, mpesaData);
+      return response.data;
+    } catch (error) {
+      console.error('Error confirming M-Pesa payment:', error);
+      throw error;
+    }
+  },
+
+  // Get M-Pesa payment summary
+  getMpesaSummary: async (params = {}) => {
+    try {
+      const response = await api.get('/payments/mpesa/summary', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching M-Pesa summary:', error);
+      throw error;
+    }
+  }
+};
+
+// System settings API for M-Pesa configuration
+export const systemSettingsAPI = {
+  // Get M-Pesa settings
+  getMpesaSettings: () => {
+    return api.get('/admin/settings/mpesa');
+  },
+
+  // Update M-Pesa settings
+  updateMpesaSettings: (settings) => {
+    return api.put('/admin/settings/mpesa', settings);
+  },
+
+  // Test M-Pesa connection
+  testMpesaConnection: () => {
+    return api.post('/admin/settings/mpesa/test');
+  }
+};
+
+// Utility functions for M-Pesa
+export const mpesaUtils = {
+  // Format phone number for M-Pesa (254 format)
+  formatPhoneNumber: (phone) => {
+    if (!phone) return '';
+    
+    let cleaned = phone.replace(/\D/g, '');
+    
+    if (cleaned.startsWith('0')) {
+      cleaned = '254' + cleaned.substring(1);
+    } else if (cleaned.startsWith('+')) {
+      cleaned = cleaned.substring(1);
+    } else if (!cleaned.startsWith('254')) {
+      cleaned = '254' + cleaned;
+    }
+    
+    return cleaned;
+  },
+
+  // Validate M-Pesa phone number
+  isValidMpesaPhone: (phone) => {
+    const formatted = mpesaUtils.formatPhoneNumber(phone);
+    return /^2547[0-9]{8}$/.test(formatted);
+  },
+
+  // Format amount for M-Pesa (must be integer)
+  formatAmount: (amount) => {
+    return Math.round(parseFloat(amount));
+  },
+
+  // Generate transaction reference
+  generateTransactionRef: (prefix = 'RENT') => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    return `${prefix}_${timestamp}_${random}`;
+  },
+
+  // Parse M-Pesa callback data
+  parseCallbackData: (callbackData) => {
+    try {
+      if (typeof callbackData === 'string') {
+        return JSON.parse(callbackData);
+      }
+      return callbackData;
+    } catch (error) {
+      console.error('Error parsing M-Pesa callback:', error);
+      return null;
+    }
+  }
+};
+
+// Mock M-Pesa API for development (remove in production)
+export const mockMpesaAPI = {
+  stkPush: (paymentData) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({
+          data: {
+            success: true,
+            CheckoutRequestID: `ws_CO_${Date.now()}`,
+            MerchantRequestID: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            ResponseCode: '0',
+            ResponseDescription: 'Success. Request accepted for processing',
+            CustomerMessage: 'Success. Request accepted for processing'
+          }
+        });
+      }, 2000);
+    });
+  },
+
+  simulatePaymentCallback: (paymentData) => {
+    return api.post('/mpesa/simulate-callback', paymentData);
+  }
 };
 
 export default api;

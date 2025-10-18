@@ -6,16 +6,24 @@ import { AllocationProvider } from './context/TenantAllocationContext'
 import { PaymentProvider } from './context/PaymentContext'
 import { ReportProvider } from './context/ReportContext'
 import { NotificationProvider, useNotification } from './context/NotificationContext'
-import { UserProvider } from './context/UserContext' // ADDED: Import UserProvider
+import { UserProvider } from './context/UserContext'
 import NotificationBell from './components/NotificationBell'
 import Login from './components/Login'
-import { SalaryPaymentProvider } from './context/SalaryPaymentContext' // ADD THIS
+import { SalaryPaymentProvider } from './context/SalaryPaymentContext'
 import { ComplaintProvider } from './context/ComplaintContext';
 import { SystemSettingsProvider } from './context/SystemSettingsContext';
 
 // Protected Route component
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
+  
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-gray-500">Loading...</div>
+      </div>
+    )
+  }
   
   if (!user) {
     return <Navigate to="/login" replace />
@@ -77,6 +85,7 @@ const Layout = ({ children }) => {
                 <p className="text-sm text-gray-700">
                   Welcome back, <span className="font-semibold text-blue-800">{user?.first_name} {user?.last_name}</span>
                 </p>
+                <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
               </div>
 
               {/* Notification Bell */}
@@ -231,6 +240,9 @@ import AgentDashboard from './pages/AgentDashboard'
 import TenantDashboard from './pages/TenantDashboard'
 import NotificationsPage from './components/NotificationPage'
 
+// Import payment-related components
+import TenantPayment from './components/TenantPayment'
+
 function AppRoutes() {
   const { user } = useAuth()
 
@@ -287,6 +299,14 @@ function AppRoutes() {
         } 
       />
       <Route 
+        path="/tenant/payments" 
+        element={
+          <ProtectedRoute allowedRoles={['tenant']}>
+            <TenantPayment />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
         path="/tenant/notifications" 
         element={
           <ProtectedRoute allowedRoles={['tenant']}>
@@ -307,6 +327,12 @@ function AppRoutes() {
         element={<Navigate to={user ? `/${user.role}/notifications` : '/login'} replace />} 
       />
       
+      {/* Payment route for tenants */}
+      <Route 
+        path="/payments" 
+        element={<Navigate to={user ? `/${user.role}/payments` : '/login'} replace />} 
+      />
+      
       {/* Unauthorized route */}
       <Route 
         path="/unauthorized" 
@@ -315,6 +341,31 @@ function AppRoutes() {
             <div className="text-center">
               <h1 className="text-4xl font-bold text-red-600 mb-4">Unauthorized</h1>
               <p className="text-gray-600">You don't have permission to access this page.</p>
+              <Link 
+                to="/login" 
+                className="mt-4 inline-block bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+              >
+                Back to Login
+              </Link>
+            </div>
+          </div>
+        } 
+      />
+      
+      {/* 404 Not Found route */}
+      <Route 
+        path="*" 
+        element={
+          <div className="min-h-screen flex items-center justify-center bg-gray-50">
+            <div className="text-center">
+              <h1 className="text-4xl font-bold text-gray-900 mb-4">404 - Page Not Found</h1>
+              <p className="text-gray-600">The page you're looking for doesn't exist.</p>
+              <Link 
+                to="/" 
+                className="mt-4 inline-block bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+              >
+                Go Home
+              </Link>
             </div>
           </div>
         } 
@@ -332,27 +383,26 @@ function App() {
       }}
     >
       <AuthProvider>
-        <UserProvider> {/* ADDED: Wrap with UserProvider */}
+        <UserProvider>
           <PropertyProvider>
-            <AllocationProvider>
-              <PaymentProvider>
-                <ReportProvider>
-                  <NotificationProvider>
-                   <SalaryPaymentProvider> {/* ADD THIS */}
-                      <ComplaintProvider>
-                        <ReportProvider>
-                          <SystemSettingsProvider>
-                            <AppRoutes />
-                          </SystemSettingsProvider>
-                        </ReportProvider>
-                      </ComplaintProvider>
-                    </SalaryPaymentProvider> {/* ADD THIS */}
-                  </NotificationProvider>
-                </ReportProvider>
-              </PaymentProvider>
-            </AllocationProvider>
+            {/* PaymentProvider should wrap AllocationProvider since PaymentContext now handles allocations for tenants */}
+            <PaymentProvider>
+              <AllocationProvider>
+                <NotificationProvider>
+                  <SalaryPaymentProvider>
+                    <ComplaintProvider>
+                      <ReportProvider>
+                        <SystemSettingsProvider>
+                          <AppRoutes />
+                        </SystemSettingsProvider>
+                      </ReportProvider>
+                    </ComplaintProvider>
+                  </SalaryPaymentProvider>
+                </NotificationProvider>
+              </AllocationProvider>
+            </PaymentProvider>
           </PropertyProvider>
-        </UserProvider> {/* ADDED: Close UserProvider */}
+        </UserProvider>
       </AuthProvider>
     </Router>
   )
