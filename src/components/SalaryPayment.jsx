@@ -180,8 +180,7 @@ const SalaryPayment = () => {
         </div>
         <button
           onClick={() => setShowPaymentModal(true)}
-          className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={availableAgents.length === 0}
+          className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
         >
           Record Salary Payment
         </button>

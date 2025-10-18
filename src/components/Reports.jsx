@@ -169,33 +169,33 @@ const Reports = () => {
           </div>
         )}
 
-        {/* Action Buttons */}
-        <div className="flex space-x-4">
+        {/* Action Buttons - FIXED: Centered and responsive */}
+        <div className="flex flex-col sm:flex-row justify-center items-center gap-4 w-full px-4">
           <button
             onClick={handleGenerateReport}
             disabled={loading}
-            className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            className="w-full sm:w-auto min-w-[140px] px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium text-center disabled:opacity-50"
           >
             {loading ? 'Generating...' : 'Generate Report'}
           </button>
           
           {reportData && (
-            <div className="flex space-x-2">
+            <div className="flex flex-col sm:flex-row justify-center items-center gap-2 w-full sm:w-auto">
               <button
                 onClick={() => handleExport('pdf')}
-                className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                className="w-full sm:w-auto min-w-[140px] px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium text-center"
               >
                 Export PDF
               </button>
               <button
                 onClick={() => handleExport('csv')}
-                className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+                className="w-full sm:w-auto min-w-[140px] px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium text-center"
               >
                 Export CSV
               </button>
               <button
                 onClick={() => handleExport('excel')}
-                className="bg-green-700 text-white px-4 py-2 rounded-md hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-500"
+                className="w-full sm:w-auto min-w-[140px] px-6 py-3 bg-green-700 text-white rounded-lg hover:bg-green-800 transition-colors text-sm font-medium text-center"
               >
                 Export Excel
               </button>
