@@ -1,18 +1,27 @@
 const express = require('express');
-const { protect, authorize } = require('../middleware/authMiddleware');
+const {
+  getComplaints,
+  getComplaintById,
+  createComplaint,
+  updateComplaint,
+  assignComplaint,
+  resolveComplaint,
+  addComplaintUpdate,
+  getTenantComplaints
+} = require('../controllers/complaintController');
 
 const router = express.Router();
 
-// Protect all routes
-router.use(protect);
+// Admin/Agent routes
+router.get('/', getComplaints);
+router.get('/:id', getComplaintById);
+router.post('/', createComplaint);
+router.put('/:id', updateComplaint);
+router.post('/:id/assign', assignComplaint);
+router.post('/:id/resolve', resolveComplaint);
+router.post('/:id/updates', addComplaintUpdate);
 
-// Placeholder routes
-router.get('/', (req, res) => {
-  res.status(200).json({ message: 'Get all complaints' });
-});
-
-router.post('/', (req, res) => {
-  res.status(200).json({ message: 'Create a complaint' });
-});
+// Tenant-specific routes
+router.get('/tenant/:tenantId', getTenantComplaints);
 
 module.exports = router;

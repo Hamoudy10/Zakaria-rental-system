@@ -1,102 +1,305 @@
-# 🏠 Zakaria Rental System
+Zakaria Rental System - Database Integration Documentation
+Overview
+This document outlines the steps to integrate the Zakaria Rental System with a PostgreSQL database, replacing mock data with real database operations.
 
-A comprehensive rental property management system built with React.js and PostgreSQL, designed to streamline property management, tenant relations, and financial tracking for rental businesses in Kenya.
+Current Issues Identified
+1. File Structure Problems
+Backend files using .jsx extension (should be .js)
 
-## 🚀 Live Demo
-[Add your live demo link here when deployed]
+Missing proper database configuration
 
-## 📋 Table of Contents
-- [System Overview](#system-overview)
-- [Features](#features)
-- [User Roles](#user-roles)
-- [Technology Stack](#technology-stack)
-- [Database Schema](#database-schema)
-- [Installation](#installation)
-- [Project Structure](#project-structure)
-- [API Integration](#api-integration)
-- [Development Guide](#development-guide)
-- [Screenshots](#screenshots)
-- [Contributing](#contributing)
-- [License](#license)
+Inconsistent response formats between frontend and backend
 
-## 🎯 System Overview
+2. Database Integration Gaps
+Controllers using mock data instead of database queries
 
-The Zakaria Rental System is a full-stack web application designed to automate and streamline rental property management operations. The system supports three main user roles (Admin, Agent, Tenant) and provides comprehensive features for property management, rent collection, maintenance tracking, and financial reporting.
+No proper error handling for database operations
 
-### Key Business Objectives:
-- **Digital Transformation**: Move from manual record-keeping to automated digital management
-- **Payment Automation**: Integrate M-Pesa for seamless rent collection
-- **Multi-role Access**: Provide tailored interfaces for different stakeholders
-- **Real-time Analytics**: Offer business intelligence through dashboards and reports
-- **Mobile-First Design**: Ensure accessibility across all devices
+Missing database connection pooling
 
-## ✨ Features
+Implementation Plan
+Phase 1: Backend Restructuring
+1.1 File Renaming
+text
+backend/
+├── controllers/
+│   ├── authController.js      ← Rename from .jsx
+│   ├── userController.js      ← Rename from .jsx
+│   ├── propertyController.js  ← Rename from .jsx
+│   └── paymentController.js   ← Rename from .jsx
+├── routes/
+│   ├── auth.js               ← Rename from .jsx
+│   ├── users.js              ← Rename from .jsx
+│   └── properties.js         ← Rename from .jsx
+└── config/
+    └── database.js           ← Rename from .jsx
+1.2 Database Configuration
+File: backend/config/database.js
 
-### 👨‍💼 Admin Features
-- **Dashboard Overview**: Real-time business metrics and performance analytics
-- **User Management**: Complete CRUD operations for admins, agents, and tenants
-- **Property Management**: Add, edit, and manage properties and units
-- **Tenant Allocation**: Assign tenants to specific units with lease management
-- **Payment Management**: Track and confirm rent payments
-- **Salary Management**: Process agent salary payments
-- **Complaint Management**: Oversee maintenance requests and resolutions
-- **Advanced Reporting**: Financial, occupancy, and revenue analytics
-- **System Settings**: Configure application-wide settings
+PostgreSQL connection pooling
 
-### 👨‍💼 Agent Features
-- **Property Management**: Manage assigned properties and units
-- **Tenant Management**: Handle tenant communications and information
-- **Complaint Resolution**: Process and resolve maintenance requests
-- **Performance Tracking**: Monitor resolution times and satisfaction rates
+Environment-based configuration
 
-### 👤 Tenant Features
-- **Rent Payments**: Make and track rent payments via M-Pesa
-- **Maintenance Requests**: Submit and track complaint resolutions
-- **Payment History**: View complete payment records
-- **Profile Management**: Update personal information and documents
+Connection error handling
 
-### 🔔 Notification System
-- **Real-time Alerts**: In-app notifications for important events
-- **Multi-channel**: SMS and email notifications (ready for integration)
-- **Customizable Preferences**: User-controlled notification settings
-- **Notification Types**: Payments, maintenance, announcements, and reminders
+Query export for database operations
 
-## 👥 User Roles
+1.3 Environment Setup
+File: backend/.env
 
-| Role | Description | Access Level |
-|------|-------------|--------------|
-| **Admin** | System administrator | Full system access |
-| **Agent** | Property manager | Assigned properties and tenants |
-| **Tenant** | Property occupant | Personal account and payments |
+env
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=zakaria_rental
+DB_USER=postgres
+DB_PASSWORD=your_password
+JWT_SECRET=your_jwt_secret
+JWT_EXPIRES_IN=7d
+PORT=3001
+CLIENT_URL=http://localhost:5173
+Phase 2: Controller Updates
+2.1 Authentication Controller
+Login: Database user lookup + JWT token generation
 
-## 🛠 Technology Stack
+Register: User creation with password hashing
 
-### Frontend
-- **React.js 18** - Modern UI framework with hooks
-- **Vite** - Fast build tool and development server
-- **Tailwind CSS** - Utility-first CSS framework
-- **React Router v6** - Client-side routing with protected routes
-- **Context API** - State management (Auth, Properties, Payments, etc.)
-- **Axios/Fetch** - API communication
+Password validation with bcrypt
 
-### Backend (To be implemented)
-- **Node.js/Express** or **Python/FastAPI** - API server
-- **PostgreSQL** - Relational database
-- **JWT** - Authentication tokens
-- **M-Pesa API** - Payment processing
-- **Redis** - Session management (optional)
+2.2 User Management Controller
+getUsers: Fetch all users from database
 
-### Database
-- **PostgreSQL** - Primary database
-- **UUID** - Unique identifier generation
-- **JSONB** - Flexible data storage for features and reports
-- **Enums** - Type-safe enumerations for status fields
+createUser: Insert new user with hashed password
 
-## 🗄 Database Schema
+updateUser: Modify user details
 
-### Core Tables Structure
+deleteUser: Soft delete (set is_active = false)
 
-#### Users & Authentication
-```sql
-users (id, national_id, first_name, last_name, email, phone_number, 
-       password_hash, role, is_active, created_at, updated_at)
+2.3 Property Management Controller
+getProperties: Fetch properties with unit counts
+
+createProperty: Insert new property record
+
+2.4 Payment Controller
+getPayments: Fetch all payments with tenant/property details
+
+getPaymentsByTenant: Tenant-specific payment history
+
+createPayment: Record new payment transactions
+
+Phase 3: Route Integration
+3.1 Route Structure
+text
+/api/auth/login          → POST (Authentication)
+/api/auth/register       → POST (User Registration)
+/api/users               → GET, POST (User Management)
+/api/properties          → GET, POST (Property Management)
+/api/payments            → GET, POST (Payment Operations)
+/api/payments/tenant/:id → GET (Tenant Payments)
+3.2 Authentication Middleware
+JWT token validation
+
+Role-based access control
+
+Request user context injection
+
+Phase 4: Frontend Updates
+4.1 API Service (src/services/api.jsx)
+Consistent response handling
+
+Automatic token attachment
+
+Error interception and handling
+
+Response format normalization
+
+4.2 Context Updates
+All React contexts updated to:
+
+Use real API endpoints
+
+Handle database-driven responses
+
+Implement proper error states
+
+Manage loading states effectively
+
+Database Schema Integration
+Key Tables Utilized
+users: User accounts and authentication
+
+properties: Property information and management
+
+property_units: Individual rental units
+
+tenant_allocations: Tenant-unit assignments
+
+rent_payments: Payment records and history
+
+admin_settings: System configuration
+
+Data Flow
+text
+Frontend → API Routes → Controllers → Database Queries → Response
+Response Format Standardization
+Success Response
+javascript
+{
+  success: true,
+  message: "Operation successful",
+  data: { /* response data */ }
+}
+Error Response
+javascript
+{
+  success: false,
+  message: "Error description",
+  error: "Detailed error info (development)"
+}
+Security Implementation
+1. Authentication
+JWT token-based authentication
+
+Password hashing with bcrypt
+
+Token expiration management
+
+2. Authorization
+Role-based access control (admin, agent, tenant)
+
+Route protection middleware
+
+User context validation
+
+3. Data Validation
+Input sanitization
+
+SQL injection prevention
+
+Parameter validation
+
+Implementation Steps
+Step 1: Environment Setup
+Install PostgreSQL and create database
+
+Run provided SQL schema script
+
+Configure environment variables
+
+Install backend dependencies
+
+Step 2: Backend Deployment
+Rename all backend files (.jsx → .js)
+
+Update package.json for ES6 modules
+
+Start backend server
+
+Verify database connection
+
+Step 3: Frontend Integration
+Update API service for real endpoints
+
+Test authentication flow
+
+Verify data loading from database
+
+Test CRUD operations
+
+Step 4: Testing & Validation
+User authentication testing
+
+Data creation and retrieval
+
+Error handling verification
+
+Performance testing
+
+Dependencies Required
+Backend Dependencies
+json
+{
+  "pg": "PostgreSQL client",
+  "bcryptjs": "Password hashing",
+  "jsonwebtoken": "JWT authentication",
+  "express": "Web framework",
+  "cors": "Cross-origin requests",
+  "helmet": "Security headers",
+  "morgan": "Request logging",
+  "dotenv": "Environment variables"
+}
+Expected Outcomes
+After Implementation
+✅ Real database integration
+
+✅ Persistent data storage
+
+✅ Proper user authentication
+
+✅ Role-based access control
+
+✅ Complete CRUD operations
+
+✅ Error handling and validation
+
+✅ Scalable architecture
+
+Performance Benefits
+Faster data retrieval vs mock API
+
+Real-time data consistency
+
+Proper transaction handling
+
+Database indexing optimization
+
+Next Phase Considerations
+1. Advanced Features
+M-Pesa payment integration
+
+Real-time notifications
+
+File upload handling
+
+Advanced reporting
+
+2. Optimization
+Database query optimization
+
+Caching implementation
+
+API response compression
+
+Connection pooling tuning
+
+3. Monitoring
+Application logging
+
+Performance monitoring
+
+Error tracking
+
+Database health checks
+
+Support & Troubleshooting
+Common Issues
+Database connection failures - Check credentials and network
+
+JWT token issues - Verify secret and expiration
+
+CORS errors - Validate client URL configuration
+
+Query failures - Check database schema alignment
+
+Testing Checklist
+Database connection successful
+
+User authentication working
+
+Data persistence verified
+
+Error handling functional
+
+All roles can access appropriate features
+
+This documentation provides a comprehensive roadmap for transitioning from mock data to a fully functional database-driven application with proper security, error handling, and scalability.
+
