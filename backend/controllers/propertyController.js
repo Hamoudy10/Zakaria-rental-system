@@ -1,55 +1,107 @@
-const { query } = require('../config/database');
+const pool = require('../config/database');
 
 const getProperties = async (req, res) => {
   try {
-    const propertiesResult = await query(`
-      SELECT p.*, 
-             COUNT(pu.id) as total_units,
-             COUNT(CASE WHEN pu.is_occupied = false AND pu.is_active = true THEN 1 END) as available_units
-      FROM properties p
-      LEFT JOIN property_units pu ON p.id = pu.property_id
-      GROUP BY p.id
+    const query = `
+      SELECT p.*, u.name as owner_name 
+      FROM properties p 
+      LEFT JOIN users u ON p.owner_id = u.id 
       ORDER BY p.created_at DESC
-    `);
-
-    res.json({
-      success: true,
-      properties: propertiesResult.rows
-    });
+    `;
+    const { rows } = await pool.query(query);
+    res.json({ success: true, data: rows });
   } catch (error) {
     console.error('Get properties error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch properties'
-    });
+    res.status(500).json({ success: false, message: 'Server error fetching properties' });
+  }
+};
+
+const getProperty = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const query = 'SELECT * FROM properties WHERE id = $1';
+    const { rows } = await pool.query(query, [id]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Property not found' });
+    }
+    
+    res.json({ success: true, data: rows[0] });
+  } catch (error) {
+    console.error('Get property error:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching property' });
   }
 };
 
 const createProperty = async (req, res) => {
   try {
-    const { property_code, name, address, county, town, description, total_units } = req.body;
-
-    const newProperty = await query(
-      `INSERT INTO properties (property_code, name, address, county, town, description, total_units, available_units) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $7) 
-       RETURNING *`,
-      [property_code, name, address, county, town, description, total_units]
-    );
-
-    res.json({
+    const { name, address, type, units, owner_id } = req.body;
+    const query = `
+      INSERT INTO properties (name, address, type, units, owner_id) 
+      VALUES ($1, $2, $3, $4, $5) 
+      RETURNING *
+    `;
+    const { rows } = await pool.query(query, [name, address, type, units, owner_id]);
+    
+    res.status(201).json({
       success: true,
-      property: newProperty.rows[0]
+      message: 'Property created successfully',
+      data: rows[0]
     });
   } catch (error) {
     console.error('Create property error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create property'
+    res.status(500).json({ success: false, message: 'Server error creating property' });
+  }
+};
+
+const updateProperty = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, address, type, units, owner_id } = req.body;
+    const query = `
+      UPDATE properties 
+      SET name = $1, address = $2, type = $3, units = $4, owner_id = $5, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = $6 
+      RETURNING *
+    `;
+    const { rows } = await pool.query(query, [name, address, type, units, owner_id, id]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Property not found' });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Property updated successfully',
+      data: rows[0]
     });
+  } catch (error) {
+    console.error('Update property error:', error);
+    res.status(500).json({ success: false, message: 'Server error updating property' });
+  }
+};
+
+const deleteProperty = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const query = 'DELETE FROM properties WHERE id = $1 RETURNING *';
+    const { rows } = await pool.query(query, [id]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Property not found' });
+    }
+    
+    res.json({ success: true, message: 'Property deleted successfully' });
+  } catch (error) {
+    console.error('Delete property error:', error);
+    res.status(500).json({ success: false, message: 'Server error deleting property' });
   }
 };
 
 module.exports = {
   getProperties,
-  createProperty
+  getProperty,
+  createProperty,
+  updateProperty,
+  deleteProperty
 };

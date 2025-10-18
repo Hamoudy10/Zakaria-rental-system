@@ -1,3 +1,4 @@
+// middleware/authMiddleware.js
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 
@@ -17,34 +18,45 @@ const protect = async (req, res, next) => {
     }
 
     try {
-      // Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
       
-      // Check if user still exists and is active
       const userQuery = `
-        SELECT id, role, is_active 
+        SELECT id, email, first_name, last_name, role, is_active 
         FROM users 
-        WHERE id = $1 AND is_active = true
+        WHERE id = $1
       `;
       const { rows } = await pool.query(userQuery, [decoded.userId]);
       
       if (rows.length === 0) {
         return res.status(401).json({
           success: false,
-          message: 'User not found or inactive'
+          message: 'User not found'
+        });
+      }
+
+      const user = rows[0];
+
+      if (!user.is_active) {
+        return res.status(401).json({
+          success: false,
+          message: 'User account is deactivated'
         });
       }
 
       req.user = {
-        userId: decoded.userId,
-        role: decoded.role
+        userId: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role
       };
 
       next();
     } catch (error) {
+      console.error('Token verification error:', error);
       return res.status(401).json({
         success: false,
-        message: 'Not authorized, invalid token'
+        message: 'Not authorized, token failed'
       });
     }
   } catch (error) {
@@ -59,6 +71,13 @@ const protect = async (req, res, next) => {
 // Role-based authorization middleware
 const authorize = (...roles) => {
   return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      });
+    }
+
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
