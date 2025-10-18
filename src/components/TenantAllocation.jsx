@@ -169,15 +169,14 @@ const TenantAllocation = () => {
 
   return (
     <div className="space-y-6 p-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Tenant Allocation</h2>
           <p className="text-gray-600">Assign tenants to units and manage lease agreements</p>
         </div>
         <button
           onClick={() => setShowAllocationModal(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={availableTenants.length === 0 || availableUnits.length === 0}
+          className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-md"
         >
           Allocate Tenant
         </button>

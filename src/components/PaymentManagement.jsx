@@ -329,23 +329,23 @@ const PaymentManagement = () => {
 
       {/* Payments List */}
       <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
           <h3 className="text-lg font-semibold">
             Payment Records ({filteredPayments.length})
             {(filterMonth || filterStatus) && ' (Filtered)'}
           </h3>
-          <div className="flex space-x-4">
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <input
               type="month"
               value={filterMonth}
               onChange={(e) => setFilterMonth(e.target.value)}
-              className="p-2 border border-gray-300 rounded-md text-sm"
+              className="w-full sm:w-40 p-2 border border-gray-300 rounded-md text-sm"
               placeholder="Filter by month"
             />
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="p-2 border border-gray-300 rounded-md text-sm"
+              className="w-full sm:w-32 p-2 border border-gray-300 rounded-md text-sm"
             >
               <option value="">All Status</option>
               <option value="pending">Pending</option>
@@ -353,9 +353,9 @@ const PaymentManagement = () => {
             </select>
             <button
               onClick={() => { setFilterMonth(''); setFilterStatus(''); }}
-              className="bg-gray-500 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-600"
+              className="w-full sm:w-auto bg-gray-500 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-600 whitespace-nowrap"
             >
-              Clear
+              Clear Filters
             </button>
           </div>
         </div>

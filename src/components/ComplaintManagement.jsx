@@ -443,16 +443,16 @@ const ComplaintManagement = () => {
 
       {/* Complaints List */}
       <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center mb-4 gap-4">
           <h3 className="text-lg font-semibold">
             Complaints ({filteredComplaints.length})
             {(filterStatus || filterPriority) && ' (Filtered)'}
           </h3>
-          <div className="flex space-x-4">
+          <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="p-2 border border-gray-300 rounded-md text-sm"
+              className="p-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
             >
               <option value="">All Status</option>
               <option value="open">Open</option>
@@ -462,7 +462,7 @@ const ComplaintManagement = () => {
             <select
               value={filterPriority}
               onChange={(e) => setFilterPriority(e.target.value)}
-              className="p-2 border border-gray-300 rounded-md text-sm"
+              className="p-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
             >
               <option value="">All Priority</option>
               <option value="high">High</option>
@@ -471,7 +471,7 @@ const ComplaintManagement = () => {
             </select>
             <button
               onClick={() => { setFilterStatus(''); setFilterPriority(''); }}
-              className="bg-gray-500 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-600"
+              className="bg-gray-500 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-600 w-full sm:w-auto"
             >
               Clear
             </button>

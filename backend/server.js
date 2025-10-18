@@ -26,6 +26,345 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// ==================== SYSTEM SETTINGS ENDPOINTS ====================
+
+// Get all system settings
+app.get('/api/admin/settings', (req, res) => {
+  // TODO: Query database for admin_settings
+  res.json({
+    success: true,
+    settings: [
+      {
+        id: '1',
+        setting_key: 'primary_color',
+        setting_value: '#3B82F6',
+        description: 'Primary brand color for the UI',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '2',
+        setting_key: 'secondary_color',
+        setting_value: '#1E40AF',
+        description: 'Secondary brand color for the UI',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '3',
+        setting_key: 'default_rent_due_day',
+        setting_value: '5',
+        description: 'Default day of month when rent is due',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '4',
+        setting_key: 'default_grace_period',
+        setting_value: '7',
+        description: 'Default grace period in days for rent payment',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '5',
+        setting_key: 'company_name',
+        setting_value: 'Prime Rentals Kenya',
+        description: 'Name of the rental agency',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '6',
+        setting_key: 'mpesa_paybill_number',
+        setting_value: '123456',
+        description: 'M-Pesa paybill number for rent payments',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '7',
+        setting_key: 'sms_enabled',
+        setting_value: 'true',
+        description: 'Whether to send SMS notifications',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '8',
+        setting_key: 'auto_confirm_payments',
+        setting_value: 'true',
+        description: 'Automatically confirm M-Pesa payments',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '9',
+        setting_key: 'maintenance_email',
+        setting_value: 'maintenance@zakariarentals.com',
+        description: 'Maintenance department email',
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: '10',
+        setting_key: 'support_phone',
+        setting_value: '+254700000000',
+        description: 'Customer support phone number',
+        updated_at: new Date().toISOString()
+      }
+    ]
+  });
+});
+
+// Update system setting
+app.put('/api/admin/settings/:key', (req, res) => {
+  const { key } = req.params;
+  const { value } = req.body;
+  
+  // TODO: Update setting in database
+  console.log(`Updating setting ${key} to ${value}`);
+  
+  res.json({
+    success: true,
+    message: 'Setting updated successfully',
+    setting: {
+      setting_key: key,
+      setting_value: value,
+      updated_at: new Date().toISOString()
+    }
+  });
+});
+
+// Update multiple settings
+app.put('/api/admin/settings', (req, res) => {
+  const settingsUpdates = req.body;
+  
+  // TODO: Update multiple settings in database
+  console.log('Updating multiple settings:', settingsUpdates);
+  
+  res.json({
+    success: true,
+    message: 'Settings updated successfully',
+    updated_count: Object.keys(settingsUpdates).length
+  });
+});
+
+// Reset settings to defaults
+app.post('/api/admin/settings/reset-defaults', (req, res) => {
+  // TODO: Reset to default settings in database
+  console.log('Resetting settings to defaults');
+  
+  res.json({
+    success: true,
+    message: 'Settings reset to defaults successfully'
+  });
+});
+
+// ==================== ENHANCED REPORTS ENDPOINTS ====================
+
+// Generate financial report with filters
+app.get('/api/reports/financial', (req, res) => {
+  const { startDate, endDate, propertyId } = req.query;
+  
+  // TODO: Query database for financial data using your schema
+  const mockFinancialData = {
+    summary: {
+      totalRevenue: 450000,
+      totalExpenses: 120000,
+      netIncome: 330000,
+      profitMargin: 73.3
+    },
+    transactions: [
+      {
+        payment_date: '2024-01-05',
+        tenant_name: 'John Doe',
+        property_name: 'Westlands Apartments',
+        amount: 15000,
+        status: 'completed'
+      },
+      {
+        payment_date: '2024-01-06',
+        tenant_name: 'Jane Smith',
+        property_name: 'Kilimani Towers',
+        amount: 18000,
+        status: 'completed'
+      }
+    ],
+    expenses: [
+      {
+        expense_type: 'maintenance',
+        total_amount: 40000,
+        count: 5
+      },
+      {
+        expense_type: 'utilities',
+        total_amount: 30000,
+        count: 3
+      },
+      {
+        expense_type: 'salaries',
+        total_amount: 50000,
+        count: 2
+      }
+    ]
+  };
+
+  res.json({
+    success: true,
+    data: mockFinancialData,
+    filters: {
+      startDate,
+      endDate,
+      propertyId
+    }
+  });
+});
+
+// Generate occupancy report
+app.get('/api/reports/occupancy', (req, res) => {
+  const { startDate, endDate, propertyId } = req.query;
+  
+  // TODO: Query database for occupancy data
+  const mockOccupancyData = {
+    occupancy: {
+      overallRate: 75,
+      occupiedUnits: 36,
+      totalUnits: 48,
+      availableUnits: 12,
+      vacancyRate: 25
+    },
+    byProperty: [
+      {
+        propertyName: 'Westlands Apartments',
+        totalUnits: 24,
+        occupiedUnits: 18,
+        availableUnits: 6,
+        occupancyRate: 75
+      },
+      {
+        propertyName: 'Kilimani Towers',
+        totalUnits: 16,
+        occupiedUnits: 12,
+        availableUnits: 4,
+        occupancyRate: 75
+      },
+      {
+        propertyName: 'Kileleshwa Gardens',
+        totalUnits: 8,
+        occupiedUnits: 6,
+        availableUnits: 2,
+        occupancyRate: 75
+      }
+    ],
+    trends: [
+      {
+        period: 'Jan 2024',
+        rate: 75,
+        change: 5
+      },
+      {
+        period: 'Dec 2023',
+        rate: 70,
+        change: -2
+      },
+      {
+        period: 'Nov 2023',
+        rate: 72,
+        change: 3
+      },
+      {
+        period: 'Oct 2023',
+        rate: 69,
+        change: 0
+      }
+    ]
+  };
+
+  res.json({
+    success: true,
+    data: mockOccupancyData,
+    filters: {
+      startDate,
+      endDate,
+      propertyId
+    }
+  });
+});
+
+// Generate revenue report
+app.get('/api/reports/revenue', (req, res) => {
+  const { startDate, endDate, propertyId, groupBy } = req.query;
+  
+  // TODO: Query database for revenue data
+  const mockRevenueData = {
+    revenue: {
+      totalRevenue: 450000,
+      averageMonthly: 150000,
+      growthRate: 12.5,
+      projectedRevenue: 500000
+    },
+    breakdown: [
+      {
+        period: 'Jan 2024',
+        rentRevenue: 140000,
+        otherRevenue: 10000,
+        totalRevenue: 150000,
+        growth: 12.5
+      },
+      {
+        period: 'Dec 2023',
+        rentRevenue: 130000,
+        otherRevenue: 8000,
+        totalRevenue: 138000,
+        growth: 8.5
+      },
+      {
+        period: 'Nov 2023',
+        rentRevenue: 125000,
+        otherRevenue: 7000,
+        totalRevenue: 132000,
+        growth: 5.0
+      }
+    ],
+    byProperty: [
+      {
+        propertyName: 'Westlands Apartments',
+        revenue: 200000,
+        occupancyRate: 75
+      },
+      {
+        propertyName: 'Kilimani Towers',
+        revenue: 150000,
+        occupancyRate: 75
+      },
+      {
+        propertyName: 'Kileleshwa Gardens',
+        revenue: 100000,
+        occupancyRate: 75
+      }
+    ]
+  };
+
+  res.json({
+    success: true,
+    data: mockRevenueData,
+    filters: {
+      startDate,
+      endDate,
+      propertyId,
+      groupBy
+    }
+  });
+});
+
+// Export report
+app.post('/api/reports/export', (req, res) => {
+  const { format, reportType, filters } = req.body;
+  
+  // TODO: Generate export file based on format (excel, csv, pdf)
+  console.log(`Exporting ${reportType} report as ${format}`, filters);
+  
+  res.json({
+    success: true,
+    message: `Report exported as ${format} successfully`,
+    downloadUrl: `/api/reports/download/${Date.now()}.${format}`
+  });
+});
+
+// ==================== EXISTING ENDPOINTS (UNCHANGED) ====================
+
 // Mock login endpoint
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body;
@@ -274,83 +613,6 @@ app.get('/api/reports', (req, res) => {
         generated_at: new Date().toISOString()
       }
     ]
-  });
-});
-
-// Generate financial report
-app.get('/api/reports/financial', (req, res) => {
-  const { period, start_date, end_date } = req.query;
-  // TODO: Generate financial report from database
-  res.json({
-    report: {
-      id: Math.random().toString(36).substr(2, 9),
-      type: 'financial',
-      period: period || 'monthly',
-      start_date: start_date || '2024-01-01',
-      end_date: end_date || '2024-01-31',
-      total_income: 450000.00,
-      total_expenses: 120000.00,
-      net_profit: 330000.00,
-      generated_at: new Date().toISOString(),
-      data: {
-        rent_payments: 400000.00,
-        other_income: 50000.00,
-        maintenance_costs: 40000.00,
-        staff_salaries: 60000.00,
-        utilities: 20000.00
-      }
-    }
-  });
-});
-
-// Generate occupancy report
-app.get('/api/reports/occupancy', (req, res) => {
-  const { period } = req.query;
-  // TODO: Generate occupancy report from database
-  res.json({
-    report: {
-      id: Math.random().toString(36).substr(2, 9),
-      type: 'occupancy',
-      period: period || 'monthly',
-      total_units: 50,
-      occupied_units: 35,
-      vacant_units: 15,
-      occupancy_rate: 70.0,
-      generated_at: new Date().toISOString(),
-      data: {
-        by_property: [
-          {
-            property_name: 'Westlands Apartments',
-            total_units: 24,
-            occupied_units: 18,
-            vacant_units: 6,
-            occupancy_rate: 75.0
-          }
-        ]
-      }
-    }
-  });
-});
-
-// Generate payment report
-app.get('/api/reports/payment', (req, res) => {
-  const { period } = req.query;
-  // TODO: Generate payment report from database
-  res.json({
-    report: {
-      id: Math.random().toString(36).substr(2, 9),
-      type: 'payment',
-      period: period || 'monthly',
-      total_collected: 350000.00,
-      total_pending: 50000.00,
-      collection_rate: 87.5,
-      generated_at: new Date().toISOString(),
-      data: {
-        on_time_payments: 28,
-        late_payments: 7,
-        pending_payments: 5
-      }
-    }
   });
 });
 
@@ -720,4 +982,6 @@ app.listen(PORT, () => {
   console.log(`🔗 API Base URL: http://localhost:${PORT}/api`);
   console.log(`✅ Health check: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Test login: POST http://localhost:${PORT}/api/auth/login`);
+  console.log(`⚙️  System Settings: GET http://localhost:${PORT}/api/admin/settings`);
+  console.log(`📈 Reports: GET http://localhost:${PORT}/api/reports/financial`);
 });

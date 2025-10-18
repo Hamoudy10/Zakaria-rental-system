@@ -47,6 +47,11 @@ const Login = () => {
     }
   };
 
+  const handleDemoLogin = (demoEmail, demoPassword) => {
+    setEmail(demoEmail);
+    setPassword(demoPassword);
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
@@ -58,6 +63,35 @@ const Login = () => {
             Sign in to your account
           </p>
         </div>
+        
+        {/* Demo Account Buttons */}
+        <div className="space-y-3">
+          <h3 className="text-center text-sm font-medium text-gray-700">Quick Demo Login:</h3>
+          <div className="grid grid-cols-1 gap-2">
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('admin@example.com', 'test123')}
+              className="w-full py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              Login as Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('agent@example.com', 'test123')}
+              className="w-full py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            >
+              Login as Agent
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('tenant@example.com', 'test123')}
+              className="w-full py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            >
+              Login as Tenant
+            </button>
+          </div>
+        </div>
+
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
@@ -98,9 +132,13 @@ const Login = () => {
           </div>
           
           {/* Demo credentials info */}
-          <div className="text-center text-sm text-gray-600 bg-yellow-50 p-3 rounded">
-            <p>Demo credentials pre-filled</p>
-            <p>Email: admin@example.com | Password: test123</p>
+          <div className="text-center text-sm text-gray-600 bg-gray-50 p-3 rounded border">
+            <p className="font-medium mb-2">Demo Credentials:</p>
+            <div className="space-y-1 text-xs">
+              <p><span className="font-medium">Admin:</span> admin@example.com | test123</p>
+              <p><span className="font-medium">Agent:</span> agent@example.com | test123</p>
+              <p><span className="font-medium">Tenant:</span> tenant@example.com | test123</p>
+            </div>
           </div>
         </form>
       </div>
