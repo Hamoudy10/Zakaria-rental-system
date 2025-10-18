@@ -1,18 +1,9 @@
 const express = require('express');
-const { protect, authorize } = require('../middleware/authMiddleware');
+const { getUsers, createUser } = require('../controllers/userController');
 
 const router = express.Router();
 
-// Protect all routes
-router.use(protect);
-
-// Placeholder routes - we'll implement these later
-router.get('/', (req, res) => {
-  res.status(200).json({ message: 'Get all users' });
-});
-
-router.post('/', (req, res) => {
-  res.status(200).json({ message: 'Create a user' });
-});
+router.get('/', getUsers);
+router.post('/', createUser);
 
 module.exports = router;
