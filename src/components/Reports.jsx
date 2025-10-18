@@ -7,7 +7,7 @@ const Reports = () => {
   const {
     reportData,
     loading,
-    dateRange,
+    dateRange = { startDate: '', endDate: '' }, // Add default value
     setDateRange,
     generateFinancialReport,
     generateOccupancyReport,
@@ -31,15 +31,18 @@ const Reports = () => {
   };
 
   const handleDateChange = (key, value) => {
-    setDateRange(prev => ({ ...prev, [key]: value }));
+    setDateRange(prev => ({ 
+      ...(prev || { startDate: '', endDate: '' }), // Safe access
+      [key]: value 
+    }));
   };
 
   const handleGenerateReport = async () => {
     try {
       const reportFilters = {
         ...filters,
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate
+        startDate: dateRange?.startDate || new Date().toISOString().split('T')[0],
+        endDate: dateRange?.endDate || new Date().toISOString().split('T')[0]
       };
 
       switch (activeReport) {
@@ -64,8 +67,8 @@ const Reports = () => {
     try {
       await exportReport(format, activeReport, {
         ...filters,
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate
+        startDate: dateRange?.startDate || new Date().toISOString().split('T')[0],
+        endDate: dateRange?.endDate || new Date().toISOString().split('T')[0]
       });
       alert(`Report exported successfully as ${format.toUpperCase()}`);
     } catch (error) {
@@ -81,6 +84,7 @@ const Reports = () => {
   };
 
   const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-KE');
   };
 
@@ -131,7 +135,7 @@ const Reports = () => {
             <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
             <input
               type="date"
-              value={dateRange.startDate ? new Date(dateRange.startDate).toISOString().split('T')[0] : ''}
+              value={dateRange?.startDate ? new Date(dateRange.startDate).toISOString().split('T')[0] : ''}
               onChange={(e) => handleDateChange('startDate', e.target.value)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -141,7 +145,7 @@ const Reports = () => {
             <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
             <input
               type="date"
-              value={dateRange.endDate ? new Date(dateRange.endDate).toISOString().split('T')[0] : ''}
+              value={dateRange?.endDate ? new Date(dateRange.endDate).toISOString().split('T')[0] : ''}
               onChange={(e) => handleDateChange('endDate', e.target.value)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -216,7 +220,7 @@ const Reports = () => {
                 {activeReport} Report
               </h2>
               <p className="text-gray-600">
-                {formatDate(dateRange.startDate)} - {formatDate(dateRange.endDate)}
+                {formatDate(dateRange?.startDate)} - {formatDate(dateRange?.endDate)}
                 {filters.propertyId && ` • ${properties.find(p => p.id === filters.propertyId)?.name}`}
               </p>
             </div>
@@ -259,25 +263,25 @@ const FinancialReportView = ({ data, formatCurrency }) => {
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-green-800">Total Revenue</h3>
           <p className="text-2xl font-bold text-green-900">
-            {formatCurrency(summary.totalRevenue)}
+            {formatCurrency(summary?.totalRevenue || 0)}
           </p>
         </div>
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-red-800">Total Expenses</h3>
           <p className="text-2xl font-bold text-red-900">
-            {formatCurrency(summary.totalExpenses)}
+            {formatCurrency(summary?.totalExpenses || 0)}
           </p>
         </div>
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-blue-800">Net Income</h3>
           <p className="text-2xl font-bold text-blue-900">
-            {formatCurrency(summary.netIncome)}
+            {formatCurrency(summary?.netIncome || 0)}
           </p>
         </div>
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-purple-800">Profit Margin</h3>
           <p className="text-2xl font-bold text-purple-900">
-            {summary.profitMargin}%
+            {summary?.profitMargin || 0}%
           </p>
         </div>
       </div>
@@ -297,7 +301,7 @@ const FinancialReportView = ({ data, formatCurrency }) => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {transactions.slice(0, 10).map((transaction, index) => (
+              {(transactions || []).slice(0, 10).map((transaction, index) => (
                 <tr key={index}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {new Date(transaction.payment_date).toLocaleDateString('en-KE')}
@@ -361,22 +365,22 @@ const OccupancyReportView = ({ data, properties }) => {
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-blue-800">Overall Occupancy Rate</h3>
           <p className="text-2xl font-bold text-blue-900">
-            {occupancy.overallRate}%
+            {occupancy?.overallRate || 0}%
           </p>
           <p className="text-sm text-blue-700">
-            {occupancy.occupiedUnits} / {occupancy.totalUnits} units occupied
+            {occupancy?.occupiedUnits || 0} / {occupancy?.totalUnits || 0} units occupied
           </p>
         </div>
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-green-800">Available Units</h3>
           <p className="text-2xl font-bold text-green-900">
-            {occupancy.availableUnits}
+            {occupancy?.availableUnits || 0}
           </p>
         </div>
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-orange-800">Vacancy Rate</h3>
           <p className="text-2xl font-bold text-orange-900">
-            {occupancy.vacancyRate}%
+            {occupancy?.vacancyRate || 0}%
           </p>
         </div>
       </div>
@@ -396,7 +400,7 @@ const OccupancyReportView = ({ data, properties }) => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {occupancy.byProperty.map((property, index) => (
+              {(occupancy?.byProperty || []).map((property, index) => (
                 <tr key={index}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {property.propertyName}
@@ -464,25 +468,25 @@ const RevenueReportView = ({ data, formatCurrency }) => {
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-green-800">Total Revenue</h3>
           <p className="text-2xl font-bold text-green-900">
-            {formatCurrency(revenue.totalRevenue)}
+            {formatCurrency(revenue?.totalRevenue || 0)}
           </p>
         </div>
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-blue-800">Average Monthly</h3>
           <p className="text-2xl font-bold text-blue-900">
-            {formatCurrency(revenue.averageMonthly)}
+            {formatCurrency(revenue?.averageMonthly || 0)}
           </p>
         </div>
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-purple-800">Growth Rate</h3>
           <p className="text-2xl font-bold text-purple-900">
-            {revenue.growthRate}%
+            {revenue?.growthRate || 0}%
           </p>
         </div>
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
           <h3 className="text-sm font-medium text-orange-800">Projected Revenue</h3>
           <p className="text-2xl font-bold text-orange-900">
-            {formatCurrency(revenue.projectedRevenue)}
+            {formatCurrency(revenue?.projectedRevenue || 0)}
           </p>
         </div>
       </div>
@@ -533,7 +537,7 @@ const RevenueReportView = ({ data, formatCurrency }) => {
       )}
 
       {/* Revenue by Property */}
-      {revenue.byProperty && revenue.byProperty.length > 0 && (
+      {revenue?.byProperty && revenue.byProperty.length > 0 && (
         <div>
           <h3 className="text-lg font-semibold mb-4">Revenue by Property</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
