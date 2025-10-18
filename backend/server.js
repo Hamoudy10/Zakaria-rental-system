@@ -371,27 +371,50 @@ app.post('/api/auth/login', (req, res) => {
 
   console.log('Login attempt:', { email, password });
 
-  // Mock user for testing
-  const user = {
-    id: '1',
-    national_id: '00000000',
-    first_name: 'System',
-    last_name: 'Administrator', 
-    email: 'admin@example.com',
-    phone_number: '254700000000',
-    role: 'admin',
-    is_active: true
+   // Define users object
+  const users = {
+    'admin@example.com': {
+      id: '1',
+      national_id: '00000000',
+      first_name: 'System',
+      last_name: 'Administrator', 
+      email: 'admin@example.com',
+      phone_number: '254700000000',
+      role: 'admin',
+      is_active: true
+    },
+    'agent@example.com': {
+      id: '2',
+      national_id: '11111111',
+      first_name: 'Jane',
+      last_name: 'Smith',
+      email: 'agent@example.com',
+      phone_number: '254712345678',
+      role: 'agent',
+      is_active: true
+    },
+    'tenant@example.com': {
+      id: '3',
+      national_id: '22222222',
+      first_name: 'Mike',
+      last_name: 'Johnson',
+      email: 'tenant@example.com',
+      phone_number: '254723456789',
+      role: 'tenant',
+      is_active: true
+    }
   };
 
-  // Mock authentication
-  if (email === 'admin@example.com' && password === 'test123') {
-    console.log('Login successful for:', email);
+  // Mock authentication - FIXED: Use different variable name
+  if (users[email] && password === 'test123') {
+    const userData = users[email]; // ✅ FIX: Use different variable name
+    console.log('Login successful for:', email, 'Role:', userData.role);
     
     res.json({
       success: true,
       message: 'Login successful!',
-      user: user,
-      token: 'test-jwt-token-12345'
+      user: userData,
+      token: 'test-jwt-token-' + userData.id
     });
   } else {
     console.log('Login failed for:', email);
@@ -453,6 +476,28 @@ app.get('/api/users', (req, res) => {
         last_name: 'Doe',
         email: 'john@example.com',
         phone_number: '254712345678',
+        role: 'tenant',
+        is_active: true,
+        created_at: new Date().toISOString()
+      },
+      {
+        id: '3',
+        national_id: '11111111',
+        first_name: 'Jane',
+        last_name: 'Smith',
+        email: 'agent@example.com',
+        phone_number: '254712345678',
+        role: 'agent',
+        is_active: true,
+        created_at: new Date().toISOString()
+      },
+      {
+        id: '4',
+        national_id: '22222222',
+        first_name: 'Mike',
+        last_name: 'Johnson',
+        email: 'tenant@example.com',
+        phone_number: '254723456789',
         role: 'tenant',
         is_active: true,
         created_at: new Date().toISOString()
