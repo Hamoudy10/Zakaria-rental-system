@@ -6,6 +6,14 @@ const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 
 console.log('=== TEMPORARY AUTH ROUTE LOADED ===');
+/*
+router.get('/verify-token', protect, (req, res) => {
+  res.json({
+    success: true,
+    user: req.user
+  });
+});
+*/
 
 // Register user
 const register = async (req, res) => {
