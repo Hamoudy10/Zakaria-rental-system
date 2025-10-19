@@ -7,6 +7,7 @@ import SystemSettings from '../components/systemSettings'
 import TenantAllocation from '../components/TenantAllocation'
 import PaymentManagement from '../components/PaymentManagement'
 import ComplaintManagement from '../components/ComplaintManagement'
+import UnitManagement from '../components/UnitManagement'
 
 const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
@@ -15,6 +16,7 @@ const AdminDashboard = () => {
     { id: 'overview', name: 'Overview' },
     { id: 'users', name: 'User Management' },
     { id: 'properties', name: 'Properties' },
+    { id: 'units', name: 'Unit Management' }, // ADDED: New tab for Unit Management
     { id: 'allocations', name: 'Tenant Allocation' },
     { id: 'payments', name: 'Payment Management' }, 
     { id: 'salaries', name: 'Salary Payments' },
@@ -29,6 +31,8 @@ const AdminDashboard = () => {
         return <UserManagement />
       case 'properties':
         return <PropertyManagement />
+      case 'units': // ADDED: New case for Unit Management
+        return <UnitManagement />
       case 'allocations':
         return <TenantAllocation />
       case 'payments':
@@ -86,10 +90,11 @@ const DashboardOverview = ({ setActiveTab }) => {
     totalRevenue: 'KSh 1,234,567',
     totalUsers: 156,
     totalProperties: 24,
+    totalUnits: 142, // ADDED: Total units stat
     occupancyRate: '85%',
     pendingComplaints: 8,
     pendingPayments: 12,
-    activeTenants: 142,
+    activeTenants: 120,
     monthlyGrowth: '+12%'
   })
 
@@ -102,9 +107,9 @@ const DashboardOverview = ({ setActiveTab }) => {
   ]
 
   const topProperties = [
-    { name: 'Kilimani Towers', revenue: 'KSh 450,000', occupancy: '95%', complaints: 2 },
-    { name: 'Westlands Apartments', revenue: 'KSh 380,000', occupancy: '92%', complaints: 1 },
-    { name: 'Kileleshwa Gardens', revenue: 'KSh 320,000', occupancy: '88%', complaints: 3 },
+    { name: 'Kilimani Towers', revenue: 'KSh 450,000', occupancy: '95%', complaints: 2, units: 24 },
+    { name: 'Westlands Apartments', revenue: 'KSh 380,000', occupancy: '92%', complaints: 1, units: 18 },
+    { name: 'Kileleshwa Gardens', revenue: 'KSh 320,000', occupancy: '88%', complaints: 3, units: 16 },
   ]
 
   const getActivityIcon = (type) => {
@@ -159,25 +164,26 @@ const DashboardOverview = ({ setActiveTab }) => {
           </div>
         </div>
 
+        {/* ADDED: Total Units Stat Card */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Occupancy Rate</p>
-              <p className="text-2xl font-bold text-purple-600">{adminStats.occupancyRate}</p>
-              <p className="text-xs text-gray-500">{adminStats.activeTenants} active tenants</p>
+              <p className="text-sm font-medium text-gray-600">Total Units</p>
+              <p className="text-2xl font-bold text-purple-600">{adminStats.totalUnits}</p>
+              <p className="text-xs text-gray-500">Available units</p>
             </div>
-            <div className="text-2xl text-purple-600">📊</div>
+            <div className="text-2xl text-purple-600">🏢</div>
           </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Pending Actions</p>
-              <p className="text-2xl font-bold text-orange-600">{adminStats.pendingComplaints + adminStats.pendingPayments}</p>
-              <p className="text-xs text-gray-500">Require attention</p>
+              <p className="text-sm font-medium text-gray-600">Occupancy Rate</p>
+              <p className="text-2xl font-bold text-orange-600">{adminStats.occupancyRate}</p>
+              <p className="text-xs text-gray-500">{adminStats.activeTenants} active tenants</p>
             </div>
-            <div className="text-2xl text-orange-600">⚠️</div>
+            <div className="text-2xl text-orange-600">📊</div>
           </div>
         </div>
       </div>
@@ -201,6 +207,14 @@ const DashboardOverview = ({ setActiveTab }) => {
               <span className="text-lg mb-1">🏠</span>
               <span className="text-sm">Properties</span>
             </button>
+            {/* ADDED: Unit Management Quick Action */}
+            <button 
+              onClick={() => setActiveTab('units')}
+              className="bg-purple-600 text-white py-3 px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors"
+            >
+              <span className="text-lg mb-1">🏢</span>
+              <span className="text-sm">Unit Mgmt</span>
+            </button>
             <button 
               onClick={() => setActiveTab('payments')}
               className="bg-green-600 text-white py-3 px-4 rounded-lg flex flex-col items-center hover:bg-green-700 transition-colors"
@@ -217,17 +231,10 @@ const DashboardOverview = ({ setActiveTab }) => {
             </button>
             <button 
               onClick={() => setActiveTab('reports')}
-              className="bg-purple-600 text-white py-3 px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors"
+              className="bg-indigo-600 text-white py-3 px-4 rounded-lg flex flex-col items-center hover:bg-indigo-700 transition-colors"
             >
               <span className="text-lg mb-1">📊</span>
               <span className="text-sm">View Reports</span>
-            </button>
-            <button 
-              onClick={() => setActiveTab('settings')}
-              className="bg-red-600 text-white py-3 px-4 rounded-lg flex flex-col items-center hover:bg-red-700 transition-colors"
-            >
-              <span className="text-lg mb-1">⚙️</span>
-              <span className="text-sm">Settings</span>
             </button>
           </div>
         </div>
@@ -272,16 +279,28 @@ const DashboardOverview = ({ setActiveTab }) => {
                   <span className="font-semibold text-blue-600">{property.occupancy}</span>
                 </div>
                 <div className="flex justify-between text-sm">
+                  <span>Total Units:</span>
+                  <span className="font-semibold text-purple-600">{property.units}</span>
+                </div>
+                <div className="flex justify-between text-sm">
                   <span>Active Complaints:</span>
                   <span className="font-semibold text-orange-600">{property.complaints}</span>
                 </div>
               </div>
-              <button 
-                onClick={() => setActiveTab('properties')}
-                className="w-full mt-3 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 text-sm"
-              >
-                View Property
-              </button>
+              <div className="flex space-x-2 mt-3">
+                <button 
+                  onClick={() => setActiveTab('properties')}
+                  className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 text-sm"
+                >
+                  View Property
+                </button>
+                <button 
+                  onClick={() => setActiveTab('units')}
+                  className="flex-1 bg-purple-600 text-white py-2 px-4 rounded-md hover:bg-purple-700 text-sm"
+                >
+                  Manage Units
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -329,6 +348,20 @@ const DashboardOverview = ({ setActiveTab }) => {
                 className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
               >
                 Process
+              </button>
+            </div>
+
+            {/* ADDED: Unit Management Action */}
+            <div className="flex justify-between items-center p-3 bg-purple-50 border border-purple-200 rounded-lg">
+              <div>
+                <p className="font-medium text-purple-900">Unit Management</p>
+                <p className="text-sm text-purple-700">Manage property units and availability</p>
+              </div>
+              <button 
+                onClick={() => setActiveTab('units')}
+                className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+              >
+                Manage
               </button>
             </div>
           </div>
@@ -403,12 +436,18 @@ const DashboardOverview = ({ setActiveTab }) => {
           </div>
         </div>
         
-        <div className="mt-4 flex justify-center">
+        <div className="mt-4 flex justify-center space-x-4">
           <button 
             onClick={() => setActiveTab('reports')}
             className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700"
           >
             View Detailed Reports
+          </button>
+          <button 
+            onClick={() => setActiveTab('units')}
+            className="bg-purple-600 text-white px-6 py-2 rounded-md hover:bg-purple-700"
+          >
+            Manage All Units
           </button>
         </div>
       </div>
