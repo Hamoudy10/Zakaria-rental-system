@@ -44,10 +44,10 @@ const protect = async (req, res, next) => {
       }
 
       req.user = {
-        userId: user.id,
-        email: user.email,
+        id: user.id,
         firstName: user.first_name,
         lastName: user.last_name,
+        email: user.email,
         role: user.role
       };
 
