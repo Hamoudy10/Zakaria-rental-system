@@ -79,6 +79,29 @@ const PaymentManagement = () => {
     }
   }, [selectedAllocation, activeAllocations]);
 
+  // SAFE VERSION: Get current month summary with fallback
+  const getCurrentMonthSummary = () => {
+    const currentDate = new Date();
+    
+    // Check if getMonthlySummary function exists
+    if (typeof getMonthlySummary === 'function') {
+      return getMonthlySummary(currentDate.getFullYear(), currentDate.getMonth() + 1);
+    }
+    
+    // Fallback: Calculate manually from payments
+    const currentMonthPayments = safePayments.filter(payment => {
+      if (!payment.payment_month || payment.status !== 'completed') return false;
+      return payment.payment_month.startsWith(currentMonth);
+    });
+
+    return {
+      completedPayments: currentMonthPayments.length,
+      totalAmount: currentMonthPayments.reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0)
+    };
+  };
+
+  const currentMonthSummary = getCurrentMonthSummary();
+
   const handleCreatePayment = async (e) => {
     e.preventDefault();
     clearError();
@@ -145,10 +168,6 @@ const PaymentManagement = () => {
       return 'Invalid Date';
     }
   };
-
-  // Get current month summary
-  const currentDate = new Date();
-  const currentMonthSummary = getMonthlySummary(currentDate.getFullYear(), currentDate.getMonth() + 1);
 
   if (loading) {
     return (

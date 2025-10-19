@@ -108,6 +108,16 @@ export const paymentAPI = {
   confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
   getPaymentHistory: (tenantId) => api.get(`/payments/history/${tenantId}`),
   generateReceipt: (paymentId) => api.get(`/payments/${paymentId}/receipt`),
+    // Unit operations
+  addUnit: (propertyId, unitData) => api.post(`/properties/${propertyId}/units`, unitData),
+  updateUnit: (propertyId, unitId, updates) => api.put(`/properties/${propertyId}/units/${unitId}`, updates),
+  deleteUnit: (propertyId, unitId) => api.delete(`/properties/${propertyId}/units/${unitId}`),
+  updateUnitOccupancy: (propertyId, unitId, occupancyData) => 
+    api.patch(`/properties/${propertyId}/units/${unitId}/occupancy`, occupancyData),
+  
+  // Statistics and search
+  getPropertyStats: () => api.get('/properties/stats/overview'),
+  searchProperties: (searchTerm) => api.get(`/properties/search?q=${encodeURIComponent(searchTerm)}`),
 };
 
 // Enhanced payment API with M-Pesa functionality
@@ -117,6 +127,11 @@ export const enhancedPaymentAPI = {
   processMpesaDeposit: (depositData) => api.post('/payments/mpesa/deposit', depositData),
   verifyMpesaTransaction: (transactionId) => api.get(`/payments/mpesa/verify/${transactionId}`),
   getMpesaTransactions: () => api.get('/payments/mpesa/transactions'),
+  deletePayment: (paymentId) => api.delete(`/payments/${paymentId}`),
+  getPaymentStats: () => api.get('/payments/stats/overview'),
+  getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
+  generateReport: (reportData) => api.post('/reports', reportData),
+  // ... other functions ...
 };
 
 // Mock M-Pesa API for testing

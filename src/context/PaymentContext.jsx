@@ -19,6 +19,9 @@ export const PaymentProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
 
+  // Clear error
+  const clearError = useCallback(() => setError(null), []);
+
   // Fetch all payments
   const fetchPayments = useCallback(async () => {
     setLoading(true);
@@ -242,6 +245,27 @@ export const PaymentProvider = ({ children }) => {
     }
   }, [fetchPayments]);
 
+  // ADDED: Delete payment function
+  const deletePayment = useCallback(async (paymentId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await enhancedPaymentAPI.deletePayment(paymentId);
+      if (response.success) {
+        // Remove payment from local state
+        setPayments(prev => prev.filter(payment => payment.id !== paymentId));
+        return response.data;
+      }
+      throw new Error(response.message || 'Failed to delete payment');
+    } catch (err) {
+      console.error('Error deleting payment:', err);
+      setError('Failed to delete payment');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // Confirm payment
   const confirmPayment = useCallback(async (paymentId) => {
     setLoading(true);
@@ -279,6 +303,82 @@ export const PaymentProvider = ({ children }) => {
     };
   }, [payments]);
 
+  // ADDED: Get monthly summary function
+  const getMonthlySummary = useCallback((year, month) => {
+    const currentMonthPayments = payments.filter(payment => {
+      if (!payment.payment_month) return false;
+      
+      const paymentDate = new Date(payment.payment_month);
+      return (
+        paymentDate.getFullYear() === year &&
+        paymentDate.getMonth() + 1 === month &&
+        payment.status === 'completed'
+      );
+    });
+
+    return {
+      completedPayments: currentMonthPayments.length,
+      totalAmount: currentMonthPayments.reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0),
+      pendingPayments: payments.filter(payment => {
+        if (!payment.payment_month) return false;
+        const paymentDate = new Date(payment.payment_month);
+        return (
+          paymentDate.getFullYear() === year &&
+          paymentDate.getMonth() + 1 === month &&
+          payment.status === 'pending'
+        );
+      }).length
+    };
+  }, [payments]);
+
+  // ADDED: Fetch payment statistics from API
+  const fetchPaymentStats = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await enhancedPaymentAPI.getPaymentStats();
+      return response.data;
+    } catch (err) {
+      console.error('Error fetching payment statistics:', err);
+      setError('Failed to fetch payment statistics');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ADDED: Get payments by unit ID
+  const getPaymentsByUnit = useCallback(async (unitId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await enhancedPaymentAPI.getUnitPayments(unitId);
+      return response.data.payments || [];
+    } catch (err) {
+      console.error('Error fetching unit payments:', err);
+      setError('Failed to fetch unit payments');
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ADDED: Generate payment report
+  const generatePaymentReport = useCallback(async (reportData) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await enhancedPaymentAPI.generateReport(reportData);
+      return response.data;
+    } catch (err) {
+      console.error('Error generating payment report:', err);
+      setError('Failed to generate payment report');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // Validate M-Pesa phone number
   const validateMpesaPhone = useCallback((phoneNumber) => {
     return mpesaUtils.isValidMpesaPhone(phoneNumber);
@@ -304,8 +404,10 @@ export const PaymentProvider = ({ children }) => {
     // Payment functions
     fetchPayments,
     getPaymentsByTenant,
+    getPaymentsByUnit,
     createPayment,
     updatePayment,
+    deletePayment, // ADDED: Now included
     confirmPayment,
     processMpesaPayment,
     checkMpesaPaymentStatus,
@@ -316,9 +418,12 @@ export const PaymentProvider = ({ children }) => {
     
     // Utility functions
     getPaymentSummary,
+    getMonthlySummary, // ADDED: Now included
+    fetchPaymentStats, // ADDED: Now included
+    generatePaymentReport, // ADDED: Now included
     validateMpesaPhone,
     formatMpesaPhone,
-    clearError: () => setError(null)
+    clearError
   }), [
     payments,
     allocations,
@@ -330,12 +435,14 @@ export const PaymentProvider = ({ children }) => {
     getPaymentsByTenant,
     createPayment,
     updatePayment,
+    deletePayment, // ADDED: Now included
     confirmPayment,
     processMpesaPayment,
     checkMpesaPaymentStatus,
     getAllocationByTenantId,
     getUpcomingPayments,
     getPaymentSummary,
+    getMonthlySummary, // ADDED: Now included
     validateMpesaPhone,
     formatMpesaPhone
   ]);
