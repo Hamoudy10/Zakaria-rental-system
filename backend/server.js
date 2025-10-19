@@ -1,4 +1,4 @@
-// server.js - ROBUST VERSION
+// server.js - UPDATED VERSION WITH BETTER ERROR LOGGING
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
@@ -27,7 +27,7 @@ console.log('Loading routes...');
 app.use('/api/auth', require('./routes/auth'));
 console.log('✅ Auth routes loaded');
 
-// Load other routes with try-catch
+// Load other routes with detailed error handling
 const routes = [
   { path: '/api/users', file: './routes/users', name: 'Users' },
   { path: '/api/properties', file: './routes/properties', name: 'Properties' },
@@ -39,15 +39,29 @@ const routes = [
 
 routes.forEach(route => {
   try {
-    app.use(route.path, require(route.file));
+    console.log(`🔄 Loading ${route.name} routes from: ${route.file}`);
+    
+    // Import the route module
+    const routeModule = require(route.file);
+    
+    // Check if it's a valid router
+    if (typeof routeModule !== 'function') {
+      throw new Error(`Expected a function but got: ${typeof routeModule}`);
+    }
+    
+    // Use the route
+    app.use(route.path, routeModule);
     console.log(`✅ ${route.name} routes loaded`);
+    
   } catch (error) {
     console.log(`❌ ${route.name} routes failed: ${error.message}`);
+    console.log(`🔍 Full error for ${route.name}:`, error);
+    
     // Create a simple fallback route
     app.use(route.path, (req, res) => {
       res.status(500).json({
         success: false,
-        message: `${route.name} routes are temporarily unavailable`
+        message: `${route.name} routes are temporarily unavailable: ${error.message}`
       });
     });
   }

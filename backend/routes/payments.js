@@ -1,29 +1,9 @@
 const express = require('express');
-router = express.Router();
-
-// Simple inline middleware for testing
-protect = (req, res, next) => {
-  req.user = { userId: 'test', role: 'admin' };
-  next();
-};
-
-console.log('Payments routes loaded');
-
-// Get payments
-router.get('/', protect, (req, res) => {
-  res.json({
-    success: true,
-    message: 'Payments route working',
-    data: []
-  });
-});
-
-module.exports = router;const express = require('express');
-router = express.Router();
+const router = express.Router();
 const pool = require('../config/database');
 
 // Simple inline middleware for testing
-protect = (req, res, next) => {
+const protect = (req, res, next) => {
   req.user = { 
     id: 'test-user-id', 
     userId: 'test', 
