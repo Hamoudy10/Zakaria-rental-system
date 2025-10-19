@@ -24,79 +24,71 @@ export const AuthProvider = ({ children }) => {
       const token = localStorage.getItem('token');
       const storedUser = localStorage.getItem('user');
       
-      console.log('Auth check - Token exists:', !!token);
-      console.log('Auth check - Stored user exists:', !!storedUser);
-      
-      // If no token or user, clear and exit
-      if (!token || !storedUser) {
-        console.log('No token or user found, clearing auth');
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setUser(null);
-        setLoading(false);
-        return;
-      }
+      console.log('🔐 TEMPORARY FIX - Auth check');
+      console.log('🔐 Token exists:', !!token);
+      console.log('🔐 Stored user exists:', !!storedUser);
 
-      // Validate token structure (basic check)
-      try {
-        const tokenParts = token.split('.');
-        if (tokenParts.length !== 3) {
-          throw new Error('Invalid token format');
+      // TEMPORARY FIX: Skip backend verification for now
+      if (token && storedUser) {
+        try {
+          console.log('🔄 TEMPORARY: Using stored user without backend verification');
+          const userData = JSON.parse(storedUser);
+          setUser(userData);
+          
+          // Set auth header for future requests
+          if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+            authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+          }
+        } catch (parseError) {
+          console.error('❌ Error parsing stored user:', parseError);
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setUser(null);
         }
-      } catch (tokenError) {
-        console.error('Token format invalid:', tokenError);
+      } else {
+        console.log('🚫 No credentials found');
         localStorage.removeItem('token');
         localStorage.removeItem('user');
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-
-      // Try to validate token with backend
-      try {
-        // Set auth header for all future requests
-        authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-        
-        // Verify token with backend (you might need to create this endpoint)
-        const response = await authAPI.get('/verify-token');
-        console.log('Token validation response:', response.data);
-        
-        const userData = JSON.parse(storedUser);
-        setUser(userData);
-      } catch (validationError) {
-        console.error('Token validation failed:', validationError);
-        // Token is invalid, clear everything
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        delete authAPI.defaults.headers.common['Authorization'];
         setUser(null);
       }
     } catch (error) {
-      console.error('Auth check failed:', error);
+      console.error('❌ Auth check failed:', error);
       // Clear any corrupted data
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       setUser(null);
     } finally {
+      console.log('✅ Auth check complete');
       setLoading(false);
     }
   };
 
   const login = async (email, password) => {
     try {
-      console.log('Attempting login with:', { email });
+      console.log('🔐 Attempting login with:', { email });
       
-      // Clear any existing auth headers
-      delete authAPI.defaults.headers.common['Authorization'];
+      // Clear any existing auth data first
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+        delete authAPI.defaults.headers.common['Authorization'];
+      }
+
+        // FIX: Make sure we're sending proper JSON object
+      const credentials = { 
+        email: email.trim(), 
+        password: password 
+      };
+      console.log('🔄 Sending login request with credentials:', credentials);
+
       
-      const response = await authAPI.post('/login', { email, password });
-      console.log('Login response:', response.data);
+      const response = await authAPI.login(credentials);
+      console.log('✅ Login response received', response);
       
-      const { user, token } = response.data;
+      const { user, token } = response;
       
-      // Validate data before storing
       if (!user || !token) {
-        throw new Error('Invalid response from server');
+        throw new Error('Invalid response from server - missing user or token');
       }
       
       // Store in localStorage
@@ -104,23 +96,36 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('user', JSON.stringify(user));
       
       // Set auth header for future requests
-      authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+        authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      }
       
       setUser(user);
       
-      console.log('Login successful, user stored:', user);
+      console.log('✅ Login successful, user:', user);
       
       return { success: true, user };
     } catch (error) {
-      console.error('Login failed:', error);
+      console.error('❌ Login failed:', error);
+      
       // Clear on failure
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      delete authAPI.defaults.headers.common['Authorization'];
+      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+        delete authAPI.defaults.headers.common['Authorization'];
+      }
+      setUser(null);
       
-      const errorMessage = error.response?.data?.message || 
-                          error.message || 
-                          'Login failed';
+      // Better error handling
+      let errorMessage = 'Login failed';
+      if (error.code === 'ERR_NETWORK') {
+        errorMessage = 'Cannot connect to server. Please make sure the backend is running.';
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       return { 
         success: false, 
         message: errorMessage 
@@ -130,12 +135,16 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (userData) => {
     try {
-      const response = await authAPI.post('/register', userData);
-      const { user, token } = response.data;
+      const response = await authAPI.register(userData);
+      const { user, token } = response;
       
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
-      authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      
+      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+        authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      }
+      
       setUser(user);
       
       return { success: true };
@@ -149,9 +158,14 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
+    console.log('🚪 Logging out');
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    delete authAPI.defaults.headers.common['Authorization'];
+    
+    if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+      delete authAPI.defaults.headers.common['Authorization'];
+    }
+    
     setUser(null);
   };
 

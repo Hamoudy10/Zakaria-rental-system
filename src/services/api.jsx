@@ -25,13 +25,27 @@ api.interceptors.request.use(
 
 // Handle responses
 api.interceptors.response.use(
-  (response) => response.data,
+  (config) => {
+     const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    
+    // TEMPORARY DEBUGGING
+    console.log('🔍 API Request:', {
+      url: config.url,
+      method: config.method,
+      data: config.data,
+      headers: config.headers
+    });
+     return config;
+  },
   (error) => {
-    if (error.response?.status === 401) {
+   /* if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
-    }
+    }*/
     
     return Promise.reject({
       success: false,

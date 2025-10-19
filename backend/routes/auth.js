@@ -4,6 +4,8 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
+const { protect } = require('../middleware/authMiddleware'); // Make sure this line exists
+const { login,register,getProfile } = require('../controllers/authController'); // Make sure this path is correct
 
 console.log('=== TEMPORARY AUTH ROUTE LOADED ===');
 /*
@@ -14,9 +16,25 @@ router.get('/verify-token', protect, (req, res) => {
   });
 });
 */
+router.get('/verify-token', protect, (req, res) => {
+  console.log('✅ Token verification successful for user:', req.user.id);
+  
+  res.json({
+    success: true,
+    user: {
+      id: req.user.id,
+      first_name: req.user.first_name,
+      last_name: req.user.last_name,
+      email: req.user.email,
+      role: req.user.role,
+      phone: req.user.phone,
+      created_at: req.user.created_at
+    }
+  });
+});
 
 // Register user
-const register = async (req, res) => {
+/*const register = async (req, res) => {
   try {
     console.log('Register endpoint called');
     const { national_id, first_name, last_name, email, phone_number, password, role } = req.body;
@@ -164,7 +182,7 @@ const getProfile = async (req, res) => {
     });
   }
 };
-
+*/
 // Set up routes
 router.post('/register', register);
 router.post('/login', login);
