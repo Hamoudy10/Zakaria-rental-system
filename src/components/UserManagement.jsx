@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useUser } from '../context/UserContext';
 
 const UserManagement = () => {
@@ -15,15 +15,6 @@ const UserManagement = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
-  const [formData, setFormData] = useState({
-    national_id: '',
-    first_name: '',
-    last_name: '',
-    email: '',
-    phone_number: '',
-    password: '',
-    role: 'tenant'
-  });
 
   useEffect(() => {
     fetchUsers();
@@ -32,29 +23,18 @@ const UserManagement = () => {
   // SAFE CHECK: Ensure users is always an array
   const safeUsers = Array.isArray(users) ? users : [];
 
-  const handleCreateUser = async (e) => {
-    e.preventDefault();
+  const handleCreateUser = async (userData) => {
     try {
-      await createUser(formData);
+      await createUser(userData);
       setShowCreateModal(false);
-      setFormData({
-        national_id: '',
-        first_name: '',
-        last_name: '',
-        email: '',
-        phone_number: '',
-        password: '',
-        role: 'tenant'
-      });
     } catch (err) {
       console.error('Error creating user:', err);
     }
   };
 
-  const handleEditUser = async (e) => {
-    e.preventDefault();
+  const handleEditUser = async (userData) => {
     try {
-      await updateUser(selectedUser.id, formData);
+      await updateUser(selectedUser.id, userData);
       setShowEditModal(false);
       setSelectedUser(null);
     } catch (err) {
@@ -72,6 +52,13 @@ const UserManagement = () => {
     }
   };
 
+  // Reset form when modal closes
+  const handleCloseModal = () => {
+    setShowCreateModal(false);
+    setShowEditModal(false);
+    setSelectedUser(null);
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -80,111 +67,293 @@ const UserManagement = () => {
     );
   }
 
+  // Separate Modal Component with its own form state
+  const CompactUserModal = React.memo(({ isOpen, onClose, onSubmit, title, isEdit = false, initialData }) => {
+    const [formData, setFormData] = useState({
+      national_id: '',
+      first_name: '',
+      last_name: '',
+      email: '',
+      phone_number: '',
+      password: '',
+      role: 'tenant'
+    });
+
+    // Initialize form data when modal opens or initialData changes
+    useEffect(() => {
+      if (isOpen) {
+        setFormData(initialData || {
+          national_id: '',
+          first_name: '',
+          last_name: '',
+          email: '',
+          phone_number: '',
+          password: '',
+          role: 'tenant'
+        });
+      }
+    }, [isOpen, initialData]);
+
+    const handleInputChange = (field, value) => {
+      setFormData(prev => ({
+        ...prev,
+        [field]: value
+      }));
+    };
+
+    const handleFormSubmit = (e) => {
+      e.preventDefault();
+      onSubmit(formData);
+    };
+
+    const handleLocalSubmit = () => {
+      onSubmit(formData);
+    };
+
+    if (!isOpen) return null;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+        <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
+          {/* Header - Fixed */}
+          <div className="flex items-center justify-between p-3 border-b border-gray-200 flex-shrink-0">
+            <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+              type="button"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Scrollable Form Content */}
+          <div className="flex-1 overflow-y-auto p-4">
+            <form id="user-form" className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  National ID *
+                </label>
+                <input
+                  type="text"
+                  placeholder="National ID"
+                  value={formData.national_id}
+                  onChange={(e) => handleInputChange('national_id', e.target.value)}
+                  className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    First Name *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="First name"
+                    value={formData.first_name}
+                    onChange={(e) => handleInputChange('first_name', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Last Name *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Last name"
+                    value={formData.last_name}
+                    onChange={(e) => handleInputChange('last_name', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Email *
+                </label>
+                <input
+                  type="email"
+                  placeholder="Email address"
+                  value={formData.email}
+                  onChange={(e) => handleInputChange('email', e.target.value)}
+                  className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Phone Number *
+                </label>
+                <input
+                  type="text"
+                  placeholder="Phone number"
+                  value={formData.phone_number}
+                  onChange={(e) => handleInputChange('phone_number', e.target.value)}
+                  className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+
+              {!isEdit && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Password *
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={formData.password}
+                    onChange={(e) => handleInputChange('password', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Role *
+                </label>
+                <select
+                  value={formData.role}
+                  onChange={(e) => handleInputChange('role', e.target.value)}
+                  className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="tenant">Tenant</option>
+                  <option value="agent">Agent</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            </form>
+          </div>
+
+          {/* Fixed Footer with Buttons */}
+          <div className="flex justify-end space-x-2 p-3 border-t border-gray-200 bg-gray-50 flex-shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-red-600 border border-transparent rounded hover:bg-red-700 focus:outline-none focus:ring-1 focus:ring-red-500"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleLocalSubmit}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-transparent rounded hover:bg-blue-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              {isEdit ? 'Update' : 'Create'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  });
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium"
         >
           Add New User
         </button>
       </div>
 
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm">
           {error}
         </div>
       )}
 
-      {/* Users Table - Wrapped in scrollable container */}
+      {/* Users Table */}
       <div className="bg-white shadow-md rounded-lg overflow-hidden">
-        <div className="overflow-x-auto"> {/* Added horizontal scroll container */}
+        <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   User
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Contact
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Role
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {/* SAFE CHECK: Use safeUsers instead of users */}
               {safeUsers.length > 0 ? (
                 safeUsers.map((user) => (
-                  <tr key={user.id}>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                  <tr key={user.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <div className="flex-shrink-0 h-10 w-10">
+                        <div className="flex-shrink-0 h-8 w-8">
                           <img
-                            className="h-10 w-10 rounded-full"
+                            className="h-8 w-8 rounded-full"
                             src={user.profile_image || '/default-avatar.png'}
                             alt=""
                           />
                         </div>
-                        <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                        <div className="ml-3">
+                          <div className="text-sm font-medium text-gray-900">
                             {user.first_name} {user.last_name}
                           </div>
-                          <div className="text-sm text-gray-500 whitespace-nowrap">
+                          <div className="text-xs text-gray-500">
                             ID: {user.national_id}
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 whitespace-nowrap">{user.email}</div>
-                      <div className="text-sm text-gray-500 whitespace-nowrap">{user.phone_number}</div>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-gray-900">{user.email}</div>
+                      <div className="text-xs text-gray-500">{user.phone_number}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full 
                         ${user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 
                           user.role === 'agent' ? 'bg-blue-100 text-blue-800' : 
                           'bg-green-100 text-green-800'}`}>
                         {user.role}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full 
                         ${user.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                         {user.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <td className="px-6 py-4 text-sm font-medium">
                       <button
                         onClick={() => {
                           setSelectedUser(user);
-                          setFormData({
-                            national_id: user.national_id || '',
-                            first_name: user.first_name || '',
-                            last_name: user.last_name || '',
-                            email: user.email || '',
-                            phone_number: user.phone_number || '',
-                            password: '',
-                            role: user.role || 'tenant'
-                          });
                           setShowEditModal(true);
                         }}
-                        className="text-blue-600 hover:text-blue-900 mr-3 whitespace-nowrap"
+                        className="text-blue-600 hover:text-blue-900 mr-3 text-sm"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => handleDeleteUser(user.id)}
-                        className="text-red-600 hover:text-red-900 whitespace-nowrap"
+                        className="text-red-600 hover:text-red-900 text-sm"
                       >
                         Deactivate
                       </button>
@@ -193,177 +362,56 @@ const UserManagement = () => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="5" className="px-6 py-4 text-center text-gray-500">
-                    No users found
+                  <td colSpan="5" className="px-6 py-8 text-center text-gray-500 text-sm">
+                    <div className="flex flex-col items-center">
+                      <svg className="w-8 h-8 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                      </svg>
+                      No users found
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-        </div> {/* End of scroll container */}
+        </div>
       </div>
 
       {/* Create User Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">Create New User</h2>
-            <form onSubmit={handleCreateUser}>
-              <div className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="National ID"
-                  value={formData.national_id}
-                  onChange={(e) => setFormData({...formData, national_id: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="First Name"
-                  value={formData.first_name}
-                  onChange={(e) => setFormData({...formData, first_name: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Last Name"
-                  value={formData.last_name}
-                  onChange={(e) => setFormData({...formData, last_name: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Phone Number"
-                  value={formData.phone_number}
-                  onChange={(e) => setFormData({...formData, phone_number: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="password"
-                  placeholder="Password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({...formData, password: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({...formData, role: e.target.value})}
-                  className="w-full p-2 border rounded"
-                >
-                  <option value="tenant">Tenant</option>
-                  <option value="agent">Agent</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-              <div className="flex justify-end space-x-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-gray-600 border rounded"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded"
-                >
-                  Create User
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <CompactUserModal
+        isOpen={showCreateModal}
+        onClose={handleCloseModal}
+        onSubmit={handleCreateUser}
+        title="Create New User"
+        isEdit={false}
+        initialData={{
+          national_id: '',
+          first_name: '',
+          last_name: '',
+          email: '',
+          phone_number: '',
+          password: '',
+          role: 'tenant'
+        }}
+      />
 
       {/* Edit User Modal */}
-      {showEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">Edit User</h2>
-            <form onSubmit={handleEditUser}>
-              <div className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="National ID"
-                  value={formData.national_id}
-                  onChange={(e) => setFormData({...formData, national_id: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="First Name"
-                  value={formData.first_name}
-                  onChange={(e) => setFormData({...formData, first_name: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Last Name"
-                  value={formData.last_name}
-                  onChange={(e) => setFormData({...formData, last_name: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Phone Number"
-                  value={formData.phone_number}
-                  onChange={(e) => setFormData({...formData, phone_number: e.target.value})}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({...formData, role: e.target.value})}
-                  className="w-full p-2 border rounded"
-                >
-                  <option value="tenant">Tenant</option>
-                  <option value="agent">Agent</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-              <div className="flex justify-end space-x-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowEditModal(false)}
-                  className="px-4 py-2 text-gray-600 border rounded"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded"
-                >
-                  Update User
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <CompactUserModal
+        isOpen={showEditModal}
+        onClose={handleCloseModal}
+        onSubmit={handleEditUser}
+        title="Edit User"
+        isEdit={true}
+        initialData={selectedUser ? {
+          national_id: selectedUser.national_id || '',
+          first_name: selectedUser.first_name || '',
+          last_name: selectedUser.last_name || '',
+          email: selectedUser.email || '',
+          phone_number: selectedUser.phone_number || '',
+          password: '', // Don't show password in edit
+          role: selectedUser.role || 'tenant'
+        } : null}
+      />
     </div>
   );
 };
