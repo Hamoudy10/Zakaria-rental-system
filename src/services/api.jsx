@@ -25,36 +25,30 @@ api.interceptors.request.use(
 
 // Handle responses
 api.interceptors.response.use(
-  (config) => {
-     const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    
-    // TEMPORARY DEBUGGING
-    console.log('🔍 API Request:', {
-      url: config.url,
-      method: config.method,
-      data: config.data,
-      headers: config.headers
+  (response) => {
+    console.log('✅ API Response:', {
+      url: response.config.url,
+      status: response.status,
+      data: response.data
     });
-     return config;
+    return response;
   },
   (error) => {
-   /* if (error.response?.status === 401) {
+    console.error('❌ API Error:', {
+      url: error.config?.url,
+      status: error.response?.status,
+      message: error.response?.data?.message || error.message
+    });
+    
+    if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
-    }*/
+    }
     
-    return Promise.reject({
-      success: false,
-      message: error.response?.data?.message || 'Network error',
-      error: error.response?.data
-    });
+    return Promise.reject(error);
   }
 );
-
 // M-Pesa utility functions
 export const mpesaUtils = {
   formatPhoneNumber: (phone) => {
@@ -112,6 +106,15 @@ export const propertyAPI = {
   deleteProperty: (id) => api.delete(`/properties/${id}`),
   getPropertyUnits: (propertyId) => api.get(`/properties/${propertyId}/units`),
   getAvailableUnits: () => api.get('/properties/units/available'),
+   addUnit: (propertyId, unitData) => api.post(`/properties/${propertyId}/units`, unitData),
+  updateUnit: (propertyId, unitId, updates) => api.put(`/properties/${propertyId}/units/${unitId}`, updates),
+  deleteUnit: (propertyId, unitId) => api.delete(`/properties/${propertyId}/units/${unitId}`),
+  updateUnitOccupancy: (propertyId, unitId, occupancyData) => 
+    api.patch(`/properties/${propertyId}/units/${unitId}/occupancy`, occupancyData),
+
+  // Statistics and search
+  getPropertyStats: () => api.get('/properties/stats/overview'),
+  searchProperties: (searchTerm) => api.get(`/properties/search?q=${encodeURIComponent(searchTerm)}`),
 };
 
 export const paymentAPI = {

@@ -110,7 +110,7 @@ export const PropertyProvider = ({ children }) => {
     }
   }, [checkAuth])
 
-  // Add new property via API - ONLY WHEN AUTHENTICATED
+  // Add new property via API - ONLY WHEN AUTHENTICATED - UPDATED FOR UNIT_TYPE
   const addProperty = useCallback(async (propertyData) => {
     if (!checkAuth()) {
       throw new Error('User not authenticated')
@@ -119,13 +119,13 @@ export const PropertyProvider = ({ children }) => {
     setLoading(true)
     setError(null)
     try {
-      console.log('🔄 Adding new property...')
+      console.log('🔄 Adding new property...', propertyData)
       const response = await propertyAPI.createProperty(propertyData)
       const newProperty = response.data?.data || response.data
       
       if (newProperty) {
         setProperties(prev => [...prev, { ...newProperty, units: [] }])
-        console.log(`✅ Successfully added property: ${newProperty.name}`)
+        console.log(`✅ Successfully added property: ${newProperty.name} with unit type: ${newProperty.unit_type}`)
         return newProperty
       } else {
         throw new Error('Invalid response from server')
@@ -145,7 +145,7 @@ export const PropertyProvider = ({ children }) => {
     }
   }, [checkAuth])
 
-  // Update property via API - ONLY WHEN AUTHENTICATED
+  // Update property via API - ONLY WHEN AUTHENTICATED - UPDATED FOR UNIT_TYPE
   const updateProperty = useCallback(async (propertyId, updates) => {
     if (!checkAuth()) {
       throw new Error('User not authenticated')
@@ -154,7 +154,7 @@ export const PropertyProvider = ({ children }) => {
     setLoading(true)
     setError(null)
     try {
-      console.log(`🔄 Updating property ${propertyId}...`)
+      console.log(`🔄 Updating property ${propertyId}...`, updates)
       const response = await propertyAPI.updateProperty(propertyId, updates)
       const updatedProperty = response.data?.data || response.data
       
@@ -167,7 +167,7 @@ export const PropertyProvider = ({ children }) => {
         setSelectedProperty(prev => ({ ...prev, ...updatedProperty }))
       }
       
-      console.log(`✅ Successfully updated property: ${updatedProperty.name}`)
+      console.log(`✅ Successfully updated property: ${updatedProperty.name} with unit type: ${updatedProperty.unit_type}`)
       return updatedProperty
     } catch (err) {
       console.error('❌ Error updating property:', err)

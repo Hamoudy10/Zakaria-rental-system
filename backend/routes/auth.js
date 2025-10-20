@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { protect } = require('../middleware/authMiddleware'); // Make sure this line exists
-const { login,register,getProfile } = require('../controllers/authController'); // Make sure this path is correct
+//const { login,register,getProfile } = require('../controllers/authController'); // Make sure this path is correct
 
 console.log('=== TEMPORARY AUTH ROUTE LOADED ===');
 /*
@@ -34,7 +34,7 @@ router.get('/verify-token', protect, (req, res) => {
 });
 
 // Register user
-/*const register = async (req, res) => {
+const register = async (req, res) => {
   try {
     console.log('Register endpoint called');
     const { national_id, first_name, last_name, email, phone_number, password, role } = req.body;
@@ -182,7 +182,7 @@ const getProfile = async (req, res) => {
     });
   }
 };
-*/
+
 // Set up routes
 router.post('/register', register);
 router.post('/login', login);
