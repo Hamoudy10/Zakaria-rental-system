@@ -1,9 +1,60 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useAuth } from '../context/AuthContext'
+import { useAllocation } from '../context/TenantAllocationContext'
+import { usePayment } from '../context/PaymentContext'
 import TenantPayment from '../components/TenantPayment'
-import TenantComplaints from '../components/TenantComplaints' // Updated to use TenantComplaints instead of ComplaintManagement
+import TenantComplaints from '../components/TenantComplaints'
 
 const TenantDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
+  const { user } = useAuth()
+  const { getTenantAllocations } = useAllocation()
+  const { getPaymentsByTenant, getPaymentSummary } = usePayment()
+
+  const [tenantData, setTenantData] = useState({
+    allocation: null,
+    payments: [],
+    paymentSummary: {},
+    loading: true,
+    error: null
+  })
+
+  // Fetch tenant data on component mount
+  useEffect(() => {
+    fetchTenantData()
+  }, [user])
+
+  const fetchTenantData = async () => {
+    if (!user?.id) return
+
+    try {
+      setTenantData(prev => ({ ...prev, loading: true, error: null }))
+      
+      // Fetch allocation data
+      const allocations = await getTenantAllocations(user.id)
+      const activeAllocation = allocations.find(allocation => allocation.is_active) || null
+
+      // Fetch payment data
+      const payments = await getPaymentsByTenant(user.id)
+      const paymentSummary = getPaymentSummary(user.id)
+
+      setTenantData({
+        allocation: activeAllocation,
+        payments: payments,
+        paymentSummary: paymentSummary,
+        loading: false,
+        error: null
+      })
+
+    } catch (error) {
+      console.error('Error fetching tenant data:', error)
+      setTenantData(prev => ({
+        ...prev,
+        loading: false,
+        error: 'Failed to load dashboard data'
+      }))
+    }
+  }
 
   const tabs = [
     { id: 'overview', name: 'Overview' },
@@ -15,14 +66,22 @@ const TenantDashboard = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'payments':
-        return <TenantPayment />
+        return <TenantPayment 
+          allocation={tenantData.allocation} 
+          payments={tenantData.payments}
+          onPaymentSuccess={fetchTenantData}
+        />
       case 'complaints':
         return <TenantComplaints />
       case 'profile':
         return <ProfileManagement />
       case 'overview':
       default:
-        return <TenantOverview setActiveTab={setActiveTab} />
+        return <TenantOverview 
+          setActiveTab={setActiveTab}
+          tenantData={tenantData}
+          onRefresh={fetchTenantData}
+        />
     }
   }
 
@@ -59,22 +118,50 @@ const TenantDashboard = () => {
   )
 }
 
-// Tenant Overview Component
-const TenantOverview = ({ setActiveTab }) => {
-  const [tenantStats, setTenantStats] = useState({
-    nextPayment: 'KSh 15,000',
-    dueDate: '2024-01-05',
-    paymentStatus: 'Pending',
-    complaintsCount: 2,
-    unitInfo: 'Studio Apartment - Unit 4B'
-  })
+// Updated Tenant Overview Component with Real Data
+const TenantOverview = ({ setActiveTab, tenantData, onRefresh }) => {
+  const { allocation, payments, paymentSummary, loading, error } = tenantData
 
-  const recentActivities = [
-    { type: 'payment', description: 'Rent payment for December', amount: 'KSh 15,000', date: '2024-12-01', status: 'completed' },
-    { type: 'complaint', description: 'Plumbing issue in bathroom', date: '2024-11-28', status: 'in_progress' },
-    { type: 'payment', description: 'Rent payment for November', amount: 'KSh 15,000', date: '2024-11-01', status: 'completed' },
-    { type: 'complaint', description: 'Broken window', date: '2024-10-15', status: 'resolved' },
-  ]
+  // Calculate next payment info
+  const getNextPaymentInfo = () => {
+    if (!allocation) return { amount: 0, dueDate: 'N/A', status: 'No Allocation' }
+
+    const now = new Date()
+    const currentMonth = now.getMonth()
+    const currentYear = now.getFullYear()
+    
+    // Check if current month is paid
+    const currentMonthPaid = payments.some(payment => {
+      const paymentDate = new Date(payment.payment_month || payment.payment_date)
+      return paymentDate.getMonth() === currentMonth && 
+             paymentDate.getFullYear() === currentYear &&
+             payment.status === 'completed'
+    })
+
+    // Calculate due date (rent_due_day of current month)
+    const dueDate = new Date(currentYear, currentMonth, allocation.rent_due_day || 5)
+    if (dueDate < now) {
+      dueDate.setMonth(dueDate.getMonth() + 1) // Move to next month if due date passed
+    }
+
+    return {
+      amount: allocation.monthly_rent || 0,
+      dueDate: dueDate.toISOString().split('T')[0],
+      status: currentMonthPaid ? 'Paid' : 'Pending',
+      isPaid: currentMonthPaid
+    }
+  }
+
+  const nextPayment = getNextPaymentInfo()
+
+  // Get recent activities (payments and complaints)
+  const recentActivities = payments.slice(0, 5).map(payment => ({
+    type: 'payment',
+    description: `Rent payment for ${new Date(payment.payment_month || payment.payment_date).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })}`,
+    amount: `KSh ${parseInt(payment.amount).toLocaleString()}`,
+    date: payment.payment_date || payment.created_at,
+    status: payment.status
+  }))
 
   const getActivityIcon = (type) => {
     switch (type) {
@@ -87,6 +174,7 @@ const TenantOverview = ({ setActiveTab }) => {
   const getStatusBadge = (status) => {
     const statusConfig = {
       completed: { color: 'bg-green-100 text-green-800', label: 'Completed' },
+      paid: { color: 'bg-green-100 text-green-800', label: 'Paid' },
       pending: { color: 'bg-yellow-100 text-yellow-800', label: 'Pending' },
       in_progress: { color: 'bg-blue-100 text-blue-800', label: 'In Progress' },
       resolved: { color: 'bg-gray-100 text-gray-800', label: 'Resolved' }
@@ -97,6 +185,39 @@ const TenantOverview = ({ setActiveTab }) => {
       <span className={`px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
         {config.label}
       </span>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-gray-500">Loading your dashboard...</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-red-600 mb-4">{error}</div>
+        <button 
+          onClick={onRefresh}
+          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  if (!allocation) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-4xl mb-4">🏠</div>
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">No Active Allocation</h2>
+        <p className="text-gray-600 mb-4">You don't have an active unit allocation yet.</p>
+        <p className="text-sm text-gray-500">Please contact the property manager for assistance.</p>
+      </div>
     )
   }
 
@@ -113,8 +234,12 @@ const TenantOverview = ({ setActiveTab }) => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Next Payment</p>
-              <p className="text-2xl font-bold text-green-600">{tenantStats.nextPayment}</p>
-              <p className="text-xs text-gray-500">Due {new Date(tenantStats.dueDate).toLocaleDateString()}</p>
+              <p className="text-2xl font-bold text-green-600">
+                KSh {parseInt(nextPayment.amount).toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500">
+                Due {new Date(nextPayment.dueDate).toLocaleDateString('en-KE')}
+              </p>
             </div>
             <div className="text-lg">💰</div>
           </div>
@@ -125,7 +250,7 @@ const TenantOverview = ({ setActiveTab }) => {
             <div>
               <p className="text-sm font-medium text-gray-600">Payment Status</p>
               <div className="mt-1">
-                {getStatusBadge(tenantStats.paymentStatus)}
+                {getStatusBadge(nextPayment.status.toLowerCase())}
               </div>
             </div>
             <div className="text-lg">📊</div>
@@ -135,11 +260,13 @@ const TenantOverview = ({ setActiveTab }) => {
         <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Active Complaints</p>
-              <p className="text-2xl font-bold text-orange-600">{tenantStats.complaintsCount}</p>
-              <p className="text-xs text-gray-500">Issues being resolved</p>
+              <p className="text-sm font-medium text-gray-600">Total Paid</p>
+              <p className="text-2xl font-bold text-purple-600">
+                KSh {paymentSummary.totalAmount?.toLocaleString() || '0'}
+              </p>
+              <p className="text-xs text-gray-500">{paymentSummary.completedPayments || 0} payments</p>
             </div>
-            <div className="text-lg">🛠️</div>
+            <div className="text-lg">💳</div>
           </div>
         </div>
 
@@ -147,7 +274,10 @@ const TenantOverview = ({ setActiveTab }) => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Your Unit</p>
-              <p className="text-lg font-bold text-purple-600">{tenantStats.unitInfo}</p>
+              <p className="text-lg font-bold text-blue-600">
+                {allocation.unit?.unit_code || 'Your Unit'}
+              </p>
+              <p className="text-xs text-gray-500">{allocation.unit?.property_name || 'Property'}</p>
             </div>
             <div className="text-lg">🏠</div>
           </div>
@@ -164,7 +294,9 @@ const TenantOverview = ({ setActiveTab }) => {
               className="bg-blue-600 text-white py-4 px-6 rounded-lg flex flex-col items-center hover:bg-blue-700 transition-colors"
             >
               <span className="text-2xl mb-2">💰</span>
-              <span className="text-lg">Make Payment</span>
+              <span className="text-lg">
+                {nextPayment.isPaid ? 'View Payments' : 'Make Payment'}
+              </span>
             </button>
             <button 
               onClick={() => setActiveTab('complaints')}
@@ -180,23 +312,49 @@ const TenantOverview = ({ setActiveTab }) => {
         <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
           <h3 className="text-lg font-semibold mb-4">Recent Activity</h3>
           <div className="space-y-3">
-            {recentActivities.map((activity, index) => (
-              <div key={index} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                <div className="text-lg">{getActivityIcon(activity.type)}</div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">
-                    {activity.description}
-                  </p>
-                  <div className="flex justify-between items-center mt-1">
-                    <p className="text-xs text-gray-500">
-                      {new Date(activity.date).toLocaleDateString()}
-                      {activity.amount && ` • ${activity.amount}`}
+            {recentActivities.length === 0 ? (
+              <p className="text-gray-500 text-center py-4">No recent activity</p>
+            ) : (
+              recentActivities.map((activity, index) => (
+                <div key={index} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="text-lg">{getActivityIcon(activity.type)}</div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-900">
+                      {activity.description}
                     </p>
-                    {getStatusBadge(activity.status)}
+                    <div className="flex justify-between items-center mt-1">
+                      <p className="text-xs text-gray-500">
+                        {new Date(activity.date).toLocaleDateString('en-KE')}
+                        {activity.amount && ` • ${activity.amount}`}
+                      </p>
+                      {getStatusBadge(activity.status)}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Lease Information */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+        <h3 className="text-lg font-semibold mb-4">Lease Information</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <p className="text-sm font-medium text-gray-600">Lease Period</p>
+            <p className="text-gray-900">
+              {new Date(allocation.lease_start_date).toLocaleDateString('en-KE')} - {' '}
+              {new Date(allocation.lease_end_date).toLocaleDateString('en-KE')}
+            </p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-600">Monthly Rent</p>
+            <p className="text-gray-900">KSh {parseInt(allocation.monthly_rent).toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-600">Security Deposit</p>
+            <p className="text-gray-900">KSh {parseInt(allocation.security_deposit || 0).toLocaleString()}</p>
           </div>
         </div>
       </div>
@@ -205,68 +363,78 @@ const TenantOverview = ({ setActiveTab }) => {
       <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
         <h3 className="text-lg font-semibold mb-4">Payment History</h3>
         <div className="space-y-4">
-          <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900">December 2024</p>
-              <p className="text-sm text-gray-500">Due date: 5th December</p>
-            </div>
-            <div className="text-right">
-              <p className="font-bold text-green-600">KSh 15,000</p>
-              {getStatusBadge('pending')}
-            </div>
-          </div>
-          
-          <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900">November 2024</p>
-              <p className="text-sm text-gray-500">Paid on: 1st November</p>
-            </div>
-            <div className="text-right">
-              <p className="font-bold text-green-600">KSh 15,000</p>
-              {getStatusBadge('completed')}
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900">October 2024</p>
-              <p className="text-sm text-gray-500">Paid on: 2nd October</p>
-            </div>
-            <div className="text-right">
-              <p className="font-bold text-green-600">KSh 15,000</p>
-              {getStatusBadge('completed')}
-            </div>
-          </div>
+          {payments.length === 0 ? (
+            <p className="text-gray-500 text-center py-4">No payment history found</p>
+          ) : (
+            payments.slice(0, 3).map((payment, index) => (
+              <div key={index} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                <div>
+                  <p className="font-medium text-gray-900">
+                    {new Date(payment.payment_month || payment.payment_date).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })}
+                  </p>
+                  <p className="text-sm text-gray-500">
+                    Paid on: {new Date(payment.payment_date).toLocaleDateString('en-KE')}
+                    {payment.mpesa_receipt_number && ` • Receipt: ${payment.mpesa_receipt_number}`}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-green-600">
+                    KSh {parseInt(payment.amount).toLocaleString()}
+                  </p>
+                  {getStatusBadge(payment.status)}
+                </div>
+              </div>
+            ))
+          )}
         </div>
         
-        <button 
-          onClick={() => setActiveTab('payments')}
-          className="w-full mt-4 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          View Full Payment History
-        </button>
+        {payments.length > 0 && (
+          <button 
+            onClick={() => setActiveTab('payments')}
+            className="w-full mt-4 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            View Full Payment History
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
-// Profile Management Component
+// Profile Management Component (Updated to use real user data)
 const ProfileManagement = () => {
+  const { user } = useAuth()
   const [profile, setProfile] = useState({
-    firstName: 'John',
-    lastName: 'Doe',
-    email: 'john.doe@example.com',
-    phoneNumber: '+254712345678',
-    nationalId: '12345678',
-    emergencyContact: '+254798765432'
+    firstName: user?.firstName || user?.first_name || '',
+    lastName: user?.lastName || user?.last_name || '',
+    email: user?.email || '',
+    phoneNumber: user?.phone_number || '',
+    nationalId: user?.national_id || '',
+    emergencyContact: user?.emergency_contact || ''
   })
 
   const [isEditing, setIsEditing] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('')
 
-  const handleSave = () => {
-    // In a real app, you would make an API call here
-    setIsEditing(false)
-    alert('Profile updated successfully!')
+  const handleSave = async () => {
+    setLoading(true)
+    setMessage('')
+    
+    try {
+      // In a real app, you would make an API call here to update the profile
+      // await userAPI.updateProfile(profile)
+      
+      setTimeout(() => {
+        setIsEditing(false)
+        setMessage('Profile updated successfully!')
+        setLoading(false)
+      }, 1000)
+      
+    } catch (error) {
+      setMessage('Failed to update profile')
+      setLoading(false)
+    }
   }
 
   const handleChange = (field, value) => {
@@ -283,10 +451,17 @@ const ProfileManagement = () => {
         <button
           onClick={() => setIsEditing(!isEditing)}
           className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={loading}
         >
           {isEditing ? 'Cancel' : 'Edit Profile'}
         </button>
       </div>
+
+      {message && (
+        <div className={`p-4 rounded-md ${message.includes('success') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+          {message}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white border border-gray-200 rounded-lg p-6">
@@ -302,7 +477,7 @@ const ProfileManagement = () => {
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               ) : (
-                <p className="text-gray-900">{profile.firstName}</p>
+                <p className="text-gray-900">{profile.firstName || 'Not set'}</p>
               )}
             </div>
 
@@ -316,7 +491,7 @@ const ProfileManagement = () => {
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               ) : (
-                <p className="text-gray-900">{profile.lastName}</p>
+                <p className="text-gray-900">{profile.lastName || 'Not set'}</p>
               )}
             </div>
 
@@ -330,7 +505,7 @@ const ProfileManagement = () => {
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               ) : (
-                <p className="text-gray-900">{profile.nationalId}</p>
+                <p className="text-gray-900">{profile.nationalId || 'Not set'}</p>
               )}
             </div>
           </div>
@@ -349,7 +524,7 @@ const ProfileManagement = () => {
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               ) : (
-                <p className="text-gray-900">{profile.email}</p>
+                <p className="text-gray-900">{profile.email || 'Not set'}</p>
               )}
             </div>
 
@@ -363,7 +538,7 @@ const ProfileManagement = () => {
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               ) : (
-                <p className="text-gray-900">{profile.phoneNumber}</p>
+                <p className="text-gray-900">{profile.phoneNumber || 'Not set'}</p>
               )}
             </div>
 
@@ -377,7 +552,7 @@ const ProfileManagement = () => {
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               ) : (
-                <p className="text-gray-900">{profile.emergencyContact}</p>
+                <p className="text-gray-900">{profile.emergencyContact || 'Not set'}</p>
               )}
             </div>
           </div>
@@ -389,53 +564,19 @@ const ProfileManagement = () => {
           <button
             onClick={() => setIsEditing(false)}
             className="bg-gray-300 text-gray-700 px-6 py-2 rounded-md hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500"
+            disabled={loading}
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             className="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+            disabled={loading}
           >
-            Save Changes
+            {loading ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       )}
-
-      {/* Document Upload Section */}
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <h3 className="text-lg font-semibold mb-4">Documents</h3>
-        <div className="space-y-4">
-          <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900">ID Front Image</p>
-              <p className="text-sm text-gray-500">Upload a clear photo of your ID front</p>
-            </div>
-            <button className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm">
-              Upload
-            </button>
-          </div>
-
-          <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900">ID Back Image</p>
-              <p className="text-sm text-gray-500">Upload a clear photo of your ID back</p>
-            </div>
-            <button className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm">
-              Upload
-            </button>
-          </div>
-
-          <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900">Lease Agreement</p>
-              <p className="text-sm text-gray-500">Upload your signed lease agreement</p>
-            </div>
-            <button className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm">
-              Upload
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

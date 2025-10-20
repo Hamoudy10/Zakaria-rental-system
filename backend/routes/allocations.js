@@ -1,27 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-
-// Simple inline middleware for testing
-const protect = (req, res, next) => {
-  req.user = { 
-    id: 'test-user-id', 
-    userId: 'test', 
-    role: 'admin',
-    first_name: 'Test',
-    last_name: 'User'
-  };
-  next();
-};
-
-const authorize = (...roles) => {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'Unauthorized' });
-    }
-    next();
-  };
-};
+const { protect, authorize } = require('../middleware/authMiddleware');
 
 console.log('Allocations routes loaded');
 
@@ -247,8 +227,7 @@ router.post('/', protect, authorize('admin', 'agent'), async (req, res) => {
   console.log('Body:', req.body);
   console.log('User:', req.user);
   
-  
-    const client = await pool.connect();
+  const client = await pool.connect();
   
   try {
     await client.query('BEGIN');
