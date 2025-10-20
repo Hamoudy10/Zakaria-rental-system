@@ -85,8 +85,9 @@ export const AuthProvider = ({ children }) => {
       const response = await authAPI.login(credentials);
       console.log('✅ Login response received', response);
       
-      const { user, token } = response;
-      
+      const { user, token } = response.data;
+      console.log("responce data is: ",user, token);
+
       if (!user || !token) {
         throw new Error('Invalid response from server - missing user or token');
       }

@@ -1,7 +1,10 @@
-// server.js - UPDATED VERSION WITH BETTER ERROR LOGGING
+// server.js - ALTERNATIVE VERSION WITH SEPARATE UNITS LOADING
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
+const allocationsRoutes = require('./routes/allocations');
+const unitsRoutes = require('./routes/units');
+
 
 const app = express();
 
@@ -27,8 +30,8 @@ console.log('Loading routes...');
 app.use('/api/auth', require('./routes/auth'));
 console.log('✅ Auth routes loaded');
 
-// Load other routes with detailed error handling
-const routes = [
+// Load core routes
+const coreRoutes = [
   { path: '/api/users', file: './routes/users', name: 'Users' },
   { path: '/api/properties', file: './routes/properties', name: 'Properties' },
   { path: '/api/payments', file: './routes/payments', name: 'Payments' },
@@ -37,25 +40,20 @@ const routes = [
   { path: '/api/notifications', file: './routes/notifications', name: 'Notifications' }
 ];
 
-routes.forEach(route => {
+coreRoutes.forEach(route => {
   try {
     console.log(`🔄 Loading ${route.name} routes from: ${route.file}`);
-    
-    // Import the route module
     const routeModule = require(route.file);
     
-    // Check if it's a valid router
     if (typeof routeModule !== 'function') {
       throw new Error(`Expected a function but got: ${typeof routeModule}`);
     }
     
-    // Use the route
     app.use(route.path, routeModule);
     console.log(`✅ ${route.name} routes loaded`);
     
   } catch (error) {
     console.log(`❌ ${route.name} routes failed: ${error.message}`);
-    console.log(`🔍 Full error for ${route.name}:`, error);
     
     // Create a simple fallback route
     app.use(route.path, (req, res) => {
@@ -67,11 +65,55 @@ routes.forEach(route => {
   }
 });
 
+// Load units routes separately with special handling
+console.log('🔄 Loading Units routes from: ./routes/units');
+try {
+  const unitsRoutes = require('./routes/units');
+  
+  if (typeof unitsRoutes !== 'function') {
+    throw new Error(`Expected a function but got: ${typeof unitsRoutes}`);
+  }
+  
+  app.use('/api', unitsRoutes);
+  console.log('✅ Units routes loaded');
+  
+} catch (error) {
+  console.log(`❌ Units routes failed: ${error.message}`);
+  console.log('🔍 Full error for Units:', error);
+  
+  // Create fallback routes for units
+  app.use('/api/properties/:propertyId/units', (req, res) => {
+    res.status(500).json({
+      success: false,
+      message: `Units routes are temporarily unavailable: ${error.message}`
+    });
+  });
+}
+app.use('/api/allocations', allocationsRoutes);
+
 console.log('=== ALL ROUTES ATTEMPTED ===');
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Server is healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Global error handler for unhandled routes
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route not found: ${req.originalUrl}`
+  });
+});
 
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`🔗 Test URL: http://localhost:${PORT}/api/test`);
+  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
 });

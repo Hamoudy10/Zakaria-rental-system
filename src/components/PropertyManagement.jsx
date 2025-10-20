@@ -28,7 +28,8 @@ const PropertyManagement = () => {
       county: '',
       town: '',
       description: '',
-      total_units: 0
+      total_units: 0,
+      unit_type: 'bedsitter' // Updated default value
     })
 
     // Initialize form data when modal opens
@@ -41,7 +42,8 @@ const PropertyManagement = () => {
           county: '',
           town: '',
           description: '',
-          total_units: 0
+          total_units: 0,
+          unit_type: 'bedsitter' // Updated default value
         })
       }
     }, [isOpen, initialData])
@@ -108,6 +110,25 @@ const PropertyManagement = () => {
                     required
                   />
                 </div>
+              </div>
+
+              {/* Unit Type Field - UPDATED OPTIONS */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Unit Type *
+                </label>
+                <select
+                  value={formData.unit_type}
+                  onChange={(e) => handleInputChange('unit_type', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="bedsitter">Bedsitter</option>
+                  <option value="studio">Studio</option>
+                  <option value="one_bedroom">One Bedroom</option>
+                  <option value="two_bedroom">Two Bedroom</option>
+                  <option value="three_bedroom">Three Bedroom</option>
+                </select>
               </div>
 
               {/* Address */}
@@ -275,7 +296,8 @@ const PropertyManagement = () => {
           county: editingProperty.county || '',
           town: editingProperty.town || '',
           description: editingProperty.description || '',
-          total_units: editingProperty.total_units || 0
+          total_units: editingProperty.total_units || 0,
+          unit_type: editingProperty.unit_type || 'bedsitter' // Updated default
         } : null}
       />
 

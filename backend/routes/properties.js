@@ -88,7 +88,7 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-// CREATE NEW PROPERTY (POST)
+// CREATE NEW PROPERTY (POST) - UPDATED WITH UNIT_TYPE
 router.post('/', protect, async (req, res) => {
   const client = await pool.connect();
   
@@ -102,7 +102,8 @@ router.post('/', protect, async (req, res) => {
       county, 
       town, 
       description, 
-      total_units 
+      total_units,
+      unit_type = 'bedsitter' // Added unit_type with default
     } = req.body;
     
     console.log('📝 Creating new property with data:', req.body);
@@ -113,6 +114,15 @@ router.post('/', protect, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields: property_code, name, address, county, town, total_units'
+      });
+    }
+
+    // Validate unit_type
+    const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+    if (!validUnitTypes.includes(unit_type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
       });
     }
 
@@ -129,16 +139,16 @@ router.post('/', protect, async (req, res) => {
       });
     }
 
-    // Insert property
+    // Insert property - UPDATED WITH UNIT_TYPE
     const propertyResult = await client.query(
       `INSERT INTO properties 
-        (property_code, name, address, county, town, description, total_units, available_units, created_by) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+        (property_code, name, address, county, town, description, total_units, available_units, unit_type, created_by) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
        RETURNING *`,
-      [property_code, name, address, county, town, description, total_units, total_units, req.user.id]
+      [property_code, name, address, county, town, description, total_units, total_units, unit_type, req.user.id]
     );
 
-    // Create default units if total_units > 0
+    // Create default units if total_units > 0 - UPDATED TO USE PROPERTY'S UNIT_TYPE
     if (total_units > 0) {
       for (let i = 1; i <= total_units; i++) {
         await client.query(
@@ -148,7 +158,7 @@ router.post('/', protect, async (req, res) => {
           [
             propertyResult.rows[0].id,
             `${property_code}-UNIT-${i}`,
-            'residential',
+            unit_type, // Use the property's unit_type instead of hardcoded 'residential'
             i.toString(),
             0, // default rent amount
             0, // default deposit amount
@@ -172,6 +182,14 @@ router.post('/', protect, async (req, res) => {
     await client.query('ROLLBACK');
     console.error('❌ Error creating property:', error);
     
+    // Handle invalid unit_type enum value
+    if (error.code === '22P02') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid unit_type value. Must be one of: bedsitter, studio, one_bedroom, two_bedroom, three_bedroom'
+      });
+    }
+    
     res.status(500).json({ 
       success: false, 
       message: 'Error creating property',
@@ -182,7 +200,7 @@ router.post('/', protect, async (req, res) => {
   }
 });
 
-// UPDATE PROPERTY (PUT)
+// UPDATE PROPERTY (PUT) - UPDATED WITH UNIT_TYPE
 router.put('/:id', protect, async (req, res) => {
   try {
     const { id } = req.params;
@@ -193,7 +211,8 @@ router.put('/:id', protect, async (req, res) => {
       county, 
       town, 
       description, 
-      total_units 
+      total_units,
+      unit_type // Added unit_type
     } = req.body;
 
     // Check if property exists
@@ -207,6 +226,17 @@ router.put('/:id', protect, async (req, res) => {
         success: false, 
         message: 'Property not found' 
       });
+    }
+
+    // Validate unit_type if provided
+    if (unit_type) {
+      const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+      if (!validUnitTypes.includes(unit_type)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
+        });
+      }
     }
 
     // Check if property code is being changed and if it already exists
@@ -224,6 +254,7 @@ router.put('/:id', protect, async (req, res) => {
       }
     }
 
+    // UPDATED QUERY WITH UNIT_TYPE
     const result = await pool.query(
       `UPDATE properties 
        SET property_code = COALESCE($1, property_code),
@@ -233,10 +264,11 @@ router.put('/:id', protect, async (req, res) => {
            town = COALESCE($5, town),
            description = COALESCE($6, description),
            total_units = COALESCE($7, total_units),
+           unit_type = COALESCE($8, unit_type),
            updated_at = NOW()
-       WHERE id = $8 
+       WHERE id = $9 
        RETURNING *`,
-      [property_code, name, address, county, town, description, total_units, id]
+      [property_code, name, address, county, town, description, total_units, unit_type, id]
     );
     
     res.json({ 
@@ -246,6 +278,15 @@ router.put('/:id', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Error updating property:', error);
+    
+    // Handle invalid unit_type enum value
+    if (error.code === '22P02') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid unit_type value. Must be one of: bedsitter, studio, one_bedroom, two_bedroom, three_bedroom'
+      });
+    }
+    
     res.status(500).json({ 
       success: false, 
       message: 'Error updating property',
