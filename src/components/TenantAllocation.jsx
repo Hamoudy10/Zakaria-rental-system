@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useAllocation } from '../context/TenantAllocationContext'
 import { useProperty } from '../context/PropertyContext'
 import { useUser } from '../context/UserContext'
@@ -29,28 +29,33 @@ const TenantAllocation = () => {
     grace_period_days: 7
   })
 
-  // SAFE CHECK: Ensure data is always arrays
-  const safeUsers = Array.isArray(users) ? users : []
-  const safeProperties = Array.isArray(properties) ? properties : []
-  const safeAllocations = Array.isArray(allocations) ? allocations : []
+  // SAFE CHECK: Ensure data is always arrays with useMemo to prevent unnecessary re-renders
+  const safeUsers = React.useMemo(() => Array.isArray(users) ? users : [], [users])
+  const safeProperties = React.useMemo(() => Array.isArray(properties) ? properties : [], [properties])
+  const safeAllocations = React.useMemo(() => Array.isArray(allocations) ? allocations : [], [allocations])
 
   // Get available tenants (users with role 'tenant' and not currently allocated)
-  const availableTenants = safeUsers.filter(user => {
-    const isTenant = user.role === 'tenant'
-    const isAllocated = getActiveAllocations().some(allocation => allocation.tenant_id === user.id)
-    return isTenant && !isAllocated
-  })
+  const availableTenants = React.useMemo(() => {
+    return safeUsers.filter(user => {
+      const isTenant = user.role === 'tenant'
+      const isAllocated = getActiveAllocations().some(allocation => allocation.tenant_id === user.id)
+      return isTenant && !isAllocated
+    })
+  }, [safeUsers, getActiveAllocations])
 
   // Get available units (units that are not occupied)
-  const availableUnits = safeProperties.flatMap(property => {
-    const propertyUnits = Array.isArray(property.units) ? property.units : []
-    return propertyUnits.filter(unit => !unit.is_occupied)
-  })
+  const availableUnits = React.useMemo(() => {
+    return safeProperties.flatMap(property => {
+      const propertyUnits = Array.isArray(property.units) ? property.units : []
+      return propertyUnits.filter(unit => !unit.is_occupied)
+    })
+  }, [safeProperties])
 
-  // Load allocations on component mount
+  // Load allocations on component mount - FIXED: Remove useCallback and use fetchAllocations directly
   useEffect(() => {
+    console.log('🔄 TenantAllocation: Loading allocations...')
     fetchAllocations()
-  }, [fetchAllocations])
+  }, []) // Empty dependency array - only run once on mount
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -95,6 +100,12 @@ const TenantAllocation = () => {
         return
       }
 
+      console.log('📝 Allocating tenant:', {
+        tenant_id: selectedTenant,
+        unit_id: selectedUnit,
+        leaseData
+      })
+
       // Create allocation
       await allocateTenant({
         tenant_id: selectedTenant,
@@ -107,11 +118,14 @@ const TenantAllocation = () => {
       // Update unit occupancy status
       const property = safeProperties.find(p => p.units?.some(u => u.id === selectedUnit))
       if (property) {
-        updateUnit(property.id, selectedUnit, { is_occupied: true })
+        await updateUnit(property.id, selectedUnit, { is_occupied: true })
       }
 
-      alert('Tenant allocated successfully!')
+      // Close modal and refresh data
       setShowAllocationModal(false)
+      await fetchAllocations() // Use fetchAllocations directly instead of loadAllocations
+      
+      alert('Tenant allocated successfully!')
     } catch (error) {
       console.error('Error allocating tenant:', error)
       // Error is already set in context, no need for additional alert
@@ -126,9 +140,11 @@ const TenantAllocation = () => {
         // Update unit occupancy status
         const property = safeProperties.find(p => p.units?.some(u => u.id === unitId))
         if (property) {
-          updateUnit(property.id, unitId, { is_occupied: false })
+          await updateUnit(property.id, unitId, { is_occupied: false })
         }
         
+        // Refresh allocations
+        await fetchAllocations() // Use fetchAllocations directly instead of loadAllocations
         alert('Tenant deallocated successfully!')
       } catch (error) {
         console.error('Error deallocating tenant:', error)
@@ -154,7 +170,7 @@ const TenantAllocation = () => {
     }
   }
 
-  const activeAllocations = getActiveAllocations()
+  const activeAllocations = React.useMemo(() => getActiveAllocations(), [getActiveAllocations])
 
   // Combined loading state
   const isLoading = usersLoading || propertiesLoading || allocationsLoading

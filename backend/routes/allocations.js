@@ -242,7 +242,13 @@ router.get('/tenant/:tenantId', protect, authorize('admin', 'agent', 'tenant'), 
 
 // CREATE NEW ALLOCATION (POST)
 router.post('/', protect, authorize('admin', 'agent'), async (req, res) => {
-  const client = await pool.connect();
+  console.log('=== ALLOCATION POST REQUEST RECEIVED ===');
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
+  console.log('User:', req.user);
+  
+  
+    const client = await pool.connect();
   
   try {
     await client.query('BEGIN');

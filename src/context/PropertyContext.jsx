@@ -53,8 +53,45 @@ export const PropertyProvider = ({ children }) => {
       
       // Handle different response formats
       const propertiesData = response.data?.data || response.data?.properties || response.data || []
-      setProperties(Array.isArray(propertiesData) ? propertiesData : [])
-      console.log(`✅ Successfully fetched ${propertiesData.length} properties`)
+      
+      if (Array.isArray(propertiesData)) {
+        // NEW: Fetch units for each property
+        console.log('🔄 Fetching units for each property...')
+        const propertiesWithUnits = await Promise.all(
+          propertiesData.map(async (property) => {
+            try {
+              // Fetch units for this specific property
+              const unitsResponse = await propertyAPI.getPropertyUnits(property.id)
+              const units = unitsResponse.data?.data || unitsResponse.data?.units || []
+              
+              console.log(`✅ Fetched ${units.length} units for property: ${property.name}`)
+              
+              return {
+                ...property,
+                units: Array.isArray(units) ? units : [],
+                // Ensure available_units is calculated if not provided
+                available_units: property.available_units !== undefined 
+                  ? property.available_units 
+                  : units.filter(unit => !unit.is_occupied).length
+              }
+            } catch (unitError) {
+              console.error(`❌ Error fetching units for property ${property.id}:`, unitError)
+              // Return property with empty units array if units fetch fails
+              return {
+                ...property,
+                units: [],
+                available_units: property.available_units || 0
+              }
+            }
+          })
+        )
+        
+        setProperties(propertiesWithUnits)
+        console.log(`✅ Successfully fetched ${propertiesWithUnits.length} properties with units`)
+      } else {
+        console.warn('⚠️ Properties data is not an array:', propertiesData)
+        setProperties([])
+      }
     } catch (err) {
       console.error('❌ Error fetching properties:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch properties'
@@ -69,6 +106,51 @@ export const PropertyProvider = ({ children }) => {
       setLoading(false)
     }
   }, [checkAuth, properties.length])
+
+  // Fetch units for a specific property
+  const fetchPropertyUnits = useCallback(async (propertyId) => {
+    if (!checkAuth()) {
+      throw new Error('User not authenticated')
+    }
+
+    try {
+      console.log(`🔄 Fetching units for property ${propertyId}...`)
+      const response = await propertyAPI.getPropertyUnits(propertyId)
+      const units = response.data?.data || response.data?.units || []
+      
+      if (!Array.isArray(units)) {
+        throw new Error('Invalid units data format')
+      }
+
+      // Update the property in the state with new units
+      setProperties(prev => prev.map(property => 
+        property.id === propertyId 
+          ? { 
+              ...property, 
+              units: units,
+              available_units: units.filter(unit => !unit.is_occupied).length
+            }
+          : property
+      ))
+
+      // Update selected property if it's the one we're updating
+      if (selectedProperty && selectedProperty.id === propertyId) {
+        setSelectedProperty(prev => ({
+          ...prev,
+          units: units,
+          available_units: units.filter(unit => !unit.is_occupied).length
+        }))
+      }
+
+      console.log(`✅ Successfully fetched ${units.length} units for property ${propertyId}`)
+      return units
+    } catch (err) {
+      console.error('❌ Error fetching property units:', err)
+      const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch property units'
+      setError(errorMessage)
+      throw err
+    }
+  }, [checkAuth, selectedProperty])
 
   // Fetch single property with units and details - ONLY WHEN AUTHENTICATED
   const fetchProperty = useCallback(async (propertyId) => {
@@ -85,13 +167,21 @@ export const PropertyProvider = ({ children }) => {
       const propertyData = response.data?.data || response.data
       
       if (propertyData) {
-        setSelectedProperty(propertyData)
+        // Fetch units for this property
+        const units = await fetchPropertyUnits(propertyId)
+        const propertyWithUnits = {
+          ...propertyData,
+          units: units,
+          available_units: units.filter(unit => !unit.is_occupied).length
+        }
+        
+        setSelectedProperty(propertyWithUnits)
         // Also update the property in the properties list
         setProperties(prev => prev.map(p => 
-          p.id === propertyId ? { ...p, ...propertyData } : p
+          p.id === propertyId ? { ...p, ...propertyWithUnits } : p
         ))
-        console.log(`✅ Successfully fetched property: ${propertyData.name}`)
-        return propertyData
+        console.log(`✅ Successfully fetched property: ${propertyData.name} with ${units.length} units`)
+        return propertyWithUnits
       } else {
         throw new Error('Property not found')
       }
@@ -108,7 +198,7 @@ export const PropertyProvider = ({ children }) => {
     } finally {
       setLoading(false)
     }
-  }, [checkAuth])
+  }, [checkAuth, fetchPropertyUnits])
 
   // Add new property via API - ONLY WHEN AUTHENTICATED - UPDATED FOR UNIT_TYPE
   const addProperty = useCallback(async (propertyData) => {
@@ -237,33 +327,8 @@ export const PropertyProvider = ({ children }) => {
         throw new Error('Invalid response from server')
       }
 
-      // Update the properties state to include the new unit
-      setProperties(prev => prev.map(property => {
-        if (property.id === propertyId) {
-          const currentUnits = property.units || []
-          const updatedUnits = [...currentUnits, newUnit]
-          return {
-            ...property,
-            units: updatedUnits,
-            // Update available units count
-            available_units: updatedUnits.filter(unit => !unit.is_occupied).length
-          }
-        }
-        return property
-      }))
-
-      // If selected property is the one we're adding to, update it too
-      if (selectedProperty && selectedProperty.id === propertyId) {
-        setSelectedProperty(prev => {
-          const currentUnits = prev.units || []
-          const updatedUnits = [...currentUnits, newUnit]
-          return {
-            ...prev,
-            units: updatedUnits,
-            available_units: updatedUnits.filter(unit => !unit.is_occupied).length
-          }
-        })
-      }
+      // Refresh the units for this property to ensure we have the latest data
+      await fetchPropertyUnits(propertyId)
 
       console.log(`✅ Successfully added unit: ${newUnit.unit_number}`)
       return newUnit
@@ -280,7 +345,7 @@ export const PropertyProvider = ({ children }) => {
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, selectedProperty])
+  }, [checkAuth, fetchPropertyUnits])
 
   // Update unit via API - ONLY WHEN AUTHENTICATED
   const updateUnit = useCallback(async (propertyId, unitId, updates) => {
@@ -641,6 +706,7 @@ export const PropertyProvider = ({ children }) => {
     updateUnit,
     deleteUnit,
     updateUnitOccupancy,
+    fetchPropertyUnits,
     
     // Utility functions
     getPropertyStats,
@@ -667,6 +733,7 @@ export const PropertyProvider = ({ children }) => {
     updateUnit,
     deleteUnit,
     updateUnitOccupancy,
+    fetchPropertyUnits,
     getPropertyStats,
     searchProperties,
     getUnitsByProperty,

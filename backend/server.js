@@ -1,10 +1,7 @@
-// server.js - ALTERNATIVE VERSION WITH SEPARATE UNITS LOADING
+// server.js - FIXED VERSION
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const allocationsRoutes = require('./routes/allocations');
-const unitsRoutes = require('./routes/units');
-
 
 const app = express();
 
@@ -26,7 +23,7 @@ app.get('/api/test', (req, res) => {
 // Import and use all routes with better error handling
 console.log('Loading routes...');
 
-// Always load auth first (we know it works)
+// Always load auth first
 app.use('/api/auth', require('./routes/auth'));
 console.log('✅ Auth routes loaded');
 
@@ -65,8 +62,8 @@ coreRoutes.forEach(route => {
   }
 });
 
-// Load units routes separately with special handling
-console.log('🔄 Loading Units routes from: ./routes/units');
+// Load units routes with proper error handling
+console.log('🔄 Loading Units routes...');
 try {
   const unitsRoutes = require('./routes/units');
   
@@ -79,7 +76,6 @@ try {
   
 } catch (error) {
   console.log(`❌ Units routes failed: ${error.message}`);
-  console.log('🔍 Full error for Units:', error);
   
   // Create fallback routes for units
   app.use('/api/properties/:propertyId/units', (req, res) => {
@@ -89,7 +85,31 @@ try {
     });
   });
 }
-app.use('/api/allocations', allocationsRoutes);
+
+// Load allocations routes with proper error handling - FIXED
+console.log('🔄 Loading Allocations routes...');
+try {
+  const allocationsRoutes = require('./routes/allocations');
+  
+  if (typeof allocationsRoutes !== 'function') {
+    throw new Error(`Expected a function but got: ${typeof allocationsRoutes}`);
+  }
+  
+  app.use('/api/allocations', allocationsRoutes);
+  console.log('✅ Allocations routes loaded');
+  
+} catch (error) {
+  console.log(`❌ Allocations routes failed: ${error.message}`);
+  console.log('🔍 Full error for Allocations:', error);
+  
+  // Create fallback routes for allocations
+  app.use('/api/allocations', (req, res) => {
+    res.status(500).json({
+      success: false,
+      message: `Allocations routes are temporarily unavailable: ${error.message}`
+    });
+  });
+}
 
 console.log('=== ALL ROUTES ATTEMPTED ===');
 
@@ -116,4 +136,5 @@ app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`🔗 Test URL: http://localhost:${PORT}/api/test`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🔗 Allocations endpoint: http://localhost:${PORT}/api/allocations`);
 });
