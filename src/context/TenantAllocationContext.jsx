@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useCallback } from 'react';
-import { tenantAllocationAPI } from '../services/api';
+import { allocationAPI } from '../services/api';
 
 const TenantAllocationContext = createContext(undefined);
 
@@ -22,10 +22,15 @@ export const AllocationProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await tenantAllocationAPI.getAllocations();
-      setAllocations(response.data.allocations || []);
+      console.log('🔄 Fetching allocations...');
+      const response = await allocationAPI.getAllocations();
+      
+      // Handle different response formats
+      const allocationsData = response.data?.data || response.data?.allocations || response.data || [];
+      setAllocations(Array.isArray(allocationsData) ? allocationsData : []);
+      console.log(`✅ Successfully fetched ${allocationsData.length} allocations`);
     } catch (err) {
-      console.error('Error fetching allocations:', err);
+      console.error('❌ Error fetching allocations:', err);
       setError('Failed to fetch allocations');
       setAllocations([]);
     } finally {
@@ -33,57 +38,47 @@ export const AllocationProvider = ({ children }) => {
     }
   }, []);
 
-  // Create new allocation
+  // Create new allocation - FIXED: Using allocationAPI instead of api
   const allocateTenant = useCallback(async (allocationData) => {
     setLoading(true);
     setError(null);
     try {
-      // Simulate API call until backend is implemented
-      const newAllocation = {
-        id: Math.random().toString(36).substr(2, 9),
-        ...allocationData,
-        is_active: true,
-        allocation_date: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        tenant: {
-          id: allocationData.tenant_id,
-          first_name: 'Tenant',
-          last_name: 'User',
-          phone_number: '254700000000'
-        },
-        unit: {
-          id: allocationData.unit_id,
-          unit_code: 'UNIT001',
-          property: {
-            name: 'Sample Property'
-          }
-        }
-      };
+      console.log('🏠 Creating allocation with data:', allocationData);
+      const response = await allocationAPI.createAllocation(allocationData);
       
-      setAllocations(prev => [...prev, newAllocation]);
-      return newAllocation;
-    } catch (err) {
-      console.error('Error creating allocation:', err);
-      setError('Failed to create allocation');
-      throw err;
+      // Refetch allocations to update UI
+      await fetchAllocations();
+      console.log('✅ Successfully allocated tenant');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error allocating tenant:', error);
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to allocate tenant';
+      setError(errorMessage);
+      throw error;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchAllocations]);
 
   // Deallocate tenant (soft delete)
   const deallocateTenant = useCallback(async (allocationId) => {
     setLoading(true);
     setError(null);
     try {
+      console.log(`🔄 Deallocating tenant from allocation: ${allocationId}`);
+      await allocationAPI.deallocateTenant(allocationId);
+      
+      // Update local state to mark as inactive
       setAllocations(prev => prev.map(allocation => 
         allocation.id === allocationId 
           ? { ...allocation, is_active: false, lease_end_date: new Date().toISOString() }
           : allocation
       ));
+      console.log('✅ Successfully deallocated tenant');
     } catch (err) {
-      console.error('Error deallocating tenant:', err);
-      setError('Failed to deallocate tenant');
+      console.error('❌ Error deallocating tenant:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to deallocate tenant';
+      setError(errorMessage);
       throw err;
     } finally {
       setLoading(false);
@@ -100,30 +95,114 @@ export const AllocationProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
+      console.log(`🔄 Updating allocation: ${allocationId}`, updates);
+      const response = await allocationAPI.updateAllocation(allocationId, updates);
+      const updatedAllocation = response.data?.data || response.data;
+      
       setAllocations(prev => prev.map(allocation => 
-        allocation.id === allocationId ? { ...allocation, ...updates } : allocation
+        allocation.id === allocationId ? { ...allocation, ...updatedAllocation } : allocation
       ));
+      console.log('✅ Successfully updated allocation');
+      return updatedAllocation;
     } catch (err) {
-      console.error('Error updating allocation:', err);
-      setError('Failed to update allocation');
+      console.error('❌ Error updating allocation:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to update allocation';
+      setError(errorMessage);
       throw err;
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Get allocation by ID
+  const getAllocation = useCallback(async (allocationId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      console.log(`🔄 Fetching allocation: ${allocationId}`);
+      const response = await allocationAPI.getAllocation(allocationId);
+      const allocation = response.data?.data || response.data;
+      
+      if (allocation) {
+        setSelectedAllocation(allocation);
+        console.log('✅ Successfully fetched allocation');
+        return allocation;
+      } else {
+        throw new Error('Allocation not found');
+      }
+    } catch (err) {
+      console.error('❌ Error fetching allocation:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch allocation';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Get allocations by tenant ID
+  const getTenantAllocations = useCallback(async (tenantId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      console.log(`🔄 Fetching allocations for tenant: ${tenantId}`);
+      const response = await allocationAPI.getAllocationsByTenantId(tenantId);
+      const tenantAllocations = response.data?.data || response.data?.allocations || [];
+      console.log(`✅ Found ${tenantAllocations.length} allocations for tenant`);
+      return Array.isArray(tenantAllocations) ? tenantAllocations : [];
+    } catch (err) {
+      console.error('❌ Error fetching tenant allocations:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch tenant allocations';
+      setError(errorMessage);
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Get allocation statistics
+  const getAllocationStats = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      console.log('🔄 Fetching allocation statistics...');
+      const response = await allocationAPI.getAllocationStats();
+      const stats = response.data?.data || response.data || {};
+      console.log('✅ Successfully fetched allocation statistics');
+      return stats;
+    } catch (err) {
+      console.error('❌ Error fetching allocation statistics:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch allocation statistics';
+      setError(errorMessage);
+      return {};
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Clear error
+  const clearError = useCallback(() => setError(null), []);
+
   const value = React.useMemo(() => ({
+    // State
     allocations,
     loading,
     error,
     selectedAllocation,
+    
+    // Setters
     setSelectedAllocation,
+    
+    // Actions
     fetchAllocations,
     allocateTenant,
     deallocateTenant,
     getActiveAllocations,
     updateAllocation,
-    clearError: () => setError(null)
+    getAllocation,
+    getTenantAllocations,
+    getAllocationStats,
+    clearError
   }), [
     allocations,
     loading,
@@ -133,7 +212,11 @@ export const AllocationProvider = ({ children }) => {
     allocateTenant,
     deallocateTenant,
     getActiveAllocations,
-    updateAllocation
+    updateAllocation,
+    getAllocation,
+    getTenantAllocations,
+    getAllocationStats,
+    clearError
   ]);
 
   return (

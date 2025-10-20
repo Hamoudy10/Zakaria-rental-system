@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useCallback } from 'react';
-import { enhancedPaymentAPI, mpesaUtils, mockMpesaAPI } from '../services/api';
+import { paymentAPI, mpesaUtils, mockMpesaAPI } from '../services/api';
 
 const PaymentContext = createContext(undefined);
 
@@ -27,7 +27,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.getPayments();
+      const response = await paymentAPI.getPayments();
       setPayments(response.data.payments || []);
     } catch (err) {
       console.error('Error fetching payments:', err);
@@ -43,7 +43,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.getTenantPayments(tenantId);
+      const response = await paymentAPI.getTenantPayments(tenantId);
       return response.data.payments || [];
     } catch (err) {
       console.error('Error fetching tenant payments:', err);
@@ -59,7 +59,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.getTenantAllocations(tenantId);
+      const response = await paymentAPI.getTenantAllocations(tenantId);
       const allocations = response.data.allocations || [];
       // Return the first active allocation
       return allocations.find(allocation => allocation.is_active) || allocations[0] || null;
@@ -96,7 +96,7 @@ export const PaymentProvider = ({ children }) => {
       } else {
         // Use real M-Pesa API for production
         console.log('Using real M-Pesa API for production');
-        result = await enhancedPaymentAPI.processMpesaPayment(formattedPaymentData);
+        result = await paymentAPI.processMpesaPayment(formattedPaymentData);
       }
 
       if (result.success) {
@@ -144,7 +144,7 @@ export const PaymentProvider = ({ children }) => {
           };
 
           try {
-            const response = await enhancedPaymentAPI.createPayment(paymentRecord);
+            const response = await paymentAPI.createPayment(paymentRecord);
             resolve({
               success: true,
               mpesa_receipt: paymentRecord.mpesa_receipt_number,
@@ -173,7 +173,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.checkPaymentStatus(checkoutRequestId);
+      const response = await paymentAPI.checkPaymentStatus(checkoutRequestId);
       return response.data;
     } catch (err) {
       console.error('Error checking payment status:', err);
@@ -210,7 +210,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.createPayment(paymentData);
+      const response = await paymentAPI.createPayment(paymentData);
       if (response.success) {
         await fetchPayments();
         return response.data;
@@ -230,7 +230,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.updatePayment(paymentId, updates);
+      const response = await paymentAPI.updatePayment(paymentId, updates);
       if (response.success) {
         await fetchPayments();
         return response.data;
@@ -250,7 +250,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.deletePayment(paymentId);
+      const response = await paymentAPI.deletePayment(paymentId);
       if (response.success) {
         // Remove payment from local state
         setPayments(prev => prev.filter(payment => payment.id !== paymentId));
@@ -271,7 +271,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.confirmPayment(paymentId);
+      const response = await paymentAPI.confirmPayment(paymentId);
       if (response.success) {
         await fetchPayments();
         return response.data;
@@ -336,7 +336,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.getPaymentStats();
+      const response = await paymentAPI.getPaymentStats();
       return response.data;
     } catch (err) {
       console.error('Error fetching payment statistics:', err);
@@ -352,7 +352,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.getUnitPayments(unitId);
+      const response = await paymentAPI.getUnitPayments(unitId);
       return response.data.payments || [];
     } catch (err) {
       console.error('Error fetching unit payments:', err);
@@ -368,7 +368,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await enhancedPaymentAPI.generateReport(reportData);
+      const response = await paymentAPI.generateReport(reportData);
       return response.data;
     } catch (err) {
       console.error('Error generating payment report:', err);

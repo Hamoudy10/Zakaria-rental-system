@@ -23,32 +23,18 @@ api.interceptors.request.use(
   }
 );
 
-// Handle responses
+// Response interceptor for error handling
 api.interceptors.response.use(
-  (response) => {
-    console.log('✅ API Response:', {
-      url: response.config.url,
-      status: response.status,
-      data: response.data
-    });
-    return response;
-  },
+  (response) => response,
   (error) => {
-    console.error('❌ API Error:', {
-      url: error.config?.url,
-      status: error.response?.status,
-      message: error.response?.data?.message || error.message
-    });
-    
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
-      localStorage.removeItem('user');
       window.location.href = '/login';
     }
-    
     return Promise.reject(error);
   }
 );
+
 // M-Pesa utility functions
 export const mpesaUtils = {
   formatPhoneNumber: (phone) => {
@@ -86,6 +72,7 @@ export const authAPI = {
   register: (userData) => api.post('/auth/register', userData),
   logout: () => api.post('/auth/logout'),
   refreshToken: () => api.post('/auth/refresh'),
+  getProfile: () => api.get('/auth/profile'),
 };
 
 export const userAPI = {
@@ -96,17 +83,22 @@ export const userAPI = {
   deleteUser: (id) => api.delete(`/users/${id}`),
   updateProfile: (updates) => api.put('/users/profile', updates),
   changePassword: (passwordData) => api.put('/users/change-password', passwordData),
+  getAgents: () => api.get('/users/role/agent'),
+  getTenants: () => api.get('/users/role/tenant'),
 };
 
 export const propertyAPI = {
+  // Property operations
   getProperties: () => api.get('/properties'),
   getProperty: (id) => api.get(`/properties/${id}`),
   createProperty: (propertyData) => api.post('/properties', propertyData),
   updateProperty: (id, updates) => api.put(`/properties/${id}`, updates),
   deleteProperty: (id) => api.delete(`/properties/${id}`),
+  
+  // Unit operations - FIXED: Using the correct endpoint structure
   getPropertyUnits: (propertyId) => api.get(`/properties/${propertyId}/units`),
   getAvailableUnits: () => api.get('/properties/units/available'),
-   addUnit: (propertyId, unitData) => api.post(`/properties/${propertyId}/units`, unitData),
+  addUnit: (propertyId, unitData) => api.post(`/properties/${propertyId}/units`, unitData),
   updateUnit: (propertyId, unitId, updates) => api.put(`/properties/${propertyId}/units/${unitId}`, updates),
   deleteUnit: (propertyId, unitId) => api.delete(`/properties/${propertyId}/units/${unitId}`),
   updateUnitOccupancy: (propertyId, unitId, occupancyData) => 
@@ -115,9 +107,32 @@ export const propertyAPI = {
   // Statistics and search
   getPropertyStats: () => api.get('/properties/stats/overview'),
   searchProperties: (searchTerm) => api.get(`/properties/search?q=${encodeURIComponent(searchTerm)}`),
+  
+  // Additional unit endpoints that might be needed
+  getUnit: (propertyId, unitId) => api.get(`/properties/${propertyId}/units/${unitId}`),
+  getUnitsByType: (unitType) => api.get(`/properties/units/type/${unitType}`),
+};
+
+export const allocationAPI = {
+  // Tenant allocation operations - FIXED: Using correct endpoints
+  getAllocations: (params = {}) => api.get('/allocations', { params }),
+  getAllocation: (id) => api.get(`/allocations/${id}`),
+  getAllocationsByTenantId: (tenantId) => api.get(`/allocations/tenant/${tenantId}`),
+  getAllocationsByUnitId: (unitId) => api.get(`/allocations/unit/${unitId}`),
+  createAllocation: (allocationData) => api.post('/allocations', allocationData),
+  updateAllocation: (id, updates) => api.put(`/allocations/${id}`, updates),
+  deleteAllocation: (id) => api.delete(`/allocations/${id}`),
+  deallocateTenant: (id) => api.put(`/allocations/${id}`, { is_active: false }),
+  
+  // Statistics and additional endpoints
+  getAllocationStats: () => api.get('/allocations/stats/overview'),
+  getMyAllocation: () => api.get('/allocations/my/allocation'),
+  getActiveAllocations: () => api.get('/allocations?is_active=true'),
+  getExpiringAllocations: () => api.get('/allocations?expiring_soon=true'),
 };
 
 export const paymentAPI = {
+  // Payment operations
   getPayments: () => api.get('/payments'),
   getPayment: (id) => api.get(`/payments/${id}`),
   getPaymentsByTenantId: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
@@ -125,30 +140,19 @@ export const paymentAPI = {
   confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
   getPaymentHistory: (tenantId) => api.get(`/payments/history/${tenantId}`),
   generateReceipt: (paymentId) => api.get(`/payments/${paymentId}/receipt`),
-    // Unit operations
-  addUnit: (propertyId, unitData) => api.post(`/properties/${propertyId}/units`, unitData),
-  updateUnit: (propertyId, unitId, updates) => api.put(`/properties/${propertyId}/units/${unitId}`, updates),
-  deleteUnit: (propertyId, unitId) => api.delete(`/properties/${propertyId}/units/${unitId}`),
-  updateUnitOccupancy: (propertyId, unitId, occupancyData) => 
-    api.patch(`/properties/${propertyId}/units/${unitId}/occupancy`, occupancyData),
+  deletePayment: (paymentId) => api.delete(`/payments/${paymentId}`),
   
-  // Statistics and search
-  getPropertyStats: () => api.get('/properties/stats/overview'),
-  searchProperties: (searchTerm) => api.get(`/properties/search?q=${encodeURIComponent(searchTerm)}`),
-};
-
-// Enhanced payment API with M-Pesa functionality
-export const enhancedPaymentAPI = {
-  ...paymentAPI,
+  // M-Pesa specific payments
   processMpesaPayment: (paymentData) => api.post('/payments/mpesa', paymentData),
   processMpesaDeposit: (depositData) => api.post('/payments/mpesa/deposit', depositData),
   verifyMpesaTransaction: (transactionId) => api.get(`/payments/mpesa/verify/${transactionId}`),
   getMpesaTransactions: () => api.get('/payments/mpesa/transactions'),
-  deletePayment: (paymentId) => api.delete(`/payments/${paymentId}`),
+  
+  // Statistics and reports
   getPaymentStats: () => api.get('/payments/stats/overview'),
   getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
-  generateReport: (reportData) => api.post('/reports', reportData),
-  // ... other functions ...
+  getPendingPayments: () => api.get('/payments?status=pending'),
+  getOverduePayments: () => api.get('/payments?status=overdue'),
 };
 
 // Mock M-Pesa API for testing
@@ -159,29 +163,19 @@ export const mockMpesaAPI = {
   simulateCallback: (callbackData) => api.post('/payments/mpesa/simulate-callback', callbackData),
 };
 
-// Tenant allocation API
-export const tenantAllocationAPI = {
-  getAllocations: () => api.get('/allocations'),
-  getAllocation: (id) => api.get(`/allocations/${id}`),
-  getAllocationsByTenantId: (tenantId) => api.get(`/allocations/tenant/${tenantId}`),
-  getAllocationsByUnitId: (unitId) => api.get(`/allocations/unit/${unitId}`),
-  createAllocation: (allocationData) => api.post('/allocations', allocationData),
-  updateAllocation: (id, updates) => api.put(`/allocations/${id}`, updates),
-  deleteAllocation: (id) => api.delete(`/allocations/${id}`),
-  terminateAllocation: (id, terminationData) => api.post(`/allocations/${id}/terminate`, terminationData),
-};
-
 // Settings API
 export const settingsAPI = {
   getSettings: () => api.get('/admin/settings'),
   getSetting: (key) => api.get(`/admin/settings/${key}`),
   updateSetting: (key, value) => api.put(`/admin/settings/${key}`, { value }),
   updateMultipleSettings: (settingsData) => api.put('/admin/settings', settingsData),
+  getSystemSettings: () => api.get('/admin/settings/system'),
+  updateSystemSettings: (settings) => api.put('/admin/settings/system', settings),
 };
 
 // Complaint API
 export const complaintAPI = {
-  getComplaints: () => api.get('/complaints'),
+  getComplaints: (params = {}) => api.get('/complaints', { params }),
   getComplaint: (id) => api.get(`/complaints/${id}`),
   createComplaint: (complaintData) => api.post('/complaints', complaintData),
   updateComplaint: (id, updates) => api.put(`/complaints/${id}`, updates),
@@ -191,6 +185,8 @@ export const complaintAPI = {
   getTenantComplaints: (tenantId) => api.get(`/complaints/tenant/${tenantId}`),
   getAgentComplaints: (agentId) => api.get(`/complaints/agent/${agentId}`),
   getComplaintUpdates: (complaintId) => api.get(`/complaints/${complaintId}/updates`),
+  getComplaintStats: () => api.get('/complaints/stats/overview'),
+  updateComplaintStatus: (id, status) => api.patch(`/complaints/${id}/status`, { status }),
 };
 
 // Report API
@@ -200,6 +196,9 @@ export const reportAPI = {
   getReport: (id) => api.get(`/reports/${id}`),
   downloadReport: (id) => api.get(`/reports/${id}/download`, { responseType: 'blob' }),
   getReportTypes: () => api.get('/reports/types'),
+  getPaymentReports: () => api.get('/reports/payments'),
+  getOccupancyReports: () => api.get('/reports/occupancy'),
+  getFinancialReports: (params) => api.get('/reports/financial', { params }),
 };
 
 // Notification API
@@ -210,6 +209,8 @@ export const notificationAPI = {
   markAllAsRead: () => api.put('/notifications/read-all'),
   getNotificationPreferences: () => api.get('/notifications/preferences'),
   updateNotificationPreferences: (preferences) => api.put('/notifications/preferences', preferences),
+  getNotificationCount: () => api.get('/notifications/count'),
+  clearAll: () => api.delete('/notifications'),
 };
 
 // Salary Payment API
@@ -221,6 +222,45 @@ export const salaryPaymentAPI = {
   processSalaryPayment: (id) => api.post(`/salary-payments/${id}/process`),
   getAgentSalaryPayments: (agentId) => api.get(`/salary-payments/agent/${agentId}`),
   processMpesaSalary: (salaryData) => api.post('/salary-payments/mpesa', salaryData),
+  getSalaryStats: () => api.get('/salary-payments/stats/overview'),
+};
+
+// Dashboard API for consolidated data
+export const dashboardAPI = {
+  getAdminDashboard: () => api.get('/dashboard/admin'),
+  getAgentDashboard: () => api.get('/dashboard/agent'),
+  getTenantDashboard: () => api.get('/dashboard/tenant'),
+  getOverviewStats: () => api.get('/dashboard/stats/overview'),
+  getRecentActivity: () => api.get('/dashboard/activity/recent'),
+};
+
+// File Upload API
+export const fileAPI = {
+  uploadImage: (formData) => api.post('/upload/image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  uploadDocument: (formData) => api.post('/upload/document', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  deleteFile: (filePath) => api.delete('/upload/file', { data: { filePath } }),
+};
+
+// Export all APIs in a single object for easy importing
+export const API = {
+  auth: authAPI,
+  users: userAPI,
+  properties: propertyAPI,
+  allocations: allocationAPI,
+  payments: paymentAPI,
+  complaints: complaintAPI,
+  reports: reportAPI,
+  notifications: notificationAPI,
+  salary: salaryPaymentAPI,
+  settings: settingsAPI,
+  dashboard: dashboardAPI,
+  files: fileAPI,
+  mpesa: mpesaUtils,
+  mockMpesa: mockMpesaAPI,
 };
 
 export default api;
