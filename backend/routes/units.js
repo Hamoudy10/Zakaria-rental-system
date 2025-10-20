@@ -187,8 +187,7 @@ router.put('/properties/:propertyId/units/:unitId', protect, async (req, res) =>
            rent_amount = COALESCE($4, rent_amount),
            deposit_amount = COALESCE($5, deposit_amount),
            description = COALESCE($6, description),
-           features = COALESCE($7, features),
-           updated_at = NOW()
+           features = COALESCE($7, features)
        WHERE id = $8 AND property_id = $9
        RETURNING *`,
       [
@@ -318,7 +317,7 @@ router.patch('/properties/:propertyId/units/:unitId/occupancy', protect, async (
     // Update unit occupancy
     const result = await client.query(
       `UPDATE property_units 
-       SET is_occupied = $1, updated_at = NOW()
+       SET is_occupied = $1
        WHERE id = $2 AND property_id = $3
        RETURNING *`,
       [is_occupied, unitId, propertyId]

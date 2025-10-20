@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useCallback } from 'react';
+import React, { createContext, useState, useContext, useCallback, useEffect } from 'react';
 import { userAPI } from '../services/api';
 
 const UserContext = createContext(undefined);
@@ -17,105 +17,156 @@ export const UserProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
 
-  // Fetch all users
+  // Fetch all users - FIXED: Proper error handling and API integration
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      console.log('🔄 Fetching users from API...');
       const response = await userAPI.getUsers();
-      setUsers(response.data.users || []);
+      
+      // Handle different response formats
+      const usersData = response.data?.users || response.data?.data || response.data || [];
+      setUsers(Array.isArray(usersData) ? usersData : []);
+      console.log(`✅ Successfully fetched ${usersData.length} users`);
     } catch (err) {
-      console.error('Error fetching users:', err);
-      setError('Failed to fetch users');
-      setUsers([]);
+      console.error('❌ Error fetching users:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch users';
+      setError(errorMessage);
+      // Don't set users to empty array on error - keep existing data
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Create new user
+  // Create new user - FIXED: Use real API
   const createUser = useCallback(async (userData) => {
     setLoading(true);
     setError(null);
     try {
-      // Simulate API call until backend is implemented
-      const newUser = {
-        id: Math.random().toString(36).substr(2, 9),
-        ...userData,
-        is_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
+      console.log('📝 Creating user:', userData);
+      const response = await userAPI.createUser(userData);
+      const newUser = response.data?.user || response.data?.data || response.data;
       
+      // Add new user to local state
       setUsers(prev => [...prev, newUser]);
+      console.log('✅ User created successfully');
       return newUser;
     } catch (err) {
-      console.error('Error creating user:', err);
-      setError('Failed to create user');
+      console.error('❌ Error creating user:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to create user';
+      setError(errorMessage);
       throw err;
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Update user
+  // Update user - FIXED: Use real API
   const updateUser = useCallback(async (userId, updates) => {
     setLoading(true);
     setError(null);
     try {
+      console.log(`🔄 Updating user ${userId}:`, updates);
+      const response = await userAPI.updateUser(userId, updates);
+      const updatedUser = response.data?.user || response.data?.data || response.data;
+      
+      // Update local state
       setUsers(prev => prev.map(user => 
-        user.id === userId ? { ...user, ...updates, updated_at: new Date().toISOString() } : user
+        user.id === userId ? { ...user, ...updatedUser } : user
       ));
       
       if (selectedUser && selectedUser.id === userId) {
-        setSelectedUser(prev => ({ ...prev, ...updates }));
+        setSelectedUser(prev => ({ ...prev, ...updatedUser }));
       }
+      
+      console.log('✅ User updated successfully');
+      return updatedUser;
     } catch (err) {
-      console.error('Error updating user:', err);
-      setError('Failed to update user');
+      console.error('❌ Error updating user:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to update user';
+      setError(errorMessage);
       throw err;
     } finally {
       setLoading(false);
     }
   }, [selectedUser]);
 
-  // Delete user (soft delete)
+  // Delete user (soft delete) - FIXED: Use real API
   const deleteUser = useCallback(async (userId) => {
     setLoading(true);
     setError(null);
     try {
+      console.log(`🗑️ Deleting user ${userId}`);
+      await userAPI.deleteUser(userId);
+      
+      // Update local state to mark as inactive
       setUsers(prev => prev.map(user => 
         user.id === userId ? { ...user, is_active: false } : user
       ));
+      
+      console.log('✅ User deleted successfully');
     } catch (err) {
-      console.error('Error deleting user:', err);
-      setError('Failed to delete user');
+      console.error('❌ Error deleting user:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to delete user';
+      setError(errorMessage);
       throw err;
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Get available tenants (users with role 'tenant' and without active allocations)
+  const getAvailableTenants = useCallback(() => {
+    return users.filter(user => 
+      user.role === 'tenant' && 
+      user.is_active === true
+    );
+  }, [users]);
+
+  // Get user by ID
+  const getUserById = useCallback((userId) => {
+    return users.find(user => user.id === userId);
+  }, [users]);
+
+  // Clear error
+  const clearError = useCallback(() => setError(null), []);
+
+  // Fetch users on component mount
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
   const value = React.useMemo(() => ({
+    // State
     users,
     loading,
     error,
     selectedUser,
+    
+    // Computed values
+    availableTenants: getAvailableTenants(),
+    
+    // Actions
     setSelectedUser,
     fetchUsers,
     createUser,
     updateUser,
     deleteUser,
-    clearError: () => setError(null)
+    getUserById,
+    clearError
   }), [
     users,
     loading,
     error,
     selectedUser,
+    getAvailableTenants,
     fetchUsers,
     createUser,
     updateUser,
-    deleteUser
+    deleteUser,
+    getUserById,
+    clearError
   ]);
 
   return (

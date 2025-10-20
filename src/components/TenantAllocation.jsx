@@ -4,7 +4,8 @@ import { useProperty } from '../context/PropertyContext'
 import { useUser } from '../context/UserContext'
 
 const TenantAllocation = () => {
-  const { users, loading: usersLoading } = useUser()
+  // Use availableTenants directly from UserContext instead of computing it here
+  const { users, availableTenants, loading: usersLoading } = useUser()
   const { properties, updateUnit, loading: propertiesLoading } = useProperty()
   const { 
     allocations, 
@@ -20,6 +21,7 @@ const TenantAllocation = () => {
   const [showAllocationModal, setShowAllocationModal] = useState(false)
   const [selectedTenant, setSelectedTenant] = useState('')
   const [selectedUnit, setSelectedUnit] = useState('')
+  const [allocationError, setAllocationError] = useState('')
   const [leaseData, setLeaseData] = useState({
     lease_start_date: '',
     lease_end_date: '',
@@ -33,15 +35,7 @@ const TenantAllocation = () => {
   const safeUsers = React.useMemo(() => Array.isArray(users) ? users : [], [users])
   const safeProperties = React.useMemo(() => Array.isArray(properties) ? properties : [], [properties])
   const safeAllocations = React.useMemo(() => Array.isArray(allocations) ? allocations : [], [allocations])
-
-  // Get available tenants (users with role 'tenant' and not currently allocated)
-  const availableTenants = React.useMemo(() => {
-    return safeUsers.filter(user => {
-      const isTenant = user.role === 'tenant'
-      const isAllocated = getActiveAllocations().some(allocation => allocation.tenant_id === user.id)
-      return isTenant && !isAllocated
-    })
-  }, [safeUsers, getActiveAllocations])
+  const safeAvailableTenants = React.useMemo(() => Array.isArray(availableTenants) ? availableTenants : [], [availableTenants])
 
   // Get available units (units that are not occupied)
   const availableUnits = React.useMemo(() => {
@@ -51,17 +45,54 @@ const TenantAllocation = () => {
     })
   }, [safeProperties])
 
-  // Load allocations on component mount - FIXED: Remove useCallback and use fetchAllocations directly
+  // Enhanced: Get tenant name by ID with fallback
+  const getTenantName = useCallback((tenantId) => {
+    if (!tenantId) return { firstName: 'Unknown', lastName: 'Tenant' }
+    
+    const tenant = safeUsers.find(user => user.id === tenantId)
+    if (!tenant) return { firstName: 'Unknown', lastName: 'Tenant' }
+    
+    return {
+      firstName: tenant.first_name || 'Unknown',
+      lastName: tenant.last_name || 'Tenant',
+      phone: tenant.phone_number || 'N/A',
+      email: tenant.email || 'N/A'
+    }
+  }, [safeUsers])
+
+  // Enhanced: Get unit details by ID with fallback
+  const getUnitDetails = useCallback((unitId) => {
+    if (!unitId) return { unitCode: 'Unknown Unit', propertyName: 'Unknown Property' }
+    
+    for (const property of safeProperties) {
+      const propertyUnits = Array.isArray(property.units) ? property.units : []
+      const unit = propertyUnits.find(u => u.id === unitId)
+      if (unit) {
+        return {
+          unitCode: unit.unit_code || 'Unknown Unit',
+          unitType: unit.unit_type || 'N/A',
+          propertyName: property.name || 'Unknown Property',
+          propertyId: property.id
+        }
+      }
+    }
+    
+    return { unitCode: 'Unknown Unit', propertyName: 'Unknown Property' }
+  }, [safeProperties])
+
+  // Load allocations on component mount
   useEffect(() => {
     console.log('🔄 TenantAllocation: Loading allocations...')
     fetchAllocations()
-  }, []) // Empty dependency array - only run once on mount
+  }, [fetchAllocations])
 
-  // Reset form when modal opens/closes
+  // Reset form and errors when modal opens/closes
   useEffect(() => {
     if (!showAllocationModal) {
       setSelectedTenant('')
       setSelectedUnit('')
+      setAllocationError('')
+      clearError()
       setLeaseData({
         lease_start_date: '',
         lease_end_date: '',
@@ -71,7 +102,7 @@ const TenantAllocation = () => {
         grace_period_days: 7
       })
     }
-  }, [showAllocationModal])
+  }, [showAllocationModal, clearError])
 
   // When unit is selected, auto-fill rent and deposit
   useEffect(() => {
@@ -87,16 +118,18 @@ const TenantAllocation = () => {
     }
   }, [selectedUnit, availableUnits])
 
+  // Enhanced: Better error handling for allocation
   const handleAllocateTenant = async (e) => {
     e.preventDefault()
     clearError()
+    setAllocationError('')
     
     try {
-      const tenant = availableTenants.find(t => t.id === selectedTenant)
+      const tenant = safeAvailableTenants.find(t => t.id === selectedTenant)
       const unit = availableUnits.find(u => u.id === selectedUnit)
 
       if (!tenant || !unit) {
-        alert('Please select both tenant and unit')
+        setAllocationError('Please select both tenant and unit')
         return
       }
 
@@ -123,12 +156,24 @@ const TenantAllocation = () => {
 
       // Close modal and refresh data
       setShowAllocationModal(false)
-      await fetchAllocations() // Use fetchAllocations directly instead of loadAllocations
+      await fetchAllocations()
       
       alert('Tenant allocated successfully!')
     } catch (error) {
       console.error('Error allocating tenant:', error)
-      // Error is already set in context, no need for additional alert
+      
+      // Enhanced: Handle specific error cases
+      if (error.response?.data?.message?.includes('already has an active allocation')) {
+        setAllocationError('This tenant already has an active allocation. Please select a different tenant.')
+      } else if (error.response?.data?.message?.includes('already occupied')) {
+        setAllocationError('This unit is already occupied. Please select a different unit.')
+      } else if (error.response?.data?.message) {
+        setAllocationError(error.response.data.message)
+      } else if (error.message) {
+        setAllocationError(error.message)
+      } else {
+        setAllocationError('Failed to allocate tenant. Please try again.')
+      }
     }
   }
 
@@ -144,11 +189,11 @@ const TenantAllocation = () => {
         }
         
         // Refresh allocations
-        await fetchAllocations() // Use fetchAllocations directly instead of loadAllocations
+        await fetchAllocations()
         alert('Tenant deallocated successfully!')
       } catch (error) {
         console.error('Error deallocating tenant:', error)
-        // Error is already set in context
+        setAllocationError('Failed to deallocate tenant. Please try again.')
       }
     }
   }
@@ -198,11 +243,12 @@ const TenantAllocation = () => {
         </button>
       </div>
 
-      {error && (
+      {/* Enhanced: Show both context errors and allocation errors */}
+      {(error || allocationError) && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {error}
+          {error || allocationError}
           <button 
-            onClick={clearError}
+            onClick={() => { clearError(); setAllocationError(''); }}
             className="float-right text-red-800 font-bold"
           >
             ×
@@ -220,7 +266,7 @@ const TenantAllocation = () => {
         </div>
         <div className="bg-white p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{availableTenants.length}</div>
+            <div className="text-2xl font-bold text-green-600">{safeAvailableTenants.length}</div>
             <div className="text-sm text-gray-600">Available Tenants</div>
           </div>
         </div>
@@ -245,24 +291,41 @@ const TenantAllocation = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold mb-4">Allocate Tenant to Unit</h3>
+            
+            {/* Enhanced: Show allocation-specific error in modal */}
+            {allocationError && (
+              <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                {allocationError}
+                <button 
+                  onClick={() => setAllocationError('')}
+                  className="float-right text-red-800 font-bold"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            
             <form onSubmit={handleAllocateTenant} className="space-y-4">
               {/* Tenant Selection */}
               <div>
                 <label className="block text-sm font-medium text-gray-700">Select Tenant *</label>
                 <select
                   value={selectedTenant}
-                  onChange={(e) => setSelectedTenant(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedTenant(e.target.value)
+                    setAllocationError('') // Clear error when user makes a selection
+                  }}
                   className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 >
                   <option value="">Choose a tenant</option>
-                  {availableTenants.map(tenant => (
+                  {safeAvailableTenants.map(tenant => (
                     <option key={tenant.id} value={tenant.id}>
                       {tenant.first_name || ''} {tenant.last_name || ''} - {tenant.email || ''}
                     </option>
                   ))}
                 </select>
-                {availableTenants.length === 0 && (
+                {safeAvailableTenants.length === 0 && (
                   <p className="text-sm text-red-600 mt-1">No available tenants. Please register tenants first.</p>
                 )}
               </div>
@@ -272,7 +335,10 @@ const TenantAllocation = () => {
                 <label className="block text-sm font-medium text-gray-700">Select Unit *</label>
                 <select
                   value={selectedUnit}
-                  onChange={(e) => setSelectedUnit(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedUnit(e.target.value)
+                    setAllocationError('') // Clear error when user makes a selection
+                  }}
                   className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 >
@@ -389,7 +455,7 @@ const TenantAllocation = () => {
         </div>
       )}
 
-      {/* Active Allocations List */}
+      {/* Active Allocations List - ENHANCED: Fixed tenant and unit display */}
       <div className="bg-white rounded-lg shadow-md p-6">
         <h3 className="text-lg font-semibold mb-4">Active Allocations ({activeAllocations.length})</h3>
         
@@ -425,53 +491,59 @@ const TenantAllocation = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {activeAllocations.map((allocation) => (
-                  <tr key={allocation.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="flex-shrink-0 h-10 w-10 bg-green-500 rounded-full flex items-center justify-center text-white font-bold">
-                          {(allocation.tenant?.first_name?.[0] || 'T')}{(allocation.tenant?.last_name?.[0] || 'U')}
-                        </div>
-                        <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                            {allocation.tenant?.first_name || 'Unknown'} {allocation.tenant?.last_name || 'Tenant'}
+                {activeAllocations.map((allocation) => {
+                  // Enhanced: Get proper tenant and unit details
+                  const tenant = getTenantName(allocation.tenant_id)
+                  const unit = getUnitDetails(allocation.unit_id)
+                  
+                  return (
+                    <tr key={allocation.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0 h-10 w-10 bg-green-500 rounded-full flex items-center justify-center text-white font-bold">
+                            {tenant.firstName[0]}{tenant.lastName[0]}
                           </div>
-                          <div className="text-sm text-gray-500 whitespace-nowrap">
-                            {allocation.tenant?.phone_number || 'N/A'}
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                              {tenant.firstName} {tenant.lastName}
+                            </div>
+                            <div className="text-sm text-gray-500 whitespace-nowrap">
+                              {tenant.phone}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                        {allocation.unit?.unit_code || 'Unknown Unit'}
-                      </div>
-                      <div className="text-sm text-gray-500 whitespace-nowrap">
-                        {allocation.unit?.property?.name || 'Unknown Property'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <div>{formatDate(allocation.lease_start_date)}</div>
-                      <div>to {formatDate(allocation.lease_end_date)}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatCurrency(allocation.monthly_rent)}/month
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                        Active
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <button
-                        onClick={() => handleDeallocate(allocation.id, allocation.unit_id)}
-                        className="text-red-600 hover:text-red-900 whitespace-nowrap"
-                      >
-                        Deallocate
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                          {unit.unitCode}
+                        </div>
+                        <div className="text-sm text-gray-500 whitespace-nowrap">
+                          {unit.propertyName}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <div>{formatDate(allocation.lease_start_date)}</div>
+                        <div>to {formatDate(allocation.lease_end_date)}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {formatCurrency(allocation.monthly_rent)}/month
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                          Active
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <button
+                          onClick={() => handleDeallocate(allocation.id, allocation.unit_id)}
+                          className="text-red-600 hover:text-red-900 whitespace-nowrap"
+                        >
+                          Deallocate
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -482,12 +554,12 @@ const TenantAllocation = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Available Tenants */}
         <div className="bg-white rounded-lg shadow-md p-6">
-          <h3 className="text-lg font-semibold mb-4">Available Tenants ({availableTenants.length})</h3>
-          {availableTenants.length === 0 ? (
+          <h3 className="text-lg font-semibold mb-4">Available Tenants ({safeAvailableTenants.length})</h3>
+          {safeAvailableTenants.length === 0 ? (
             <p className="text-gray-500 text-center py-4">No available tenants</p>
           ) : (
             <div className="space-y-3">
-              {availableTenants.map(tenant => (
+              {safeAvailableTenants.map(tenant => (
                 <div key={tenant.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
                   <div>
                     <div className="font-medium text-gray-900 whitespace-nowrap">
