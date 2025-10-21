@@ -140,15 +140,19 @@ export const AllocationProvider = ({ children }) => {
     }
   }, []);
 
-  // Get allocations by tenant ID
+  // Get allocations by tenant ID - ENHANCED: Better error handling and logging
   const getTenantAllocations = useCallback(async (tenantId) => {
     setLoading(true);
     setError(null);
     try {
       console.log(`🔄 Fetching allocations for tenant: ${tenantId}`);
       const response = await allocationAPI.getAllocationsByTenantId(tenantId);
-      const tenantAllocations = response.data?.data || response.data?.allocations || [];
-      console.log(`✅ Found ${tenantAllocations.length} allocations for tenant`);
+      
+      // Handle different response formats
+      const tenantAllocations = response.data?.data || response.data?.allocations || response.data || [];
+      
+      console.log(`✅ Found ${tenantAllocations.length} allocations for tenant:`, tenantAllocations);
+      
       return Array.isArray(tenantAllocations) ? tenantAllocations : [];
     } catch (err) {
       console.error('❌ Error fetching tenant allocations:', err);
