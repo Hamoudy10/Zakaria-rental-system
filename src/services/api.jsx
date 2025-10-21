@@ -7,7 +7,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // ADDED: Increased timeout for M-Pesa requests
+  timeout: 30000, // Increased timeout for M-Pesa requests
 });
 
 // Add auth token to requests
@@ -67,77 +67,74 @@ export const mpesaUtils = {
   }
 };
 
-// Export API methods
-export const authAPI = {
-  login: (credentials) => api.post('/auth/login', credentials),
-  register: (userData) => api.post('/auth/register', userData),
-  logout: () => api.post('/auth/logout'),
-  refreshToken: () => api.post('/auth/refresh'),
-  getProfile: () => api.get('/auth/profile'),
+// Enhanced Notification API with all endpoints
+export const notificationAPI = {
+  // Get notifications with pagination and filtering
+  getNotifications: (limit = 20, offset = 0, type, is_read, related_entity_type, start_date, end_date) => {
+    const params = { limit, offset };
+    if (type) params.type = type;
+    if (is_read !== undefined) params.is_read = is_read;
+    if (related_entity_type) params.related_entity_type = related_entity_type;
+    if (start_date) params.start_date = start_date;
+    if (end_date) params.end_date = end_date;
+    
+    return api.get('/notifications', { params });
+  },
+
+  // Get unread notification count
+  getUnreadCount: () => api.get('/notifications/unread-count'),
+
+  // Get notification statistics
+  getNotificationStats: () => api.get('/notifications/stats'),
+
+  // Get notifications by type
+  getNotificationsByType: (type, page = 1, limit = 20) => 
+    api.get(`/notifications/type/${type}?page=${page}&limit=${limit}`),
+
+  // Mark notification as read
+  markAsRead: (notificationId) => api.put(`/notifications/${notificationId}/read`),
+
+  // Mark all notifications as read
+  markAllAsRead: () => api.put('/notifications/read-all'),
+
+  // Create notification
+  createNotification: (notificationData) => api.post('/notifications', notificationData),
+
+  // Create broadcast notification (admin only)
+  createBroadcastNotification: (broadcastData) => api.post('/notifications/broadcast', broadcastData),
+
+  // Delete notification
+  deleteNotification: (notificationId) => api.delete(`/notifications/${notificationId}`),
+
+  // Clear all read notifications
+  clearReadNotifications: () => api.delete('/notifications/clear-read'),
+
+  // Admin endpoints
+  getAdminNotifications: (page = 1, limit = 50, filters = {}) => {
+    const params = { page, limit, ...filters };
+    return api.get('/notifications/admin/all', { params });
+  },
+
+  getAdminNotificationStats: (start_date, end_date) => {
+    const params = {};
+    if (start_date) params.start_date = start_date;
+    if (end_date) params.end_date = end_date;
+    return api.get('/notifications/admin/stats/overview', { params });
+  },
+
+  clearUserNotifications: (userId) => api.delete(`/notifications/admin/clear-all/${userId}`),
+
+  // Health check
+  healthCheck: () => api.get('/notifications/health')
 };
 
-export const userAPI = {
-  getUsers: () => api.get('/users'),
-  getUser: (id) => api.get(`/users/${id}`),
-  createUser: (userData) => api.post('/users', userData),
-  updateUser: (id, updates) => api.put(`/users/${id}`, updates),
-  deleteUser: (id) => api.delete(`/users/${id}`),
-  updateProfile: (updates) => api.put('/users/profile', updates),
-  changePassword: (passwordData) => api.put('/users/change-password', passwordData),
-  getAgents: () => api.get('/users/role/agent'),
-  getTenants: () => api.get('/users/role/tenant'),
-};
-
-export const propertyAPI = {
-  // Property operations
-  getProperties: () => api.get('/properties'),
-  getProperty: (id) => api.get(`/properties/${id}`),
-  createProperty: (propertyData) => api.post('/properties', propertyData),
-  updateProperty: (id, updates) => api.put(`/properties/${id}`, updates),
-  deleteProperty: (id) => api.delete(`/properties/${id}`),
-  
-  // Unit operations - FIXED: Using the correct endpoint structure
-  getPropertyUnits: (propertyId) => api.get(`/properties/${propertyId}/units`),
-  getAvailableUnits: () => api.get('/properties/units/available'),
-  addUnit: (propertyId, unitData) => api.post(`/properties/${propertyId}/units`, unitData),
-  updateUnit: (propertyId, unitId, updates) => api.put(`/properties/${propertyId}/units/${unitId}`, updates),
-  deleteUnit: (propertyId, unitId) => api.delete(`/properties/${propertyId}/units/${unitId}`),
-  updateUnitOccupancy: (propertyId, unitId, occupancyData) => 
-    api.patch(`/properties/${propertyId}/units/${unitId}/occupancy`, occupancyData),
-
-  // Statistics and search
-  getPropertyStats: () => api.get('/properties/stats/overview'),
-  searchProperties: (searchTerm) => api.get(`/properties/search?q=${encodeURIComponent(searchTerm)}`),
-  
-  // Additional unit endpoints that might be needed
-  getUnit: (propertyId, unitId) => api.get(`/properties/${propertyId}/units/${unitId}`),
-  getUnitsByType: (unitType) => api.get(`/properties/units/type/${unitType}`),
-};
-
-export const allocationAPI = {
-  // Tenant allocation operations - FIXED: Using correct endpoints
-  getAllocations: (params = {}) => api.get('/allocations', { params }),
-  getAllocation: (id) => api.get(`/allocations/${id}`),
-  getAllocationsByTenantId: (tenantId) => api.get(`/allocations/tenant/${tenantId}`),
-  getAllocationsByUnitId: (unitId) => api.get(`/allocations/unit/${unitId}`),
-  createAllocation: (allocationData) => api.post('/allocations', allocationData),
-  updateAllocation: (id, updates) => api.put(`/allocations/${id}`, updates),
-  deleteAllocation: (id) => api.delete(`/allocations/${id}`),
-  deallocateTenant: (id) => api.put(`/allocations/${id}`, { is_active: false }),
-  
-  // Statistics and additional endpoints
-  getAllocationStats: () => api.get('/allocations/stats/overview'),
-  getMyAllocation: () => api.get('/allocations/my/allocation'),
-  getActiveAllocations: () => api.get('/allocations?is_active=true'),
-  getExpiringAllocations: () => api.get('/allocations?expiring_soon=true'),
-};
-
+// Enhanced Payment API with salary payments
 export const paymentAPI = {
   // Payment operations
-  getPayments: () => api.get('/payments'),
+  getPayments: (params = {}) => api.get('/payments', { params }),
   getPayment: (id) => api.get(`/payments/${id}`),
   getPaymentsByTenantId: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
-  getPaymentsByTenant: (tenantId) => api.get(`/payments/tenant/${tenantId}`), // ADDED: Missing function
+  getPaymentsByTenant: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
   createPayment: (paymentData) => api.post('/payments', paymentData),
   confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
   getPaymentHistory: (tenantId) => api.get(`/payments/history/${tenantId}`),
@@ -156,16 +153,19 @@ export const paymentAPI = {
   getPendingPayments: () => api.get('/payments?status=pending'),
   getOverduePayments: () => api.get('/payments?status=overdue'),
   
-  // ADDED: Missing functions for tenant dashboard
-  getTenantPayments: (tenantId) => api.get(`/payments/tenant/${tenantId}`), // ADDED: Missing function
-  getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`), // ADDED: Missing function
-  getPaymentSummary: (tenantId) => api.get(`/payments/summary/${tenantId}`), // ADDED: Missing function
+  // Tenant payment functions
+  getTenantPayments: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
+  getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`),
+  getPaymentSummary: (tenantId) => api.get(`/payments/summary/${tenantId}`),
   
-  // ADDED: Check payment status function
+  // Payment status and updates
   checkPaymentStatus: (checkoutRequestId) => api.get(`/payments/mpesa/status/${checkoutRequestId}`),
-  
-  // ADDED: Update payment function
   updatePayment: (paymentId, updates) => api.put(`/payments/${paymentId}`, updates),
+  
+  // Salary payments
+  processSalaryPayment: (salaryData) => api.post('/payments/salary', salaryData),
+  getSalaryPayments: (params = {}) => api.get('/payments/salary', { params }),
+  getAgentSalaryPayments: (agentId) => api.get(`/payments/salary/agent/${agentId}`)
 };
 
 // Mock M-Pesa API for testing
@@ -176,6 +176,82 @@ export const mockMpesaAPI = {
   simulateCallback: (callbackData) => api.post('/payments/mpesa/simulate-callback', callbackData),
 };
 
+// Auth API
+export const authAPI = {
+  login: (credentials) => api.post('/auth/login', credentials),
+  register: (userData) => api.post('/auth/register', userData),
+  logout: () => api.post('/auth/logout'),
+  refreshToken: () => api.post('/auth/refresh'),
+  getProfile: () => api.get('/auth/profile'),
+  updateProfile: (updates) => api.put('/auth/profile', updates),
+  changePassword: (passwordData) => api.put('/auth/change-password', passwordData),
+};
+
+// User API
+export const userAPI = {
+  getUsers: (params = {}) => api.get('/users', { params }),
+  getUser: (id) => api.get(`/users/${id}`),
+  createUser: (userData) => api.post('/users', userData),
+  updateUser: (id, updates) => api.put(`/users/${id}`, updates),
+  deleteUser: (id) => api.delete(`/users/${id}`),
+  updateProfile: (updates) => api.put('/users/profile', updates),
+  changePassword: (passwordData) => api.put('/users/change-password', passwordData),
+  getAgents: () => api.get('/users/role/agent'),
+  getTenants: () => api.get('/users/role/tenant'),
+  getUserStats: () => api.get('/users/stats/overview'),
+  updateNotificationPreferences: (preferences) => 
+    api.put('/users/notification-preferences', preferences),
+};
+
+// Property API
+export const propertyAPI = {
+  // Property operations
+  getProperties: (params = {}) => api.get('/properties', { params }),
+  getProperty: (id) => api.get(`/properties/${id}`),
+  createProperty: (propertyData) => api.post('/properties', propertyData),
+  updateProperty: (id, updates) => api.put(`/properties/${id}`, updates),
+  deleteProperty: (id) => api.delete(`/properties/${id}`),
+  
+  // Unit operations
+  getPropertyUnits: (propertyId) => api.get(`/properties/${propertyId}/units`),
+  getAvailableUnits: () => api.get('/properties/units/available'),
+  addUnit: (propertyId, unitData) => api.post(`/properties/${propertyId}/units`, unitData),
+  updateUnit: (propertyId, unitId, updates) => api.put(`/properties/${propertyId}/units/${unitId}`, updates),
+  deleteUnit: (propertyId, unitId) => api.delete(`/properties/${propertyId}/units/${unitId}`),
+  updateUnitOccupancy: (propertyId, unitId, occupancyData) => 
+    api.patch(`/properties/${propertyId}/units/${unitId}/occupancy`, occupancyData),
+
+  // Statistics and search
+  getPropertyStats: () => api.get('/properties/stats/overview'),
+  searchProperties: (searchTerm) => api.get(`/properties/search?q=${encodeURIComponent(searchTerm)}`),
+  
+  // Additional unit endpoints
+  getUnit: (propertyId, unitId) => api.get(`/properties/${propertyId}/units/${unitId}`),
+  getUnitsByType: (unitType) => api.get(`/properties/units/type/${unitType}`),
+  getUnitAllocations: (unitId) => api.get(`/properties/units/${unitId}/allocations`),
+};
+
+// Allocation API
+export const allocationAPI = {
+  // Tenant allocation operations
+  getAllocations: (params = {}) => api.get('/allocations', { params }),
+  getAllocation: (id) => api.get(`/allocations/${id}`),
+  getAllocationsByTenantId: (tenantId) => api.get(`/allocations/tenant/${tenantId}`),
+  getAllocationsByUnitId: (unitId) => api.get(`/allocations/unit/${unitId}`),
+  createAllocation: (allocationData) => api.post('/allocations', allocationData),
+  updateAllocation: (id, updates) => api.put(`/allocations/${id}`, updates),
+  deleteAllocation: (id) => api.delete(`/allocations/${id}`),
+  deallocateTenant: (id) => api.put(`/allocations/${id}`, { is_active: false }),
+  
+  // Statistics and additional endpoints
+  getAllocationStats: () => api.get('/allocations/stats/overview'),
+  getMyAllocation: () => api.get('/allocations/my/allocation'),
+  getActiveAllocations: () => api.get('/allocations?is_active=true'),
+  getExpiringAllocations: () => api.get('/allocations?expiring_soon=true'),
+  terminateAllocation: (id, terminationData) => 
+    api.post(`/allocations/${id}/terminate`, terminationData),
+};
+
 // Settings API
 export const settingsAPI = {
   getSettings: () => api.get('/admin/settings'),
@@ -184,6 +260,8 @@ export const settingsAPI = {
   updateMultipleSettings: (settingsData) => api.put('/admin/settings', settingsData),
   getSystemSettings: () => api.get('/admin/settings/system'),
   updateSystemSettings: (settings) => api.put('/admin/settings/system', settings),
+  getMpesaSettings: () => api.get('/admin/settings/mpesa'),
+  updateMpesaSettings: (settings) => api.put('/admin/settings/mpesa', settings),
 };
 
 // Complaint API
@@ -200,6 +278,7 @@ export const complaintAPI = {
   getComplaintUpdates: (complaintId) => api.get(`/complaints/${complaintId}/updates`),
   getComplaintStats: () => api.get('/complaints/stats/overview'),
   updateComplaintStatus: (id, status) => api.patch(`/complaints/${id}/status`, { status }),
+  addComplaintComment: (id, comment) => api.post(`/complaints/${id}/comments`, { comment }),
 };
 
 // Report API
@@ -212,21 +291,12 @@ export const reportAPI = {
   getPaymentReports: () => api.get('/reports/payments'),
   getOccupancyReports: () => api.get('/reports/occupancy'),
   getFinancialReports: (params) => api.get('/reports/financial', { params }),
+  getMaintenanceReports: () => api.get('/reports/maintenance'),
+  exportReport: (id, format = 'pdf') => 
+    api.get(`/reports/${id}/export?format=${format}`, { responseType: 'blob' }),
 };
 
-// Notification API
-export const notificationAPI = {
-  getNotifications: () => api.get('/notifications'),
-  getUnreadNotifications: () => api.get('/notifications/unread'),
-  markAsRead: (id) => api.put(`/notifications/${id}/read`),
-  markAllAsRead: () => api.put('/notifications/read-all'),
-  getNotificationPreferences: () => api.get('/notifications/preferences'),
-  updateNotificationPreferences: (preferences) => api.put('/notifications/preferences', preferences),
-  getNotificationCount: () => api.get('/notifications/count'),
-  clearAll: () => api.delete('/notifications'),
-};
-
-// Salary Payment API
+// Salary Payment API (legacy - now integrated into paymentAPI)
 export const salaryPaymentAPI = {
   getSalaryPayments: () => api.get('/salary-payments'),
   getSalaryPayment: (id) => api.get(`/salary-payments/${id}`),
@@ -245,6 +315,9 @@ export const dashboardAPI = {
   getTenantDashboard: () => api.get('/dashboard/tenant'),
   getOverviewStats: () => api.get('/dashboard/stats/overview'),
   getRecentActivity: () => api.get('/dashboard/activity/recent'),
+  getFinancialOverview: () => api.get('/dashboard/financial/overview'),
+  getOccupancyMetrics: () => api.get('/dashboard/metrics/occupancy'),
+  getMaintenanceMetrics: () => api.get('/dashboard/metrics/maintenance'),
 };
 
 // File Upload API
@@ -256,9 +329,12 @@ export const fileAPI = {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
   deleteFile: (filePath) => api.delete('/upload/file', { data: { filePath } }),
+  uploadMultiple: (formData) => api.post('/upload/multiple', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
 };
 
-// ADDED: Missing utility functions for M-Pesa validation
+// Enhanced utility functions for M-Pesa validation and payment processing
 export const paymentUtils = {
   // Validate Kenyan phone number for M-Pesa
   isValidMpesaPhone: (phone) => {
@@ -308,6 +384,146 @@ export const paymentUtils = {
       currency: 'KES',
       minimumFractionDigits: 0
     }).format(amount || 0);
+  },
+
+  // Validate payment amount
+  validatePaymentAmount: (amount, expectedAmount) => {
+    const paymentAmount = parseFloat(amount);
+    const expected = parseFloat(expectedAmount);
+    return paymentAmount === expected;
+  },
+
+  // Calculate due dates and late fees
+  calculateDueDate: (allocation) => {
+    if (!allocation) return null;
+    
+    const now = new Date();
+    const dueDate = new Date(now.getFullYear(), now.getMonth(), allocation.rent_due_day || 1);
+    
+    if (dueDate < now) {
+      dueDate.setMonth(dueDate.getMonth() + 1);
+    }
+    
+    return dueDate;
+  },
+
+  // Check if payment is overdue
+  isPaymentOverdue: (paymentDate, dueDate) => {
+    const payment = new Date(paymentDate);
+    const due = new Date(dueDate);
+    return payment > due;
+  },
+
+  // Calculate late fee
+  calculateLateFee: (rentAmount, daysLate, lateFeeRate = 0.05) => {
+    const dailyLateFee = rentAmount * lateFeeRate;
+    return Math.round(dailyLateFee * daysLate);
+  }
+};
+
+// Notification utility functions
+export const notificationUtils = {
+  // Format notification message based on type
+  formatNotificationMessage: (notification) => {
+    const { type, message, title } = notification;
+    
+    switch (type) {
+      case 'payment_success':
+        return `✅ Payment confirmed: ${message}`;
+      case 'payment_received':
+        return `💰 Payment received: ${message}`;
+      case 'payment_failed':
+        return `❌ Payment failed: ${message}`;
+      case 'salary_paid':
+        return `💵 Salary processed: ${message}`;
+      case 'complaint_updated':
+        return `🔧 Complaint update: ${message}`;
+      case 'announcement':
+        return `📢 Announcement: ${message}`;
+      case 'system_alert':
+        return `⚠️ System alert: ${message}`;
+      default:
+        return message || title;
+    }
+  },
+
+  // Get notification icon based on type
+  getNotificationIcon: (type) => {
+    switch (type) {
+      case 'payment_success':
+      case 'payment_received':
+        return '💰';
+      case 'salary_paid':
+        return '💵';
+      case 'payment_failed':
+        return '❌';
+      case 'complaint_updated':
+        return '🔧';
+      case 'announcement':
+        return '📢';
+      case 'system_alert':
+        return '⚠️';
+      default:
+        return '🔔';
+    }
+  },
+
+  // Format timestamp for display
+  formatTimestamp: (timestamp) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInMs = now - date;
+    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
+    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+    if (diffInMinutes < 1) return 'Just now';
+    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+    if (diffInHours < 24) return `${diffInHours}h ago`;
+    if (diffInDays < 7) return `${diffInDays}d ago`;
+    
+    return date.toLocaleDateString();
+  },
+
+  // Check if notification is recent (within 24 hours)
+  isRecent: (timestamp) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInHours = (now - date) / (1000 * 60 * 60);
+    return diffInHours < 24;
+  },
+
+  // Group notifications by date
+  groupNotificationsByDate: (notifications) => {
+    const groups = {
+      today: [],
+      yesterday: [],
+      thisWeek: [],
+      older: []
+    };
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const lastWeek = new Date(today);
+    lastWeek.setDate(lastWeek.getDate() - 7);
+
+    notifications.forEach(notification => {
+      const notificationDate = new Date(notification.created_at);
+      
+      if (notificationDate >= today) {
+        groups.today.push(notification);
+      } else if (notificationDate >= yesterday) {
+        groups.yesterday.push(notification);
+      } else if (notificationDate >= lastWeek) {
+        groups.thisWeek.push(notification);
+      } else {
+        groups.older.push(notification);
+      }
+    });
+
+    return groups;
   }
 };
 
@@ -326,8 +542,50 @@ export const API = {
   dashboard: dashboardAPI,
   files: fileAPI,
   mpesa: mpesaUtils,
-  paymentUtils: paymentUtils, // ADDED: Missing payment utilities
+  paymentUtils: paymentUtils,
+  notificationUtils: notificationUtils,
   mockMpesa: mockMpesaAPI,
+};
+
+// Health check function
+export const healthCheck = async () => {
+  try {
+    const response = await api.get('/health');
+    return response.data;
+  } catch (error) {
+    console.error('Health check failed:', error);
+    return { success: false, message: 'Service unavailable' };
+  }
+};
+
+// Global error handler
+export const handleApiError = (error) => {
+  if (error.response) {
+    // Server responded with error status
+    const message = error.response.data?.message || error.response.data?.error || 'An error occurred';
+    const status = error.response.status;
+    
+    return {
+      success: false,
+      message,
+      status,
+      data: error.response.data
+    };
+  } else if (error.request) {
+    // Request made but no response received
+    return {
+      success: false,
+      message: 'Network error: Unable to connect to server',
+      status: 0
+    };
+  } else {
+    // Something else happened
+    return {
+      success: false,
+      message: error.message || 'An unexpected error occurred',
+      status: -1
+    };
+  }
 };
 
 export default api;
