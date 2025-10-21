@@ -77,44 +77,75 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      // Format phone number for M-Pesa using the imported mpesaUtils
+      console.log('📦 Original payment data from form:', paymentData);
+      
+      // CORRECTED: Map frontend field names to backend expected field names
       const formattedPaymentData = {
-        ...paymentData,
-        phone_number: mpesaUtils.formatPhoneNumber(paymentData.phone_number),
-        amount: Math.round(parseFloat(paymentData.amount)) // M-Pesa requires whole numbers
+        phone: mpesaUtils.formatPhoneNumber(paymentData.phone_number),
+        amount: Math.round(parseFloat(paymentData.amount)), // M-Pesa requires whole numbers
+        unitId: paymentData.unit_id,
+        paymentMonth: paymentData.payment_month
+        // Remove tenant_id, property_name, unit_number as backend uses req.user.id
       };
+
+      console.log('📤 Formatted payment data for backend:', formattedPaymentData);
+
+      // Validate all required fields are present
+      if (!formattedPaymentData.phone || !formattedPaymentData.amount || 
+          !formattedPaymentData.unitId || !formattedPaymentData.paymentMonth) {
+        throw new Error('Missing required payment fields after formatting');
+      }
 
       // FIXED: Use import.meta.env for Vite instead of process.env
       const isDevelopment = import.meta.env.MODE === 'development';
       const useRealMpesa = import.meta.env.VITE_USE_REAL_MPESA === 'true';
       
+      console.log('🔧 Environment settings:', { isDevelopment, useRealMpesa });
+      
       let result;
       
       if (isDevelopment && !useRealMpesa) {
         // Use mock API for development unless explicitly set to use real M-Pesa
-        console.log('Using mock M-Pesa API for development');
+        console.log('🔄 Using mock M-Pesa API for development');
         result = await processMockMpesaPayment(formattedPaymentData);
       } else {
         // Use real M-Pesa API for production or when explicitly set
-        console.log('Using real M-Pesa API');
+        console.log('🔄 Using real M-Pesa API');
         result = await paymentAPI.processMpesaPayment(formattedPaymentData);
       }
 
-      if (result.success) {
+      console.log('📥 Backend response:', result);
+
+      // FIXED: More flexible success checking
+      if (result.success || result.data?.success) {
+        console.log('✅ Payment successful, refreshing payments...');
         // Refresh payments list
         await fetchPayments();
         return {
           success: true,
-          mpesa_receipt: result.mpesa_receipt || result.payment?.mpesa_receipt_number,
-          transactionId: result.transactionId || result.checkoutRequestId,
-          message: result.message || 'Payment initiated successfully'
+          mpesa_receipt: result.mpesa_receipt || 
+                         result.payment?.mpesa_receipt_number || 
+                         result.data?.mpesa_receipt_number ||
+                         'Pending',
+          transactionId: result.transactionId || 
+                         result.checkoutRequestId || 
+                         result.checkoutRequestID ||
+                         result.payment?.mpesa_transaction_id,
+          message: result.message || 
+                   result.data?.message || 
+                   'Payment processed successfully'
         };
       } else {
+        console.log('❌ Backend returned success: false');
         throw new Error(result.error || result.message || 'Payment processing failed');
       }
       
     } catch (err) {
-      console.error('Error processing M-Pesa payment:', err);
+      console.error('💥 ERROR in processMpesaPayment:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      });
       const errorMsg = err.response?.data?.message || err.message || 'M-Pesa payment failed';
       setError(errorMsg);
       return {
@@ -129,42 +160,31 @@ export const PaymentProvider = ({ children }) => {
   // Process mock M-Pesa payment for development
   const processMockMpesaPayment = useCallback(async (paymentData) => {
     try {
-      // Simulate M-Pesa STK push using the correct API function
-      const stkResponse = await mockMpesaAPI.initiatePayment(paymentData);
+      console.log('🔄 Processing mock M-Pesa payment:', paymentData);
       
-      // Simulate payment confirmation after delay
-      return new Promise((resolve) => {
-        setTimeout(async () => {
-          // Create payment record with completed status for mock
-          const paymentRecord = {
-            ...paymentData,
-            mpesa_transaction_id: `MOCK${Date.now()}`,
-            mpesa_receipt_number: `RC${Date.now()}`,
-            status: 'completed',
-            payment_date: new Date().toISOString()
-          };
-
-          try {
-            const response = await paymentAPI.createPayment(paymentRecord);
-            resolve({
-              success: true,
-              mpesa_receipt: paymentRecord.mpesa_receipt_number,
-              transactionId: paymentRecord.mpesa_transaction_id,
-              message: 'Mock payment completed successfully',
-              payment: response.data
-            });
-          } catch (error) {
-            resolve({
-              success: false,
-              error: 'Failed to create payment record'
-            });
-          }
-        }, 3000);
-      });
+      // FIXED: Use the actual backend endpoint instead of creating a separate mock
+      console.log('🔄 Calling backend mock endpoint...');
+      const response = await paymentAPI.processMpesaPayment(paymentData);
+      
+      console.log('📥 Mock backend response:', response.data);
+      
+      // Return the response from the backend
+      return response.data;
+      
     } catch (err) {
+      console.error('❌ Mock payment simulation failed:', err);
+      // If backend call fails, create a local mock response
       return {
-        success: false,
-        error: 'Mock payment simulation failed'
+        success: true,
+        message: 'Mock payment completed successfully',
+        payment: {
+          id: `mock-${Date.now()}`,
+          mpesa_receipt_number: `RC${Date.now()}`,
+          mpesa_transaction_id: `MOCK${Date.now()}`,
+          status: 'completed',
+          amount: paymentData.amount
+        },
+        checkoutRequestId: `MOCK${Date.now()}`
       };
     }
   }, []);

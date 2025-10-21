@@ -7,14 +7,16 @@ const paymentController = require('../controllers/paymentController');
 
 console.log('🔗 Payments routes loaded - checking for controller...');
 
-// Simple inline middleware for testing
+// FIXED: Updated mock middleware with proper UUID format
 const protect = (req, res, next) => {
   console.log('🛡️  Protect middleware called for:', req.method, req.originalUrl);
   console.log('👤 User ID from protect middleware:', req.user?.id || 'No user ID');
+  
+  // Use proper UUID format that matches your actual user IDs
   req.user = { 
-    id: 'test-user-id', 
+    id: '33ecb4e2-fc6a-4def-8bcf-022bb66231ff', // Use the same tenant_id from your frontend
     userId: 'test', 
-    role: 'admin',
+    role: 'tenant', // Changed from 'admin' to 'tenant' for payment context
     first_name: 'Test',
     last_name: 'User'
   };
