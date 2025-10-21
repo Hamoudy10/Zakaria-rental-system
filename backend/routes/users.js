@@ -1,22 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../config/database'); // Make sure this path is correct
-
-// Simple inline middleware for testing
-const protect = (req, res, next) => {
-  // For now, just add a mock user for testing
-  req.user = { id: 'test-user-id', role: 'admin' };
-  next();
-};
-
-const authorize = (...roles) => {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'Unauthorized' });
-    }
-    next();
-  };
-};
+const db = require('../config/database');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const bcrypt = require('bcryptjs');
 
 console.log('Users routes loaded');
 
@@ -87,9 +73,13 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
       last_name, 
       email, 
       phone_number, 
-      password_hash, 
+      password,  // Changed from password_hash to password
       role 
     } = req.body;
+
+    console.log('📝 Creating user with data:', {
+      national_id, first_name, last_name, email, phone_number, role
+    });
 
     // Validate required fields
     if (!national_id || !first_name || !last_name || !email || !phone_number || !role) {
@@ -98,6 +88,18 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
         error: 'Missing required fields: national_id, first_name, last_name, email, phone_number, role'
       });
     }
+
+    // Validate password (only for new users, not for updates)
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password is required for new users'
+      });
+    }
+
+    // Hash the password
+    const saltRounds = 10;
+    const password_hash = await bcrypt.hash(password, saltRounds);
 
     const query = `
       INSERT INTO users (
@@ -108,22 +110,22 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
       RETURNING id, national_id, first_name, last_name, email, phone_number, role, created_at
     `;
     
-    // In a real app, you should hash the password properly
-    // For now, using the provided password_hash or a default
-    const hashedPassword = password_hash || 'temp_password_need_to_hash';
-    
     const values = [
       national_id, 
       first_name, 
       last_name, 
       email, 
       phone_number, 
-      hashedPassword, 
+      password_hash, 
       role, 
-      req.user.id // created_by
+      req.user.id // This will now be a proper UUID from the real auth middleware
     ];
 
+    console.log('📊 Executing user creation query with values:', values);
+
     const result = await db.query(query, values);
+    
+    console.log('✅ User created successfully:', result.rows[0]);
     
     res.status(201).json({
       success: true,
@@ -131,7 +133,7 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
       user: result.rows[0]
     });
   } catch (error) {
-    console.error('Create user error:', error);
+    console.error('❌ Create user error:', error);
     
     // Handle duplicate key errors
     if (error.code === '23505') { // PostgreSQL unique violation
@@ -151,7 +153,7 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
     
     res.status(500).json({ 
       success: false,
-      error: 'Failed to create user' 
+      error: 'Failed to create user: ' + error.message
     });
   }
 });

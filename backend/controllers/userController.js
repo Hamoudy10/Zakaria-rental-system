@@ -29,6 +29,14 @@ const createUser = async (req, res) => {
   try {
     const { national_id, first_name, last_name, email, phone_number, password, role } = req.body;
     
+    // Validate required fields
+    if (!national_id || !first_name || !last_name || !email || !phone_number || !password || !role) {
+      return res.status(400).json({
+        success: false,
+        message: 'All fields are required: national_id, first_name, last_name, email, phone_number, password, role'
+      });
+    }
+    
     // Hash password
     const saltRounds = 10;
     const password_hash = await bcrypt.hash(password, saltRounds);
@@ -40,7 +48,7 @@ const createUser = async (req, res) => {
     `;
     
     const { rows } = await pool.query(query, [
-      national_id, first_name, last_name, email, phone_number, password_hash, role, req.user.userId
+      national_id, first_name, last_name, email, phone_number, password_hash, role, req.user.id
     ]);
     
     res.status(201).json({
@@ -63,4 +71,9 @@ const createUser = async (req, res) => {
       message: 'Server error creating user'
     });
   }
+};
+
+module.exports = {
+  getUsers,
+  createUser
 };

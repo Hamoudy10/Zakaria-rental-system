@@ -306,12 +306,8 @@ const UserManagement = () => {
                   <tr key={user.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <div className="flex-shrink-0 h-8 w-8">
-                          <img
-                            className="h-8 w-8 rounded-full"
-                            src={user.profile_image || '/default-avatar.png'}
-                            alt=""
-                          />
+                        <div className="flex-shrink-0 h-8 w-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
+                          {(user.first_name?.[0] || 'T')}{(user.last_name?.[0] || 'U')}
                         </div>
                         <div className="ml-3">
                           <div className="text-sm font-medium text-gray-900">

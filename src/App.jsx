@@ -26,10 +26,12 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   }
   
   if (!user) {
+    console.log('No user, redirecting to login');
     return <Navigate to="/login" replace />
   }
   
   if (allowedRoles && !allowedRoles.includes(user.role)) {
+    console.log('User role not allowed, redirecting to unauthorized');
     return <Navigate to="/unauthorized" replace />
   }
   
@@ -39,11 +41,21 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 // Layout component with notification bell
 const Layout = ({ children }) => {
   const { user, logout } = useAuth()
-  const { unreadCount } = useNotification()
+  const { unreadCount, notifications, markAsRead } = useNotification()
   const [isNotificationOpen, setIsNotificationOpen] = useState(false)
 
   const handleLogout = () => {
     logout()
+  }
+
+  // Get recent notifications for dropdown (last 5 unread or recent)
+  const recentNotifications = notifications
+    .filter(notification => !notification.is_read)
+    .slice(0, 5)
+
+  const handleNotificationClick = async (notificationId) => {
+    await markAsRead(notificationId)
+    setIsNotificationOpen(false)
   }
 
   return (
@@ -125,23 +137,47 @@ const Layout = ({ children }) => {
                         </Link>
                       </div>
                       
-                      {/* Notification List - Placeholder */}
+                      {/* Dynamic Notification List */}
                       <div className="space-y-2 max-h-60 overflow-y-auto">
-                        <div className="p-3 bg-blue-50 rounded-lg">
-                          <p className="text-sm font-medium">Payment Received</p>
-                          <p className="text-xs text-gray-600">Rent payment confirmed for April</p>
-                          <p className="text-xs text-gray-500">2 hours ago</p>
-                        </div>
-                        <div className="p-3 bg-yellow-50 rounded-lg">
-                          <p className="text-sm font-medium">Maintenance Update</p>
-                          <p className="text-xs text-gray-600">Your complaint has been assigned</p>
-                          <p className="text-xs text-gray-500">1 day ago</p>
-                        </div>
+                        {recentNotifications.length > 0 ? (
+                          recentNotifications.map((notification) => (
+                            <div 
+                              key={notification.id}
+                              className={`p-3 rounded-lg cursor-pointer hover:bg-gray-50 ${
+                                notification.type === 'payment_success' ? 'bg-green-50 border border-green-200' :
+                                notification.type === 'payment_received' ? 'bg-blue-50 border border-blue-200' :
+                                notification.type === 'salary_paid' ? 'bg-purple-50 border border-purple-200' :
+                                notification.type === 'salary_processed' ? 'bg-indigo-50 border border-indigo-200' :
+                                'bg-gray-50 border border-gray-200'
+                              }`}
+                              onClick={() => handleNotificationClick(notification.id)}
+                            >
+                              <p className="text-sm font-medium text-gray-900">{notification.title}</p>
+                              <p className="text-xs text-gray-600 mt-1">{notification.message}</p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {new Date(notification.created_at).toLocaleDateString()} at{' '}
+                                {new Date(notification.created_at).toLocaleTimeString()}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-4 text-gray-500">
+                            <p>No new notifications</p>
+                          </div>
+                        )}
                       </div>
                       
-                      {unreadCount === 0 && (
-                        <div className="text-center py-4 text-gray-500">
-                          <p>No new notifications</p>
+                      {unreadCount > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <button
+                            onClick={() => {
+                              // This would mark all as read - you'd need to implement this function
+                              setIsNotificationOpen(false)
+                            }}
+                            className="w-full text-center text-sm text-blue-600 hover:text-blue-800"
+                          >
+                            Mark all as read
+                          </button>
                         </div>
                       )}
                     </div>
@@ -238,7 +274,7 @@ const Layout = ({ children }) => {
 import AdminDashboard from './pages/AdminDashboard'
 import AgentDashboard from './pages/AgentDashboard'
 import TenantDashboard from './pages/TenantDashboard'
-import NotificationsPage from './components/NotificationPage'
+import NotificationsPage from './components/NotificationsPage'
 
 // Import payment-related components
 import TenantPayment from './components/TenantPayment'
@@ -385,10 +421,9 @@ function App() {
       <AuthProvider>
         <UserProvider>
           <PropertyProvider>
-            {/* PaymentProvider should wrap AllocationProvider since PaymentContext now handles allocations for tenants */}
-            <PaymentProvider>
-              <AllocationProvider>
-                <NotificationProvider>
+            <NotificationProvider>
+              <PaymentProvider>
+                <AllocationProvider>
                   <SalaryPaymentProvider>
                     <ComplaintProvider>
                       <ReportProvider>
@@ -398,9 +433,9 @@ function App() {
                       </ReportProvider>
                     </ComplaintProvider>
                   </SalaryPaymentProvider>
-                </NotificationProvider>
-              </AllocationProvider>
-            </PaymentProvider>
+                </AllocationProvider>
+              </PaymentProvider>
+            </NotificationProvider>
           </PropertyProvider>
         </UserProvider>
       </AuthProvider>

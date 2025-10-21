@@ -39,13 +39,25 @@ export const UserProvider = ({ children }) => {
     }
   }, []);
 
-  // Create new user - FIXED: Use real API
+  // Create new user - FIXED: Use real API with correct field mapping
   const createUser = useCallback(async (userData) => {
     setLoading(true);
     setError(null);
     try {
       console.log('📝 Creating user:', userData);
-      const response = await userAPI.createUser(userData);
+      
+      // Map the data to match backend expectations
+      const apiData = {
+        national_id: userData.national_id,
+        first_name: userData.first_name,
+        last_name: userData.last_name,
+        email: userData.email,
+        phone_number: userData.phone_number,
+        password: userData.password, // Send as 'password' not 'password_hash'
+        role: userData.role
+      };
+      
+      const response = await userAPI.createUser(apiData);
       const newUser = response.data?.user || response.data?.data || response.data;
       
       // Add new user to local state
@@ -54,7 +66,7 @@ export const UserProvider = ({ children }) => {
       return newUser;
     } catch (err) {
       console.error('❌ Error creating user:', err);
-      const errorMessage = err.response?.data?.message || err.message || 'Failed to create user';
+      const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to create user';
       setError(errorMessage);
       throw err;
     } finally {
@@ -84,7 +96,7 @@ export const UserProvider = ({ children }) => {
       return updatedUser;
     } catch (err) {
       console.error('❌ Error updating user:', err);
-      const errorMessage = err.response?.data?.message || err.message || 'Failed to update user';
+      const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to update user';
       setError(errorMessage);
       throw err;
     } finally {
@@ -108,7 +120,7 @@ export const UserProvider = ({ children }) => {
       console.log('✅ User deleted successfully');
     } catch (err) {
       console.error('❌ Error deleting user:', err);
-      const errorMessage = err.response?.data?.message || err.message || 'Failed to delete user';
+      const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to delete user';
       setError(errorMessage);
       throw err;
     } finally {

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { usePayment } from '../context/PaymentContext'
 import { useAuth } from '../context/AuthContext'
+import { useNotification } from '../context/NotificationContext'
 
-const TenantPayment = ({ allocation }) => {
+const TenantPayment = () => {
   const { user } = useAuth()
   const { 
     payments, 
@@ -16,7 +17,11 @@ const TenantPayment = ({ allocation }) => {
     formatMpesaPhone,
     clearError
   } = usePayment()
+
+  const { refreshNotifications } = useNotification()
   
+  const [allocations, setAllocations] = useState([])
+  const [selectedAllocation, setSelectedAllocation] = useState(null)
   const [tenantPayments, setTenantPayments] = useState([])
   const [upcomingPayments, setUpcomingPayments] = useState([])
   const [showPaymentModal, setShowPaymentModal] = useState(false)
@@ -74,16 +79,33 @@ const TenantPayment = ({ allocation }) => {
     return cleaned;
   }
 
-  // Load payments when component mounts or when allocation changes
+  // Load tenant allocations and payments
   useEffect(() => {
-    const loadPayments = async () => {
+    const loadTenantData = async () => {
       if (user?.id) {
         setPaymentsLoading(true);
         try {
+          // Mock tenant allocations - replace with actual API call
+          const mockAllocations = [
+            {
+              id: 'alloc1',
+              unit_id: 'unit1',
+              monthly_rent: 15000,
+              property_name: 'Green Apartments',
+              unit_number: 'A101',
+              rent_due_day: 5
+            }
+          ];
+          setAllocations(mockAllocations);
+          if (mockAllocations.length > 0) {
+            setSelectedAllocation(mockAllocations[0]);
+          }
+
+          // Load payments
           const paymentsData = await getPaymentsByTenant(user.id);
           setTenantPayments(paymentsData || []);
         } catch (err) {
-          console.error('Error loading payments:', err);
+          console.error('Error loading tenant data:', err);
           // For new users, set empty array instead of showing error
           setTenantPayments([]);
         } finally {
@@ -92,18 +114,18 @@ const TenantPayment = ({ allocation }) => {
       }
     }
 
-    loadPayments();
+    loadTenantData();
   }, [user, getPaymentsByTenant]);
 
   // Update payment data and upcoming payments when allocation changes
   useEffect(() => {
-    if (allocation) {
+    if (selectedAllocation) {
       const currentDate = new Date()
       const currentMonth = currentDate.toISOString().slice(0, 7) // YYYY-MM
       
       setPaymentData(prev => ({
         ...prev,
-        amount: allocation.monthly_rent?.toString() || '',
+        amount: selectedAllocation.monthly_rent?.toString() || '',
         phone_number: user?.phone_number || '',
         payment_month: currentMonth
       }))
@@ -111,7 +133,7 @@ const TenantPayment = ({ allocation }) => {
       // Calculate upcoming payments
       try {
         if (getUpcomingPayments && typeof getUpcomingPayments === 'function') {
-          const upcoming = getUpcomingPayments([allocation])
+          const upcoming = getUpcomingPayments([selectedAllocation])
           setUpcomingPayments(upcoming || [])
         } else {
           // Fallback upcoming payments calculation
@@ -124,8 +146,8 @@ const TenantPayment = ({ allocation }) => {
           
           setUpcomingPayments([{
             month: currentMonth,
-            amount: allocation.monthly_rent,
-            dueDate: new Date(currentDate.getFullYear(), currentDate.getMonth(), allocation.rent_due_day || 5),
+            amount: selectedAllocation.monthly_rent,
+            dueDate: new Date(currentDate.getFullYear(), currentDate.getMonth(), selectedAllocation.rent_due_day || 5),
             paidThisMonth: paidThisMonth
           }]);
         }
@@ -134,7 +156,7 @@ const TenantPayment = ({ allocation }) => {
         setUpcomingPayments([])
       }
     }
-  }, [allocation, user, getUpcomingPayments, tenantPayments])
+  }, [selectedAllocation, user, getUpcomingPayments, tenantPayments])
 
   // Validate phone number on change
   useEffect(() => {
@@ -161,7 +183,7 @@ const TenantPayment = ({ allocation }) => {
     }
 
     // Validate allocation exists
-    if (!allocation) {
+    if (!selectedAllocation) {
       setPaymentStatus({ 
         type: 'error', 
         message: 'No active allocation found. Please contact administrator.' 
@@ -177,14 +199,13 @@ const TenantPayment = ({ allocation }) => {
     
     try {
       const paymentPayload = {
-        tenant_id: user.id,
-        unit_id: allocation.unit_id,
-        amount: parseFloat(paymentData.amount),
-        payment_month: `${paymentData.payment_month}-01`,
         phone_number: formattedPhone,
-        property_name: allocation.property_name,
-        unit_number: allocation.unit_number
+        amount: selectedAllocation.monthly_rent,
+        unit_id: selectedAllocation.unit_id,
+        payment_month: paymentData.payment_month
       }
+
+      console.log('📦 Processing payment with data:', paymentPayload)
 
       const result = await processMpesaPayment(paymentPayload)
       
@@ -202,6 +223,14 @@ const TenantPayment = ({ allocation }) => {
           setTenantPayments(updatedPayments || [])
         } catch (err) {
           console.error('Error refreshing payments:', err)
+        }
+
+        // 🔄 CRITICAL: Refresh notifications to show the new payment notification
+        try {
+          await refreshNotifications()
+          console.log('✅ Notifications refreshed after payment')
+        } catch (err) {
+          console.error('Error refreshing notifications:', err)
         }
         
         // Reset form on success
@@ -290,7 +319,7 @@ const TenantPayment = ({ allocation }) => {
     )
   }
 
-  if (!allocation) {
+  if (!selectedAllocation) {
     return (
       <div className="card text-center py-12">
         <div className="text-gray-400 text-6xl mb-4">🏠</div>
@@ -340,7 +369,7 @@ const TenantPayment = ({ allocation }) => {
         <div className="card">
           <div className="text-center">
             <div className="text-2xl font-bold text-gray-900">
-              {formatCurrency(allocation.monthly_rent)}
+              {formatCurrency(selectedAllocation.monthly_rent)}
             </div>
             <div className="text-sm text-gray-600">Monthly Rent</div>
           </div>
@@ -375,7 +404,7 @@ const TenantPayment = ({ allocation }) => {
           <div className="text-right">
             <div className="text-sm text-gray-600">Due Date</div>
             <div className="font-semibold">
-              {new Date(new Date().getFullYear(), new Date().getMonth(), allocation.rent_due_day || 5).toLocaleDateString('en-KE')}
+              {new Date(new Date().getFullYear(), new Date().getMonth(), selectedAllocation.rent_due_day || 5).toLocaleDateString('en-KE')}
             </div>
           </div>
         </div>
@@ -392,7 +421,7 @@ const TenantPayment = ({ allocation }) => {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold text-gray-900">
-                    {allocation.property_name} - {allocation.unit_number}
+                    {selectedAllocation.property_name} - {selectedAllocation.unit_number}
                   </div>
                   <div className="text-sm text-gray-600">
                     Rent for {formatDate(paymentData.payment_month)}
@@ -400,7 +429,7 @@ const TenantPayment = ({ allocation }) => {
                 </div>
                 <div className="text-right">
                   <div className="text-lg font-bold text-gray-900">
-                    {formatCurrency(allocation.monthly_rent)}
+                    {formatCurrency(selectedAllocation.monthly_rent)}
                   </div>
                 </div>
               </div>
@@ -484,7 +513,7 @@ const TenantPayment = ({ allocation }) => {
         )}
       </div>
 
-      {/* M-Pesa Payment Modal - UPDATED WITH BETTER HEIGHT DISTRIBUTION AND CLOSE BUTTON */}
+      {/* M-Pesa Payment Modal */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-lg w-full max-w-md my-8 mx-auto max-h-[85vh] flex flex-col">
@@ -552,11 +581,11 @@ const TenantPayment = ({ allocation }) => {
                     <div className="p-4 bg-gray-50 rounded-lg">
                       <div className="flex justify-between items-center mb-2">
                         <span className="font-medium text-sm">Property:</span>
-                        <span className="text-sm">{allocation.property_name}</span>
+                        <span className="text-sm">{selectedAllocation.property_name}</span>
                       </div>
                       <div className="flex justify-between items-center mb-2">
                         <span className="font-medium text-sm">Unit:</span>
-                        <span className="text-sm">{allocation.unit_number}</span>
+                        <span className="text-sm">{selectedAllocation.unit_number}</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="font-medium text-sm">Amount:</span>
