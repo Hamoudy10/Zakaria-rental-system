@@ -38,6 +38,12 @@ const TenantDashboard = () => {
       const payments = await getPaymentsByTenant(user.id)
       const paymentSummary = getPaymentSummary(user.id)
 
+      console.log('📊 Tenant Dashboard Data:', {
+        allocation: activeAllocation,
+        paymentsCount: payments.length,
+        paymentSummary
+      })
+
       setTenantData({
         allocation: activeAllocation,
         payments: payments,
@@ -275,9 +281,13 @@ const TenantOverview = ({ setActiveTab, tenantData, onRefresh }) => {
             <div>
               <p className="text-sm font-medium text-gray-600">Your Unit</p>
               <p className="text-lg font-bold text-blue-600">
-                {allocation.unit?.unit_code || 'Your Unit'}
+                {/* FIXED: Use actual unit data from allocation */}
+                {allocation.unit_code || allocation.unit_number || 'Your Unit'}
               </p>
-              <p className="text-xs text-gray-500">{allocation.unit?.property_name || 'Property'}</p>
+              <p className="text-xs text-gray-500">
+                {/* FIXED: Use actual property data from allocation */}
+                {allocation.property_name || 'Property'}
+              </p>
             </div>
             <div className="text-lg">🏠</div>
           </div>
@@ -355,6 +365,20 @@ const TenantOverview = ({ setActiveTab, tenantData, onRefresh }) => {
           <div>
             <p className="text-sm font-medium text-gray-600">Security Deposit</p>
             <p className="text-gray-900">KSh {parseInt(allocation.security_deposit || 0).toLocaleString()}</p>
+          </div>
+        </div>
+        {/* FIXED: Added Property and Unit Details */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-200">
+          <div>
+            <p className="text-sm font-medium text-gray-600">Property</p>
+            <p className="text-gray-900">{allocation.property_name || 'N/A'}</p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-600">Unit</p>
+            <p className="text-gray-900">
+              {allocation.unit_code || allocation.unit_number || 'N/A'} 
+              {allocation.unit_type && ` (${allocation.unit_type})`}
+            </p>
           </div>
         </div>
       </div>

@@ -5,7 +5,13 @@ import { useUser } from '../context/UserContext'
 
 const TenantAllocation = () => {
   // Use availableTenants directly from UserContext instead of computing it here
-  const { users, availableTenants, loading: usersLoading } = useUser()
+  const { 
+    users, 
+    availableTenants, 
+    loading: usersLoading, 
+    fetchUsers,
+    refreshAllocations 
+  } = useUser()
   const { properties, updateUnit, loading: propertiesLoading } = useProperty()
   const { 
     allocations, 
@@ -86,6 +92,15 @@ const TenantAllocation = () => {
     fetchAllocations()
   }, [fetchAllocations])
 
+  // NEW: Refresh users and allocations when modal opens
+  useEffect(() => {
+    if (showAllocationModal) {
+      console.log('🔄 Modal opened, refreshing users and allocations...')
+      fetchUsers()
+      refreshAllocations()
+    }
+  }, [showAllocationModal, fetchUsers, refreshAllocations])
+
   // Reset form and errors when modal opens/closes
   useEffect(() => {
     if (!showAllocationModal) {
@@ -157,6 +172,7 @@ const TenantAllocation = () => {
       // Close modal and refresh data
       setShowAllocationModal(false)
       await fetchAllocations()
+      await refreshAllocations() // NEW: Refresh allocation data in UserContext
       
       alert('Tenant allocated successfully!')
     } catch (error) {
@@ -190,6 +206,7 @@ const TenantAllocation = () => {
         
         // Refresh allocations
         await fetchAllocations()
+        await refreshAllocations() // NEW: Refresh allocation data in UserContext
         alert('Tenant deallocated successfully!')
       } catch (error) {
         console.error('Error deallocating tenant:', error)

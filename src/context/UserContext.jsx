@@ -13,11 +13,12 @@ export const useUser = () => {
 
 export const UserProvider = ({ children }) => {
   const [users, setUsers] = useState([]);
+  const [allocations, setAllocations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
 
-  // Fetch all users - FIXED: Proper error handling and API integration
+  // Fetch all users
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -25,7 +26,6 @@ export const UserProvider = ({ children }) => {
       console.log('🔄 Fetching users from API...');
       const response = await userAPI.getUsers();
       
-      // Handle different response formats
       const usersData = response.data?.users || response.data?.data || response.data || [];
       setUsers(Array.isArray(usersData) ? usersData : []);
       console.log(`✅ Successfully fetched ${usersData.length} users`);
@@ -33,27 +33,53 @@ export const UserProvider = ({ children }) => {
       console.error('❌ Error fetching users:', err);
       const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch users';
       setError(errorMessage);
-      // Don't set users to empty array on error - keep existing data
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Create new user - FIXED: Use real API with correct field mapping
+  // Fetch tenant allocations to check who's already allocated
+  const fetchTenantAllocations = useCallback(async () => {
+    try {
+      console.log('🔄 Fetching tenant allocations...');
+      // Using the same API endpoint that TenantAllocationContext uses
+      const response = await fetch('/api/tenant-allocations', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const allocationsData = data.data || data.allocations || [];
+        setAllocations(Array.isArray(allocationsData) ? allocationsData : []);
+        console.log(`✅ Successfully fetched ${allocationsData.length} allocations`);
+      } else {
+        console.warn('⚠️ Could not fetch allocations, proceeding without allocation data');
+        setAllocations([]);
+      }
+    } catch (err) {
+      console.error('❌ Error fetching allocations:', err);
+      // Don't set error state for allocations - we can still function without them
+      setAllocations([]);
+    }
+  }, []);
+
+  // Create new user
   const createUser = useCallback(async (userData) => {
     setLoading(true);
     setError(null);
     try {
       console.log('📝 Creating user:', userData);
       
-      // Map the data to match backend expectations
       const apiData = {
         national_id: userData.national_id,
         first_name: userData.first_name,
         last_name: userData.last_name,
         email: userData.email,
         phone_number: userData.phone_number,
-        password: userData.password, // Send as 'password' not 'password_hash'
+        password: userData.password,
         role: userData.role
       };
       
@@ -62,6 +88,7 @@ export const UserProvider = ({ children }) => {
       
       // Add new user to local state
       setUsers(prev => [...prev, newUser]);
+      
       console.log('✅ User created successfully');
       return newUser;
     } catch (err) {
@@ -74,7 +101,7 @@ export const UserProvider = ({ children }) => {
     }
   }, []);
 
-  // Update user - FIXED: Use real API
+  // Update user
   const updateUser = useCallback(async (userId, updates) => {
     setLoading(true);
     setError(null);
@@ -104,7 +131,7 @@ export const UserProvider = ({ children }) => {
     }
   }, [selectedUser]);
 
-  // Delete user (soft delete) - FIXED: Use real API
+  // Delete user (soft delete)
   const deleteUser = useCallback(async (userId) => {
     setLoading(true);
     setError(null);
@@ -130,11 +157,33 @@ export const UserProvider = ({ children }) => {
 
   // Get available tenants (users with role 'tenant' and without active allocations)
   const getAvailableTenants = useCallback(() => {
-    return users.filter(user => 
+    // Get all tenant users who are active
+    const allTenants = users.filter(user => 
       user.role === 'tenant' && 
-      user.is_active === true
+      user.is_active !== false
     );
-  }, [users]);
+    
+    // If we don't have allocation data, return all tenants
+    if (!allocations.length) {
+      console.log('📊 No allocation data available, showing all tenants');
+      return allTenants;
+    }
+    
+    // Get IDs of tenants who already have active allocations
+    const allocatedTenantIds = allocations
+      .filter(allocation => allocation.is_active === true)
+      .map(allocation => allocation.tenant_id);
+    
+    // Filter out tenants who have active allocations
+    const availableTenants = allTenants.filter(tenant => 
+      !allocatedTenantIds.includes(tenant.id)
+    );
+    
+    console.log(`📊 Available tenants: ${availableTenants.length} out of ${allTenants.length} total tenants`);
+    console.log(`📊 Allocated tenant IDs:`, allocatedTenantIds);
+    
+    return availableTenants;
+  }, [users, allocations]);
 
   // Get user by ID
   const getUserById = useCallback((userId) => {
@@ -144,14 +193,26 @@ export const UserProvider = ({ children }) => {
   // Clear error
   const clearError = useCallback(() => setError(null), []);
 
-  // Fetch users on component mount
+  // Refresh allocations manually
+  const refreshAllocations = useCallback(async () => {
+    await fetchTenantAllocations();
+  }, [fetchTenantAllocations]);
+
+  // Refresh users manually
+  const refreshUsers = useCallback(async () => {
+    await fetchUsers();
+  }, [fetchUsers]);
+
+  // Fetch users and allocations on component mount
   useEffect(() => {
     fetchUsers();
-  }, [fetchUsers]);
+    fetchTenantAllocations();
+  }, [fetchUsers, fetchTenantAllocations]);
 
   const value = React.useMemo(() => ({
     // State
     users,
+    allocations,
     loading,
     error,
     selectedUser,
@@ -166,9 +227,12 @@ export const UserProvider = ({ children }) => {
     updateUser,
     deleteUser,
     getUserById,
-    clearError
+    clearError,
+    refreshAllocations,
+    refreshUsers
   }), [
     users,
+    allocations,
     loading,
     error,
     selectedUser,
@@ -178,7 +242,9 @@ export const UserProvider = ({ children }) => {
     updateUser,
     deleteUser,
     getUserById,
-    clearError
+    clearError,
+    refreshAllocations,
+    refreshUsers
   ]);
 
   return (
