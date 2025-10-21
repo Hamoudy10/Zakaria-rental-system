@@ -136,6 +136,7 @@ export const paymentAPI = {
   getPayments: () => api.get('/payments'),
   getPayment: (id) => api.get(`/payments/${id}`),
   getPaymentsByTenantId: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
+  getPaymentsByTenant: (tenantId) => api.get(`/payments/tenant/${tenantId}`), // ADDED: Missing function
   createPayment: (paymentData) => api.post('/payments', paymentData),
   confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
   getPaymentHistory: (tenantId) => api.get(`/payments/history/${tenantId}`),
@@ -153,6 +154,11 @@ export const paymentAPI = {
   getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
   getPendingPayments: () => api.get('/payments?status=pending'),
   getOverduePayments: () => api.get('/payments?status=overdue'),
+  
+  // ADDED: Missing functions for tenant dashboard
+  getTenantPayments: (tenantId) => api.get(`/payments/tenant/${tenantId}`), // ADDED: Missing function
+  getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`), // ADDED: Missing function
+  getPaymentSummary: (tenantId) => api.get(`/payments/summary/${tenantId}`), // ADDED: Missing function
 };
 
 // Mock M-Pesa API for testing
@@ -245,6 +251,59 @@ export const fileAPI = {
   deleteFile: (filePath) => api.delete('/upload/file', { data: { filePath } }),
 };
 
+// ADDED: Missing utility functions for M-Pesa validation
+export const paymentUtils = {
+  // Validate Kenyan phone number for M-Pesa
+  isValidMpesaPhone: (phone) => {
+    if (!phone) return false;
+    
+    // Remove any non-digit characters
+    const cleaned = phone.replace(/\D/g, '');
+    
+    // Check if it's a valid Kenyan phone number
+    // Formats: 0712345678, 254712345678, +254712345678
+    const regex = /^(07\d{8}|2547\d{8}|\+2547\d{8})$/;
+    return regex.test(cleaned);
+  },
+
+  // Format phone number to 2547XXXXXXXX format
+  formatMpesaPhone: (phone) => {
+    if (!phone) return '';
+    
+    // Remove any non-digit characters
+    const cleaned = phone.replace(/\D/g, '');
+    
+    // Convert to 2547XXXXXXXX format
+    if (cleaned.startsWith('07') && cleaned.length === 10) {
+      return '254' + cleaned.slice(1);
+    } else if (cleaned.startsWith('2547') && cleaned.length === 12) {
+      return cleaned;
+    } else if (cleaned.startsWith('254') && cleaned.length === 12) {
+      return cleaned;
+    } else if (cleaned.startsWith('7') && cleaned.length === 9) {
+      return '254' + cleaned;
+    }
+    
+    return cleaned; // Return as is if no pattern matches
+  },
+
+  // Generate transaction reference
+  generateTransactionRef: () => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    return `RENT${timestamp}${random}`;
+  },
+
+  // Format amount for display
+  formatAmount: (amount) => {
+    return new Intl.NumberFormat('en-KE', {
+      style: 'currency',
+      currency: 'KES',
+      minimumFractionDigits: 0
+    }).format(amount || 0);
+  }
+};
+
 // Export all APIs in a single object for easy importing
 export const API = {
   auth: authAPI,
@@ -260,6 +319,7 @@ export const API = {
   dashboard: dashboardAPI,
   files: fileAPI,
   mpesa: mpesaUtils,
+  paymentUtils: paymentUtils, // ADDED: Missing payment utilities
   mockMpesa: mockMpesaAPI,
 };
 

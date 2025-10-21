@@ -77,25 +77,26 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      // Format phone number for M-Pesa
+      // Format phone number for M-Pesa using the imported mpesaUtils
       const formattedPaymentData = {
         ...paymentData,
         phone_number: mpesaUtils.formatPhoneNumber(paymentData.phone_number),
-        amount: mpesaUtils.formatAmount(paymentData.amount)
+        amount: Math.round(parseFloat(paymentData.amount)) // M-Pesa requires whole numbers
       };
 
-      // Check if we're in development mode (mock API) or production (real API)
-      const isDevelopment = process.env.NODE_ENV === 'development';
+      // FIXED: Use import.meta.env for Vite instead of process.env
+      const isDevelopment = import.meta.env.MODE === 'development';
+      const useRealMpesa = import.meta.env.VITE_USE_REAL_MPESA === 'true';
       
       let result;
       
-      if (isDevelopment) {
-        // Use mock API for development
+      if (isDevelopment && !useRealMpesa) {
+        // Use mock API for development unless explicitly set to use real M-Pesa
         console.log('Using mock M-Pesa API for development');
         result = await processMockMpesaPayment(formattedPaymentData);
       } else {
-        // Use real M-Pesa API for production
-        console.log('Using real M-Pesa API for production');
+        // Use real M-Pesa API for production or when explicitly set
+        console.log('Using real M-Pesa API');
         result = await paymentAPI.processMpesaPayment(formattedPaymentData);
       }
 
@@ -128,8 +129,8 @@ export const PaymentProvider = ({ children }) => {
   // Process mock M-Pesa payment for development
   const processMockMpesaPayment = useCallback(async (paymentData) => {
     try {
-      // Simulate M-Pesa STK push
-      const stkResponse = await mockMpesaAPI.stkPush(paymentData);
+      // Simulate M-Pesa STK push using the correct API function
+      const stkResponse = await mockMpesaAPI.initiatePayment(paymentData);
       
       // Simulate payment confirmation after delay
       return new Promise((resolve) => {
@@ -137,7 +138,7 @@ export const PaymentProvider = ({ children }) => {
           // Create payment record with completed status for mock
           const paymentRecord = {
             ...paymentData,
-            mpesa_transaction_id: stkResponse.data.CheckoutRequestID,
+            mpesa_transaction_id: `MOCK${Date.now()}`,
             mpesa_receipt_number: `RC${Date.now()}`,
             status: 'completed',
             payment_date: new Date().toISOString()
@@ -379,12 +380,12 @@ export const PaymentProvider = ({ children }) => {
     }
   }, []);
 
-  // Validate M-Pesa phone number
+  // Validate M-Pesa phone number using the imported mpesaUtils
   const validateMpesaPhone = useCallback((phoneNumber) => {
-    return mpesaUtils.isValidMpesaPhone(phoneNumber);
+    return mpesaUtils.validatePhoneNumber(phoneNumber);
   }, []);
 
-  // Format phone number for M-Pesa
+  // Format phone number for M-Pesa using the imported mpesaUtils
   const formatMpesaPhone = useCallback((phoneNumber) => {
     return mpesaUtils.formatPhoneNumber(phoneNumber);
   }, []);
@@ -407,7 +408,7 @@ export const PaymentProvider = ({ children }) => {
     getPaymentsByUnit,
     createPayment,
     updatePayment,
-    deletePayment, // ADDED: Now included
+    deletePayment,
     confirmPayment,
     processMpesaPayment,
     checkMpesaPaymentStatus,
@@ -418,9 +419,9 @@ export const PaymentProvider = ({ children }) => {
     
     // Utility functions
     getPaymentSummary,
-    getMonthlySummary, // ADDED: Now included
-    fetchPaymentStats, // ADDED: Now included
-    generatePaymentReport, // ADDED: Now included
+    getMonthlySummary,
+    fetchPaymentStats,
+    generatePaymentReport,
     validateMpesaPhone,
     formatMpesaPhone,
     clearError
@@ -433,18 +434,22 @@ export const PaymentProvider = ({ children }) => {
     selectedPayment,
     fetchPayments,
     getPaymentsByTenant,
+    getPaymentsByUnit,
     createPayment,
     updatePayment,
-    deletePayment, // ADDED: Now included
+    deletePayment,
     confirmPayment,
     processMpesaPayment,
     checkMpesaPaymentStatus,
     getAllocationByTenantId,
     getUpcomingPayments,
     getPaymentSummary,
-    getMonthlySummary, // ADDED: Now included
+    getMonthlySummary,
+    fetchPaymentStats,
+    generatePaymentReport,
     validateMpesaPhone,
-    formatMpesaPhone
+    formatMpesaPhone,
+    clearError
   ]);
 
   return (
