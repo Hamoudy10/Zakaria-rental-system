@@ -7,6 +7,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // ADDED: Increased timeout for M-Pesa requests
 });
 
 // Add auth token to requests
@@ -159,6 +160,12 @@ export const paymentAPI = {
   getTenantPayments: (tenantId) => api.get(`/payments/tenant/${tenantId}`), // ADDED: Missing function
   getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`), // ADDED: Missing function
   getPaymentSummary: (tenantId) => api.get(`/payments/summary/${tenantId}`), // ADDED: Missing function
+  
+  // ADDED: Check payment status function
+  checkPaymentStatus: (checkoutRequestId) => api.get(`/payments/mpesa/status/${checkoutRequestId}`),
+  
+  // ADDED: Update payment function
+  updatePayment: (paymentId, updates) => api.put(`/payments/${paymentId}`, updates),
 };
 
 // Mock M-Pesa API for testing
