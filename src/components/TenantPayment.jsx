@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { usePayment } from '../context/PaymentContext'
 import { useAuth } from '../context/AuthContext'
 
-const TenantPayment = () => {
+const TenantPayment = ({ allocation }) => {
   const { user } = useAuth()
   const { 
     payments, 
@@ -11,14 +11,12 @@ const TenantPayment = () => {
     error,
     processMpesaPayment, 
     getPaymentsByTenant,
-    getAllocationByTenantId,
     getUpcomingPayments,
     validateMpesaPhone,
     formatMpesaPhone,
     clearError
   } = usePayment()
   
-  const [allocation, setAllocation] = useState(null)
   const [tenantPayments, setTenantPayments] = useState([])
   const [upcomingPayments, setUpcomingPayments] = useState([])
   const [showPaymentModal, setShowPaymentModal] = useState(false)
@@ -29,32 +27,75 @@ const TenantPayment = () => {
   })
   const [paymentStatus, setPaymentStatus] = useState(null)
   const [phoneError, setPhoneError] = useState('')
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
 
-  // Load allocation and payments when component mounts
+  // Fallback phone validation functions in case context functions fail
+  const isValidMpesaPhone = (phone) => {
+    try {
+      // Try to use context function first
+      if (validateMpesaPhone && typeof validateMpesaPhone === 'function') {
+        return validateMpesaPhone(phone);
+      }
+    } catch (error) {
+      console.warn('Context validateMpesaPhone failed, using fallback');
+    }
+    
+    // Fallback validation
+    if (!phone) return false;
+    const cleaned = phone.replace(/\D/g, '');
+    const regex = /^(07\d{8}|2547\d{8}|\+2547\d{8})$/;
+    return regex.test(cleaned);
+  }
+
+  const formatMpesaPhoneNumber = (phone) => {
+    try {
+      // Try to use context function first
+      if (formatMpesaPhone && typeof formatMpesaPhone === 'function') {
+        return formatMpesaPhone(phone);
+      }
+    } catch (error) {
+      console.warn('Context formatMpesaPhone failed, using fallback');
+    }
+    
+    // Fallback formatting
+    if (!phone) return '';
+    const cleaned = phone.replace(/\D/g, '');
+    
+    if (cleaned.startsWith('07') && cleaned.length === 10) {
+      return '254' + cleaned.slice(1);
+    } else if (cleaned.startsWith('2547') && cleaned.length === 12) {
+      return cleaned;
+    } else if (cleaned.startsWith('254') && cleaned.length === 12) {
+      return cleaned;
+    } else if (cleaned.startsWith('7') && cleaned.length === 9) {
+      return '254' + cleaned;
+    }
+    
+    return cleaned;
+  }
+
+  // Load payments when component mounts or when allocation changes
   useEffect(() => {
-    const loadData = async () => {
+    const loadPayments = async () => {
       if (user?.id) {
+        setPaymentsLoading(true);
         try {
-          const allocationData = await getAllocationByTenantId(user.id)
-          setAllocation(allocationData)
-          
-          const paymentsData = await getPaymentsByTenant(user.id)
-          setTenantPayments(paymentsData)
-          
-          if (allocationData) {
-            const upcoming = getUpcomingPayments([allocationData])
-            setUpcomingPayments(upcoming)
-          }
+          const paymentsData = await getPaymentsByTenant(user.id);
+          setTenantPayments(paymentsData || []);
         } catch (err) {
-          console.error('Error loading payment data:', err)
+          console.error('Error loading payments:', err);
+          // For new users, set empty array instead of showing error
+          setTenantPayments([]);
+        } finally {
+          setPaymentsLoading(false);
         }
       }
     }
 
-    loadData()
-  }, [user, getAllocationByTenantId, getPaymentsByTenant, getUpcomingPayments])
+    loadPayments();
+  }, [user, getPaymentsByTenant]);
 
-  // Update payment data when allocation changes
+  // Update payment data and upcoming payments when allocation changes
   useEffect(() => {
     if (allocation) {
       const currentDate = new Date()
@@ -66,14 +107,40 @@ const TenantPayment = () => {
         phone_number: user?.phone_number || '',
         payment_month: currentMonth
       }))
+
+      // Calculate upcoming payments
+      try {
+        if (getUpcomingPayments && typeof getUpcomingPayments === 'function') {
+          const upcoming = getUpcomingPayments([allocation])
+          setUpcomingPayments(upcoming || [])
+        } else {
+          // Fallback upcoming payments calculation
+          const currentDate = new Date();
+          const currentMonth = currentDate.toISOString().slice(0, 7);
+          const paidThisMonth = tenantPayments.some(payment => 
+            payment.payment_month?.startsWith(currentMonth) && 
+            payment.status === 'completed'
+          );
+          
+          setUpcomingPayments([{
+            month: currentMonth,
+            amount: allocation.monthly_rent,
+            dueDate: new Date(currentDate.getFullYear(), currentDate.getMonth(), allocation.rent_due_day || 5),
+            paidThisMonth: paidThisMonth
+          }]);
+        }
+      } catch (error) {
+        console.error('Error calculating upcoming payments:', error)
+        setUpcomingPayments([])
+      }
     }
-  }, [allocation, user])
+  }, [allocation, user, getUpcomingPayments, tenantPayments])
 
   // Validate phone number on change
   useEffect(() => {
     if (paymentData.phone_number) {
-      const formattedPhone = formatMpesaPhone(paymentData.phone_number)
-      if (!validateMpesaPhone(formattedPhone)) {
+      const formattedPhone = formatMpesaPhoneNumber(paymentData.phone_number)
+      if (!isValidMpesaPhone(formattedPhone)) {
         setPhoneError('Please enter a valid Kenyan phone number (e.g., 0712345678)')
       } else {
         setPhoneError('')
@@ -81,20 +148,31 @@ const TenantPayment = () => {
     } else {
       setPhoneError('')
     }
-  }, [paymentData.phone_number, validateMpesaPhone, formatMpesaPhone])
+  }, [paymentData.phone_number])
 
   const handleMpesaPayment = async (e) => {
     e.preventDefault()
     
     // Validate phone number
-    const formattedPhone = formatMpesaPhone(paymentData.phone_number)
-    if (!validateMpesaPhone(formattedPhone)) {
+    const formattedPhone = formatMpesaPhoneNumber(paymentData.phone_number)
+    if (!isValidMpesaPhone(formattedPhone)) {
       setPhoneError('Please enter a valid Kenyan phone number')
       return
     }
 
+    // Validate allocation exists
+    if (!allocation) {
+      setPaymentStatus({ 
+        type: 'error', 
+        message: 'No active allocation found. Please contact administrator.' 
+      })
+      return
+    }
+
     setPaymentStatus({ type: 'processing', message: 'Initiating M-Pesa payment...' })
-    clearError()
+    if (clearError && typeof clearError === 'function') {
+      clearError()
+    }
     setPhoneError('')
     
     try {
@@ -110,7 +188,7 @@ const TenantPayment = () => {
 
       const result = await processMpesaPayment(paymentPayload)
       
-      if (result.success) {
+      if (result && result.success) {
         setPaymentStatus({ 
           type: 'success', 
           message: result.message || 'Payment initiated successfully! Check your phone for M-Pesa prompt.',
@@ -119,8 +197,12 @@ const TenantPayment = () => {
         })
         
         // Refresh payments data
-        const updatedPayments = await getPaymentsByTenant(user.id)
-        setTenantPayments(updatedPayments)
+        try {
+          const updatedPayments = await getPaymentsByTenant(user.id)
+          setTenantPayments(updatedPayments || [])
+        } catch (err) {
+          console.error('Error refreshing payments:', err)
+        }
         
         // Reset form on success
         setPaymentData(prev => ({
@@ -135,7 +217,7 @@ const TenantPayment = () => {
       } else {
         setPaymentStatus({ 
           type: 'error', 
-          message: result.error || 'Payment failed. Please try again.' 
+          message: (result && result.error) || 'Payment failed. Please try again.' 
         })
       }
     } catch (error) {
@@ -156,6 +238,7 @@ const TenantPayment = () => {
 
   const formatDate = (dateString) => {
     try {
+      if (!dateString) return 'N/A';
       return new Date(dateString).toLocaleDateString('en-KE', {
         year: 'numeric',
         month: 'long'
@@ -166,7 +249,11 @@ const TenantPayment = () => {
   }
 
   const getPaymentStatus = (payment) => {
-    switch (payment.status) {
+    if (!payment || !payment.status) {
+      return { color: 'text-gray-600', bg: 'bg-gray-100', text: 'Unknown' }
+    }
+    
+    switch (payment.status.toLowerCase()) {
       case 'completed':
         return { color: 'text-green-600', bg: 'bg-green-100', text: 'Completed' }
       case 'pending':
@@ -183,10 +270,19 @@ const TenantPayment = () => {
     setPaymentData(prev => ({ ...prev, phone_number: value }))
   }
 
+  const handleCloseModal = () => {
+    setShowPaymentModal(false)
+    setPaymentStatus(null)
+    setPhoneError('')
+    if (clearError && typeof clearError === 'function') {
+      clearError()
+    }
+  }
+
   const currentMonthPaid = upcomingPayments[0]?.paidThisMonth || false
   const isDevelopment = process.env.NODE_ENV === 'development'
 
-  if (loading && !allocation) {
+  if (paymentsLoading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -206,8 +302,8 @@ const TenantPayment = () => {
 
   return (
     <div className="space-y-6">
-      {/* Error Display */}
-      {error && (
+      {/* Error Display - Only show if it's a real error, not "no payments" */}
+      {error && !error.includes('Failed to fetch tenant payments') && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
           {error}
           <button onClick={clearError} className="float-right font-bold">×</button>
@@ -221,6 +317,19 @@ const TenantPayment = () => {
             <div className="text-yellow-600 mr-2">🛠️</div>
             <div className="text-sm text-yellow-800">
               <strong>Development Mode:</strong> Using mock M-Pesa API. No real payments will be processed.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Welcome message for new users */}
+      {tenantPayments.length === 0 && !paymentsLoading && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+          <div className="flex items-center">
+            <div className="text-blue-500 text-2xl mr-3">👋</div>
+            <div>
+              <h3 className="text-lg font-semibold text-blue-900">Welcome!</h3>
+              <p className="text-blue-800">This appears to be your first payment. You can make your rent payment using M-Pesa below.</p>
             </div>
           </div>
         </div>
@@ -345,10 +454,10 @@ const TenantPayment = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {tenantPayments.map((payment) => {
+                {tenantPayments.map((payment, index) => {
                   const status = getPaymentStatus(payment)
                   return (
-                    <tr key={payment.id} className="hover:bg-gray-50">
+                    <tr key={payment.id || index} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {payment.payment_date ? new Date(payment.payment_date).toLocaleDateString('en-KE') : 'N/A'}
                       </td>
@@ -375,124 +484,149 @@ const TenantPayment = () => {
         )}
       </div>
 
-      {/* M-Pesa Payment Modal */}
+      {/* M-Pesa Payment Modal - UPDATED WITH BETTER HEIGHT DISTRIBUTION AND CLOSE BUTTON */}
       {showPaymentModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-xl font-bold mb-4">Pay with M-Pesa</h3>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg w-full max-w-md my-8 mx-auto max-h-[85vh] flex flex-col">
+            {/* Modal Header - Reduced height with close button */}
+            <div className="border-b border-gray-200 px-6 py-3 flex-shrink-0 flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Pay with M-Pesa</h3>
+                <p className="text-sm text-gray-600 mt-1">Complete your rent payment securely</p>
+              </div>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                onClick={handleCloseModal}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
             
-            {paymentStatus ? (
-              <div className={`text-center py-6 ${
-                paymentStatus.type === 'success' ? 'text-green-600' :
-                paymentStatus.type === 'error' ? 'text-red-600' :
-                'text-blue-600'
-              }`}>
-                {paymentStatus.type === 'processing' && (
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                )}
-                {paymentStatus.type === 'success' && (
-                  <div className="text-4xl mb-2">✓</div>
-                )}
-                {paymentStatus.type === 'error' && (
-                  <div className="text-4xl mb-2">✗</div>
-                )}
-                <p className="text-lg font-semibold mb-2">
-                  {paymentStatus.type === 'processing' ? 'Processing Payment...' :
-                   paymentStatus.type === 'success' ? 'Payment Initiated!' :
-                   'Payment Failed'}
-                </p>
-                <p className="text-sm">{paymentStatus.message}</p>
-                
-                {paymentStatus.type === 'success' && (
-                  <div className="mt-4 p-3 bg-green-50 rounded-lg">
-                    <p className="text-sm font-semibold">Transaction Details:</p>
-                    <p className="text-xs">Receipt: {paymentStatus.receipt}</p>
-                    <p className="text-xs">Transaction ID: {paymentStatus.transactionId}</p>
+            {/* Modal Content - Increased height and scrollable */}
+            <div className="flex-1 overflow-y-auto">
+              <div className="p-6">
+                {paymentStatus ? (
+                  <div className={`text-center py-6 ${
+                    paymentStatus.type === 'success' ? 'text-green-600' :
+                    paymentStatus.type === 'error' ? 'text-red-600' :
+                    'text-blue-600'
+                  }`}>
+                    {paymentStatus.type === 'processing' && (
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    )}
+                    {paymentStatus.type === 'success' && (
+                      <div className="text-4xl mb-2">✓</div>
+                    )}
+                    {paymentStatus.type === 'error' && (
+                      <div className="text-4xl mb-2">✗</div>
+                    )}
+                    <p className="text-lg font-semibold mb-2">
+                      {paymentStatus.type === 'processing' ? 'Processing Payment...' :
+                      paymentStatus.type === 'success' ? 'Payment Initiated!' :
+                      'Payment Failed'}
+                    </p>
+                    <p className="text-sm mb-4">{paymentStatus.message}</p>
+                    
+                    {paymentStatus.type === 'success' && paymentStatus.receipt && (
+                      <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                        <p className="text-sm font-semibold">Transaction Details:</p>
+                        <p className="text-xs">Receipt: {paymentStatus.receipt}</p>
+                        {paymentStatus.transactionId && (
+                          <p className="text-xs">Transaction ID: {paymentStatus.transactionId}</p>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleCloseModal}
+                      className="btn-secondary mt-4 px-6 py-2 text-sm"
+                    >
+                      Close
+                    </button>
                   </div>
+                ) : (
+                  <form onSubmit={handleMpesaPayment} className="space-y-5">
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-medium text-sm">Property:</span>
+                        <span className="text-sm">{allocation.property_name}</span>
+                      </div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-medium text-sm">Unit:</span>
+                        <span className="text-sm">{allocation.unit_number}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium text-sm">Amount:</span>
+                        <span className="text-lg font-bold">{formatCurrency(paymentData.amount)}</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Phone Number
+                      </label>
+                      <input
+                        type="tel"
+                        value={paymentData.phone_number}
+                        onChange={handlePhoneChange}
+                        className={`input-primary w-full ${phoneError ? 'border-red-500' : ''}`}
+                        placeholder="0712345678"
+                        required
+                      />
+                      {phoneError && (
+                        <p className="text-red-500 text-xs mt-1">{phoneError}</p>
+                      )}
+                      <p className="text-xs text-gray-500 mt-1">
+                        Format: 0712345678 or 254712345678
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Payment Month
+                      </label>
+                      <input
+                        type="month"
+                        value={paymentData.payment_month}
+                        onChange={(e) => setPaymentData({...paymentData, payment_month: e.target.value})}
+                        className="input-primary w-full"
+                        required
+                      />
+                    </div>
+
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-start">
+                        <div className="text-blue-600 mr-2 mt-0.5 text-sm">ℹ️</div>
+                        <div className="text-xs text-blue-800">
+                          <strong className="text-sm">M-Pesa Instructions:</strong> 
+                          <p className="mt-1">You will receive a prompt on your phone to enter your M-Pesa PIN. Ensure your phone is nearby and has sufficient signal.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex space-x-3 pt-4">
+                      <button
+                        type="submit"
+                        disabled={loading || phoneError}
+                        className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed py-3 text-sm font-medium"
+                      >
+                        {loading ? 'Processing...' : 'Confirm Payment'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCloseModal}
+                        className="btn-secondary flex-1 py-3 text-sm font-medium"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
                 )}
               </div>
-            ) : (
-              <form onSubmit={handleMpesaPayment} className="space-y-4">
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-semibold">Property:</span>
-                    <span>{allocation.property_name}</span>
-                  </div>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-semibold">Unit:</span>
-                    <span>{allocation.unit_number}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold">Amount:</span>
-                    <span className="text-lg font-bold">{formatCurrency(paymentData.amount)}</span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Phone Number
-                  </label>
-                  <input
-                    type="tel"
-                    value={paymentData.phone_number}
-                    onChange={handlePhoneChange}
-                    className={`input-primary ${phoneError ? 'border-red-500' : ''}`}
-                    placeholder="0712345678"
-                    required
-                  />
-                  {phoneError && (
-                    <p className="text-red-500 text-xs mt-1">{phoneError}</p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    Format: 0712345678 or 254712345678
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Payment Month
-                  </label>
-                  <input
-                    type="month"
-                    value={paymentData.payment_month}
-                    onChange={(e) => setPaymentData({...paymentData, payment_month: e.target.value})}
-                    className="input-primary"
-                    required
-                  />
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="flex items-center">
-                    <div className="text-blue-600 mr-2">ℹ️</div>
-                    <div className="text-sm text-blue-800">
-                      <strong>M-Pesa Instructions:</strong> You will receive a prompt on your phone to enter your M-Pesa PIN.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex space-x-4 pt-4">
-                  <button
-                    type="submit"
-                    disabled={loading || phoneError}
-                    className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {loading ? 'Processing...' : 'Confirm Payment'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowPaymentModal(false)
-                      setPaymentStatus(null)
-                      setPhoneError('')
-                      clearError()
-                    }}
-                    className="btn-secondary flex-1"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            )}
+            </div>
           </div>
         </div>
       )}
