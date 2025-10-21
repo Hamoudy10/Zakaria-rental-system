@@ -1,17 +1,58 @@
 const axios = require('axios');
 const moment = require('moment');
 const pool = require('../config/database');
-const bcrypt = require('bcryptjs');
+const NotificationService = require('../services/notificationService');
 
-// Add this function to check database connection
+// Check database connection
 const checkDatabase = async () => {
   try {
     const result = await pool.query('SELECT NOW()');
-    console.log('✅ Database connection successful:', result.rows[0]);
+    console.log('✅ Database connection successful');
     return true;
   } catch (error) {
     console.error('❌ Database connection failed:', error);
     return false;
+  }
+};
+
+// Generate timestamp for M-Pesa (YYYYMMDDHHmmss format)
+const generateTimestamp = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}${month}${day}${hours}${minutes}${seconds}`;
+};
+
+// Generate M-Pesa password
+const generatePassword = (shortCode, passKey, timestamp) => {
+  const passwordString = `${shortCode}${passKey}${timestamp}`;
+  return Buffer.from(passwordString).toString('base64');
+};
+
+// Get M-Pesa access token
+const getAccessToken = async () => {
+  try {
+    const consumerKey = process.env.MPESA_CONSUMER_KEY;
+    const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
+    const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+    
+    const response = await axios.get(
+      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+      {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+        },
+      }
+    );
+    
+    return response.data.access_token;
+  } catch (error) {
+    console.error('❌ Error getting access token:', error.response?.data || error.message);
+    throw new Error(`Failed to get access token: ${error.message}`);
   }
 };
 
@@ -37,8 +78,8 @@ const initiateSTKPush = async (req, res) => {
       amount, 
       unitId,
       paymentMonth,
-      account_reference = 'RENTAL',
-      transaction_desc = 'Rent Payment'
+      account_reference = 'RENTAL_PAYMENT',
+      transaction_desc = 'Monthly Rent Payment'
     } = req.body;
 
     console.log('📦 Payment data:', { phone, amount, unitId, paymentMonth });
@@ -68,19 +109,22 @@ const initiateSTKPush = async (req, res) => {
     const formattedPhone = `254${match[1]}`;
     console.log('📞 Formatted phone:', formattedPhone);
 
-    // FIXED: Use monthly_rent column instead of rent_amount
+    // Check tenant allocation
     console.log('🔍 Checking tenant allocation for user:', req.user.id, 'unit:', unitId);
     const allocationCheck = await pool.query(
       `SELECT 
         ta.id, 
         ta.tenant_id, 
         ta.unit_id,
-        ta.monthly_rent,  -- CHANGED: Using monthly_rent from tenant_allocations
+        ta.monthly_rent,
         p.name as property_name,
-        pu.unit_number
+        pu.unit_number,
+        u.first_name,
+        u.last_name
        FROM tenant_allocations ta
        LEFT JOIN property_units pu ON ta.unit_id = pu.id
        LEFT JOIN properties p ON pu.property_id = p.id
+       LEFT JOIN users u ON ta.tenant_id = u.id
        WHERE ta.unit_id = $1 AND ta.tenant_id = $2 AND ta.is_active = true`,
       [unitId, req.user.id]
     );
@@ -97,7 +141,7 @@ const initiateSTKPush = async (req, res) => {
     console.log('✅ Allocation found:', allocation);
 
     // Validate amount matches the unit's monthly rent
-    const unitMonthlyRent = parseFloat(allocation.monthly_rent); // CHANGED: monthly_rent
+    const unitMonthlyRent = parseFloat(allocation.monthly_rent);
     const paymentAmount = parseFloat(amount);
     
     if (paymentAmount !== unitMonthlyRent) {
@@ -133,137 +177,80 @@ const initiateSTKPush = async (req, res) => {
       }
     }
 
-    // Check if using real M-Pesa
-    const useRealMpesa = process.env.VITE_USE_REAL_MPESA === 'true' || process.env.USE_REAL_MPESA === 'true';
-    console.log('💰 M-Pesa Mode:', useRealMpesa ? 'REAL' : 'MOCK');
-
-    if (!useRealMpesa) {
-      console.log('🔧 Using mock M-Pesa payment...');
-      
-      // Create a mock payment record
-      const mockPaymentResult = await pool.query(
-        `INSERT INTO rent_payments (
-          tenant_id, unit_id, phone_number, amount, 
-          payment_month, status, mpesa_receipt_number,
-          mpesa_transaction_id, payment_date, confirmed_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING *`,
-        [
-          req.user.id,
-          unitId,
-          formattedPhone,
-          amount,
-          paymentMonth,
-          'completed',
-          `MPESA${Date.now()}`,
-          `TEST${Date.now()}`,
-          new Date(),
-          req.user.id
-        ]
-      );
-
-      console.log('✅ Mock payment created:', mockPaymentResult.rows[0].id);
-
-      // Create payment notification
-      await pool.query(
-        `INSERT INTO payment_notifications (
-          payment_id, recipient_id, message_type, message_content,
-          mpesa_code, amount, payment_date, property_info, unit_info, is_sent
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          mockPaymentResult.rows[0].id,
-          req.user.id,
-          'payment_confirmation',
-          `Your rent payment of KSh ${amount} for ${paymentMonth} has been confirmed. Thank you!`,
-          `MPESA${Date.now()}`,
-          amount,
-          new Date(),
-          allocation.property_name,
-          `Unit ${allocation.unit_number}`,
-          true
-        ]
-      );
-
-      return res.json({
-        success: true,
-        message: 'Mock payment processed successfully',
-        payment: mockPaymentResult.rows[0],
-        checkoutRequestId: `MOCK${Date.now()}`
-      });
-    }
-
     // REAL M-Pesa Integration
     console.log('🔧 Initiating real M-Pesa STK Push...');
 
-    // Get access token from Daraja API
-    const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
-    
-    const tokenResponse = await axios.get(
-      `${process.env.MPESA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials`,
-      {
-        headers: {
-          Authorization: `Basic ${auth}`,
-        },
-      }
-    );
+    // Get M-Pesa credentials from environment
+    const shortCode = process.env.MPESA_SHORT_CODE;
+    const passKey = process.env.MPESA_PASSKEY;
+    const callbackUrl = `${process.env.BACKEND_URL}/api/payments/mpesa-callback`;
 
-    const access_token = tokenResponse.data.access_token;
+    if (!shortCode || !passKey) {
+      throw new Error('M-Pesa configuration missing: MPESA_SHORT_CODE or MPESA_PASSKEY not set');
+    }
+
+    // Get access token
+    const access_token = await getAccessToken();
     console.log('✅ M-Pesa access token obtained');
 
-    // Prepare STK Push request
-    const timestamp = moment().format('YYYYMMDDHHmmss');
-    const password = Buffer.from(
-      `${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`
-    ).toString('base64');
+    // Generate timestamp and password
+    const timestamp = generateTimestamp();
+    const password = generatePassword(shortCode, passKey, timestamp);
 
+    // Prepare STK Push request payload :cite[1]:cite[2]
     const stkPushPayload = {
-      BusinessShortCode: process.env.MPESA_SHORTCODE,
+      BusinessShortCode: shortCode,
       Password: password,
       Timestamp: timestamp,
       TransactionType: 'CustomerPayBillOnline',
-      Amount: Math.round(amount), // M-Pesa requires whole numbers
+      Amount: Math.round(paymentAmount), // M-Pesa requires whole numbers
       PartyA: formattedPhone,
-      PartyB: process.env.MPESA_SHORTCODE,
+      PartyB: shortCode,
       PhoneNumber: formattedPhone,
-      CallBackURL: `${process.env.BACKEND_URL}/api/payments/mpesa-callback`,
+      CallBackURL: callbackUrl,
       AccountReference: account_reference,
       TransactionDesc: transaction_desc,
     };
 
     console.log('📤 Initiating STK Push:', { 
       phone: formattedPhone, 
-      amount, 
-      shortcode: process.env.MPESA_SHORTCODE,
-      callback_url: `${process.env.BACKEND_URL}/api/payments/mpesa-callback`
+      amount: paymentAmount, 
+      shortcode: shortCode,
+      callback_url: callbackUrl
     });
 
-    // Initiate STK Push
+    // Initiate STK Push :cite[1]:cite[10]
     const stkResponse = await axios.post(
-      `${process.env.MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest`,
+      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
       stkPushPayload,
       {
         headers: {
-          Authorization: `Bearer ${access_token}`,
+          'Authorization': `Bearer ${access_token}`,
           'Content-Type': 'application/json',
         },
+        timeout: 30000,
       }
     );
 
     console.log('✅ STK Push initiated:', stkResponse.data);
+
+    if (stkResponse.data.ResponseCode !== '0') {
+      throw new Error(`M-Pesa API error: ${stkResponse.data.ResponseDescription}`);
+    }
 
     // Create pending payment record
     const paymentResult = await pool.query(
       `INSERT INTO rent_payments (
         tenant_id, unit_id, phone_number, amount, 
         payment_month, status, mpesa_transaction_id,
-        merchant_request_id, payment_method
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        merchant_request_id, payment_method, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
       RETURNING *`,
       [
         req.user.id,
         unitId,
         formattedPhone,
-        amount,
+        paymentAmount,
         paymentMonth,
         'pending',
         stkResponse.data.CheckoutRequestID,
@@ -275,24 +262,46 @@ const initiateSTKPush = async (req, res) => {
     const paymentRecord = paymentResult.rows[0];
     console.log('✅ Pending payment record created:', paymentRecord.id);
 
+    // Create pending payment notification for tenant
+    try {
+      await NotificationService.createNotification({
+        userId: req.user.id,
+        title: 'Payment Initiated',
+        message: `Your rent payment of KSh ${paymentAmount} for ${paymentMonth} has been initiated. Please check your phone to enter your M-Pesa PIN.`,
+        type: 'payment_pending',
+        relatedEntityType: 'rent_payment',
+        relatedEntityId: paymentRecord.id
+      });
+      console.log('✅ Pending payment notification created');
+    } catch (notificationError) {
+      console.error('❌ Failed to create pending payment notification:', notificationError);
+    }
+
     res.json({
       success: true,
-      message: 'M-Pesa payment initiated successfully',
+      message: 'M-Pesa payment initiated successfully. Please check your phone to enter your M-Pesa PIN.',
       checkoutRequestID: stkResponse.data.CheckoutRequestID,
       merchantRequestID: stkResponse.data.MerchantRequestID,
       responseCode: stkResponse.data.ResponseCode,
       responseDescription: stkResponse.data.ResponseDescription,
+      customerMessage: stkResponse.data.CustomerMessage,
       payment: paymentRecord
     });
 
   } catch (error) {
     console.error('❌ ERROR in initiateSTKPush:', error);
-    console.error('🔍 Error details:', {
-      message: error.message,
-      response: error.response?.data,
-      code: error.code,
-      stack: error.stack
-    });
+    
+    // Create error notification for tenant
+    try {
+      await NotificationService.createNotification({
+        userId: req.user.id,
+        title: 'Payment Failed',
+        message: `Failed to initiate rent payment: ${error.message}`,
+        type: 'payment_failed'
+      });
+    } catch (notificationError) {
+      console.error('Failed to create error notification:', notificationError);
+    }
     
     res.status(500).json({
       success: false,
@@ -303,7 +312,7 @@ const initiateSTKPush = async (req, res) => {
   }
 };
 
-// M-Pesa callback handler
+// M-Pesa callback handler :cite[1]:cite[4]
 const handleMpesaCallback = async (req, res) => {
   console.log('📞 M-Pesa callback received:', JSON.stringify(req.body, null, 2));
 
@@ -321,12 +330,23 @@ const handleMpesaCallback = async (req, res) => {
 
     const stkCallback = callbackData.Body.stkCallback;
     const checkoutRequestId = stkCallback.CheckoutRequestID;
+    const resultCode = stkCallback.ResultCode;
 
-    console.log('🔍 Processing callback for:', checkoutRequestId);
+    console.log('🔍 Processing callback for:', checkoutRequestId, 'ResultCode:', resultCode);
 
-    // Find the payment record
+    // Find the payment record with tenant and property details
     const paymentResult = await pool.query(
-      'SELECT * FROM rent_payments WHERE mpesa_transaction_id = $1',
+      `SELECT 
+        rp.*,
+        u.first_name,
+        u.last_name,
+        p.name as property_name,
+        pu.unit_number
+       FROM rent_payments rp
+       LEFT JOIN users u ON rp.tenant_id = u.id
+       LEFT JOIN property_units pu ON rp.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       WHERE rp.mpesa_transaction_id = $1`,
       [checkoutRequestId]
     );
 
@@ -341,7 +361,7 @@ const handleMpesaCallback = async (req, res) => {
     const payment = paymentResult.rows[0];
 
     // Check if transaction was successful
-    if (stkCallback.ResultCode === 0) {
+    if (resultCode === 0) {
       const callbackMetadata = stkCallback.CallbackMetadata?.Item;
       
       if (!callbackMetadata) {
@@ -350,17 +370,48 @@ const handleMpesaCallback = async (req, res) => {
           'UPDATE rent_payments SET status = $1, failure_reason = $2 WHERE id = $3',
           ['failed', 'No callback metadata received', payment.id]
         );
+
+        // Create failure notification
+        try {
+          await NotificationService.createNotification({
+            userId: payment.tenant_id,
+            title: 'Payment Failed',
+            message: 'Payment failed: No confirmation received from M-Pesa',
+            type: 'payment_failed',
+            relatedEntityType: 'rent_payment',
+            relatedEntityId: payment.id
+          });
+        } catch (notificationError) {
+          console.error('Failed to create failure notification:', notificationError);
+        }
+
         return res.status(200).json({ 
           ResultCode: 0, 
           ResultDesc: 'Success' 
         });
       }
 
-      // Extract payment details from callback
-      const amount = callbackMetadata.find(item => item.Name === 'Amount')?.Value;
-      const mpesaReceiptNumber = callbackMetadata.find(item => item.Name === 'MpesaReceiptNumber')?.Value;
-      const transactionDate = callbackMetadata.find(item => item.Name === 'TransactionDate')?.Value;
-      const phoneNumber = callbackMetadata.find(item => item.Name === 'PhoneNumber')?.Value;
+      // Extract payment details from callback metadata :cite[4]
+      let amount, mpesaReceiptNumber, transactionDate, phoneNumber;
+
+      if (Array.isArray(callbackMetadata)) {
+        callbackMetadata.forEach(item => {
+          switch (item.Name) {
+            case 'Amount':
+              amount = item.Value;
+              break;
+            case 'MpesaReceiptNumber':
+              mpesaReceiptNumber = item.Value;
+              break;
+            case 'TransactionDate':
+              transactionDate = item.Value;
+              break;
+            case 'PhoneNumber':
+              phoneNumber = item.Value;
+              break;
+          }
+        });
+      }
 
       console.log('✅ Payment successful:', {
         receipt: mpesaReceiptNumber,
@@ -369,70 +420,67 @@ const handleMpesaCallback = async (req, res) => {
         transactionDate: transactionDate
       });
 
-      // Get allocation details for notification
-      const allocationResult = await pool.query(
-        `SELECT 
-          p.name as property_name,
-          pu.unit_number
-         FROM tenant_allocations ta
-         LEFT JOIN property_units pu ON ta.unit_id = pu.id
-         LEFT JOIN properties p ON pu.property_id = p.id
-         WHERE ta.unit_id = $1 AND ta.tenant_id = $2`,
-        [payment.unit_id, payment.tenant_id]
-      );
-
-      const allocation = allocationResult.rows[0] || {};
-
       // Update payment status to completed
       await pool.query(
         `UPDATE rent_payments 
          SET status = 'completed', 
              mpesa_receipt_number = $1,
-             payment_date = $2,
-             confirmed_at = $2,
-             confirmed_by = $3
-         WHERE id = $4`,
+             payment_date = NOW(),
+             confirmed_at = NOW(),
+             confirmed_by = $2
+         WHERE id = $3`,
         [
           mpesaReceiptNumber,
-          new Date(),
-          payment.tenant_id, // or system user
+          payment.tenant_id,
           payment.id
         ]
       );
 
-      // Create payment notification
-      await pool.query(
-        `INSERT INTO payment_notifications (
-          payment_id, recipient_id, message_type, message_content,
-          mpesa_code, amount, payment_date, property_info, unit_info, is_sent
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          payment.id,
-          payment.tenant_id,
-          'payment_confirmation',
-          `Your rent payment of KSh ${amount} has been confirmed. M-Pesa receipt: ${mpesaReceiptNumber}`,
-          mpesaReceiptNumber,
-          amount,
-          new Date(),
-          allocation.property_name || 'Property',
-          `Unit ${allocation.unit_number || 'N/A'}`,
-          true
-        ]
-      );
+      console.log('✅ Payment completed in database');
 
-      console.log('✅ Payment completed and notification sent');
+      // Create payment notifications using NotificationService
+      try {
+        await NotificationService.createPaymentNotification({
+          tenantId: payment.tenant_id,
+          tenantName: `${payment.first_name} ${payment.last_name}`,
+          unitInfo: `Unit ${payment.unit_number}`,
+          propertyInfo: payment.property_name,
+          amount: amount || payment.amount,
+          paymentMonth: payment.payment_month,
+          mpesaReceipt: mpesaReceiptNumber,
+          paymentId: payment.id
+        });
+        console.log('✅ Payment notifications created successfully');
+      } catch (notificationError) {
+        console.error('❌ Failed to create payment notifications:', notificationError);
+      }
 
     } else {
       // Transaction failed
+      const failureReason = stkCallback.ResultDesc || 'Payment failed';
       await pool.query(
         'UPDATE rent_payments SET status = $1, failure_reason = $2 WHERE id = $3',
-        ['failed', stkCallback.ResultDesc || 'Payment cancelled by user', payment.id]
+        ['failed', failureReason, payment.id]
       );
 
-      console.log('❌ Payment failed:', stkCallback.ResultDesc);
+      // Create failure notification for tenant
+      try {
+        await NotificationService.createNotification({
+          userId: payment.tenant_id,
+          title: 'Payment Failed',
+          message: `Payment failed: ${failureReason}`,
+          type: 'payment_failed',
+          relatedEntityType: 'rent_payment',
+          relatedEntityId: payment.id
+        });
+      } catch (notificationError) {
+        console.error('Failed to create failure notification:', notificationError);
+      }
+
+      console.log('❌ Payment failed:', failureReason);
     }
 
-    // Always return success to M-Pesa to avoid repeated callbacks
+    // Always return success to M-Pesa to avoid repeated callbacks :cite[1]
     res.status(200).json({ 
       ResultCode: 0, 
       ResultDesc: 'Success' 
@@ -456,7 +504,17 @@ const checkPaymentStatus = async (req, res) => {
     console.log('🔍 Checking payment status for:', checkoutRequestId);
 
     const result = await pool.query(
-      'SELECT * FROM rent_payments WHERE mpesa_transaction_id = $1',
+      `SELECT 
+        rp.*,
+        u.first_name as tenant_first_name,
+        u.last_name as tenant_last_name,
+        p.name as property_name,
+        pu.unit_number
+       FROM rent_payments rp
+       LEFT JOIN users u ON rp.tenant_id = u.id
+       LEFT JOIN property_units pu ON rp.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       WHERE rp.mpesa_transaction_id = $1`,
       [checkoutRequestId]
     );
 
@@ -477,6 +535,185 @@ const checkPaymentStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to check payment status',
+      error: error.message
+    });
+  }
+};
+
+// Process Salary Payment with M-Pesa
+const processSalaryPayment = async (req, res) => {
+  console.log('💰 processSalaryPayment called with:', {
+    body: req.body,
+    user: req.user
+  });
+
+  try {
+    const {
+      agentId,
+      amount,
+      paymentMonth,
+      phone
+    } = req.body;
+
+    // Validate required fields
+    if (!agentId || !amount || !paymentMonth || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: agentId, amount, paymentMonth, phone'
+      });
+    }
+
+    // Validate phone number format
+    const cleanedPhone = phone.replace(/\s+/g, '');
+    const phoneRegex = /^(?:254|\+254|0)?(7[0-9]{8})$/;
+    const match = cleanedPhone.match(phoneRegex);
+    
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid phone number format. Use Kenyan format: 07... or 254...'
+      });
+    }
+
+    const formattedPhone = `254${match[1]}`;
+
+    // Get agent details
+    const agentQuery = await pool.query(
+      `SELECT id, first_name, last_name FROM users WHERE id = $1 AND role = 'agent'`,
+      [agentId]
+    );
+
+    if (agentQuery.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Agent not found'
+      });
+    }
+
+    const agent = agentQuery.rows[0];
+
+    // Get admin details for notification
+    const adminQuery = await pool.query(
+      `SELECT first_name, last_name FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const admin = adminQuery.rows[0] || { first_name: 'Admin', last_name: 'User' };
+
+    // REAL M-Pesa Integration for Salary Payments
+    console.log('🔧 Initiating real M-Pesa salary payment...');
+
+    const shortCode = process.env.MPESA_SHORT_CODE;
+    const passKey = process.env.MPESA_PASSKEY;
+    const callbackUrl = `${process.env.BACKEND_URL}/api/payments/salary-callback`;
+
+    // Get access token
+    const access_token = await getAccessToken();
+    
+    // Generate timestamp and password
+    const timestamp = generateTimestamp();
+    const password = generatePassword(shortCode, passKey, timestamp);
+
+    // Prepare STK Push request for salary
+    const stkPushPayload = {
+      BusinessShortCode: shortCode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: 'CustomerPayBillOnline',
+      Amount: Math.round(amount),
+      PartyA: formattedPhone,
+      PartyB: shortCode,
+      PhoneNumber: formattedPhone,
+      CallBackURL: callbackUrl,
+      AccountReference: 'SALARY_PAYMENT',
+      TransactionDesc: `Salary for ${paymentMonth}`,
+    };
+
+    // Initiate STK Push for salary
+    const stkResponse = await axios.post(
+      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      stkPushPayload,
+      {
+        headers: {
+          'Authorization': `Bearer ${access_token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (stkResponse.data.ResponseCode !== '0') {
+      throw new Error(`M-Pesa API error: ${stkResponse.data.ResponseDescription}`);
+    }
+
+    // Create pending salary payment record
+    const salaryPaymentResult = await pool.query(
+      `INSERT INTO salary_payments (
+        agent_id, amount, payment_month, phone_number,
+        mpesa_transaction_id, merchant_request_id,
+        paid_by, status, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      RETURNING *`,
+      [
+        agentId,
+        amount,
+        paymentMonth,
+        formattedPhone,
+        stkResponse.data.CheckoutRequestID,
+        stkResponse.data.MerchantRequestID,
+        req.user.id,
+        'pending'
+      ]
+    );
+
+    const salaryRecord = salaryPaymentResult.rows[0];
+
+    // Create pending salary notifications
+    try {
+      await NotificationService.createNotification({
+        userId: agentId,
+        title: 'Salary Payment Initiated',
+        message: `Your salary payment of KSh ${amount} for ${paymentMonth} has been initiated. Please check your phone.`,
+        type: 'salary_pending',
+        relatedEntityType: 'salary_payment',
+        relatedEntityId: salaryRecord.id
+      });
+
+      await NotificationService.createNotification({
+        userId: req.user.id,
+        title: 'Salary Payment Initiated',
+        message: `Salary payment of KSh ${amount} to ${agent.first_name} ${agent.last_name} has been initiated.`,
+        type: 'salary_processed',
+        relatedEntityType: 'salary_payment',
+        relatedEntityId: salaryRecord.id
+      });
+    } catch (notificationError) {
+      console.error('Failed to create salary notifications:', notificationError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Salary payment initiated successfully. Agent will receive an M-Pesa prompt.',
+      checkoutRequestID: stkResponse.data.CheckoutRequestID,
+      payment: salaryRecord
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR in processSalaryPayment:', error);
+    
+    // Create error notification for admin
+    try {
+      await NotificationService.createNotification({
+        userId: req.user.id,
+        title: 'Salary Payment Failed',
+        message: `Failed to process salary payment: ${error.message}`,
+        type: 'payment_failed'
+      });
+    } catch (notificationError) {
+      console.error('Failed to create error notification:', notificationError);
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Error processing salary payment',
       error: error.message
     });
   }
@@ -563,10 +800,75 @@ const getPaymentsByTenant = async (req, res) => {
   }
 };
 
+// Get all payments (for admin)
+const getAllPayments = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status } = req.query;
+    const offset = (page - 1) * limit;
+
+    let query = `
+      SELECT 
+        rp.*,
+        u.first_name as tenant_first_name,
+        u.last_name as tenant_last_name,
+        p.name as property_name,
+        pu.unit_number
+      FROM rent_payments rp
+      LEFT JOIN users u ON rp.tenant_id = u.id
+      LEFT JOIN property_units pu ON rp.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+    `;
+
+    let countQuery = `SELECT COUNT(*) FROM rent_payments rp`;
+    const queryParams = [];
+    const countParams = [];
+
+    if (status) {
+      query += ` WHERE rp.status = $1`;
+      countQuery += ` WHERE rp.status = $1`;
+      queryParams.push(status);
+      countParams.push(status);
+    }
+
+    query += ` ORDER BY rp.created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+
+    const paymentsResult = await pool.query(query, queryParams);
+    const countResult = await pool.query(countQuery, countParams);
+
+    const totalCount = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(totalCount / limit);
+
+    res.json({
+      success: true,
+      data: {
+        payments: paymentsResult.rows,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalCount,
+          hasNext: page < totalPages,
+          hasPrev: page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting all payments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get payments',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   initiateSTKPush,
   handleMpesaCallback,
   checkPaymentStatus,
   getPaymentById,
-  getPaymentsByTenant
+  getPaymentsByTenant,
+  getAllPayments,
+  processSalaryPayment
 };
