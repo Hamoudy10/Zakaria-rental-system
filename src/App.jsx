@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, Suspense, lazy } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { PropertyProvider } from './context/PropertyContext'
@@ -13,16 +13,26 @@ import { SalaryPaymentProvider } from './context/SalaryPaymentContext'
 import { ComplaintProvider } from './context/ComplaintContext';
 import { SystemSettingsProvider } from './context/SystemSettingsContext';
 
+// Lazy load all dashboard components and major components
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AgentDashboard = lazy(() => import('./pages/AgentDashboard'));
+const TenantDashboard = lazy(() => import('./pages/TenantDashboard'));
+const NotificationsPage = lazy(() => import('./components/NotificationsPage'));
+const TenantPayment = lazy(() => import('./components/TenantPayment'));
+
+// Loading component for Suspense fallback
+const LoadingSpinner = () => (
+  <div className="flex justify-center items-center min-h-64">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+  </div>
+);
+
 // Protected Route component
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth()
   
   if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="text-gray-500">Loading...</div>
-      </div>
-    )
+    return <LoadingSpinner />
   }
   
   if (!user) {
@@ -102,87 +112,7 @@ const Layout = ({ children }) => {
 
               {/* Notification Bell */}
               <div className="relative">
-                <button
-                  onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                  className="relative p-2 text-gray-600 hover:text-gray-900 focus:outline-none transition-colors duration-200"
-                >
-                  {/* Real Bell Icon - Yellow */}
-                  <svg 
-                    className="w-6 h-6 text-yellow-500" 
-                    fill="currentColor" 
-                    viewBox="0 0 20 20"
-                  >
-                    <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
-                  </svg>
-                  
-                  {unreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center border-2 border-white">
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </span>
-                  )}
-                </button>
-
-                {/* Notification Dropdown */}
-                {isNotificationOpen && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-                    <div className="p-4">
-                      <div className="flex justify-between items-center mb-3">
-                        <h3 className="text-lg font-semibold">Notifications</h3>
-                        <Link 
-                          to={`/${user?.role}/notifications`}
-                          className="text-sm text-blue-600 hover:text-blue-800"
-                          onClick={() => setIsNotificationOpen(false)}
-                        >
-                          View All
-                        </Link>
-                      </div>
-                      
-                      {/* Dynamic Notification List */}
-                      <div className="space-y-2 max-h-60 overflow-y-auto">
-                        {recentNotifications.length > 0 ? (
-                          recentNotifications.map((notification) => (
-                            <div 
-                              key={notification.id}
-                              className={`p-3 rounded-lg cursor-pointer hover:bg-gray-50 ${
-                                notification.type === 'payment_success' ? 'bg-green-50 border border-green-200' :
-                                notification.type === 'payment_received' ? 'bg-blue-50 border border-blue-200' :
-                                notification.type === 'salary_paid' ? 'bg-purple-50 border border-purple-200' :
-                                notification.type === 'salary_processed' ? 'bg-indigo-50 border border-indigo-200' :
-                                'bg-gray-50 border border-gray-200'
-                              }`}
-                              onClick={() => handleNotificationClick(notification.id)}
-                            >
-                              <p className="text-sm font-medium text-gray-900">{notification.title}</p>
-                              <p className="text-xs text-gray-600 mt-1">{notification.message}</p>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {new Date(notification.created_at).toLocaleDateString()} at{' '}
-                                {new Date(notification.created_at).toLocaleTimeString()}
-                              </p>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="text-center py-4 text-gray-500">
-                            <p>No new notifications</p>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {unreadCount > 0 && (
-                        <div className="mt-3 pt-3 border-t border-gray-200">
-                          <button
-                            onClick={() => {
-                              // This would mark all as read - you'd need to implement this function
-                              setIsNotificationOpen(false)
-                            }}
-                            className="w-full text-center text-sm text-blue-600 hover:text-blue-800"
-                          >
-                            Mark all as read
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
+                <NotificationBell />
               </div>
               
               {/* User menu */}
@@ -264,20 +194,13 @@ const Layout = ({ children }) => {
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {children}
+        <Suspense fallback={<LoadingSpinner />}>
+          {children}
+        </Suspense>
       </main>
     </div>
   )
 }
-
-// Dashboard components
-import AdminDashboard from './pages/AdminDashboard'
-import AgentDashboard from './pages/AgentDashboard'
-import TenantDashboard from './pages/TenantDashboard'
-import NotificationsPage from './components/NotificationsPage'
-
-// Import payment-related components
-import TenantPayment from './components/TenantPayment'
 
 function AppRoutes() {
   const { user } = useAuth()
@@ -428,7 +351,9 @@ function App() {
                     <ComplaintProvider>
                       <ReportProvider>
                         <SystemSettingsProvider>
-                          <AppRoutes />
+                          <Suspense fallback={<LoadingSpinner />}>
+                            <AppRoutes />
+                          </Suspense>
                         </SystemSettingsProvider>
                       </ReportProvider>
                     </ComplaintProvider>

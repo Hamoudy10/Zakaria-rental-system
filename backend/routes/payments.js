@@ -39,6 +39,75 @@ router.post('/mpesa', protect, async (req, res) => {
   }
 });
 
+// NEW: Manual payment recording with tracking
+router.post('/manual', protect, async (req, res) => {
+  console.log('📝 Manual Payment Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.recordManualPayment...');
+    await paymentController.recordManualPayment(req, res);
+    console.log('✅ Manual payment recorded successfully');
+  } catch (error) {
+    console.error('❌ ERROR in manual payment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in manual payment',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Get payment summary with tracking
+router.get('/summary/:tenantId/:unitId', protect, async (req, res) => {
+  console.log('📊 Payment Summary Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    params: req.params,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getPaymentSummary...');
+    await paymentController.getPaymentSummary(req, res);
+    console.log('✅ Payment summary fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR in payment summary:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in payment summary',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Get payment history with tracking
+router.get('/history/:tenantId/:unitId', protect, async (req, res) => {
+  console.log('📈 Payment History Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    params: req.params,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getPaymentHistory...');
+    await paymentController.getPaymentHistory(req, res);
+    console.log('✅ Payment history fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR in payment history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in payment history',
+      error: error.message
+    });
+  }
+});
+
 // ADDED: M-Pesa configuration test route
 router.get('/mpesa/test-config', protect, async (req, res) => {
   console.log('🔧 M-Pesa Configuration Test Request:', {
@@ -219,7 +288,7 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-// CREATE NEW PAYMENT (POST)
+// CREATE NEW PAYMENT (POST) - Enhanced with tracking
 router.post('/', protect, async (req, res) => {
   console.log('💰 CREATE Payment Request:', {
     method: req.method,
@@ -320,8 +389,13 @@ router.post('/', protect, async (req, res) => {
     }
     console.log('✅ No duplicate payments found');
     
+    // NEW: Track payment for carry-forward logic
+    console.log('🔄 Tracking payment allocation...');
+    const paymentDate = new Date();
+    const trackingResult = await paymentController.trackRentPayment(tenant_id, unit_id, amount, paymentDate);
+    
     console.log('🔄 Creating payment record...');
-    // Create the payment
+    // Create the payment with tracked amount
     const paymentResult = await client.query(
       `INSERT INTO rent_payments (
         tenant_id, unit_id, mpesa_transaction_id, mpesa_receipt_number,
@@ -335,34 +409,56 @@ router.post('/', protect, async (req, res) => {
         mpesa_transaction_id,
         mpesa_receipt_number,
         phone_number,
-        amount,
+        trackingResult.currentMonthPayment, // Use tracked amount
         payment_month,
         status,
         req.user.id,
         late_fee,
         is_late_payment,
-        status === 'completed' ? new Date() : null
+        status === 'completed' ? paymentDate : null
       ]
     );
     
-    console.log(`✅ Payment created with ID: ${paymentResult.rows[0].id}`);
+    const paymentRecord = paymentResult.rows[0];
+    console.log(`✅ Payment created with ID: ${paymentRecord.id}`);
+    
+    // NEW: Handle carry-forward if applicable
+    if (trackingResult.carryForwardAmount > 0) {
+      console.log(`🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`);
+      await paymentController.recordCarryForward(
+        tenant_id,
+        unit_id,
+        trackingResult.carryForwardAmount,
+        paymentRecord.id,
+        paymentDate
+      );
+    }
     
     // Create payment notification only for completed payments
     if (status === 'completed') {
       console.log('🔄 Creating payment notification...');
+      
+      // NEW: Enhanced notification message with tracking info
+      let notificationMessage = `Your rent payment of KSh ${amount} has been confirmed. `;
+      if (trackingResult.carryForwardAmount > 0) {
+        notificationMessage += `KSh ${trackingResult.currentMonthPayment} applied to current month, KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
+      } else {
+        notificationMessage += `Thank you!`;
+      }
+      
       await client.query(
         `INSERT INTO payment_notifications (
           payment_id, recipient_id, message_type, message_content,
           mpesa_code, amount, payment_date, property_info, unit_info, is_sent
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
-          paymentResult.rows[0].id,
+          paymentRecord.id,
           tenant_id,
           'payment_confirmation',
-          `Your rent payment of KSh ${amount} for ${payment_month} has been confirmed. Thank you!`,
+          notificationMessage,
           mpesa_receipt_number,
           amount,
-          new Date(),
+          paymentDate,
           unitCheck.rows[0].property_name,
           `Unit ${unitCheck.rows[0].unit_number}`,
           true
@@ -391,10 +487,10 @@ router.post('/', protect, async (req, res) => {
             mpesa_receipt_number,
             phone_number,
             amount,
-            new Date(),
+            paymentDate,
             true,
-            new Date(),
-            paymentResult.rows[0].id
+            paymentDate,
+            paymentRecord.id
           ]
         );
         console.log('✅ M-Pesa transaction record created');
@@ -411,7 +507,8 @@ router.post('/', protect, async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Payment recorded successfully',
-      payment: paymentResult.rows[0]
+      payment: paymentRecord,
+      tracking: trackingResult // NEW: Include tracking information in response
     });
   } catch (error) {
     console.error('❌ ERROR creating payment:', error);
@@ -539,7 +636,7 @@ router.get('/unit/:unitId', protect, async (req, res) => {
   }
 });
 
-// GET PAYMENT STATISTICS
+// GET PAYMENT STATISTICS - Enhanced with tracking data
 router.get('/stats/overview', protect, async (req, res) => {
   console.log('📊 GET Payment Statistics Request:', {
     method: req.method,
@@ -559,6 +656,7 @@ router.get('/stats/overview', protect, async (req, res) => {
         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments,
         COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_payments,
         COUNT(CASE WHEN is_late_payment = true THEN 1 END) as late_payments,
+        COUNT(CASE WHEN is_advance_payment = true THEN 1 END) as advance_payments,
         SUM(late_fee) as total_late_fees
       FROM rent_payments
     `);
@@ -573,6 +671,16 @@ router.get('/stats/overview', protect, async (req, res) => {
       AND status = 'completed'
       GROUP BY DATE_TRUNC('month', payment_date)
       ORDER BY month DESC
+    `);
+    
+    // NEW: Get carry-forward statistics
+    const carryForwardResult = await pool.query(`
+      SELECT 
+        COUNT(*) as total_carry_forwards,
+        SUM(amount) as total_carry_forward_amount
+      FROM rent_payments 
+      WHERE is_advance_payment = true 
+      AND status = 'completed'
     `);
     
     // Get recent payments for dashboard
@@ -596,7 +704,10 @@ router.get('/stats/overview', protect, async (req, res) => {
     res.json({
       success: true,
       data: {
-        overview: statsResult.rows[0],
+        overview: {
+          ...statsResult.rows[0],
+          ...carryForwardResult.rows[0]
+        },
         monthly_breakdown: monthlyResult.rows,
         recent_payments: recentPayments.rows
       }
@@ -698,7 +809,52 @@ router.get('/status/overdue', protect, async (req, res) => {
   }
 });
 
-// UPDATE PAYMENT (PUT) - Keeping the original but with enhanced logging
+// NEW: Get advance payments (carry-forward)
+router.get('/status/advance', protect, async (req, res) => {
+  console.log('🔮 GET Advance Payments Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Fetching advance payments...');
+    
+    const result = await pool.query(`
+      SELECT 
+        rp.*,
+        u.first_name as tenant_first_name,
+        u.last_name as tenant_last_name,
+        p.name as property_name,
+        pu.unit_number,
+        original_rp.mpesa_receipt_number as original_receipt
+      FROM rent_payments rp
+      LEFT JOIN users u ON rp.tenant_id = u.id
+      LEFT JOIN property_units pu ON rp.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN rent_payments original_rp ON rp.original_payment_id = original_rp.id
+      WHERE rp.is_advance_payment = true
+      ORDER BY rp.payment_month DESC
+    `);
+    
+    console.log(`✅ Found ${result.rows.length} advance payments`);
+    
+    res.json({
+      success: true,
+      count: result.rows.length,
+      payments: result.rows
+    });
+  } catch (error) {
+    console.error('❌ ERROR fetching advance payments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching advance payments',
+      error: error.message
+    });
+  }
+});
+
+// UPDATE PAYMENT (PUT) - Enhanced with tracking
 router.put('/:id', protect, async (req, res) => {
   console.log('✏️  UPDATE Payment Request:', {
     method: req.method,
@@ -727,7 +883,7 @@ router.put('/:id', protect, async (req, res) => {
     
     // Check if payment exists
     const paymentCheck = await client.query(
-      'SELECT id, tenant_id, amount, status as old_status FROM rent_payments WHERE id = $1',
+      'SELECT id, tenant_id, unit_id, amount, status as old_status FROM rent_payments WHERE id = $1',
       [id]
     );
     
@@ -739,7 +895,21 @@ router.put('/:id', protect, async (req, res) => {
       });
     }
     
-    console.log(`✅ Payment found, old status: ${paymentCheck.rows[0].old_status}`);
+    const payment = paymentCheck.rows[0];
+    console.log(`✅ Payment found, old status: ${payment.old_status}`);
+    
+    // NEW: If amount is being updated and payment is completed, track the new amount
+    let trackingResult = null;
+    if (amount && parseFloat(amount) !== parseFloat(payment.amount) && status === 'completed') {
+      console.log('🔄 Tracking updated payment amount...');
+      const paymentDate = new Date();
+      trackingResult = await paymentController.trackRentPayment(
+        payment.tenant_id, 
+        payment.unit_id, 
+        amount, 
+        paymentDate
+      );
+    }
     
     const result = await client.query(
       `UPDATE rent_payments 
@@ -761,7 +931,7 @@ router.put('/:id', protect, async (req, res) => {
        RETURNING *`,
       [
         mpesa_receipt_number,
-        amount,
+        amount || payment.amount,
         status,
         late_fee,
         is_late_payment,
@@ -772,8 +942,20 @@ router.put('/:id', protect, async (req, res) => {
     
     console.log(`✅ Payment updated successfully, new status: ${result.rows[0].status}`);
     
+    // NEW: Handle carry-forward if amount was updated
+    if (trackingResult && trackingResult.carryForwardAmount > 0) {
+      console.log(`🔄 Processing carry-forward for updated payment: KSh ${trackingResult.carryForwardAmount}`);
+      await paymentController.recordCarryForward(
+        payment.tenant_id,
+        payment.unit_id,
+        trackingResult.carryForwardAmount,
+        id,
+        new Date()
+      );
+    }
+    
     // Create payment notification if status changed to completed
-    if (status === 'completed' && paymentCheck.rows[0].old_status !== 'completed') {
+    if (status === 'completed' && payment.old_status !== 'completed') {
       console.log('🔄 Creating payment notification for status change to completed...');
       // Get payment details for notification
       const paymentDetails = await client.query(`
@@ -786,7 +968,15 @@ router.put('/:id', protect, async (req, res) => {
       `, [id]);
       
       if (paymentDetails.rows.length > 0) {
-        const payment = paymentDetails.rows[0];
+        const updatedPayment = paymentDetails.rows[0];
+        
+        // NEW: Enhanced notification with tracking info
+        let notificationMessage = `Your rent payment of KSh ${updatedPayment.amount} has been confirmed. `;
+        if (trackingResult && trackingResult.carryForwardAmount > 0) {
+          notificationMessage += `KSh ${trackingResult.currentMonthPayment} applied to current month, KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
+        } else {
+          notificationMessage += `Thank you!`;
+        }
         
         await client.query(
           `INSERT INTO payment_notifications (
@@ -795,14 +985,14 @@ router.put('/:id', protect, async (req, res) => {
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             id,
-            payment.tenant_id,
+            updatedPayment.tenant_id,
             'payment_confirmation',
-            `Your rent payment of KSh ${payment.amount} has been confirmed. Thank you!`,
-            payment.mpesa_receipt_number,
-            payment.amount,
+            notificationMessage,
+            updatedPayment.mpesa_receipt_number,
+            updatedPayment.amount,
             new Date(),
-            payment.property_name,
-            `Unit ${payment.unit_number}`,
+            updatedPayment.property_name,
+            `Unit ${updatedPayment.unit_number}`,
             true
           ]
         );
@@ -816,7 +1006,8 @@ router.put('/:id', protect, async (req, res) => {
     res.json({
       success: true,
       message: 'Payment updated successfully',
-      payment: result.rows[0]
+      payment: result.rows[0],
+      tracking: trackingResult // NEW: Include tracking information
     });
   } catch (error) {
     console.error('❌ ERROR updating payment:', error);
@@ -840,7 +1031,7 @@ router.put('/:id', protect, async (req, res) => {
   }
 });
 
-// DELETE PAYMENT (DELETE) - Keeping the original but with enhanced logging
+// DELETE PAYMENT (DELETE) - Enhanced to handle carry-forward payments
 router.delete('/:id', protect, async (req, res) => {
   console.log('🗑️  DELETE Payment Request:', {
     method: req.method,
@@ -860,7 +1051,7 @@ router.delete('/:id', protect, async (req, res) => {
     
     // Check if payment exists
     const paymentCheck = await client.query(
-      'SELECT id, mpesa_receipt_number, amount FROM rent_payments WHERE id = $1',
+      'SELECT id, mpesa_receipt_number, amount, is_advance_payment FROM rent_payments WHERE id = $1',
       [id]
     );
     
@@ -872,7 +1063,17 @@ router.delete('/:id', protect, async (req, res) => {
       });
     }
     
-    console.log(`✅ Payment found: ${paymentCheck.rows[0].mpesa_receipt_number} for KSh ${paymentCheck.rows[0].amount}`);
+    const payment = paymentCheck.rows[0];
+    console.log(`✅ Payment found: ${payment.mpesa_receipt_number} for KSh ${payment.amount}`);
+    
+    // NEW: Also delete any carry-forward payments linked to this payment
+    if (!payment.is_advance_payment) {
+      console.log('🔄 Deleting related carry-forward payments...');
+      await client.query(
+        'DELETE FROM rent_payments WHERE original_payment_id = $1',
+        [id]
+      );
+    }
     
     // Delete related payment notifications
     console.log('🔄 Deleting related payment notifications...');
@@ -899,7 +1100,7 @@ router.delete('/:id', protect, async (req, res) => {
     
     res.json({
       success: true,
-      message: `Payment ${paymentCheck.rows[0].mpesa_receipt_number} for KSh ${paymentCheck.rows[0].amount} deleted successfully`
+      message: `Payment ${payment.mpesa_receipt_number} for KSh ${payment.amount} deleted successfully`
     });
   } catch (error) {
     console.error('❌ ERROR deleting payment:', error);

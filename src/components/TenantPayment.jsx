@@ -10,7 +10,8 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     error,
     processMpesaPayment, 
     getPaymentsByTenant,
-    getUpcomingPayments,
+    getPaymentSummary,
+    getPaymentHistory,
     validateMpesaPhone,
     formatMpesaPhone,
     clearError
@@ -19,7 +20,8 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
   const { refreshNotifications } = useNotification()
   
   const [tenantPayments, setTenantPayments] = useState(payments || [])
-  const [upcomingPayments, setUpcomingPayments] = useState([])
+  const [paymentSummary, setPaymentSummary] = useState(null)
+  const [paymentHistory, setPaymentHistory] = useState([])
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [paymentData, setPaymentData] = useState({
     amount: '',
@@ -29,6 +31,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
   const [paymentStatus, setPaymentStatus] = useState(null)
   const [phoneError, setPhoneError] = useState('')
   const [paymentsLoading, setPaymentsLoading] = useState(false)
+  const [summaryLoading, setSummaryLoading] = useState(false)
 
   // Update tenant payments when prop changes
   useEffect(() => {
@@ -37,10 +40,33 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     }
   }, [payments])
 
-  // Fallback phone validation functions in case context functions fail
+  // Load payment summary and history
+  useEffect(() => {
+    const loadPaymentData = async () => {
+      if (user?.id && allocation?.unit_id) {
+        setSummaryLoading(true);
+        try {
+          // Load payment summary
+          const summary = await getPaymentSummary(user.id, allocation.unit_id);
+          setPaymentSummary(summary);
+          
+          // Load payment history
+          const history = await getPaymentHistory(user.id, allocation.unit_id);
+          setPaymentHistory(history.payments || []);
+        } catch (err) {
+          console.error('Error loading payment data:', err);
+        } finally {
+          setSummaryLoading(false);
+        }
+      }
+    }
+
+    loadPaymentData();
+  }, [user, allocation, getPaymentSummary, getPaymentHistory]);
+
+  // Fallback phone validation functions
   const isValidMpesaPhone = (phone) => {
     try {
-      // Try to use context function first
       if (validateMpesaPhone && typeof validateMpesaPhone === 'function') {
         return validateMpesaPhone(phone);
       }
@@ -48,7 +74,6 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
       console.warn('Context validateMpesaPhone failed, using fallback');
     }
     
-    // Fallback validation
     if (!phone) return false;
     const cleaned = phone.replace(/\D/g, '');
     const regex = /^(07\d{8}|2547\d{8}|\+2547\d{8})$/;
@@ -57,7 +82,6 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
 
   const formatMpesaPhoneNumber = (phone) => {
     try {
-      // Try to use context function first
       if (formatMpesaPhone && typeof formatMpesaPhone === 'function') {
         return formatMpesaPhone(phone);
       }
@@ -65,7 +89,6 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
       console.warn('Context formatMpesaPhone failed, using fallback');
     }
     
-    // Fallback formatting
     if (!phone) return '';
     const cleaned = phone.replace(/\D/g, '');
     
@@ -102,46 +125,23 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     loadPayments();
   }, [user, getPaymentsByTenant, payments]);
 
-  // Update payment data and upcoming payments when allocation changes
+  // Update payment data when allocation changes
   useEffect(() => {
     if (allocation) {
       const currentDate = new Date()
       const currentMonth = currentDate.toISOString().slice(0, 7) // YYYY-MM
       
+      // NEW: Set amount to remaining balance or monthly rent
+      const remainingBalance = paymentSummary?.balance || allocation.monthly_rent;
+      
       setPaymentData(prev => ({
         ...prev,
-        amount: allocation.monthly_rent?.toString() || '',
+        amount: remainingBalance > 0 ? remainingBalance.toString() : allocation.monthly_rent?.toString() || '',
         phone_number: user?.phone_number || '',
         payment_month: currentMonth
       }))
-
-      // Calculate upcoming payments
-      try {
-        if (getUpcomingPayments && typeof getUpcomingPayments === 'function') {
-          const upcoming = getUpcomingPayments([allocation])
-          setUpcomingPayments(upcoming || [])
-        } else {
-          // Fallback upcoming payments calculation
-          const currentDate = new Date();
-          const currentMonth = currentDate.toISOString().slice(0, 7);
-          const paidThisMonth = tenantPayments.some(payment => 
-            payment.payment_month?.startsWith(currentMonth) && 
-            payment.status === 'completed'
-          );
-          
-          setUpcomingPayments([{
-            month: currentMonth,
-            amount: allocation.monthly_rent,
-            dueDate: new Date(currentDate.getFullYear(), currentDate.getMonth(), allocation.rent_due_day || 5),
-            paidThisMonth: paidThisMonth
-          }]);
-        }
-      } catch (error) {
-        console.error('Error calculating upcoming payments:', error)
-        setUpcomingPayments([])
-      }
     }
-  }, [allocation, user, getUpcomingPayments, tenantPayments])
+  }, [allocation, user, paymentSummary])
 
   // Validate phone number on change
   useEffect(() => {
@@ -185,7 +185,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     try {
       const paymentPayload = {
         phone_number: formattedPhone,
-        amount: allocation.monthly_rent,
+        amount: parseFloat(paymentData.amount),
         unit_id: allocation.unit_id,
         payment_month: paymentData.payment_month
       }
@@ -206,6 +206,11 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
         try {
           const updatedPayments = await getPaymentsByTenant(user.id)
           setTenantPayments(updatedPayments || [])
+          
+          // Refresh payment summary
+          const summary = await getPaymentSummary(user.id, allocation.unit_id);
+          setPaymentSummary(summary);
+          
           // Call parent callback to refresh dashboard data
           if (onPaymentSuccess) {
             onPaymentSuccess()
@@ -214,7 +219,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
           console.error('Error refreshing payments:', err)
         }
 
-        // 🔄 CRITICAL: Refresh notifications to show the new payment notification
+        // Refresh notifications to show the new payment notification
         try {
           await refreshNotifications()
           console.log('✅ Notifications refreshed after payment')
@@ -288,6 +293,11 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     setPaymentData(prev => ({ ...prev, phone_number: value }))
   }
 
+  const handleAmountChange = (e) => {
+    const value = e.target.value
+    setPaymentData(prev => ({ ...prev, amount: value }))
+  }
+
   const handleCloseModal = () => {
     setShowPaymentModal(false)
     setPaymentStatus(null)
@@ -297,10 +307,11 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     }
   }
 
-  const currentMonthPaid = upcomingPayments[0]?.paidThisMonth || false
+  const currentMonthPaid = paymentSummary?.isFullyPaid || false
   const isDevelopment = process.env.NODE_ENV === 'development'
+  const remainingBalance = paymentSummary?.balance || 0
 
-  if (paymentsLoading) {
+  if (paymentsLoading || summaryLoading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -320,7 +331,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
 
   return (
     <div className="space-y-6">
-      {/* Error Display - Only show if it's a real error, not "no payments" */}
+      {/* Error Display */}
       {error && !error.includes('Failed to fetch tenant payments') && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
           {error}
@@ -340,48 +351,38 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
         </div>
       )}
 
-      {/* Welcome message for new users */}
-      {tenantPayments.length === 0 && !paymentsLoading && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-          <div className="flex items-center">
-            <div className="text-blue-500 text-2xl mr-3">👋</div>
-            <div>
-              <h3 className="text-lg font-semibold text-blue-900">Welcome!</h3>
-              <p className="text-blue-800">This appears to be your first payment. You can make your rent payment using M-Pesa below.</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Payment Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="card">
-          <div className="text-center">
+      {/* Payment Summary Card */}
+      {paymentSummary && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="card text-center">
             <div className="text-2xl font-bold text-gray-900">
-              {formatCurrency(allocation.monthly_rent)}
+              {formatCurrency(paymentSummary.monthlyRent)}
             </div>
             <div className="text-sm text-gray-600">Monthly Rent</div>
           </div>
-        </div>
-        
-        <div className="card">
-          <div className="text-center">
+          
+          <div className="card text-center">
+            <div className="text-2xl font-bold text-blue-600">
+              {formatCurrency(paymentSummary.totalPaid)}
+            </div>
+            <div className="text-sm text-gray-600">Paid This Month</div>
+          </div>
+          
+          <div className="card text-center">
+            <div className={`text-2xl font-bold ${remainingBalance > 0 ? 'text-orange-600' : 'text-green-600'}`}>
+              {formatCurrency(remainingBalance)}
+            </div>
+            <div className="text-sm text-gray-600">Remaining Balance</div>
+          </div>
+          
+          <div className="card text-center">
             <div className={`text-2xl font-bold ${currentMonthPaid ? 'text-green-600' : 'text-orange-600'}`}>
               {currentMonthPaid ? 'Paid' : 'Pending'}
             </div>
-            <div className="text-sm text-gray-600">Current Month</div>
+            <div className="text-sm text-gray-600">Status</div>
           </div>
         </div>
-        
-        <div className="card">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">
-              {tenantPayments.length}
-            </div>
-            <div className="text-sm text-gray-600">Total Payments</div>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Quick Payment Card */}
       <div className="card">
@@ -403,13 +404,19 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
             <div className="text-green-500 text-4xl mb-2">✓</div>
             <h4 className="text-lg font-semibold text-gray-900 mb-2">Rent Paid for This Month</h4>
             <p className="text-gray-600">Your payment for {formatDate(paymentData.payment_month)} has been received.</p>
+            {paymentSummary?.advanceAmount > 0 && (
+              <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  <strong>Advance Payment:</strong> You have {formatCurrency(paymentSummary.advanceAmount)} carried forward to next month.
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
             <div className="p-4 bg-blue-50 rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  {/* FIXED: Use real allocation data instead of mock */}
                   <div className="font-semibold text-gray-900">
                     {allocation.property_name || 'Property'} - {allocation.unit_code || allocation.unit_number || 'Unit'}
                   </div>
@@ -421,20 +428,80 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                   <div className="text-lg font-bold text-gray-900">
                     {formatCurrency(allocation.monthly_rent)}
                   </div>
+                  {remainingBalance > 0 && remainingBalance < allocation.monthly_rent && (
+                    <div className="text-sm text-orange-600">
+                      Balance: {formatCurrency(remainingBalance)}
+                    </div>
+                  )}
                 </div>
               </div>
+            </div>
+
+            {/* NEW: Payment amount selection */}
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Payment Amount
+              </label>
+              <div className="space-y-2">
+                <div className="flex space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentData(prev => ({ ...prev, amount: remainingBalance.toString() }))}
+                    className={`flex-1 py-2 px-3 text-sm border rounded-md ${
+                      parseFloat(paymentData.amount) === remainingBalance 
+                        ? 'bg-blue-100 border-blue-500 text-blue-700' 
+                        : 'bg-white border-gray-300 text-gray-700'
+                    }`}
+                  >
+                    Pay Balance ({formatCurrency(remainingBalance)})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentData(prev => ({ ...prev, amount: allocation.monthly_rent.toString() }))}
+                    className={`flex-1 py-2 px-3 text-sm border rounded-md ${
+                      parseFloat(paymentData.amount) === allocation.monthly_rent 
+                        ? 'bg-blue-100 border-blue-500 text-blue-700' 
+                        : 'bg-white border-gray-300 text-gray-700'
+                    }`}
+                  >
+                    Full Rent ({formatCurrency(allocation.monthly_rent)})
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={paymentData.amount}
+                    onChange={handleAmountChange}
+                    className="input-primary w-full pl-8"
+                    placeholder="Enter custom amount"
+                    min="1"
+                  />
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <span className="text-gray-500">KES</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* NEW: Carry-forward information */}
+              {parseFloat(paymentData.amount) > remainingBalance && remainingBalance > 0 && (
+                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-md">
+                  <p className="text-xs text-green-700">
+                    <strong>Note:</strong> {formatCurrency(parseFloat(paymentData.amount) - remainingBalance)} will be carried forward to next month as advance payment.
+                  </p>
+                </div>
+              )}
             </div>
 
             <button
               onClick={() => setShowPaymentModal(true)}
               className="btn-primary w-full py-3 text-lg"
-              disabled={loading}
+              disabled={loading || !paymentData.amount || parseFloat(paymentData.amount) <= 0}
             >
-              {loading ? 'Processing...' : 'Pay with M-Pesa'}
+              {loading ? 'Processing...' : `Pay ${formatCurrency(parseFloat(paymentData.amount) || 0)} with M-Pesa`}
             </button>
 
             <div className="text-center text-sm text-gray-500">
-              <p>You will receive an M-Pesa prompt on your phone</p>
+              <p>You will receive a prompt on your phone to enter your M-Pesa PIN</p>
             </div>
           </div>
         )}
@@ -442,7 +509,12 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
 
       {/* Payment History */}
       <div className="card">
-        <h3 className="text-lg font-semibold mb-4">Payment History</h3>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Payment History</h3>
+          <div className="text-sm text-gray-600">
+            {tenantPayments.length} payment{tenantPayments.length !== 1 ? 's' : ''}
+          </div>
+        </div>
         
         {tenantPayments.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
@@ -468,6 +540,9 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                     M-Pesa Code
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Type
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
                 </tr>
@@ -485,9 +560,19 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {formatCurrency(payment.amount)}
+                        {payment.is_advance_payment && (
+                          <span className="ml-1 text-xs text-blue-600">(Advance)</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {payment.mpesa_receipt_number || 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {payment.is_advance_payment ? (
+                          <span className="text-blue-600">Carry Forward</span>
+                        ) : (
+                          <span className="text-gray-600">Regular</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${status.bg} ${status.color}`}>
@@ -507,7 +592,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-lg w-full max-w-md my-8 mx-auto max-h-[85vh] flex flex-col">
-            {/* Modal Header - Reduced height with close button */}
+            {/* Modal Header */}
             <div className="border-b border-gray-200 px-6 py-3 flex-shrink-0 flex justify-between items-center">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Pay with M-Pesa</h3>
@@ -524,7 +609,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
               </button>
             </div>
             
-            {/* Modal Content - Increased height and scrollable */}
+            {/* Modal Content */}
             <div className="flex-1 overflow-y-auto">
               <div className="p-6">
                 {paymentStatus ? (
@@ -571,18 +656,29 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                     <div className="p-4 bg-gray-50 rounded-lg">
                       <div className="flex justify-between items-center mb-2">
                         <span className="font-medium text-sm">Property:</span>
-                        {/* FIXED: Use real allocation data */}
                         <span className="text-sm">{allocation.property_name || 'N/A'}</span>
                       </div>
                       <div className="flex justify-between items-center mb-2">
                         <span className="font-medium text-sm">Unit:</span>
-                        {/* FIXED: Use real allocation data */}
                         <span className="text-sm">{allocation.unit_code || allocation.unit_number || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-medium text-sm">Month:</span>
+                        <span className="text-sm">{formatDate(paymentData.payment_month)}</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="font-medium text-sm">Amount:</span>
                         <span className="text-lg font-bold">{formatCurrency(paymentData.amount)}</span>
                       </div>
+                      
+                      {/* NEW: Carry-forward notice */}
+                      {parseFloat(paymentData.amount) > remainingBalance && remainingBalance > 0 && (
+                        <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
+                          <p className="text-xs text-blue-700">
+                            <strong>Note:</strong> {formatCurrency(parseFloat(paymentData.amount) - remainingBalance)} will be carried forward to next month.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -631,10 +727,10 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                     <div className="flex space-x-3 pt-4">
                       <button
                         type="submit"
-                        disabled={loading || phoneError}
+                        disabled={loading || phoneError || !paymentData.amount}
                         className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed py-3 text-sm font-medium"
                       >
-                        {loading ? 'Processing...' : 'Confirm Payment'}
+                        {loading ? 'Processing...' : `Pay ${formatCurrency(parseFloat(paymentData.amount) || 0)}`}
                       </button>
                       <button
                         type="button"

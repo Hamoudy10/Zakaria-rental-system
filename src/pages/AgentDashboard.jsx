@@ -1,5 +1,14 @@
-import React, { useState } from 'react'
-import ComplaintManagement from '../components/ComplaintManagement'
+import React, { useState, Suspense, lazy } from 'react'
+
+// Lazy load agent components
+const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'));
+
+// Loading component for Suspense fallback
+const TabLoadingSpinner = () => (
+  <div className="flex justify-center items-center h-64">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+  </div>
+);
 
 const AgentDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
@@ -14,7 +23,11 @@ const AgentDashboard = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'complaints':
-        return <ComplaintManagement />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <ComplaintManagement />
+          </Suspense>
+        )
       case 'properties':
         return <PropertyManagement />
       case 'tenants':
@@ -58,7 +71,7 @@ const AgentDashboard = () => {
   )
 }
 
-// Agent Overview Component
+// Agent Overview Component (Keep as is - lightweight)
 const AgentOverview = ({ setActiveTab }) => {
   const [agentStats, setAgentStats] = useState({
     assignedProperties: 3,
@@ -284,7 +297,7 @@ const AgentOverview = ({ setActiveTab }) => {
   )
 }
 
-// Property Management Component
+// Property Management Component (Keep as is - lightweight)
 const PropertyManagement = () => {
   const [properties] = useState([
     {
@@ -368,7 +381,7 @@ const PropertyManagement = () => {
   )
 }
 
-// Tenant Management Component
+// Tenant Management Component (Keep as is - lightweight)
 const TenantManagement = () => {
   const [tenants] = useState([
     {

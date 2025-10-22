@@ -30,33 +30,42 @@ export const NotificationProvider = ({ children }) => {
     recent: 0
   });
 
-  // Refs for polling
+  // Refs for polling control
   const pollingIntervalRef = useRef(null);
   const isMountedRef = useRef(true);
+  const lastFetchRef = useRef(0);
+  const isPollingPausedRef = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
+      stopPolling();
     };
   }, []);
 
-  // Start polling for new notifications
-  const startPolling = useCallback((interval = 30000) => {
+  // Enhanced polling with debouncing and pause functionality
+  const startPolling = useCallback((interval = 60000) => { // Increased to 60 seconds
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
     }
 
+    // Don't start polling if paused
+    if (isPollingPausedRef.current) {
+      return;
+    }
+
     pollingIntervalRef.current = setInterval(async () => {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && !isPollingPausedRef.current) {
         try {
+          // Only fetch unread count, not full notifications
           await fetchUnreadCount();
-          // Refresh stats every 2 minutes during polling
-          if (Date.now() % 120000 < 30000) {
+          
+          // Refresh stats only every 5 minutes during polling
+          const now = Date.now();
+          if (now - lastFetchRef.current > 300000) { // 5 minutes
             await fetchNotificationStats();
+            lastFetchRef.current = now;
           }
         } catch (error) {
           console.warn('Polling error:', error);
@@ -73,8 +82,29 @@ export const NotificationProvider = ({ children }) => {
     }
   }, []);
 
-  // Fetch notifications with pagination and filters
-  const fetchNotifications = useCallback(async (options = {}) => {
+  // Pause polling (useful when user is inactive)
+  const pausePolling = useCallback(() => {
+    isPollingPausedRef.current = true;
+    stopPolling();
+  }, []);
+
+  // Resume polling
+  const resumePolling = useCallback(() => {
+    isPollingPausedRef.current = false;
+    startPolling();
+  }, []);
+
+  // Debounced fetch function to prevent rapid successive calls
+  const debouncedFetch = useCallback((fn, delay = 1000) => {
+    let timeoutId;
+    return (...args) => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => fn(...args), delay);
+    };
+  }, []);
+
+  // Fetch notifications with pagination and filters - with debouncing
+  const fetchNotifications = useCallback(debouncedFetch(async (options = {}) => {
     const {
       page = 1,
       limit = 20,
@@ -84,6 +114,9 @@ export const NotificationProvider = ({ children }) => {
       start_date,
       end_date
     } = options;
+
+    // Don't fetch if already loading
+    if (loading) return;
 
     setLoading(true);
     setError(null);
@@ -105,10 +138,6 @@ export const NotificationProvider = ({ children }) => {
         setNotifications(newNotifications);
         setPagination(paginationData);
         
-        // Update unread count from the new data
-        const newUnreadCount = newNotifications.filter(n => !n.is_read).length;
-        setUnreadCount(newUnreadCount);
-        
         console.log(`✅ Loaded ${newNotifications.length} notifications`);
       }
     } catch (err) {
@@ -125,9 +154,9 @@ export const NotificationProvider = ({ children }) => {
         setLoading(false);
       }
     }
-  }, []);
+  }), [loading]);
 
-  // Fetch unread count
+  // Fetch unread count - optimized
   const fetchUnreadCount = useCallback(async () => {
     try {
       const response = await notificationAPI.getUnreadCount();
@@ -139,7 +168,6 @@ export const NotificationProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('❌ Error fetching unread count:', err);
-      // Don't set error for background updates
     }
   }, []);
 
@@ -363,8 +391,8 @@ export const NotificationProvider = ({ children }) => {
     }
   }, []);
 
-  // Refresh all notification data
-  const refreshNotifications = useCallback(async () => {
+  // Refresh all notification data - with debouncing
+  const refreshNotifications = useCallback(debouncedFetch(async () => {
     try {
       await Promise.all([
         fetchNotifications({ page: 1 }),
@@ -375,14 +403,14 @@ export const NotificationProvider = ({ children }) => {
     } catch (error) {
       console.error('❌ Error refreshing notifications:', error);
     }
-  }, [fetchNotifications, fetchUnreadCount, fetchNotificationStats]);
+  }), [fetchNotifications, fetchUnreadCount, fetchNotificationStats]);
 
-  // Load initial data
+  // Load initial data - only once
   useEffect(() => {
     const initializeNotifications = async () => {
       await refreshNotifications();
-      // Start polling for updates
-      startPolling(30000); // Poll every 30 seconds
+      // Start polling for updates with longer interval
+      startPolling(60000); // Poll every 60 seconds instead of 30
     };
 
     initializeNotifications();
@@ -390,7 +418,7 @@ export const NotificationProvider = ({ children }) => {
     return () => {
       stopPolling();
     };
-  }, [refreshNotifications, startPolling, stopPolling]);
+  }, []); // Empty dependency array - only run once on mount
 
   // Filter notifications by type
   const getNotificationsByType = useCallback(async (type, options = {}) => {
@@ -466,6 +494,8 @@ export const NotificationProvider = ({ children }) => {
     // Polling control
     startPolling,
     stopPolling,
+    pausePolling,
+    resumePolling,
     
     // Utility
     clearError: () => setError(null),
@@ -491,7 +521,9 @@ export const NotificationProvider = ({ children }) => {
     getNotificationsByType,
     getNotificationById,
     startPolling,
-    stopPolling
+    stopPolling,
+    pausePolling,
+    resumePolling
   ]);
 
   return (
