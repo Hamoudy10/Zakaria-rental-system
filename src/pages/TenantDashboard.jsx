@@ -1,9 +1,18 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense, lazy } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useAllocation } from '../context/TenantAllocationContext'
 import { usePayment } from '../context/PaymentContext'
-import TenantPayment from '../components/TenantPayment'
-import TenantComplaints from '../components/TenantComplaints'
+
+// Lazy load tenant components
+const TenantPayment = lazy(() => import('../components/TenantPayment'));
+const TenantComplaints = lazy(() => import('../components/TenantComplaints'));
+
+// Loading component for Suspense fallback
+const TabLoadingSpinner = () => (
+  <div className="flex justify-center items-center h-64">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+  </div>
+);
 
 const TenantDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
@@ -72,13 +81,21 @@ const TenantDashboard = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'payments':
-        return <TenantPayment 
-          allocation={tenantData.allocation} 
-          payments={tenantData.payments}
-          onPaymentSuccess={fetchTenantData}
-        />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <TenantPayment 
+              allocation={tenantData.allocation} 
+              payments={tenantData.payments}
+              onPaymentSuccess={fetchTenantData}
+            />
+          </Suspense>
+        )
       case 'complaints':
-        return <TenantComplaints />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <TenantComplaints />
+          </Suspense>
+        )
       case 'profile':
         return <ProfileManagement />
       case 'overview':
@@ -124,7 +141,7 @@ const TenantDashboard = () => {
   )
 }
 
-// Updated Tenant Overview Component with Real Data
+// Tenant Overview Component (Keep as is - lightweight)
 const TenantOverview = ({ setActiveTab, tenantData, onRefresh }) => {
   const { allocation, payments, paymentSummary, loading, error } = tenantData
 
@@ -281,11 +298,9 @@ const TenantOverview = ({ setActiveTab, tenantData, onRefresh }) => {
             <div>
               <p className="text-sm font-medium text-gray-600">Your Unit</p>
               <p className="text-lg font-bold text-blue-600">
-                {/* FIXED: Use actual unit data from allocation */}
                 {allocation.unit_code || allocation.unit_number || 'Your Unit'}
               </p>
               <p className="text-xs text-gray-500">
-                {/* FIXED: Use actual property data from allocation */}
                 {allocation.property_name || 'Property'}
               </p>
             </div>
@@ -367,7 +382,6 @@ const TenantOverview = ({ setActiveTab, tenantData, onRefresh }) => {
             <p className="text-gray-900">KSh {parseInt(allocation.security_deposit || 0).toLocaleString()}</p>
           </div>
         </div>
-        {/* FIXED: Added Property and Unit Details */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-200">
           <div>
             <p className="text-sm font-medium text-gray-600">Property</p>
@@ -425,7 +439,7 @@ const TenantOverview = ({ setActiveTab, tenantData, onRefresh }) => {
   )
 }
 
-// Profile Management Component (Updated to use real user data)
+// Profile Management Component (Keep as is - lightweight)
 const ProfileManagement = () => {
   const { user } = useAuth()
   const [profile, setProfile] = useState({

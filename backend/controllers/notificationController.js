@@ -1,10 +1,37 @@
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
 
+// Rate limiting to prevent excessive API calls
+const userRequestTimestamps = new Map();
+const RATE_LIMIT_WINDOW = 2000; // 2 seconds between similar requests
+
+const checkRateLimit = (userId, endpoint) => {
+  const now = Date.now();
+  const key = `${userId}-${endpoint}`;
+  const lastRequest = userRequestTimestamps.get(key);
+  
+  if (lastRequest && (now - lastRequest) < RATE_LIMIT_WINDOW) {
+    return false;
+  }
+  
+  userRequestTimestamps.set(key, now);
+  return true;
+};
+
 // Get user notifications with pagination and filters
 const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
+    
+    // Rate limiting check
+    if (!checkRateLimit(userId, 'getNotifications')) {
+      console.log(`⏰ Rate limit exceeded for user ${userId} on getNotifications`);
+      return res.status(429).json({
+        success: false,
+        message: 'Too many requests. Please wait a moment.'
+      });
+    }
+
     const { 
       page = 1, 
       limit = 20, 
@@ -91,11 +118,13 @@ const getNotifications = async (req, res) => {
     query += ` ORDER BY n.created_at DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
     queryParams.push(parseInt(limit), offset);
 
-    console.log('📊 Executing notification query with params:', queryParams);
+    console.log('📊 Executing notification query');
 
     // Execute queries
-    const notificationsResult = await pool.query(query, queryParams);
-    const countResult = await pool.query(countQuery, countParams);
+    const [notificationsResult, countResult] = await Promise.all([
+      pool.query(query, queryParams),
+      pool.query(countQuery, countParams)
+    ]);
 
     const totalCount = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(totalCount / limit);
@@ -187,7 +216,7 @@ const createNotification = async (req, res) => {
       notification = results[0]; // Return first one as sample
     }
 
-    console.log('✅ Notification created successfully:', notification.id);
+    console.log('✅ Notification created successfully');
 
     res.status(201).json({
       success: true,
@@ -222,7 +251,7 @@ const markAsRead = async (req, res) => {
       });
     }
 
-    console.log('✅ Notification marked as read:', id);
+    console.log('✅ Notification marked as read');
 
     res.json({
       success: true,
@@ -244,6 +273,14 @@ const markAsRead = async (req, res) => {
 const markAllAsRead = async (req, res) => {
   try {
     const userId = req.user.id;
+
+    // Rate limiting check
+    if (!checkRateLimit(userId, 'markAllAsRead')) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many requests. Please wait a moment.'
+      });
+    }
 
     console.log(`📋 Marking all notifications as read for user: ${userId}`);
 
@@ -275,6 +312,14 @@ const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // Rate limiting check
+    if (!checkRateLimit(userId, 'getUnreadCount')) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many requests. Please wait a moment.'
+      });
+    }
+
     console.log(`🔢 Getting unread count for user: ${userId}`);
 
     const unreadCount = await NotificationService.getUnreadCount(userId);
@@ -303,6 +348,14 @@ const getUnreadCount = async (req, res) => {
 const getNotificationStats = async (req, res) => {
   try {
     const userId = req.user.id;
+
+    // Rate limiting check
+    if (!checkRateLimit(userId, 'getNotificationStats')) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many requests. Please wait a moment.'
+      });
+    }
 
     console.log(`📊 Getting notification stats for user: ${userId}`);
 
@@ -346,7 +399,7 @@ const getNotificationStats = async (req, res) => {
       recent: parseInt(recentQuery.rows[0].recent_count)
     };
 
-    console.log(`✅ Notification stats retrieved for user: ${userId}`, stats);
+    console.log(`✅ Notification stats retrieved for user: ${userId}`);
 
     res.json({
       success: true,
@@ -390,7 +443,7 @@ const deleteNotification = async (req, res) => {
       [id]
     );
 
-    console.log('✅ Notification deleted successfully:', id);
+    console.log('✅ Notification deleted successfully');
 
     res.json({
       success: true,
@@ -586,6 +639,30 @@ const createBroadcastNotification = async (req, res) => {
   }
 };
 
+// Health check endpoint
+const healthCheck = async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW() as time, COUNT(*) as notification_count FROM notifications');
+    
+    res.json({
+      success: true,
+      message: 'Notification service is healthy',
+      data: {
+        timestamp: result.rows[0].time,
+        totalNotifications: parseInt(result.rows[0].notification_count),
+        service: 'notifications'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Health check error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Notification service is unhealthy',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getNotifications,
   createNotification,
@@ -596,5 +673,6 @@ module.exports = {
   deleteNotification,
   clearReadNotifications,
   getNotificationsByType,
-  createBroadcastNotification
+  createBroadcastNotification,
+  healthCheck
 };

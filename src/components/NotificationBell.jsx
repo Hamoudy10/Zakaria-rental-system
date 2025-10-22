@@ -10,13 +10,13 @@ const NotificationBell = () => {
     loading, 
     markAsRead, 
     markAllAsRead, 
-    fetchNotifications,
     refreshNotifications
   } = useNotification();
   
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const [hasFetched, setHasFetched] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
@@ -30,12 +30,14 @@ const NotificationBell = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch notifications when dropdown opens
+  // Fetch notifications only once when dropdown opens for the first time
   useEffect(() => {
-    if (isOpen) {
-      fetchNotifications({ page: 1, limit: 10 });
+    if (isOpen && !hasFetched && !loading) {
+      console.log('🔔 Fetching notifications for dropdown...');
+      refreshNotifications();
+      setHasFetched(true);
     }
-  }, [isOpen, fetchNotifications]);
+  }, [isOpen, hasFetched, loading, refreshNotifications]);
 
   const handleNotificationClick = async (notification) => {
     try {
@@ -45,15 +47,10 @@ const NotificationBell = () => {
       
       // Handle navigation based on notification type
       if (notification.related_entity_type === 'rent_payment') {
-        // Navigate to payment details or keep in dropdown
         console.log('Payment notification clicked:', notification.related_entity_id);
       } else if (notification.related_entity_type === 'salary_payment') {
-        // Navigate to salary details
         console.log('Salary notification clicked:', notification.related_entity_id);
       }
-      
-      // Don't close dropdown on click, let user see multiple notifications
-      // setIsOpen(false);
     } catch (error) {
       console.error('Error handling notification click:', error);
     }
@@ -63,8 +60,6 @@ const NotificationBell = () => {
     try {
       setIsMarkingAll(true);
       await markAllAsRead();
-      // Refresh to get updated list
-      await fetchNotifications({ page: 1, limit: 10 });
     } catch (error) {
       console.error('Error marking all as read:', error);
     } finally {
@@ -114,11 +109,25 @@ const NotificationBell = () => {
     return typeMap[type] || type;
   };
 
+  // Reset fetched state when dropdown closes
+  const handleBellClick = () => {
+    const newState = !isOpen;
+    setIsOpen(newState);
+    if (!newState) {
+      // Reset fetched state when closing so we fetch fresh data next time
+      setTimeout(() => setHasFetched(false), 1000);
+    }
+  };
+
+  if (!user) {
+    return null;
+  }
+
   return (
     <div className="relative" ref={dropdownRef}>
       {/* Notification Bell */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleBellClick}
         disabled={loading}
         className={`relative p-2 rounded-full transition-all duration-200 ${
           loading 

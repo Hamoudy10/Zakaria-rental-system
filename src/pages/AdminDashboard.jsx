@@ -1,13 +1,22 @@
-import React, { useState } from 'react'
-import UserManagement from '../components/UserManagement'
-import PropertyManagement from '../components/PropertyManagement'
-import Reports from '../components/Reports'
-import SalaryPayment from '../components/SalaryPayment'
-import SystemSettings from '../components/systemSettings'
-import TenantAllocation from '../components/TenantAllocation'
-import PaymentManagement from '../components/PaymentManagement'
-import ComplaintManagement from '../components/ComplaintManagement'
-import UnitManagement from '../components/UnitManagement'
+import React, { useState, Suspense, lazy } from 'react'
+
+// Lazy load all admin components
+const UserManagement = lazy(() => import('../components/UserManagement'));
+const PropertyManagement = lazy(() => import('../components/PropertyManagement'));
+const Reports = lazy(() => import('../components/Reports'));
+const SalaryPayment = lazy(() => import('../components/SalaryPayment'));
+const SystemSettings = lazy(() => import('../components/SystemSettings'));
+const TenantAllocation = lazy(() => import('../components/TenantAllocation'));
+const PaymentManagement = lazy(() => import('../components/PaymentManagement'));
+const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'));
+const UnitManagement = lazy(() => import('../components/UnitManagement'));
+
+// Loading component for Suspense fallback
+const TabLoadingSpinner = () => (
+  <div className="flex justify-center items-center h-64">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+  </div>
+);
 
 const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
@@ -16,7 +25,7 @@ const AdminDashboard = () => {
     { id: 'overview', name: 'Overview' },
     { id: 'users', name: 'User Management' },
     { id: 'properties', name: 'Properties' },
-    { id: 'units', name: 'Unit Management' }, // ADDED: New tab for Unit Management
+    { id: 'units', name: 'Unit Management' },
     { id: 'allocations', name: 'Tenant Allocation' },
     { id: 'payments', name: 'Payment Management' }, 
     { id: 'salaries', name: 'Salary Payments' },
@@ -28,23 +37,59 @@ const AdminDashboard = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'users':
-        return <UserManagement />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <UserManagement />
+          </Suspense>
+        )
       case 'properties':
-        return <PropertyManagement />
-      case 'units': // ADDED: New case for Unit Management
-        return <UnitManagement />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <PropertyManagement />
+          </Suspense>
+        )
+      case 'units':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <UnitManagement />
+          </Suspense>
+        )
       case 'allocations':
-        return <TenantAllocation />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <TenantAllocation />
+          </Suspense>
+        )
       case 'payments':
-        return <PaymentManagement />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <PaymentManagement />
+          </Suspense>
+        )
       case 'salaries':
-        return <SalaryPayment />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <SalaryPayment />
+          </Suspense>
+        )
       case 'complaints':
-        return <ComplaintManagement />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <ComplaintManagement />
+          </Suspense>
+        )
       case 'reports':
-        return <Reports />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <Reports />
+          </Suspense>
+        )
       case 'settings':
-        return <SystemSettings />
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <SystemSettings />
+          </Suspense>
+        )
       case 'overview':
       default:
         return <DashboardOverview setActiveTab={setActiveTab} />
@@ -84,13 +129,13 @@ const AdminDashboard = () => {
   )
 }
 
-// Dashboard Overview Component
+// Dashboard Overview Component (Keep this as it's lightweight)
 const DashboardOverview = ({ setActiveTab }) => {
   const [adminStats, setAdminStats] = useState({
     totalRevenue: 'KSh 1,234,567',
     totalUsers: 156,
     totalProperties: 24,
-    totalUnits: 142, // ADDED: Total units stat
+    totalUnits: 142,
     occupancyRate: '85%',
     pendingComplaints: 8,
     pendingPayments: 12,
@@ -164,7 +209,6 @@ const DashboardOverview = ({ setActiveTab }) => {
           </div>
         </div>
 
-        {/* ADDED: Total Units Stat Card */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -207,7 +251,6 @@ const DashboardOverview = ({ setActiveTab }) => {
               <span className="text-lg mb-1">🏠</span>
               <span className="text-sm">Properties</span>
             </button>
-            {/* ADDED: Unit Management Quick Action */}
             <button 
               onClick={() => setActiveTab('units')}
               className="bg-purple-600 text-white py-3 px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors"
@@ -351,7 +394,6 @@ const DashboardOverview = ({ setActiveTab }) => {
               </button>
             </div>
 
-            {/* ADDED: Unit Management Action */}
             <div className="flex justify-between items-center p-3 bg-purple-50 border border-purple-200 rounded-lg">
               <div>
                 <p className="font-medium text-purple-900">Unit Management</p>
