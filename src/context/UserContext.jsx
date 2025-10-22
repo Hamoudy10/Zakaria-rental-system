@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useCallback, useEffect } from 'react';
 import { userAPI } from '../services/api';
+import { useAuth } from './AuthContext'; // ADD THIS IMPORT
 
 const UserContext = createContext(undefined);
 
@@ -17,9 +18,21 @@ export const UserProvider = ({ children }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
+  const { user: authUser } = useAuth(); // ADD AUTH CHECK
 
-  // Fetch all users
+  // Check if user is authenticated
+  const isAuthenticated = useCallback(() => {
+    return !!authUser;
+  }, [authUser]);
+
+  // Fetch all users - ONLY WHEN AUTHENTICATED
   const fetchUsers = useCallback(async () => {
+    if (!isAuthenticated()) {
+      console.log('🚫 UserContext: User not authenticated, skipping user fetch');
+      setUsers([]);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -36,16 +49,29 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
-  // Fetch tenant allocations to check who's already allocated
+  // Fetch tenant allocations to check who's already allocated - ONLY WHEN AUTHENTICATED
   const fetchTenantAllocations = useCallback(async () => {
+    if (!isAuthenticated()) {
+      console.log('🚫 UserContext: User not authenticated, skipping allocations fetch');
+      setAllocations([]);
+      return;
+    }
+
     try {
       console.log('🔄 Fetching tenant allocations...');
-      // Using the same API endpoint that TenantAllocationContext uses
+      const token = localStorage.getItem('token');
+      
+      if (!token) {
+        console.warn('⚠️ No token found, skipping allocations fetch');
+        setAllocations([]);
+        return;
+      }
+
       const response = await fetch('/api/tenant-allocations', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -61,13 +87,16 @@ export const UserProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('❌ Error fetching allocations:', err);
-      // Don't set error state for allocations - we can still function without them
       setAllocations([]);
     }
-  }, []);
+  }, [isAuthenticated]);
 
-  // Create new user
+  // Create new user - ONLY WHEN AUTHENTICATED
   const createUser = useCallback(async (userData) => {
+    if (!isAuthenticated()) {
+      throw new Error('User not authenticated');
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -86,7 +115,6 @@ export const UserProvider = ({ children }) => {
       const response = await userAPI.createUser(apiData);
       const newUser = response.data?.user || response.data?.data || response.data;
       
-      // Add new user to local state
       setUsers(prev => [...prev, newUser]);
       
       console.log('✅ User created successfully');
@@ -99,10 +127,14 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
-  // Update user
+  // Update user - ONLY WHEN AUTHENTICATED
   const updateUser = useCallback(async (userId, updates) => {
+    if (!isAuthenticated()) {
+      throw new Error('User not authenticated');
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -110,7 +142,6 @@ export const UserProvider = ({ children }) => {
       const response = await userAPI.updateUser(userId, updates);
       const updatedUser = response.data?.user || response.data?.data || response.data;
       
-      // Update local state
       setUsers(prev => prev.map(user => 
         user.id === userId ? { ...user, ...updatedUser } : user
       ));
@@ -129,17 +160,20 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [selectedUser]);
+  }, [isAuthenticated, selectedUser]);
 
-  // Delete user (soft delete)
+  // Delete user (soft delete) - ONLY WHEN AUTHENTICATED
   const deleteUser = useCallback(async (userId) => {
+    if (!isAuthenticated()) {
+      throw new Error('User not authenticated');
+    }
+
     setLoading(true);
     setError(null);
     try {
       console.log(`🗑️ Deleting user ${userId}`);
       await userAPI.deleteUser(userId);
       
-      // Update local state to mark as inactive
       setUsers(prev => prev.map(user => 
         user.id === userId ? { ...user, is_active: false } : user
       ));
@@ -153,7 +187,7 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Get available tenants (users with role 'tenant' and without active allocations)
   const getAvailableTenants = useCallback(() => {
@@ -180,7 +214,6 @@ export const UserProvider = ({ children }) => {
     );
     
     console.log(`📊 Available tenants: ${availableTenants.length} out of ${allTenants.length} total tenants`);
-    console.log(`📊 Allocated tenant IDs:`, allocatedTenantIds);
     
     return availableTenants;
   }, [users, allocations]);
@@ -203,11 +236,28 @@ export const UserProvider = ({ children }) => {
     await fetchUsers();
   }, [fetchUsers]);
 
-  // Fetch users and allocations on component mount
+  // Fetch users and allocations on component mount ONLY IF AUTHENTICATED
   useEffect(() => {
-    fetchUsers();
-    fetchTenantAllocations();
-  }, [fetchUsers, fetchTenantAllocations]);
+    if (isAuthenticated()) {
+      console.log('🔄 UserContext: User authenticated, fetching data...');
+      fetchUsers();
+      fetchTenantAllocations();
+    } else {
+      console.log('🚫 UserContext: User not authenticated, skipping data fetch');
+      setUsers([]);
+      setAllocations([]);
+    }
+  }, [fetchUsers, fetchTenantAllocations, isAuthenticated]);
+
+  // Listen for authentication changes
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      console.log('🚫 UserContext: User logged out, clearing data');
+      setUsers([]);
+      setAllocations([]);
+      setSelectedUser(null);
+    }
+  }, [authUser, isAuthenticated]);
 
   const value = React.useMemo(() => ({
     // State

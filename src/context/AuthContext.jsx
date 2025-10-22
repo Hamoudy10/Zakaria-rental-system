@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { authAPI } from '../services/api';
 
 const AuthContext = createContext();
@@ -14,79 +14,75 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
-    checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const storedUser = localStorage.getItem('user');
-      
-      console.log('🔐 TEMPORARY FIX - Auth check');
-      console.log('🔐 Token exists:', !!token);
-      console.log('🔐 Stored user exists:', !!storedUser);
-
-      // TEMPORARY FIX: Skip backend verification for now
-      if (token && storedUser) {
-        try {
-          console.log('🔄 TEMPORARY: Using stored user without backend verification');
-          const userData = JSON.parse(storedUser);
-          setUser(userData);
-          
-          // Set auth header for future requests
-          if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
-            authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    // Only run once on mount
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+    
+    const initializeAuth = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const storedUser = localStorage.getItem('user');
+        
+        console.log('🔐 Initial auth check');
+        
+        if (token && storedUser) {
+          try {
+            const userData = JSON.parse(storedUser);
+            console.log('🔄 Setting user from localStorage');
+            setUser(userData);
+            
+            if (authAPI?.defaults?.headers) {
+              authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            }
+          } catch (parseError) {
+            console.error('❌ Error parsing stored user:', parseError);
+            clearAuthData();
           }
-        } catch (parseError) {
-          console.error('❌ Error parsing stored user:', parseError);
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
+        } else {
+          console.log('🚫 No stored credentials found');
           setUser(null);
         }
-      } else {
-        console.log('🚫 No credentials found');
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setUser(null);
+      } catch (error) {
+        console.error('❌ Auth initialization failed:', error);
+        clearAuthData();
+      } finally {
+        console.log('✅ Auth initialization complete');
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('❌ Auth check failed:', error);
-      // Clear any corrupted data
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      setUser(null);
-    } finally {
-      console.log('✅ Auth check complete');
-      setLoading(false);
+    };
+
+    initializeAuth();
+  }, []); // Empty dependency array - runs only once on mount
+
+  const clearAuthData = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setUser(null);
+    
+    if (authAPI?.defaults?.headers) {
+      delete authAPI.defaults.headers.common['Authorization'];
     }
   };
 
   const login = async (email, password) => {
     try {
-      console.log('🔐 Attempting login with:', { email });
+      console.log('🔐 Attempting login');
       
       // Clear any existing auth data first
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
-        delete authAPI.defaults.headers.common['Authorization'];
-      }
+      clearAuthData();
 
-        // FIX: Make sure we're sending proper JSON object
       const credentials = { 
         email: email.trim(), 
         password: password 
       };
-      console.log('🔄 Sending login request with credentials:', credentials);
 
-      
       const response = await authAPI.login(credentials);
-      console.log('✅ Login response received', response);
+      console.log('✅ Login response received');
       
       const { user, token } = response.data;
-      console.log("responce data is: ",user, token);
 
       if (!user || !token) {
         throw new Error('Invalid response from server - missing user or token');
@@ -97,27 +93,19 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('user', JSON.stringify(user));
       
       // Set auth header for future requests
-      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+      if (authAPI?.defaults?.headers) {
         authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       }
       
       setUser(user);
       
-      console.log('✅ Login successful, user:', user);
+      console.log('✅ Login successful');
       
       return { success: true, user };
     } catch (error) {
       console.error('❌ Login failed:', error);
+      clearAuthData();
       
-      // Clear on failure
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
-        delete authAPI.defaults.headers.common['Authorization'];
-      }
-      setUser(null);
-      
-      // Better error handling
       let errorMessage = 'Login failed';
       if (error.code === 'ERR_NETWORK') {
         errorMessage = 'Cannot connect to server. Please make sure the backend is running.';
@@ -142,7 +130,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
       
-      if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
+      if (authAPI?.defaults?.headers) {
         authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       }
       
@@ -160,14 +148,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = () => {
     console.log('🚪 Logging out');
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    
-    if (authAPI && authAPI.defaults && authAPI.defaults.headers) {
-      delete authAPI.defaults.headers.common['Authorization'];
-    }
-    
-    setUser(null);
+    clearAuthData();
   };
 
   const value = {

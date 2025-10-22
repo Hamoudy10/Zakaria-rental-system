@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useCallback, useEffect } from 'react'
 import { propertyAPI } from '../services/api'
+import { useAuth } from './AuthContext' // ADD THIS IMPORT
 
 const PropertyContext = createContext(undefined)
 
@@ -16,16 +17,12 @@ export const PropertyProvider = ({ children }) => {
   const [selectedProperty, setSelectedProperty] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const { user: authUser } = useAuth() // ADD AUTH CHECK
 
-  // Check authentication status
-  const checkAuth = useCallback(() => {
-    const token = localStorage.getItem('token')
-    const user = localStorage.getItem('user')
-    const authenticated = !!(token && user)
-    setIsAuthenticated(authenticated)
-    return authenticated
-  }, [])
+  // Check authentication status using AuthContext
+  const isAuthenticated = useCallback(() => {
+    return !!authUser;
+  }, [authUser])
 
   // Clear error function
   const clearError = useCallback(() => setError(null), [])
@@ -33,8 +30,8 @@ export const PropertyProvider = ({ children }) => {
   // Fetch all properties from API - ONLY WHEN AUTHENTICATED
   const fetchProperties = useCallback(async (forceRefresh = false) => {
     // Check authentication before making API call
-    if (!checkAuth()) {
-      console.log('🛑 Not fetching properties - user not authenticated')
+    if (!isAuthenticated()) {
+      console.log('🛑 PropertyContext: User not authenticated, skipping property fetch')
       setProperties([])
       return
     }
@@ -97,19 +94,14 @@ export const PropertyProvider = ({ children }) => {
       const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch properties'
       setError(errorMessage)
       setProperties([])
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, properties.length])
+  }, [isAuthenticated, properties.length])
 
-  // Fetch units for a specific property
+  // Fetch units for a specific property - ONLY WHEN AUTHENTICATED
   const fetchPropertyUnits = useCallback(async (propertyId) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -150,11 +142,11 @@ export const PropertyProvider = ({ children }) => {
       setError(errorMessage)
       throw err
     }
-  }, [checkAuth, selectedProperty])
+  }, [isAuthenticated, selectedProperty])
 
   // Fetch single property with units and details - ONLY WHEN AUTHENTICATED
   const fetchProperty = useCallback(async (propertyId) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       console.log('🛑 Not fetching property - user not authenticated')
       return null
     }
@@ -189,20 +181,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error fetching property:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch property details'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       return null
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, fetchPropertyUnits])
+  }, [isAuthenticated, fetchPropertyUnits])
 
-  // Add new property via API - ONLY WHEN AUTHENTICATED - UPDATED FOR UNIT_TYPE
+  // Add new property via API - ONLY WHEN AUTHENTICATED
   const addProperty = useCallback(async (propertyData) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -224,20 +211,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error adding property:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to create property'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       throw err
     } finally {
       setLoading(false)
     }
-  }, [checkAuth])
+  }, [isAuthenticated])
 
-  // Update property via API - ONLY WHEN AUTHENTICATED - UPDATED FOR UNIT_TYPE
+  // Update property via API - ONLY WHEN AUTHENTICATED
   const updateProperty = useCallback(async (propertyId, updates) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -263,20 +245,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error updating property:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to update property'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       throw err
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, selectedProperty])
+  }, [isAuthenticated, selectedProperty])
 
   // Delete property via API - ONLY WHEN AUTHENTICATED
   const deleteProperty = useCallback(async (propertyId) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -299,20 +276,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error deleting property:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to delete property'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       throw err
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, selectedProperty])
+  }, [isAuthenticated, selectedProperty])
 
   // Add unit to property via API - ONLY WHEN AUTHENTICATED
   const addUnit = useCallback(async (propertyId, unitData) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -336,20 +308,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error adding unit:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to add unit'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       throw err
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, fetchPropertyUnits])
+  }, [isAuthenticated, fetchPropertyUnits])
 
   // Update unit via API - ONLY WHEN AUTHENTICATED
   const updateUnit = useCallback(async (propertyId, unitId, updates) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -398,20 +365,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error updating unit:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to update unit'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       throw err
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, selectedProperty])
+  }, [isAuthenticated, selectedProperty])
 
   // Delete unit via API - ONLY WHEN AUTHENTICATED
   const deleteUnit = useCallback(async (propertyId, unitId) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -451,20 +413,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error deleting unit:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to delete unit'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       throw err
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, selectedProperty])
+  }, [isAuthenticated, selectedProperty])
 
   // Update unit occupancy status - ONLY WHEN AUTHENTICATED
   const updateUnitOccupancy = useCallback(async (propertyId, unitId, isOccupied) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       throw new Error('User not authenticated')
     }
 
@@ -515,20 +472,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error updating unit occupancy:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to update unit occupancy'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       throw err
     } finally {
       setLoading(false)
     }
-  }, [checkAuth, selectedProperty])
+  }, [isAuthenticated, selectedProperty])
 
   // Get property statistics - ONLY WHEN AUTHENTICATED
   const getPropertyStats = useCallback(async () => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       console.log('🛑 Not fetching stats - user not authenticated')
       return {}
     }
@@ -545,20 +497,15 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error fetching property stats:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch property statistics'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       return {}
     } finally {
       setLoading(false)
     }
-  }, [checkAuth])
+  }, [isAuthenticated])
 
   // Search properties - ONLY WHEN AUTHENTICATED
   const searchProperties = useCallback(async (searchTerm) => {
-    if (!checkAuth()) {
+    if (!isAuthenticated()) {
       console.log('🛑 Not searching properties - user not authenticated')
       return []
     }
@@ -576,16 +523,11 @@ export const PropertyProvider = ({ children }) => {
       console.error('❌ Error searching properties:', err)
       const errorMessage = err.message || err.response?.data?.message || 'Failed to search properties'
       setError(errorMessage)
-      
-      // If it's an authentication error, update auth status
-      if (err.response?.status === 401) {
-        setIsAuthenticated(false)
-      }
       return []
     } finally {
       setLoading(false)
     }
-  }, [checkAuth])
+  }, [isAuthenticated])
 
   // Get units by property
   const getUnitsByProperty = useCallback((propertyId) => {
@@ -647,40 +589,23 @@ export const PropertyProvider = ({ children }) => {
 
   // Load properties on mount ONLY IF AUTHENTICATED
   useEffect(() => {
-    const authCheck = checkAuth()
-    if (authCheck) {
+    if (isAuthenticated()) {
       console.log('🔄 PropertyProvider: User authenticated, fetching properties...')
       fetchProperties()
     } else {
       console.log('🛑 PropertyProvider: User not authenticated, skipping property fetch')
       setProperties([])
     }
-  }, [fetchProperties, checkAuth])
+  }, [fetchProperties, isAuthenticated])
 
   // Listen for authentication changes
   useEffect(() => {
-    const handleStorageChange = () => {
-      const authCheck = checkAuth()
-      if (authCheck && properties.length === 0) {
-        console.log('🔄 Authentication detected, fetching properties...')
-        fetchProperties()
-      } else if (!authCheck) {
-        console.log('🛑 User logged out, clearing properties')
-        setProperties([])
-        setSelectedProperty(null)
-      }
+    if (!isAuthenticated()) {
+      console.log('🛑 PropertyProvider: User logged out, clearing properties')
+      setProperties([])
+      setSelectedProperty(null)
     }
-
-    // Listen for storage changes (login/logout)
-    window.addEventListener('storage', handleStorageChange)
-    
-    // Also check auth when the component mounts
-    handleStorageChange()
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange)
-    }
-  }, [checkAuth, fetchProperties, properties.length])
+  }, [authUser, isAuthenticated])
 
   const value = React.useMemo(() => ({
     // State
@@ -688,7 +613,7 @@ export const PropertyProvider = ({ children }) => {
     selectedProperty,
     loading,
     error,
-    isAuthenticated,
+    isAuthenticated: isAuthenticated(),
     
     // Setters
     setSelectedProperty,
@@ -715,8 +640,7 @@ export const PropertyProvider = ({ children }) => {
     getAvailableUnits,
     getOccupiedUnits,
     calculatePropertyStats,
-    clearError,
-    checkAuth
+    clearError
   }), [
     properties,
     selectedProperty,
@@ -740,8 +664,7 @@ export const PropertyProvider = ({ children }) => {
     getAvailableUnits,
     getOccupiedUnits,
     calculatePropertyStats,
-    clearError,
-    checkAuth
+    clearError
   ])
 
   return <PropertyContext.Provider value={value}>{children}</PropertyContext.Provider>

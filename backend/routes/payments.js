@@ -288,6 +288,124 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
+// CONFIRM PAYMENT - NEW ROUTE ADDED
+router.post('/:id/confirm', protect, async (req, res) => {
+  console.log('✅ CONFIRM Payment Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    params: req.params,
+    user: req.user
+  });
+  
+  const client = await pool.connect();
+  
+  try {
+    const { id } = req.params;
+    const { user } = req;
+
+    console.log(`🔄 Confirm payment request for ID: ${id} by user: ${user.id}`);
+
+    await client.query('BEGIN');
+
+    // Check if payment exists
+    const paymentQuery = `
+      SELECT * FROM rent_payments 
+      WHERE id = $1
+    `;
+    const paymentResult = await client.query(paymentQuery, [id]);
+    
+    if (paymentResult.rows.length === 0) {
+      console.log(`❌ Payment not found with ID: ${id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found'
+      });
+    }
+
+    const payment = paymentResult.rows[0];
+
+    // Check if payment is already confirmed
+    if (payment.status === 'completed') {
+      console.log(`ℹ️ Payment ${id} is already confirmed`);
+      return res.status(400).json({
+        success: false,
+        message: 'Payment is already confirmed'
+      });
+    }
+
+    // Update payment status to completed
+    const updateQuery = `
+      UPDATE rent_payments 
+      SET status = 'completed', 
+          confirmed_by = $1, 
+          confirmed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      RETURNING *
+    `;
+    
+    const updateResult = await client.query(updateQuery, [user.id, id]);
+    const updatedPayment = updateResult.rows[0];
+
+    // Get payment details for notification
+    const detailsQuery = `
+      SELECT 
+        rp.*,
+        u.first_name as tenant_first_name,
+        u.last_name as tenant_last_name,
+        u.phone_number as tenant_phone,
+        p.name as property_name,
+        pu.unit_number,
+        pu.unit_code
+      FROM rent_payments rp
+      LEFT JOIN users u ON rp.tenant_id = u.id
+      LEFT JOIN property_units pu ON rp.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE rp.id = $1
+    `;
+    
+    const detailsResult = await client.query(detailsQuery, [id]);
+    const paymentDetails = detailsResult.rows[0];
+
+    // Create notification for tenant
+    const notificationQuery = `
+      INSERT INTO notifications (user_id, title, message, type, related_entity_type, related_entity_id)
+      VALUES ($1, $2, $3, $4, $5, $6)
+    `;
+    
+    await client.query(notificationQuery, [
+      payment.tenant_id,
+      'Payment Confirmed',
+      `Your payment of KSh ${payment.amount} for ${paymentDetails.property_name} - Unit ${paymentDetails.unit_number} has been confirmed.`,
+      'payment_confirmed',
+      'payment',
+      id
+    ]);
+
+    console.log(`✅ Payment ${id} confirmed successfully by user ${user.id}`);
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Payment confirmed successfully',
+      data: updatedPayment
+    });
+
+  } catch (error) {
+    console.error('❌ Error confirming payment:', error);
+    await client.query('ROLLBACK');
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to confirm payment',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
 // CREATE NEW PAYMENT (POST) - Enhanced with tracking
 router.post('/', protect, async (req, res) => {
   console.log('💰 CREATE Payment Request:', {

@@ -1,11 +1,11 @@
 import React, { useState, Suspense, lazy } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { PropertyProvider } from './context/PropertyContext'
 import { AllocationProvider } from './context/TenantAllocationContext'
 import { PaymentProvider } from './context/PaymentContext'
 import { ReportProvider } from './context/ReportContext'
-import { NotificationProvider, useNotification } from './context/NotificationContext'
+import { NotificationProvider } from './context/NotificationContext'
 import { UserProvider } from './context/UserContext'
 import NotificationBell from './components/NotificationBell'
 import Login from './components/Login'
@@ -27,9 +27,10 @@ const LoadingSpinner = () => (
   </div>
 );
 
-// Protected Route component
+// Protected Route component - FIXED VERSION
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth()
+  const navigate = useNavigate()
   
   if (loading) {
     return <LoadingSpinner />
@@ -51,21 +52,22 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 // Layout component with notification bell
 const Layout = ({ children }) => {
   const { user, logout } = useAuth()
-  const { unreadCount, notifications, markAsRead } = useNotification()
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false)
+  const navigate = useNavigate()
 
   const handleLogout = () => {
     logout()
+    navigate('/login')
   }
 
-  // Get recent notifications for dropdown (last 5 unread or recent)
-  const recentNotifications = notifications
-    .filter(notification => !notification.is_read)
-    .slice(0, 5)
-
-  const handleNotificationClick = async (notificationId) => {
-    await markAsRead(notificationId)
-    setIsNotificationOpen(false)
+  // Get dashboard path based on user role
+  const getDashboardPath = () => {
+    if (!user) return '/login'
+    switch (user.role) {
+      case 'admin': return '/admin-dashboard'
+      case 'agent': return '/agent-dashboard'
+      case 'tenant': return '/tenant-dashboard'
+      default: return '/login'
+    }
   }
 
   return (
@@ -86,13 +88,13 @@ const Layout = ({ children }) => {
               {/* Navigation */}
               <nav className="hidden md:flex space-x-4">
                 <Link 
-                  to={`/${user?.role}`} 
+                  to={getDashboardPath()} 
                   className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200"
                 >
                   Dashboard
                 </Link>
                 <Link 
-                  to={`/${user?.role}/notifications`} 
+                  to={`${getDashboardPath()}/notifications`} 
                   className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200"
                 >
                   Notifications
@@ -144,16 +146,14 @@ const Layout = ({ children }) => {
                     </div>
                     
                     <Link 
-                      to={`/${user?.role}/profile`} 
+                      to={`${getDashboardPath()}/profile`} 
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-150"
-                      onClick={() => setIsNotificationOpen(false)}
                     >
                       Your Profile
                     </Link>
                     <Link 
-                      to={`/${user?.role}/settings`} 
+                      to={`${getDashboardPath()}/settings`} 
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-150"
-                      onClick={() => setIsNotificationOpen(false)}
                     >
                       Settings
                     </Link>
@@ -174,16 +174,14 @@ const Layout = ({ children }) => {
           <div className="md:hidden border-t border-gray-200 mt-2 pt-2">
             <nav className="flex space-x-4">
               <Link 
-                to={`/${user?.role}`} 
+                to={getDashboardPath()} 
                 className="text-gray-600 hover:text-gray-900 px-2 py-1 rounded text-sm font-medium"
-                onClick={() => setIsNotificationOpen(false)}
               >
                 Dashboard
               </Link>
               <Link 
-                to={`/${user?.role}/notifications`} 
+                to={`${getDashboardPath()}/notifications`} 
                 className="text-gray-600 hover:text-gray-900 px-2 py-1 rounded text-sm font-medium"
-                onClick={() => setIsNotificationOpen(false)}
               >
                 Notifications
               </Link>
@@ -202,19 +200,64 @@ const Layout = ({ children }) => {
   )
 }
 
+// Public Route - redirect to dashboard if already authenticated
+const PublicRoute = ({ children }) => {
+  const { user, loading } = useAuth()
+  
+  if (loading) {
+    return <LoadingSpinner />
+  }
+  
+  if (user) {
+    // Redirect to appropriate dashboard based on role
+    let redirectPath = '/login'
+    switch (user.role) {
+      case 'admin': redirectPath = '/admin-dashboard'; break
+      case 'agent': redirectPath = '/agent-dashboard'; break
+      case 'tenant': redirectPath = '/tenant-dashboard'; break
+      default: redirectPath = '/login'
+    }
+    console.log(`🔄 PublicRoute: User authenticated, redirecting to ${redirectPath}`)
+    return <Navigate to={redirectPath} replace />
+  }
+  
+  return children
+}
+
 function AppRoutes() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
+
+  // Show loading spinner while checking authentication
+  if (loading) {
+    return <LoadingSpinner />
+  }
+
+  // Get the appropriate dashboard path based on user role
+  const getDashboardPath = () => {
+    if (!user) return '/login'
+    switch (user.role) {
+      case 'admin': return '/admin-dashboard'
+      case 'agent': return '/agent-dashboard'
+      case 'tenant': return '/tenant-dashboard'
+      default: return '/login'
+    }
+  }
 
   return (
     <Routes>
+      {/* Public Routes */}
       <Route 
         path="/login" 
-        element={user ? <Navigate to={`/${user.role}`} replace /> : <Login />} 
+        element={
+          <PublicRoute>
+            <Login />
+          </PublicRoute>
+        } 
       />
       
       {/* Admin Routes */}
       <Route 
-        path="/admin/*" 
+        path="/admin-dashboard" 
         element={
           <ProtectedRoute allowedRoles={['admin']}>
             <AdminDashboard />
@@ -222,7 +265,7 @@ function AppRoutes() {
         } 
       />
       <Route 
-        path="/admin/notifications" 
+        path="/admin-dashboard/notifications" 
         element={
           <ProtectedRoute allowedRoles={['admin']}>
             <NotificationsPage />
@@ -232,7 +275,7 @@ function AppRoutes() {
       
       {/* Agent Routes */}
       <Route 
-        path="/agent/*" 
+        path="/agent-dashboard" 
         element={
           <ProtectedRoute allowedRoles={['agent']}>
             <AgentDashboard />
@@ -240,7 +283,7 @@ function AppRoutes() {
         } 
       />
       <Route 
-        path="/agent/notifications" 
+        path="/agent-dashboard/notifications" 
         element={
           <ProtectedRoute allowedRoles={['agent']}>
             <NotificationsPage />
@@ -250,7 +293,7 @@ function AppRoutes() {
       
       {/* Tenant Routes */}
       <Route 
-        path="/tenant/*" 
+        path="/tenant-dashboard" 
         element={
           <ProtectedRoute allowedRoles={['tenant']}>
             <TenantDashboard />
@@ -258,7 +301,7 @@ function AppRoutes() {
         } 
       />
       <Route 
-        path="/tenant/payments" 
+        path="/tenant-dashboard/payments" 
         element={
           <ProtectedRoute allowedRoles={['tenant']}>
             <TenantPayment />
@@ -266,7 +309,7 @@ function AppRoutes() {
         } 
       />
       <Route 
-        path="/tenant/notifications" 
+        path="/tenant-dashboard/notifications" 
         element={
           <ProtectedRoute allowedRoles={['tenant']}>
             <NotificationsPage />
@@ -274,22 +317,22 @@ function AppRoutes() {
         } 
       />
       
-      {/* Default route */}
+      {/* Default route - redirect to appropriate dashboard or login */}
       <Route 
         path="/" 
-        element={<Navigate to={user ? `/${user.role}` : '/login'} replace />} 
+        element={<Navigate to={user ? getDashboardPath() : '/login'} replace />} 
       />
       
-      {/* Notifications route for all roles */}
+      {/* Catch-all route for undefined paths - redirect to appropriate dashboard */}
       <Route 
-        path="/notifications" 
-        element={<Navigate to={user ? `/${user.role}/notifications` : '/login'} replace />} 
-      />
-      
-      {/* Payment route for tenants */}
-      <Route 
-        path="/payments" 
-        element={<Navigate to={user ? `/${user.role}/payments` : '/login'} replace />} 
+        path="*" 
+        element={
+          user ? (
+            <Navigate to={getDashboardPath()} replace />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        } 
       />
       
       {/* Unauthorized route */}
@@ -301,29 +344,10 @@ function AppRoutes() {
               <h1 className="text-4xl font-bold text-red-600 mb-4">Unauthorized</h1>
               <p className="text-gray-600">You don't have permission to access this page.</p>
               <Link 
-                to="/login" 
+                to={user ? getDashboardPath() : '/login'} 
                 className="mt-4 inline-block bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
               >
-                Back to Login
-              </Link>
-            </div>
-          </div>
-        } 
-      />
-      
-      {/* 404 Not Found route */}
-      <Route 
-        path="*" 
-        element={
-          <div className="min-h-screen flex items-center justify-center bg-gray-50">
-            <div className="text-center">
-              <h1 className="text-4xl font-bold text-gray-900 mb-4">404 - Page Not Found</h1>
-              <p className="text-gray-600">The page you're looking for doesn't exist.</p>
-              <Link 
-                to="/" 
-                className="mt-4 inline-block bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-              >
-                Go Home
+                {user ? 'Go to Dashboard' : 'Back to Login'}
               </Link>
             </div>
           </div>
@@ -335,12 +359,7 @@ function AppRoutes() {
 
 function App() {
   return (
-    <Router
-      future={{
-        v7_startTransition: true,
-        v7_relativeSplatPath: true,
-      }}
-    >
+    <Router>
       <AuthProvider>
         <UserProvider>
           <PropertyProvider>
@@ -351,9 +370,7 @@ function App() {
                     <ComplaintProvider>
                       <ReportProvider>
                         <SystemSettingsProvider>
-                          <Suspense fallback={<LoadingSpinner />}>
-                            <AppRoutes />
-                          </Suspense>
+                          <AppRoutes />
                         </SystemSettingsProvider>
                       </ReportProvider>
                     </ComplaintProvider>
