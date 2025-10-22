@@ -38,6 +38,11 @@ const getAccessToken = async () => {
   try {
     const consumerKey = process.env.MPESA_CONSUMER_KEY;
     const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
+    
+    if (!consumerKey || !consumerSecret) {
+      throw new Error('M-Pesa consumer key or secret not configured');
+    }
+    
     const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
     
     const response = await axios.get(
@@ -46,6 +51,7 @@ const getAccessToken = async () => {
         headers: {
           'Authorization': `Basic ${auth}`,
         },
+        timeout: 10000,
       }
     );
     
@@ -54,6 +60,32 @@ const getAccessToken = async () => {
     console.error('❌ Error getting access token:', error.response?.data || error.message);
     throw new Error(`Failed to get access token: ${error.message}`);
   }
+};
+
+// FIXED: Function to format payment month to proper date format
+const formatPaymentMonth = (paymentMonth) => {
+  console.log('📅 Formatting payment month:', paymentMonth);
+  
+  // If it's already in YYYY-MM-DD format, return as is
+  if (typeof paymentMonth === 'string' && paymentMonth.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    return paymentMonth;
+  }
+  
+  // If it's in YYYY-MM format, add the first day
+  if (typeof paymentMonth === 'string' && paymentMonth.match(/^\d{4}-\d{2}$/)) {
+    return `${paymentMonth}-01`;
+  }
+  
+  // If it's a Date object, format it
+  if (paymentMonth instanceof Date) {
+    return paymentMonth.toISOString().split('T')[0];
+  }
+  
+  // Default: use current month first day
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}-01`;
 };
 
 // Real M-Pesa STK Push function
@@ -92,6 +124,10 @@ const initiateSTKPush = async (req, res) => {
         message: 'Missing required fields: phone, amount, unitId, paymentMonth'
       });
     }
+
+    // FIXED: Format payment month to proper date format
+    const formattedPaymentMonth = formatPaymentMonth(paymentMonth);
+    console.log('📅 Formatted payment month:', formattedPaymentMonth);
 
     // Validate phone number format (Kenyan format)
     const cleanedPhone = phone.replace(/\s+/g, '');
@@ -157,7 +193,7 @@ const initiateSTKPush = async (req, res) => {
     const existingPayment = await pool.query(
       `SELECT id, status FROM rent_payments 
        WHERE tenant_id = $1 AND unit_id = $2 AND payment_month = $3`,
-      [req.user.id, unitId, paymentMonth]
+      [req.user.id, unitId, formattedPaymentMonth]
     );
 
     if (existingPayment.rows.length > 0) {
@@ -183,10 +219,19 @@ const initiateSTKPush = async (req, res) => {
     // Get M-Pesa credentials from environment
     const shortCode = process.env.MPESA_SHORT_CODE;
     const passKey = process.env.MPESA_PASSKEY;
-    const callbackUrl = `${process.env.BACKEND_URL}/api/payments/mpesa-callback`;
+    
+    // FIXED: Use environment variable for callback URL with fallback
+    const callbackUrl = process.env.MPESA_CALLBACK_URL || `${process.env.BACKEND_URL || 'http://localhost:3001'}/api/payments/mpesa-callback`;
+
+    console.log('🔗 Callback URL:', callbackUrl);
 
     if (!shortCode || !passKey) {
       throw new Error('M-Pesa configuration missing: MPESA_SHORT_CODE or MPESA_PASSKEY not set');
+    }
+
+    // Validate callback URL is set
+    if (!callbackUrl || callbackUrl.includes('undefined')) {
+      throw new Error('M-Pesa callback URL is not properly configured. Check BACKEND_URL environment variable.');
     }
 
     // Get access token
@@ -197,7 +242,7 @@ const initiateSTKPush = async (req, res) => {
     const timestamp = generateTimestamp();
     const password = generatePassword(shortCode, passKey, timestamp);
 
-    // Prepare STK Push request payload :cite[1]:cite[2]
+    // Prepare STK Push request payload
     const stkPushPayload = {
       BusinessShortCode: shortCode,
       Password: password,
@@ -212,14 +257,18 @@ const initiateSTKPush = async (req, res) => {
       TransactionDesc: transaction_desc,
     };
 
-    console.log('📤 Initiating STK Push:', { 
-      phone: formattedPhone, 
-      amount: paymentAmount, 
-      shortcode: shortCode,
-      callback_url: callbackUrl
+    console.log('🎯 FINAL STK PUSH DETAILS:', {
+      phone: formattedPhone,
+      amount: paymentAmount,
+      shortCode: shortCode,
+      callbackUrl: callbackUrl,
+      timestamp: timestamp,
+      environment: process.env.MPESA_ENVIRONMENT
     });
 
-    // Initiate STK Push :cite[1]:cite[10]
+    console.log('📤 Initiating STK Push to M-Pesa...');
+    
+    // Initiate STK Push
     const stkResponse = await axios.post(
       'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
       stkPushPayload,
@@ -251,7 +300,7 @@ const initiateSTKPush = async (req, res) => {
         unitId,
         formattedPhone,
         paymentAmount,
-        paymentMonth,
+        formattedPaymentMonth, // FIXED: Use formatted date
         'pending',
         stkResponse.data.CheckoutRequestID,
         stkResponse.data.MerchantRequestID,
@@ -312,7 +361,7 @@ const initiateSTKPush = async (req, res) => {
   }
 };
 
-// M-Pesa callback handler :cite[1]:cite[4]
+// M-Pesa callback handler
 const handleMpesaCallback = async (req, res) => {
   console.log('📞 M-Pesa callback received:', JSON.stringify(req.body, null, 2));
 
@@ -391,7 +440,7 @@ const handleMpesaCallback = async (req, res) => {
         });
       }
 
-      // Extract payment details from callback metadata :cite[4]
+      // Extract payment details from callback metadata
       let amount, mpesaReceiptNumber, transactionDate, phoneNumber;
 
       if (Array.isArray(callbackMetadata)) {
@@ -480,7 +529,7 @@ const handleMpesaCallback = async (req, res) => {
       console.log('❌ Payment failed:', failureReason);
     }
 
-    // Always return success to M-Pesa to avoid repeated callbacks :cite[1]
+    // Always return success to M-Pesa to avoid repeated callbacks
     res.status(200).json({ 
       ResultCode: 0, 
       ResultDesc: 'Success' 
@@ -563,6 +612,10 @@ const processSalaryPayment = async (req, res) => {
       });
     }
 
+    // FIXED: Format payment month to proper date format
+    const formattedPaymentMonth = formatPaymentMonth(paymentMonth);
+    console.log('📅 Formatted salary payment month:', formattedPaymentMonth);
+
     // Validate phone number format
     const cleanedPhone = phone.replace(/\s+/g, '');
     const phoneRegex = /^(?:254|\+254|0)?(7[0-9]{8})$/;
@@ -604,7 +657,13 @@ const processSalaryPayment = async (req, res) => {
 
     const shortCode = process.env.MPESA_SHORT_CODE;
     const passKey = process.env.MPESA_PASSKEY;
-    const callbackUrl = `${process.env.BACKEND_URL}/api/payments/salary-callback`;
+    
+    // FIXED: Use environment variable for callback URL with fallback
+    const callbackUrl = process.env.MPESA_CALLBACK_URL || `${process.env.BACKEND_URL || 'http://localhost:3001'}/api/payments/salary-callback`;
+
+    if (!shortCode || !passKey) {
+      throw new Error('M-Pesa configuration missing: MPESA_SHORT_CODE or MPESA_PASSKEY not set');
+    }
 
     // Get access token
     const access_token = await getAccessToken();
@@ -655,7 +714,7 @@ const processSalaryPayment = async (req, res) => {
       [
         agentId,
         amount,
-        paymentMonth,
+        formattedPaymentMonth, // FIXED: Use formatted date
         formattedPhone,
         stkResponse.data.CheckoutRequestID,
         stkResponse.data.MerchantRequestID,
@@ -863,6 +922,50 @@ const getAllPayments = async (req, res) => {
   }
 };
 
+// Test M-Pesa configuration
+const testMpesaConfig = async (req, res) => {
+  try {
+    console.log('🔧 Testing M-Pesa configuration...');
+    
+    const mpesaConfig = {
+      consumerKey: process.env.MPESA_CONSUMER_KEY ? '✅ Set' : '❌ Missing',
+      consumerSecret: process.env.MPESA_CONSUMER_SECRET ? '✅ Set' : '❌ Missing',
+      shortCode: process.env.MPESA_SHORT_CODE ? '✅ Set' : '❌ Missing',
+      passKey: process.env.MPESA_PASSKEY ? '✅ Set' : '❌ Missing',
+      backendUrl: process.env.BACKEND_URL ? '✅ Set' : '❌ Missing',
+      callbackUrl: process.env.MPESA_CALLBACK_URL ? '✅ Set' : '❌ Missing',
+      environment: process.env.MPESA_ENVIRONMENT || 'sandbox'
+    };
+
+    console.log('📋 M-Pesa Configuration:', mpesaConfig);
+
+    // Test access token generation
+    try {
+      const access_token = await getAccessToken();
+      mpesaConfig.accessToken = access_token ? '✅ Obtained' : '❌ Failed';
+      console.log('✅ Access token test passed');
+    } catch (tokenError) {
+      mpesaConfig.accessToken = `❌ Failed: ${tokenError.message}`;
+      console.error('❌ Access token test failed:', tokenError.message);
+    }
+
+    res.json({
+      success: true,
+      message: 'M-Pesa configuration test',
+      config: mpesaConfig,
+      instructions: 'If any items show as ❌ Missing, check your .env file'
+    });
+
+  } catch (error) {
+    console.error('❌ M-Pesa config test failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'M-Pesa configuration test failed',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   initiateSTKPush,
   handleMpesaCallback,
@@ -870,5 +973,7 @@ module.exports = {
   getPaymentById,
   getPaymentsByTenant,
   getAllPayments,
-  processSalaryPayment
+  processSalaryPayment,
+  testMpesaConfig, // ADDED: M-Pesa configuration test
+  formatPaymentMonth
 };

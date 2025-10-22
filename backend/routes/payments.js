@@ -7,24 +7,10 @@ const paymentController = require('../controllers/paymentController');
 
 console.log('🔗 Payments routes loaded - checking for controller...');
 
-// FIXED: Updated mock middleware with proper UUID format
-const protect = (req, res, next) => {
-  console.log('🛡️  Protect middleware called for:', req.method, req.originalUrl);
-  console.log('👤 User ID from protect middleware:', req.user?.id || 'No user ID');
-  
-  // Use proper UUID format that matches your actual user IDs
-  req.user = { 
-    id: '33ecb4e2-fc6a-4def-8bcf-022bb66231ff', // Use the same tenant_id from your frontend
-    userId: 'test', 
-    role: 'tenant', // Changed from 'admin' to 'tenant' for payment context
-    first_name: 'Test',
-    last_name: 'User'
-  };
-  console.log('✅ Protect middleware set user:', req.user);
-  next();
-};
+// FIXED: Use the actual auth middleware instead of mock
+const { protect } = require('../middleware/authMiddleware');
 
-// M-Pesa payment routes - ADDED: Enhanced logging and error handling
+// M-Pesa payment routes - FIXED: Using real auth middleware
 router.post('/mpesa', protect, async (req, res) => {
   console.log('💰 M-Pesa STK Push Request Received:', {
     method: req.method,
@@ -49,6 +35,28 @@ router.post('/mpesa', protect, async (req, res) => {
       message: 'Internal server error in M-Pesa route',
       error: error.message,
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// ADDED: M-Pesa configuration test route
+router.get('/mpesa/test-config', protect, async (req, res) => {
+  console.log('🔧 M-Pesa Configuration Test Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.testMpesaConfig...');
+    await paymentController.testMpesaConfig(req, res);
+    console.log('✅ M-Pesa configuration test completed successfully');
+  } catch (error) {
+    console.error('❌ CRITICAL ERROR in M-Pesa config test:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in M-Pesa configuration test',
+      error: error.message
     });
   }
 });
@@ -651,6 +659,7 @@ router.get('/status/overdue', protect, async (req, res) => {
   console.log('⚠️  GET Overdue Payments Request:', {
     method: req.method,
     url: req.originalUrl,
+    params: req.params,
     user: req.user
   });
   

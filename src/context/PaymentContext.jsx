@@ -22,6 +22,32 @@ export const PaymentProvider = ({ children }) => {
   // Clear error
   const clearError = useCallback(() => setError(null), []);
 
+  // FIXED: Function to format payment month to proper format
+  const formatPaymentMonthForBackend = (paymentMonth) => {
+    console.log('📅 Formatting payment month in frontend:', paymentMonth);
+    
+    // If it's already in YYYY-MM-DD format, return as is
+    if (typeof paymentMonth === 'string' && paymentMonth.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return paymentMonth;
+    }
+    
+    // If it's in YYYY-MM format, add the first day
+    if (typeof paymentMonth === 'string' && paymentMonth.match(/^\d{4}-\d{2}$/)) {
+      return `${paymentMonth}-01`;
+    }
+    
+    // If it's a Date object, format it
+    if (paymentMonth instanceof Date) {
+      return paymentMonth.toISOString().split('T')[0];
+    }
+    
+    // Default: use current month first day
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}-01`;
+  };
+
   // Fetch all payments
   const fetchPayments = useCallback(async () => {
     setLoading(true);
@@ -79,12 +105,16 @@ export const PaymentProvider = ({ children }) => {
     try {
       console.log('📦 Original payment data from form:', paymentData);
       
+      // FIXED: Format payment month before sending to backend
+      const formattedPaymentMonth = formatPaymentMonthForBackend(paymentData.payment_month);
+      console.log('📅 Formatted payment month for backend:', formattedPaymentMonth);
+      
       // CORRECTED: Map frontend field names to backend expected field names
       const formattedPaymentData = {
         phone: mpesaUtils.formatPhoneNumber(paymentData.phone_number),
         amount: Math.round(parseFloat(paymentData.amount)), // M-Pesa requires whole numbers
         unitId: paymentData.unit_id,
-        paymentMonth: paymentData.payment_month
+        paymentMonth: formattedPaymentMonth // FIXED: Use formatted date
         // Remove tenant_id, property_name, unit_number as backend uses req.user.id
       };
 
@@ -231,7 +261,13 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await paymentAPI.createPayment(paymentData);
+      // FIXED: Format payment month before sending
+      const formattedData = {
+        ...paymentData,
+        payment_month: formatPaymentMonthForBackend(paymentData.payment_month)
+      };
+      
+      const response = await paymentAPI.createPayment(formattedData);
       if (response.success) {
         await fetchPayments();
         return response.data;
@@ -251,7 +287,13 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await paymentAPI.updatePayment(paymentId, updates);
+      // FIXED: Format payment month if present
+      const formattedUpdates = { ...updates };
+      if (updates.payment_month) {
+        formattedUpdates.payment_month = formatPaymentMonthForBackend(updates.payment_month);
+      }
+      
+      const response = await paymentAPI.updatePayment(paymentId, formattedUpdates);
       if (response.success) {
         await fetchPayments();
         return response.data;
@@ -444,6 +486,7 @@ export const PaymentProvider = ({ children }) => {
     generatePaymentReport,
     validateMpesaPhone,
     formatMpesaPhone,
+    formatPaymentMonthForBackend, // FIXED: Export for components to use
     clearError
   }), [
     payments,
@@ -469,6 +512,7 @@ export const PaymentProvider = ({ children }) => {
     generatePaymentReport,
     validateMpesaPhone,
     formatMpesaPhone,
+    formatPaymentMonthForBackend,
     clearError
   ]);
 
