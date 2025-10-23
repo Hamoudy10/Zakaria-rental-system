@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { usePayment } from '../context/PaymentContext';
 import { useAllocation } from '../context/TenantAllocationContext';
+import { useUser } from '../context/UserContext';
+import { useProperty } from '../context/PropertyContext';
 
 const PaymentManagement = () => {
   const {
@@ -16,6 +18,8 @@ const PaymentManagement = () => {
   } = usePayment();
 
   const { allocations } = useAllocation();
+  const { users, fetchUsers } = useUser();
+  const { properties, fetchProperties, getUnitsByProperty } = useProperty(); // Updated: removed fetchUnits
 
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedAllocation, setSelectedAllocation] = useState('');
@@ -32,6 +36,15 @@ const PaymentManagement = () => {
   // SAFE CHECK: Ensure data is always arrays
   const safePayments = Array.isArray(payments) ? payments : [];
   const safeAllocations = Array.isArray(allocations) ? allocations : [];
+  const safeUsers = Array.isArray(users) ? users : [];
+  const safeProperties = Array.isArray(properties) ? properties : [];
+
+  // Get all units from all properties
+  const getAllUnits = () => {
+    return safeProperties.flatMap(property => property.units || []);
+  };
+
+  const safeUnits = getAllUnits();
 
   // Get active allocations for payment
   const activeAllocations = safeAllocations.filter(allocation => allocation.is_active);
@@ -46,10 +59,12 @@ const PaymentManagement = () => {
   // Current month for default value
   const currentMonth = new Date().toISOString().slice(0, 7);
 
-  // Load payments on component mount
+  // Load payments, users, and properties on component mount
   useEffect(() => {
     fetchPayments();
-  }, [fetchPayments]);
+    fetchUsers();
+    fetchProperties(); // This will fetch properties with their units
+  }, [fetchPayments, fetchUsers, fetchProperties]);
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -70,14 +85,45 @@ const PaymentManagement = () => {
     if (selectedAllocation) {
       const allocation = activeAllocations.find(a => a.id === selectedAllocation);
       if (allocation) {
+        // Find tenant details from users
+        const tenant = safeUsers.find(user => user.id === allocation.tenant_id);
         setPaymentData(prev => ({
           ...prev,
           amount: allocation.monthly_rent || '',
-          phone_number: allocation.tenant?.phone_number || ''
+          phone_number: tenant?.phone_number || ''
         }));
       }
     }
-  }, [selectedAllocation, activeAllocations]);
+  }, [selectedAllocation, activeAllocations, safeUsers]);
+
+  // Function to get tenant name by ID
+  const getTenantName = (tenantId) => {
+    if (!tenantId || !safeUsers.length) return 'Unknown Tenant';
+    
+    const tenant = safeUsers.find(user => user.id === tenantId);
+    return tenant ? `${tenant.first_name} ${tenant.last_name}` : 'Unknown Tenant';
+  };
+
+  // Function to get unit details by ID
+  const getUnitDetails = (unitId) => {
+    if (!unitId || !safeUnits.length) return 'Unknown Unit';
+    
+    const unit = safeUnits.find(unit => unit.id === unitId);
+    if (!unit) return 'Unknown Unit';
+    
+    return `${unit.unit_code} - ${unit.unit_number}`;
+  };
+
+  // Function to get property name by unit ID
+  const getPropertyName = (unitId) => {
+    if (!unitId || !safeUnits.length || !safeProperties.length) return '';
+    
+    const unit = safeUnits.find(unit => unit.id === unitId);
+    if (!unit) return '';
+    
+    const property = safeProperties.find(prop => prop.id === unit.property_id);
+    return property ? property.name : '';
+  };
 
   // SAFE VERSION: Get current month summary with fallback
   const getCurrentMonthSummary = () => {
@@ -251,13 +297,17 @@ const PaymentManagement = () => {
                   required
                 >
                   <option value="">Choose a tenant</option>
-                  {activeAllocations.map(allocation => (
-                    <option key={allocation.id} value={allocation.id}>
-                      {allocation.tenant?.first_name || 'Unknown'} {allocation.tenant?.last_name || 'Tenant'} - 
-                      {allocation.unit?.unit_code || 'Unknown Unit'} - 
-                      {formatCurrency(allocation.monthly_rent)}
-                    </option>
-                  ))}
+                  {activeAllocations.map(allocation => {
+                    const tenant = safeUsers.find(user => user.id === allocation.tenant_id);
+                    const unit = safeUnits.find(unit => unit.id === allocation.unit_id);
+                    return (
+                      <option key={allocation.id} value={allocation.id}>
+                        {tenant ? `${tenant.first_name} ${tenant.last_name}` : 'Unknown Tenant'} - 
+                        {unit ? `${unit.unit_code} - ${unit.unit_number}` : 'Unknown Unit'} - 
+                        {formatCurrency(allocation.monthly_rent)}
+                      </option>
+                    );
+                  })}
                 </select>
                 {activeAllocations.length === 0 && (
                   <p className="text-sm text-red-600 mt-1">No active tenant allocations found.</p>
@@ -389,87 +439,112 @@ const PaymentManagement = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Tenant & Unit
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Payment Details
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    M-Pesa Info
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredPayments.map((payment) => (
-                  <tr key={payment.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="flex-shrink-0 h-10 w-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
-                          {(payment.tenant?.first_name?.[0] || 'T')}{(payment.tenant?.last_name?.[0] || 'U')}
-                        </div>
-                        <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                            {payment.tenant?.first_name || 'Unknown'} {payment.tenant?.last_name || 'Tenant'}
-                          </div>
-                          <div className="text-sm text-gray-500 whitespace-nowrap">
-                            {payment.unit?.unit_code || 'Unknown Unit'}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                        {formatCurrency(payment.amount)}
-                      </div>
-                      <div className="text-sm text-gray-500 whitespace-nowrap">
-                        {formatDate(payment.payment_month)}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 whitespace-nowrap">
-                        {payment.mpesa_transaction_id || 'N/A'}
-                      </div>
-                      <div className="text-sm text-gray-500 whitespace-nowrap">
-                        {payment.mpesa_receipt_number || 'N/A'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                        ${payment.status === 'completed' ? 'bg-green-100 text-green-800' : 
-                          'bg-yellow-100 text-yellow-800'}`}>
-                        {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1) || 'Unknown'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                      {payment.status !== 'completed' && (
-                        <button
-                          onClick={() => handleConfirmPayment(payment.id)}
-                          className="text-green-600 hover:text-green-900 whitespace-nowrap"
-                        >
-                          Confirm
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleDeletePayment(payment.id)}
-                        className="text-red-600 hover:text-red-900 whitespace-nowrap"
-                      >
-                        Delete
-                      </button>
-                    </td>
+            {/* Added scrollable container with max height */}
+            <div className="max-h-96 overflow-y-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                      Tenant & Unit
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                      Payment Details
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                      M-Pesa Info
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                      Actions
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredPayments.map((payment) => (
+                    <tr key={payment.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0 h-10 w-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
+                            {getTenantName(payment.tenant_id).split(' ').map(n => n[0]).join('').toUpperCase()}
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                              {getTenantName(payment.tenant_id)}
+                            </div>
+                            <div className="text-sm text-gray-500 whitespace-nowrap">
+                              {getUnitDetails(payment.unit_id)}
+                            </div>
+                            {getPropertyName(payment.unit_id) && (
+                              <div className="text-xs text-gray-400 whitespace-nowrap">
+                                {getPropertyName(payment.unit_id)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                          {formatCurrency(payment.amount)}
+                        </div>
+                        <div className="text-sm text-gray-500 whitespace-nowrap">
+                          {formatDate(payment.payment_month)}
+                        </div>
+                        {payment.payment_date && (
+                          <div className="text-xs text-gray-400 whitespace-nowrap">
+                            Paid: {new Date(payment.payment_date).toLocaleDateString()}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900 whitespace-nowrap">
+                          {payment.mpesa_transaction_id || 'N/A'}
+                        </div>
+                        <div className="text-sm text-gray-500 whitespace-nowrap">
+                          {payment.mpesa_receipt_number || 'N/A'}
+                        </div>
+                        {payment.phone_number && (
+                          <div className="text-xs text-gray-400 whitespace-nowrap">
+                            {payment.phone_number}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                          ${payment.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                            'bg-yellow-100 text-yellow-800'}`}>
+                          {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1) || 'Unknown'}
+                        </span>
+                        {payment.is_late_payment && (
+                          <div className="mt-1">
+                            <span className="px-1 inline-flex text-xs leading-4 font-semibold rounded-full bg-red-100 text-red-800">
+                              Late
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                        {payment.status !== 'completed' && (
+                          <button
+                            onClick={() => handleConfirmPayment(payment.id)}
+                            className="text-green-600 hover:text-green-900 whitespace-nowrap"
+                          >
+                            Confirm
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeletePayment(payment.id)}
+                          className="text-red-600 hover:text-red-900 whitespace-nowrap"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
