@@ -8,9 +8,11 @@ const PropertyManagement = () => {
   const [editingProperty, setEditingProperty] = useState(null)
   const [showUnits, setShowUnits] = useState(null)
 
+  // Use accurate occupancy calculation based on actual units
   const getOccupancyRate = (property) => {
     if (property.total_units === 0) return 0
-    return Math.round(((property.total_units - property.available_units) / property.total_units) * 100)
+    const occupiedUnits = property.occupied_units || (property.total_units - property.available_units)
+    return Math.round((occupiedUnits / property.total_units) * 100)
   }
 
   const getOccupancyColor = (rate) => {
@@ -29,7 +31,7 @@ const PropertyManagement = () => {
       town: '',
       description: '',
       total_units: 0,
-      unit_type: 'bedsitter' // Updated default value
+      unit_type: 'bedsitter'
     })
 
     // Initialize form data when modal opens
@@ -43,7 +45,7 @@ const PropertyManagement = () => {
           town: '',
           description: '',
           total_units: 0,
-          unit_type: 'bedsitter' // Updated default value
+          unit_type: 'bedsitter'
         })
       }
     }, [isOpen, initialData])
@@ -112,7 +114,7 @@ const PropertyManagement = () => {
                 </div>
               </div>
 
-              {/* Unit Type Field - UPDATED OPTIONS */}
+              {/* Unit Type Field */}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   Unit Type *
@@ -190,10 +192,10 @@ const PropertyManagement = () => {
                 />
               </div>
 
-              {/* Total Units */}
+              {/* Total Units - Note: This is now informational only for new properties */}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Total Units *
+                  Initial Total Units *
                 </label>
                 <input
                   type="number"
@@ -203,6 +205,9 @@ const PropertyManagement = () => {
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 max-w-xs"
                   required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Note: Actual unit counts will be calculated based on the units you add.
+                </p>
               </div>
             </div>
           </div>
@@ -297,78 +302,87 @@ const PropertyManagement = () => {
           town: editingProperty.town || '',
           description: editingProperty.description || '',
           total_units: editingProperty.total_units || 0,
-          unit_type: editingProperty.unit_type || 'bedsitter' // Updated default
+          unit_type: editingProperty.unit_type || 'bedsitter'
         } : null}
       />
 
       {/* Properties Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {properties.map((property) => (
-          <div key={property.id} className="bg-white rounded-lg shadow-md border border-gray-200 p-4 hover:shadow-lg transition-shadow duration-200">
-            <div className="flex justify-between items-start mb-4">
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900">{property.name}</h3>
-                <p className="text-sm text-gray-500">{property.property_code}</p>
+        {properties.map((property) => {
+          const occupancyRate = getOccupancyRate(property)
+          const occupiedUnits = property.occupied_units || (property.total_units - property.available_units)
+          
+          return (
+            <div key={property.id} className="bg-white rounded-lg shadow-md border border-gray-200 p-4 hover:shadow-lg transition-shadow duration-200">
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-gray-900">{property.name}</h3>
+                  <p className="text-sm text-gray-500">{property.property_code}</p>
+                </div>
+                <div className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                  occupancyRate >= 90 ? 'bg-green-100 text-green-800' :
+                  occupancyRate >= 70 ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800'
+                }`}>
+                  {occupancyRate}% Occupied
+                </div>
               </div>
-              <div className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                getOccupancyRate(property) >= 90 ? 'bg-green-100 text-green-800' :
-                getOccupancyRate(property) >= 70 ? 'bg-yellow-100 text-yellow-800' :
-                'bg-red-100 text-red-800'
-              }`}>
-                {getOccupancyRate(property)}% Occupied
-              </div>
-            </div>
 
-            <div className="space-y-2 mb-4">
-              <p className="text-sm text-gray-600">
-                <span className="font-medium">Location:</span> {property.town}, {property.county}
-              </p>
-              <p className="text-sm text-gray-600 line-clamp-2">{property.description}</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div className="text-center p-2 bg-gray-50 rounded">
-                <div className="text-lg font-bold text-gray-900">{property.total_units}</div>
-                <div className="text-xs text-gray-500">Total Units</div>
+              <div className="space-y-2 mb-4">
+                <p className="text-sm text-gray-600">
+                  <span className="font-medium">Location:</span> {property.town}, {property.county}
+                </p>
+                <p className="text-sm text-gray-600 line-clamp-2">{property.description}</p>
               </div>
-              <div className="text-center p-2 bg-gray-50 rounded">
-                <div className="text-lg font-bold text-green-600">{property.available_units}</div>
-                <div className="text-xs text-gray-500">Available</div>
-              </div>
-            </div>
 
-            <div className="flex space-x-2">
-              <button
-                onClick={() => {
-                  setSelectedProperty(property)
-                  setShowUnits(showUnits === property.id ? null : property.id)
-                }}
-                className="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 text-sm flex-1"
-              >
-                {showUnits === property.id ? 'Hide Units' : 'Manage Units'}
-              </button>
-              <button
-                onClick={() => handleEditProperty(property)}
-                className="bg-gray-600 text-white px-3 py-2 rounded hover:bg-gray-700 text-sm"
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => handleDeleteProperty(property.id)}
-                className="bg-red-600 text-white px-3 py-2 rounded hover:bg-red-700 text-sm"
-              >
-                Delete
-              </button>
-            </div>
-
-            {/* Units Section */}
-            {showUnits === property.id && (
-              <div className="mt-4 border-t pt-4">
-                <UnitManagement property={property} />
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="text-center p-2 bg-gray-50 rounded">
+                  <div className="text-lg font-bold text-gray-900">{property.total_units}</div>
+                  <div className="text-xs text-gray-500">Total Units</div>
+                </div>
+                <div className="text-center p-2 bg-green-50 rounded">
+                  <div className="text-lg font-bold text-green-600">{property.available_units}</div>
+                  <div className="text-xs text-gray-500">Available</div>
+                </div>
+                <div className="text-center p-2 bg-blue-50 rounded">
+                  <div className="text-lg font-bold text-blue-600">{occupiedUnits}</div>
+                  <div className="text-xs text-gray-500">Occupied</div>
+                </div>
               </div>
-            )}
-          </div>
-        ))}
+
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => {
+                    setSelectedProperty(property)
+                    setShowUnits(showUnits === property.id ? null : property.id)
+                  }}
+                  className="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 text-sm flex-1"
+                >
+                  {showUnits === property.id ? 'Hide Units' : 'Manage Units'}
+                </button>
+                <button
+                  onClick={() => handleEditProperty(property)}
+                  className="bg-gray-600 text-white px-3 py-2 rounded hover:bg-gray-700 text-sm"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDeleteProperty(property.id)}
+                  className="bg-red-600 text-white px-3 py-2 rounded hover:bg-red-700 text-sm"
+                >
+                  Delete
+                </button>
+              </div>
+
+              {/* Units Section */}
+              {showUnits === property.id && (
+                <div className="mt-4 border-t pt-4">
+                  <UnitManagement property={property} />
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {properties.length === 0 && (

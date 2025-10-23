@@ -349,21 +349,105 @@ export const PaymentProvider = ({ children }) => {
     }
   }, [fetchPayments]);
 
-  // Get payment summary
-  const getPaymentSummary = useCallback((tenantId) => {
-    const tenantPayments = payments.filter(payment => payment.tenant_id === tenantId);
-    const totalPaid = tenantPayments
-      .filter(p => p.status === 'completed')
-      .reduce((sum, payment) => sum + (payment.amount || 0), 0);
-    
-    const pendingPayments = tenantPayments.filter(p => p.status === 'pending');
-    
-    return {
-      totalPayments: tenantPayments.length,
-      completedPayments: tenantPayments.filter(p => p.status === 'completed').length,
-      pendingPayments: pendingPayments.length,
-      totalAmount: totalPaid
-    };
+  // FIXED: Enhanced get payment summary function with proper API call
+  const getPaymentSummary = useCallback(async (tenantId, unitId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      console.log(`🔄 Fetching payment summary for tenant ${tenantId}, unit ${unitId}`);
+      
+      // Use the API to get payment summary
+      const response = await paymentAPI.getPaymentSummary(tenantId, unitId);
+      
+      if (response.data?.success) {
+        console.log('✅ Payment summary fetched successfully:', response.data.summary);
+        return response.data.summary;
+      } else {
+        // Fallback to local calculation if API fails
+        console.warn('⚠️ API payment summary failed, using fallback calculation');
+        const tenantPayments = payments.filter(payment => payment.tenant_id === tenantId && payment.unit_id === unitId);
+        const totalPaid = tenantPayments
+          .filter(p => p.status === 'completed')
+          .reduce((sum, payment) => sum + (payment.amount || 0), 0);
+        
+        // Get allocation to know monthly rent
+        const allocation = allocations.find(a => a.tenant_id === tenantId && a.unit_id === unitId && a.is_active);
+        const monthlyRent = allocation?.monthly_rent || 0;
+        const balance = monthlyRent - totalPaid;
+        
+        return {
+          monthlyRent,
+          totalPaid,
+          balance,
+          isFullyPaid: balance <= 0,
+          advanceAmount: 0,
+          paymentCount: tenantPayments.filter(p => p.status === 'completed').length
+        };
+      }
+    } catch (err) {
+      console.error('❌ Error fetching payment summary:', err);
+      // Fallback to local calculation
+      const tenantPayments = payments.filter(payment => payment.tenant_id === tenantId && payment.unit_id === unitId);
+      const totalPaid = tenantPayments
+        .filter(p => p.status === 'completed')
+        .reduce((sum, payment) => sum + (payment.amount || 0), 0);
+      
+      const allocation = allocations.find(a => a.tenant_id === tenantId && a.unit_id === unitId && a.is_active);
+      const monthlyRent = allocation?.monthly_rent || 0;
+      const balance = monthlyRent - totalPaid;
+      
+      return {
+        monthlyRent,
+        totalPaid,
+        balance,
+        isFullyPaid: balance <= 0,
+        advanceAmount: 0,
+        paymentCount: tenantPayments.filter(p => p.status === 'completed').length
+      };
+    } finally {
+      setLoading(false);
+    }
+  }, [payments, allocations]);
+
+  // FIXED: Enhanced get payment history function
+  const getPaymentHistory = useCallback(async (tenantId, unitId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      console.log(`🔄 Fetching payment history for tenant ${tenantId}, unit ${unitId}`);
+      
+      const response = await paymentAPI.getPaymentHistory(tenantId, unitId);
+      
+      if (response.data?.success) {
+        console.log(`✅ Payment history fetched successfully: ${response.data.payments?.length || 0} payments`);
+        return response.data;
+      } else {
+        // Fallback to local data
+        const tenantPayments = payments.filter(payment => 
+          payment.tenant_id === tenantId && payment.unit_id === unitId
+        );
+        
+        return {
+          payments: tenantPayments,
+          monthlySummary: [],
+          monthlyRent: 0
+        };
+      }
+    } catch (err) {
+      console.error('❌ Error fetching payment history:', err);
+      // Fallback to local data
+      const tenantPayments = payments.filter(payment => 
+        payment.tenant_id === tenantId && payment.unit_id === unitId
+      );
+      
+      return {
+        payments: tenantPayments,
+        monthlySummary: [],
+        monthlyRent: 0
+      };
+    } finally {
+      setLoading(false);
+    }
   }, [payments]);
 
   // ADDED: Get monthly summary function
@@ -487,7 +571,8 @@ export const PaymentProvider = ({ children }) => {
     validateMpesaPhone,
     formatMpesaPhone,
     formatPaymentMonthForBackend, // FIXED: Export for components to use
-    clearError
+    clearError,
+    getPaymentHistory // FIXED: Added missing function
   }), [
     payments,
     allocations,
@@ -513,7 +598,8 @@ export const PaymentProvider = ({ children }) => {
     validateMpesaPhone,
     formatMpesaPhone,
     formatPaymentMonthForBackend,
-    clearError
+    clearError,
+    getPaymentHistory
   ]);
 
   return (
