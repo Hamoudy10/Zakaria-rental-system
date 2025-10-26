@@ -421,8 +421,60 @@ export const paymentUtils = {
   }
 };
 
-// Notification utility functions
+// COMPLETELY UPDATED Notification utility functions
 export const notificationUtils = {
+  // Get notification icon based on type
+  getNotificationIcon: (type) => {
+    switch (type) {
+      case 'payment_success':
+      case 'payment_received':
+        return '💰';
+      case 'salary_paid':
+      case 'salary_processed':
+        return '💵';
+      case 'payment_failed':
+        return '❌';
+      case 'complaint_updated':
+      case 'complaint_created':
+      case 'complaint_resolved':
+        return '🔧';
+      case 'announcement':
+        return '📢';
+      case 'system_alert':
+        return '⚠️';
+      default:
+        return '🔔';
+    }
+  },
+
+  // Format timestamp for display
+  formatTimestamp: (timestamp) => {
+    if (!timestamp) return 'Unknown time';
+    
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffInMs = now - date;
+      const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
+      const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+      const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+      if (diffInMinutes < 1) return 'Just now';
+      if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+      if (diffInHours < 24) return `${diffInHours}h ago`;
+      if (diffInDays < 7) return `${diffInDays}d ago`;
+      
+      return date.toLocaleDateString('en-KE', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch (error) {
+      console.error('Error formatting timestamp:', error);
+      return 'Invalid date';
+    }
+  },
+
   // Format notification message based on type
   formatNotificationMessage: (notification) => {
     const { type, message, title } = notification;
@@ -447,50 +499,16 @@ export const notificationUtils = {
     }
   },
 
-  // Get notification icon based on type
-  getNotificationIcon: (type) => {
-    switch (type) {
-      case 'payment_success':
-      case 'payment_received':
-        return '💰';
-      case 'salary_paid':
-        return '💵';
-      case 'payment_failed':
-        return '❌';
-      case 'complaint_updated':
-        return '🔧';
-      case 'announcement':
-        return '📢';
-      case 'system_alert':
-        return '⚠️';
-      default:
-        return '🔔';
-    }
-  },
-
-  // Format timestamp for display
-  formatTimestamp: (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffInMs = now - date;
-    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
-    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
-    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
-
-    if (diffInMinutes < 1) return 'Just now';
-    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
-    if (diffInHours < 24) return `${diffInHours}h ago`;
-    if (diffInDays < 7) return `${diffInDays}d ago`;
-    
-    return date.toLocaleDateString();
-  },
-
   // Check if notification is recent (within 24 hours)
   isRecent: (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffInHours = (now - date) / (1000 * 60 * 60);
-    return diffInHours < 24;
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffInHours = (now - date) / (1000 * 60 * 60);
+      return diffInHours < 24;
+    } catch {
+      return false;
+    }
   },
 
   // Group notifications by date

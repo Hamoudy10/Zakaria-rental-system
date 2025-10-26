@@ -183,6 +183,50 @@ const getProfile = async (req, res) => {
   }
 };
 
+// Add this to your auth routes temporarily
+router.post('/debug-login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    console.log('🔍 DEBUG: Login attempt for:', email);
+    
+    // Find user
+    const userResult = await pool.query(
+      'SELECT id, email, password_hash FROM users WHERE email = $1',
+      [email]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.json({ success: false, message: 'User not found' });
+    }
+    
+    const user = userResult.rows[0];
+    console.log('🔍 DEBUG: User found:', user);
+    
+    // Generate token manually to test
+    const testToken = jwt.sign(
+      { 
+        id: user.id, 
+        email: user.email 
+      },
+      process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024',
+      { expiresIn: '1h' }
+    );
+    
+    console.log('🔍 DEBUG: Generated token payload:', jwt.decode(testToken));
+    
+    res.json({
+      success: true,
+      token: testToken,
+      decoded: jwt.decode(testToken),
+      user: { id: user.id, email: user.email }
+    });
+    
+  } catch (error) {
+    console.error('Debug login error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 // Set up routes
 router.post('/register', register);
 router.post('/login', login);

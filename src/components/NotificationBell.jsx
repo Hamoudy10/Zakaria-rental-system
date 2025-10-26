@@ -30,7 +30,7 @@ const NotificationBell = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch notifications only once when dropdown opens for the first time
+  // Fetch notifications when dropdown opens
   useEffect(() => {
     if (isOpen && !hasFetched && !loading) {
       console.log('🔔 Fetching notifications for dropdown...');
@@ -43,13 +43,6 @@ const NotificationBell = () => {
     try {
       if (!notification.is_read) {
         await markAsRead(notification.id);
-      }
-      
-      // Handle navigation based on notification type
-      if (notification.related_entity_type === 'rent_payment') {
-        console.log('Payment notification clicked:', notification.related_entity_id);
-      } else if (notification.related_entity_type === 'salary_payment') {
-        console.log('Salary notification clicked:', notification.related_entity_id);
       }
     } catch (error) {
       console.error('Error handling notification click:', error);
@@ -114,11 +107,11 @@ const NotificationBell = () => {
     const newState = !isOpen;
     setIsOpen(newState);
     if (!newState) {
-      // Reset fetched state when closing so we fetch fresh data next time
       setTimeout(() => setHasFetched(false), 1000);
     }
   };
 
+  // Don't render if no user
   if (!user) {
     return null;
   }
@@ -274,12 +267,6 @@ const NotificationBell = () => {
                         }`}>
                           {getNotificationTypeLabel(notification.type)}
                         </span>
-                        
-                        {notification.related_entity_info && (
-                          <span className="text-xs text-gray-500 truncate">
-                            {notification.related_entity_info}
-                          </span>
-                        )}
                       </div>
                     </div>
                     

@@ -1,21 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const notificationController = require('../controllers/notificationController');
-
-// Enhanced middleware with proper UUID format and role-based access
-const protect = (req, res, next) => {
-  // In a real application, this would verify JWT token
-  // For development, we'll use mock user data
-  req.user = { 
-    id: '33ecb4e2-fc6a-4def-8bcf-022bb66231ff',
-    userId: 'test-user', 
-    role: 'admin',
-    first_name: 'Test',
-    last_name: 'User'
-  };
-  console.log(`🔐 Authenticated user: ${req.user.id} (${req.user.role})`);
-  next();
-};
+const { protect } = require('../middleware/authMiddleware');
 
 // Admin middleware for admin-only routes
 const requireAdmin = (req, res, next) => {
@@ -28,7 +14,7 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-console.log('✅ Notifications routes loaded');
+console.log('✅ Notifications routes loaded with real authentication');
 
 // =============================================
 // NOTIFICATION RETRIEVAL ENDPOINTS
@@ -305,18 +291,21 @@ router.get('/admin/all', protect, requireAdmin, async (req, res) => {
     const offset = (page - 1) * limit;
     queryParams.push(parseInt(limit), offset);
 
-    const { rows: notifications } = await req.app.get('db').query(query, queryParams);
-    const { rows: countRows } = await req.app.get('db').query(countQuery, countParams);
+    const pool = req.app.get('db');
+    const [notificationsResult, countResult] = await Promise.all([
+      pool.query(query, queryParams),
+      pool.query(countQuery, countParams)
+    ]);
 
-    const totalCount = parseInt(countRows[0].count);
+    const totalCount = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(totalCount / limit);
 
-    console.log(`✅ Admin retrieved ${notifications.length} system notifications`);
+    console.log(`✅ Admin retrieved ${notificationsResult.rows.length} system notifications`);
 
     res.json({
       success: true,
       data: {
-        notifications,
+        notifications: notificationsResult.rows,
         pagination: {
           currentPage: parseInt(page),
           totalPages,
