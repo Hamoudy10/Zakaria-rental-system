@@ -18,7 +18,7 @@ const checkRateLimit = (userId, endpoint) => {
   return true;
 };
 
-// Get user notifications with pagination and filters
+// Get user notifications with pagination and filters - SIMPLIFIED QUERY
 const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -48,27 +48,10 @@ const getNotifications = async (req, res) => {
       page, limit, type, is_read, related_entity_type
     });
 
-    // Build query with filters
-    let query = `
-      SELECT 
-        n.*,
-        CASE 
-          WHEN n.related_entity_type = 'rent_payment' THEN (
-            SELECT rp.mpesa_receipt_number FROM rent_payments rp WHERE rp.id = n.related_entity_id
-          )
-          WHEN n.related_entity_type = 'salary_payment' THEN (
-            SELECT sp.mpesa_receipt_number FROM salary_payments sp WHERE sp.id = n.related_entity_id
-          )
-          WHEN n.related_entity_type = 'complaint' THEN (
-            SELECT c.title FROM complaints c WHERE c.id = n.related_entity_id
-          )
-          ELSE NULL
-        END as related_entity_info
-      FROM notifications n
-      WHERE n.user_id = $1
-    `;
-
+    // SIMPLIFIED QUERY - Remove complex JOIN that might be failing
+    let query = `SELECT * FROM notifications WHERE user_id = $1`;
     let countQuery = `SELECT COUNT(*) FROM notifications WHERE user_id = $1`;
+    
     const queryParams = [userId];
     const countParams = [userId];
     let paramCount = 1;
@@ -76,7 +59,7 @@ const getNotifications = async (req, res) => {
     // Add filters
     if (type) {
       paramCount++;
-      query += ` AND n.type = $${paramCount}`;
+      query += ` AND type = $${paramCount}`;
       countQuery += ` AND type = $${paramCount}`;
       queryParams.push(type);
       countParams.push(type);
@@ -84,7 +67,7 @@ const getNotifications = async (req, res) => {
 
     if (is_read !== undefined) {
       paramCount++;
-      query += ` AND n.is_read = $${paramCount}`;
+      query += ` AND is_read = $${paramCount}`;
       countQuery += ` AND is_read = $${paramCount}`;
       queryParams.push(is_read === 'true');
       countParams.push(is_read === 'true');
@@ -92,7 +75,7 @@ const getNotifications = async (req, res) => {
 
     if (related_entity_type) {
       paramCount++;
-      query += ` AND n.related_entity_type = $${paramCount}`;
+      query += ` AND related_entity_type = $${paramCount}`;
       countQuery += ` AND related_entity_type = $${paramCount}`;
       queryParams.push(related_entity_type);
       countParams.push(related_entity_type);
@@ -100,7 +83,7 @@ const getNotifications = async (req, res) => {
 
     if (start_date) {
       paramCount++;
-      query += ` AND n.created_at >= $${paramCount}`;
+      query += ` AND created_at >= $${paramCount}`;
       countQuery += ` AND created_at >= $${paramCount}`;
       queryParams.push(new Date(start_date));
       countParams.push(new Date(start_date));
@@ -108,17 +91,17 @@ const getNotifications = async (req, res) => {
 
     if (end_date) {
       paramCount++;
-      query += ` AND n.created_at <= $${paramCount}`;
+      query += ` AND created_at <= $${paramCount}`;
       countQuery += ` AND created_at <= $${paramCount}`;
       queryParams.push(new Date(end_date));
       countParams.push(new Date(end_date));
     }
 
     // Add ordering and pagination
-    query += ` ORDER BY n.created_at DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+    query += ` ORDER BY created_at DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
     queryParams.push(parseInt(limit), offset);
 
-    console.log('📊 Executing notification query');
+    console.log('📊 Executing simplified notification query');
 
     // Execute queries
     const [notificationsResult, countResult] = await Promise.all([
