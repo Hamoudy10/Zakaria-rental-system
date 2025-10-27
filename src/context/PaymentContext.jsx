@@ -18,11 +18,12 @@ export const PaymentProvider = ({ children }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
+  const [pendingPayments, setPendingPayments] = useState(new Map()); // Track pending payments
 
   // Clear error
   const clearError = useCallback(() => setError(null), []);
 
-  // FIXED: Function to format payment month to proper format
+  // Function to format payment month to proper format
   const formatPaymentMonthForBackend = (paymentMonth) => {
     console.log('📅 Formatting payment month in frontend:', paymentMonth);
     
@@ -98,24 +99,88 @@ export const PaymentProvider = ({ children }) => {
     }
   }, []);
 
-  // Process M-Pesa payment with real API integration
+  // NEW: Poll payment status until confirmed or timeout
+  const pollPaymentStatus = useCallback(async (checkoutRequestId, maxAttempts = 60) => {
+    let attempts = 0;
+    
+    const poll = async () => {
+      attempts++;
+      console.log(`🔄 Polling payment status (attempt ${attempts}/${maxAttempts})`);
+      
+      try {
+        const statusResponse = await paymentAPI.checkPaymentStatus(checkoutRequestId);
+        const payment = statusResponse.data.payment;
+        
+        console.log('📊 Payment status:', payment.status);
+        
+        if (payment.status === 'completed') {
+          console.log('✅ Payment completed via M-Pesa callback');
+          return { 
+            success: true, 
+            payment,
+            message: 'Payment confirmed successfully!' 
+          };
+        } else if (payment.status === 'failed') {
+          console.log('❌ Payment failed via M-Pesa callback');
+          return { 
+            success: false, 
+            payment,
+            error: payment.failure_reason || 'Payment failed' 
+          };
+        }
+        
+        // If still pending and not exceeded max attempts, continue polling
+        if (attempts < maxAttempts && payment.status === 'pending') {
+          console.log('⏳ Payment still pending, waiting...');
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+          return await poll();
+        } else if (attempts >= maxAttempts) {
+          console.log('⏰ Payment status polling timeout');
+          return { 
+            success: false, 
+            payment,
+            error: 'Payment confirmation timeout. Please check your M-Pesa messages.' 
+          };
+        }
+        
+        return { success: false, payment, error: 'Payment status unknown' };
+        
+      } catch (error) {
+        console.error('❌ Error polling payment status:', error);
+        
+        if (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          return await poll();
+        } else {
+          return { 
+            success: false, 
+            error: 'Unable to verify payment status. Please check your M-Pesa messages.' 
+          };
+        }
+      }
+    };
+    
+    return await poll();
+  }, []);
+
+  // UPDATED: Process M-Pesa payment with proper status polling
   const processMpesaPayment = useCallback(async (paymentData) => {
     setLoading(true);
     setError(null);
+    
     try {
       console.log('📦 Original payment data from form:', paymentData);
       
-      // FIXED: Format payment month before sending to backend
+      // Format payment month before sending to backend
       const formattedPaymentMonth = formatPaymentMonthForBackend(paymentData.payment_month);
       console.log('📅 Formatted payment month for backend:', formattedPaymentMonth);
       
-      // CORRECTED: Map frontend field names to backend expected field names
+      // Map frontend field names to backend expected field names
       const formattedPaymentData = {
         phone: mpesaUtils.formatPhoneNumber(paymentData.phone_number),
         amount: Math.round(parseFloat(paymentData.amount)), // M-Pesa requires whole numbers
         unitId: paymentData.unit_id,
-        paymentMonth: formattedPaymentMonth // FIXED: Use formatted date
-        // Remove tenant_id, property_name, unit_number as backend uses req.user.id
+        paymentMonth: formattedPaymentMonth
       };
 
       console.log('📤 Formatted payment data for backend:', formattedPaymentData);
@@ -126,7 +191,7 @@ export const PaymentProvider = ({ children }) => {
         throw new Error('Missing required payment fields after formatting');
       }
 
-      // FIXED: Use import.meta.env for Vite instead of process.env
+      // Use import.meta.env for Vite instead of process.env
       const isDevelopment = import.meta.env.MODE === 'development';
       const useRealMpesa = import.meta.env.VITE_USE_REAL_MPESA === 'true';
       
@@ -138,36 +203,51 @@ export const PaymentProvider = ({ children }) => {
         // Use mock API for development unless explicitly set to use real M-Pesa
         console.log('🔄 Using mock M-Pesa API for development');
         result = await processMockMpesaPayment(formattedPaymentData);
+        
+        // For mock payments, we don't need to poll status
+        if (result.success) {
+          console.log('✅ Mock payment successful, refreshing payments...');
+          await fetchPayments();
+          return {
+            success: true,
+            mpesa_receipt: result.mpesa_receipt || 
+                           result.payment?.mpesa_receipt_number || 
+                           result.data?.mpesa_receipt_number ||
+                           'MOCK_RECEIPT',
+            transactionId: result.transactionId || 
+                           result.checkoutRequestId || 
+                           result.checkoutRequestID ||
+                           result.payment?.mpesa_transaction_id,
+            message: result.message || 
+                     result.data?.message || 
+                     'Mock payment completed successfully',
+            requiresPolling: false // Mock payments don't need polling
+          };
+        }
       } else {
         // Use real M-Pesa API for production or when explicitly set
         console.log('🔄 Using real M-Pesa API');
-        result = await paymentAPI.processMpesaPayment(formattedPaymentData);
-      }
+        const response = await paymentAPI.processMpesaPayment(formattedPaymentData);
+        result = response.data;
+        
+        console.log('📥 Backend response:', result);
 
-      console.log('📥 Backend response:', result);
-
-      // FIXED: More flexible success checking
-      if (result.success || result.data?.success) {
-        console.log('✅ Payment successful, refreshing payments...');
-        // Refresh payments list
-        await fetchPayments();
-        return {
-          success: true,
-          mpesa_receipt: result.mpesa_receipt || 
-                         result.payment?.mpesa_receipt_number || 
-                         result.data?.mpesa_receipt_number ||
-                         'Pending',
-          transactionId: result.transactionId || 
-                         result.checkoutRequestId || 
-                         result.checkoutRequestID ||
-                         result.payment?.mpesa_transaction_id,
-          message: result.message || 
-                   result.data?.message || 
-                   'Payment processed successfully'
-        };
-      } else {
-        console.log('❌ Backend returned success: false');
-        throw new Error(result.error || result.message || 'Payment processing failed');
+        // Check if STK push was initiated successfully
+        if (result.success && result.checkoutRequestID) {
+          console.log('✅ STK Push initiated, starting status polling...');
+          
+          // Return immediately with polling info - frontend will handle the polling
+          return {
+            success: true,
+            checkoutRequestId: result.checkoutRequestID,
+            message: 'M-Pesa payment initiated. Please check your phone to enter your M-Pesa PIN.',
+            requiresPolling: true, // Real M-Pesa payments need polling
+            payment: result.payment
+          };
+        } else {
+          console.log('❌ STK Push failed');
+          throw new Error(result.error || result.message || 'Failed to initiate M-Pesa payment');
+        }
       }
       
     } catch (err) {
@@ -180,19 +260,32 @@ export const PaymentProvider = ({ children }) => {
       setError(errorMsg);
       return {
         success: false,
-        error: errorMsg
+        error: errorMsg,
+        requiresPolling: false
       };
     } finally {
       setLoading(false);
     }
-  }, [fetchPayments]);
+  }, [fetchPayments, pollPaymentStatus]);
+
+  // NEW: Function to check payment status (for polling)
+  const checkPaymentStatus = useCallback(async (checkoutRequestId) => {
+    try {
+      console.log('🔍 Checking payment status for:', checkoutRequestId);
+      const response = await paymentAPI.checkPaymentStatus(checkoutRequestId);
+      return response.data;
+    } catch (err) {
+      console.error('Error checking payment status:', err);
+      throw err;
+    }
+  }, []);
 
   // Process mock M-Pesa payment for development
   const processMockMpesaPayment = useCallback(async (paymentData) => {
     try {
       console.log('🔄 Processing mock M-Pesa payment:', paymentData);
       
-      // FIXED: Use the actual backend endpoint instead of creating a separate mock
+      // Use the actual backend endpoint instead of creating a separate mock
       console.log('🔄 Calling backend mock endpoint...');
       const response = await paymentAPI.processMpesaPayment(paymentData);
       
@@ -216,22 +309,6 @@ export const PaymentProvider = ({ children }) => {
         },
         checkoutRequestId: `MOCK${Date.now()}`
       };
-    }
-  }, []);
-
-  // Check M-Pesa payment status
-  const checkMpesaPaymentStatus = useCallback(async (checkoutRequestId) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await paymentAPI.checkPaymentStatus(checkoutRequestId);
-      return response.data;
-    } catch (err) {
-      console.error('Error checking payment status:', err);
-      setError('Failed to check payment status');
-      throw err;
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -261,7 +338,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      // FIXED: Format payment month before sending
+      // Format payment month before sending
       const formattedData = {
         ...paymentData,
         payment_month: formatPaymentMonthForBackend(paymentData.payment_month)
@@ -287,7 +364,7 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      // FIXED: Format payment month if present
+      // Format payment month if present
       const formattedUpdates = { ...updates };
       if (updates.payment_month) {
         formattedUpdates.payment_month = formatPaymentMonthForBackend(updates.payment_month);
@@ -308,7 +385,7 @@ export const PaymentProvider = ({ children }) => {
     }
   }, [fetchPayments]);
 
-  // ADDED: Delete payment function
+  // Delete payment function
   const deletePayment = useCallback(async (paymentId) => {
     setLoading(true);
     setError(null);
@@ -349,7 +426,7 @@ export const PaymentProvider = ({ children }) => {
     }
   }, [fetchPayments]);
 
-  // FIXED: Enhanced get payment summary function with proper API call
+  // Enhanced get payment summary function with proper API call
   const getPaymentSummary = useCallback(async (tenantId, unitId) => {
     setLoading(true);
     setError(null);
@@ -381,7 +458,8 @@ export const PaymentProvider = ({ children }) => {
           balance,
           isFullyPaid: balance <= 0,
           advanceAmount: 0,
-          paymentCount: tenantPayments.filter(p => p.status === 'completed').length
+          paymentCount: tenantPayments.filter(p => p.status === 'completed').length,
+          monthlyStatus: []
         };
       }
     } catch (err) {
@@ -402,21 +480,22 @@ export const PaymentProvider = ({ children }) => {
         balance,
         isFullyPaid: balance <= 0,
         advanceAmount: 0,
-        paymentCount: tenantPayments.filter(p => p.status === 'completed').length
+        paymentCount: tenantPayments.filter(p => p.status === 'completed').length,
+        monthlyStatus: []
       };
     } finally {
       setLoading(false);
     }
   }, [payments, allocations]);
 
-  // FIXED: Enhanced get payment history function
-  const getPaymentHistory = useCallback(async (tenantId, unitId) => {
+  // Enhanced get payment history function
+  const getPaymentHistory = useCallback(async (tenantId, unitId, months = 12) => {
     setLoading(true);
     setError(null);
     try {
       console.log(`🔄 Fetching payment history for tenant ${tenantId}, unit ${unitId}`);
       
-      const response = await paymentAPI.getPaymentHistory(tenantId, unitId);
+      const response = await paymentAPI.getPaymentHistory(tenantId, unitId, { months });
       
       if (response.data?.success) {
         console.log(`✅ Payment history fetched successfully: ${response.data.payments?.length || 0} payments`);
@@ -430,7 +509,8 @@ export const PaymentProvider = ({ children }) => {
         return {
           payments: tenantPayments,
           monthlySummary: [],
-          monthlyRent: 0
+          monthlyRent: 0,
+          totalMonths: 0
         };
       }
     } catch (err) {
@@ -443,14 +523,44 @@ export const PaymentProvider = ({ children }) => {
       return {
         payments: tenantPayments,
         monthlySummary: [],
-        monthlyRent: 0
+        monthlyRent: 0,
+        totalMonths: 0
       };
     } finally {
       setLoading(false);
     }
   }, [payments]);
 
-  // ADDED: Get monthly summary function
+  // NEW: Get future payments status
+  const getFuturePaymentsStatus = useCallback(async (tenantId, unitId, futureMonths = 6) => {
+    setLoading(true);
+    setError(null);
+    try {
+      console.log(`🔄 Fetching future payments status for tenant ${tenantId}, unit ${unitId}`);
+      
+      const response = await paymentAPI.getFuturePaymentsStatus(tenantId, unitId, { futureMonths });
+      
+      if (response.data?.success) {
+        console.log(`✅ Future payments status fetched successfully: ${response.data.futurePayments?.length || 0} months`);
+        return response.data;
+      } else {
+        return {
+          futurePayments: [],
+          monthlyRent: 0
+        };
+      }
+    } catch (err) {
+      console.error('❌ Error fetching future payments status:', err);
+      return {
+        futurePayments: [],
+        monthlyRent: 0
+      };
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Get monthly summary function
   const getMonthlySummary = useCallback((year, month) => {
     const currentMonthPayments = payments.filter(payment => {
       if (!payment.payment_month) return false;
@@ -478,7 +588,7 @@ export const PaymentProvider = ({ children }) => {
     };
   }, [payments]);
 
-  // ADDED: Fetch payment statistics from API
+  // Fetch payment statistics from API
   const fetchPaymentStats = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -494,7 +604,7 @@ export const PaymentProvider = ({ children }) => {
     }
   }, []);
 
-  // ADDED: Get payments by unit ID
+  // Get payments by unit ID
   const getPaymentsByUnit = useCallback(async (unitId) => {
     setLoading(true);
     setError(null);
@@ -510,7 +620,7 @@ export const PaymentProvider = ({ children }) => {
     }
   }, []);
 
-  // ADDED: Generate payment report
+  // Generate payment report
   const generatePaymentReport = useCallback(async (reportData) => {
     setLoading(true);
     setError(null);
@@ -557,7 +667,8 @@ export const PaymentProvider = ({ children }) => {
     deletePayment,
     confirmPayment,
     processMpesaPayment,
-    checkMpesaPaymentStatus,
+    checkPaymentStatus,
+    pollPaymentStatus,
     
     // Allocation functions
     getAllocationByTenantId,
@@ -565,14 +676,15 @@ export const PaymentProvider = ({ children }) => {
     
     // Utility functions
     getPaymentSummary,
+    getPaymentHistory,
+    getFuturePaymentsStatus,
     getMonthlySummary,
     fetchPaymentStats,
     generatePaymentReport,
     validateMpesaPhone,
     formatMpesaPhone,
-    formatPaymentMonthForBackend, // FIXED: Export for components to use
-    clearError,
-    getPaymentHistory // FIXED: Added missing function
+    formatPaymentMonthForBackend,
+    clearError
   }), [
     payments,
     allocations,
@@ -588,18 +700,20 @@ export const PaymentProvider = ({ children }) => {
     deletePayment,
     confirmPayment,
     processMpesaPayment,
-    checkMpesaPaymentStatus,
+    checkPaymentStatus,
+    pollPaymentStatus,
     getAllocationByTenantId,
     getUpcomingPayments,
     getPaymentSummary,
+    getPaymentHistory,
+    getFuturePaymentsStatus,
     getMonthlySummary,
     fetchPaymentStats,
     generatePaymentReport,
     validateMpesaPhone,
     formatMpesaPhone,
     formatPaymentMonthForBackend,
-    clearError,
-    getPaymentHistory
+    clearError
   ]);
 
   return (

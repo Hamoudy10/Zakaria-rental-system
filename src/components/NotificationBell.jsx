@@ -1,7 +1,7 @@
+// src/components/NotificationBell.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useNotification } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
-import { notificationUtils } from '../services/api';
 
 const NotificationBell = () => {
   const { 
@@ -16,7 +16,6 @@ const NotificationBell = () => {
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
-  const [hasFetched, setHasFetched] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
@@ -32,12 +31,11 @@ const NotificationBell = () => {
 
   // Fetch notifications when dropdown opens
   useEffect(() => {
-    if (isOpen && !hasFetched && !loading) {
+    if (isOpen && !loading) {
       console.log('🔔 Fetching notifications for dropdown...');
       refreshNotifications();
-      setHasFetched(true);
     }
-  }, [isOpen, hasFetched, loading, refreshNotifications]);
+  }, [isOpen, loading, refreshNotifications]);
 
   const handleNotificationClick = async (notification) => {
     try {
@@ -86,28 +84,46 @@ const NotificationBell = () => {
     }
   };
 
-  const getNotificationTypeLabel = (type) => {
-    const typeMap = {
-      'payment_success': 'Payment Success',
-      'payment_received': 'Payment Received',
-      'payment_failed': 'Payment Failed',
-      'payment_pending': 'Payment Pending',
-      'salary_paid': 'Salary Paid',
-      'salary_processed': 'Salary Processed',
-      'complaint_updated': 'Complaint Update',
-      'announcement': 'Announcement',
-      'system_alert': 'System Alert'
-    };
-    
-    return typeMap[type] || type;
+  const getNotificationIcon = (type) => {
+    switch (type) {
+      case 'payment_success':
+      case 'payment_received':
+        return '💰';
+      case 'salary_paid':
+      case 'salary_processed':
+        return '💵';
+      case 'payment_failed':
+        return '❌';
+      case 'complaint_updated':
+        return '🔧';
+      case 'announcement':
+        return '📢';
+      case 'system_alert':
+        return '⚠️';
+      default:
+        return '🔔';
+    }
   };
 
-  // Reset fetched state when dropdown closes
-  const handleBellClick = () => {
-    const newState = !isOpen;
-    setIsOpen(newState);
-    if (!newState) {
-      setTimeout(() => setHasFetched(false), 1000);
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return '';
+    
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      if (diffMins < 1) return 'Just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      
+      return date.toLocaleDateString();
+    } catch {
+      return 'Unknown time';
     }
   };
 
@@ -120,7 +136,7 @@ const NotificationBell = () => {
     <div className="relative" ref={dropdownRef}>
       {/* Notification Bell */}
       <button
-        onClick={handleBellClick}
+        onClick={() => setIsOpen(!isOpen)}
         disabled={loading}
         className={`relative p-2 rounded-full transition-all duration-200 ${
           loading 
@@ -234,7 +250,7 @@ const NotificationBell = () => {
                     <div className={`text-lg flex-shrink-0 ${
                       !notification.is_read ? 'text-blue-500' : 'text-gray-400'
                     }`}>
-                      {notificationUtils.getNotificationIcon(notification.type)}
+                      {getNotificationIcon(notification.type)}
                     </div>
                     
                     {/* Notification Content */}
@@ -246,7 +262,7 @@ const NotificationBell = () => {
                           {notification.title}
                         </p>
                         <span className="text-xs text-gray-400 flex-shrink-0 ml-2">
-                          {notificationUtils.formatTimestamp(notification.created_at)}
+                          {formatTimestamp(notification.created_at)}
                         </span>
                       </div>
                       
@@ -265,7 +281,7 @@ const NotificationBell = () => {
                             ? 'bg-yellow-100 text-yellow-800'
                             : 'bg-blue-100 text-blue-800'
                         }`}>
-                          {getNotificationTypeLabel(notification.type)}
+                          {notification.type.replace(/_/g, ' ')}
                         </span>
                       </div>
                     </div>

@@ -84,8 +84,8 @@ const formatPaymentMonth = (paymentMonth) => {
   return `${year}-${month}-01`;
 };
 
-// NEW: Track rent payment with carry-forward logic
-const trackRentPayment = async (tenantId, unitId, amount, paymentDate) => {
+// ENHANCED: Track rent payment with partial payments and carry-forward logic
+const trackRentPayment = async (tenantId, unitId, amount, paymentDate, targetMonth = null) => {
   try {
     // Get tenant allocation and current month's rent status
     const allocationQuery = `
@@ -103,42 +103,53 @@ const trackRentPayment = async (tenantId, unitId, amount, paymentDate) => {
     const allocation = allocationResult.rows[0];
     const monthlyRent = parseFloat(allocation.monthly_rent);
     const paymentAmount = parseFloat(amount);
-    const currentMonth = new Date(paymentDate).toISOString().slice(0, 7); // YYYY-MM
     
-    // Check current month's paid amount
-    const currentMonthPaymentsQuery = `
+    // Determine the target month for payment allocation
+    let paymentMonth = targetMonth;
+    if (!paymentMonth) {
+      paymentMonth = new Date(paymentDate).toISOString().slice(0, 7); // YYYY-MM
+    }
+    
+    // Check if target month is in the future
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const isFutureMonth = paymentMonth > currentMonth;
+
+    // Check target month's paid amount
+    const targetMonthPaymentsQuery = `
       SELECT COALESCE(SUM(amount), 0) as total_paid 
       FROM rent_payments 
       WHERE tenant_id = $1 AND unit_id = $2 
-      AND DATE_TRUNC('month', payment_date) = DATE_TRUNC('month', $3::timestamp)
+      AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
       AND status = 'completed'
     `;
-    const currentMonthResult = await pool.query(currentMonthPaymentsQuery, [tenantId, unitId, paymentDate]);
-    const currentMonthPaid = parseFloat(currentMonthResult.rows[0].total_paid);
+    const targetMonthResult = await pool.query(targetMonthPaymentsQuery, [tenantId, unitId, `${paymentMonth}-01`]);
+    const targetMonthPaid = parseFloat(targetMonthResult.rows[0].total_paid);
     
-    const remainingForCurrentMonth = monthlyRent - currentMonthPaid;
-    let currentMonthPayment = 0;
+    const remainingForTargetMonth = monthlyRent - targetMonthPaid;
+    let allocatedAmount = 0;
     let carryForwardAmount = 0;
     let isMonthComplete = false;
     
-    if (paymentAmount <= remainingForCurrentMonth) {
-      // Full amount applies to current month
-      currentMonthPayment = paymentAmount;
-      isMonthComplete = (currentMonthPaid + currentMonthPayment) >= monthlyRent;
+    if (paymentAmount <= remainingForTargetMonth) {
+      // Full amount applies to target month
+      allocatedAmount = paymentAmount;
+      isMonthComplete = (targetMonthPaid + allocatedAmount) >= monthlyRent;
     } else {
-      // Part applies to current month, rest carries forward
-      currentMonthPayment = remainingForCurrentMonth;
-      carryForwardAmount = paymentAmount - remainingForCurrentMonth;
+      // Part applies to target month, rest carries forward
+      allocatedAmount = remainingForTargetMonth;
+      carryForwardAmount = paymentAmount - remainingForTargetMonth;
       isMonthComplete = true;
     }
     
     return {
-      currentMonthPayment,
+      allocatedAmount,
       carryForwardAmount,
       monthlyRent,
-      currentMonthPaid,
+      targetMonthPaid,
       isMonthComplete,
-      remainingForCurrentMonth
+      remainingForTargetMonth,
+      targetMonth: paymentMonth,
+      isFutureMonth
     };
   } catch (error) {
     console.error('Error in trackRentPayment:', error);
@@ -146,38 +157,77 @@ const trackRentPayment = async (tenantId, unitId, amount, paymentDate) => {
   }
 };
 
-// NEW: Record carry-forward payment
+// ENHANCED: Record carry-forward payment with future month support
 const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, paymentDate) => {
   try {
-    const nextMonth = new Date(paymentDate);
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
-    const nextMonthFormatted = nextMonth.toISOString().slice(0, 7) + '-01';
+    let nextMonth = new Date(paymentDate);
+    let remainingAmount = amount;
+    const createdPayments = [];
+
+    while (remainingAmount > 0) {
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      const nextMonthFormatted = nextMonth.toISOString().slice(0, 7) + '-01';
+      
+      // Check if future month already has payments
+      const futureMonthQuery = `
+        SELECT COALESCE(SUM(amount), 0) as total_paid 
+        FROM rent_payments 
+        WHERE tenant_id = $1 AND unit_id = $2 
+        AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
+        AND status = 'completed'
+      `;
+      const futureMonthResult = await pool.query(futureMonthQuery, [tenantId, unitId, nextMonthFormatted]);
+      const futureMonthPaid = parseFloat(futureMonthResult.rows[0].total_paid);
+      
+      // Get monthly rent for calculation
+      const allocationQuery = `
+        SELECT monthly_rent FROM tenant_allocations 
+        WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
+      `;
+      const allocationResult = await pool.query(allocationQuery, [tenantId, unitId]);
+      const monthlyRent = parseFloat(allocationResult.rows[0].monthly_rent);
+      
+      const remainingForFutureMonth = monthlyRent - futureMonthPaid;
+      const allocationAmount = Math.min(remainingAmount, remainingForFutureMonth);
+      
+      if (allocationAmount > 0) {
+        const carryForwardQuery = `
+          INSERT INTO rent_payments 
+          (tenant_id, unit_id, amount, payment_month, status, is_advance_payment, original_payment_id, payment_date)
+          VALUES ($1, $2, $3, $4, 'completed', true, $5, $6)
+          RETURNING *
+        `;
+        
+        const result = await pool.query(carryForwardQuery, [
+          tenantId, 
+          unitId, 
+          allocationAmount, 
+          nextMonthFormatted, 
+          originalPaymentId,
+          paymentDate
+        ]);
+        
+        createdPayments.push(result.rows[0]);
+        remainingAmount -= allocationAmount;
+        
+        console.log(`✅ Carry-forward payment recorded: KSh ${allocationAmount} for ${nextMonthFormatted}`);
+        
+        // If we've allocated all remaining amount, break the loop
+        if (remainingAmount <= 0) break;
+      } else {
+        // If this month is already fully paid, move to next month
+        continue;
+      }
+    }
     
-    const carryForwardQuery = `
-      INSERT INTO rent_payments 
-      (tenant_id, unit_id, amount, payment_month, status, is_advance_payment, original_payment_id, payment_date)
-      VALUES ($1, $2, $3, $4, 'completed', true, $5, $6)
-      RETURNING *
-    `;
-    
-    const result = await pool.query(carryForwardQuery, [
-      tenantId, 
-      unitId, 
-      amount, 
-      nextMonthFormatted, 
-      originalPaymentId,
-      paymentDate
-    ]);
-    
-    console.log(`✅ Carry-forward payment recorded: KSh ${amount} for ${nextMonthFormatted}`);
-    return result.rows[0];
+    return createdPayments;
   } catch (error) {
     console.error('Error recording carry-forward:', error);
     throw error;
   }
 };
 
-// NEW: Enhanced payment notification system
+// ENHANCED: Payment notification system with partial payment support
 const sendPaymentNotifications = async (payment, trackingResult, isCarryForward = false) => {
   try {
     const paymentId = payment.id || payment.payment_id;
@@ -212,7 +262,7 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
       const carryForwardNotification = {
         userId: tenantId,
         title: 'Payment Carry-Forward',
-        message: `Your payment of KSh ${amount} has been carried forward to next month as advance payment.`,
+        message: `Your payment of KSh ${amount} has been carried forward to future months as advance payment.`,
         type: 'payment_carry_forward',
         relatedEntityType: 'rent_payment',
         relatedEntityId: paymentId
@@ -224,11 +274,11 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
       let tenantMessage = `Your rent payment of KSh ${amount} has been processed successfully. `;
       
       if (trackingResult.carryForwardAmount > 0) {
-        tenantMessage += `KSh ${trackingResult.currentMonthPayment} applied to current month, KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
+        tenantMessage += `KSh ${trackingResult.allocatedAmount} applied to ${trackingResult.targetMonth}, KSh ${trackingResult.carryForwardAmount} carried forward to future months.`;
       } else if (trackingResult.isMonthComplete) {
-        tenantMessage += `Your rent for this month is now fully paid.`;
+        tenantMessage += `Your rent for ${trackingResult.targetMonth} is now fully paid.`;
       } else {
-        tenantMessage += `Your rent for this month is partially paid. Remaining balance: KSh ${trackingResult.remainingForCurrentMonth - trackingResult.currentMonthPayment}.`;
+        tenantMessage += `Your rent for ${trackingResult.targetMonth} is partially paid. Remaining balance: KSh ${trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount}.`;
       }
       
       const tenantNotification = {
@@ -246,10 +296,14 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
       const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
       
       for (const admin of adminUsers.rows) {
-        const adminMessage = `Tenant ${tenantName} has successfully paid KSh ${amount} for ${propertyInfo} - ${unitInfo}. `;
+        let adminMessage = `Tenant ${tenantName} has successfully paid KSh ${amount} for ${propertyInfo} - ${unitInfo} (${trackingResult.targetMonth}). `;
         
         if (trackingResult.carryForwardAmount > 0) {
-          adminMessage += `KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
+          adminMessage += `KSh ${trackingResult.carryForwardAmount} carried forward to future months.`;
+        } else if (!trackingResult.isMonthComplete) {
+          adminMessage += `Remaining balance for ${trackingResult.targetMonth}: KSh ${trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount}.`;
+        } else {
+          adminMessage += `Payment for ${trackingResult.targetMonth} is now complete.`;
         }
         
         const adminNotification = {
@@ -272,7 +326,7 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
   }
 };
 
-// NEW: Enhanced M-Pesa callback with payment tracking
+// ENHANCED: M-Pesa callback with partial payment tracking
 const handleMpesaCallback = async (req, res) => {
   console.log('📞 M-Pesa callback received:', JSON.stringify(req.body, null, 2));
 
@@ -341,6 +395,19 @@ const handleMpesaCallback = async (req, res) => {
             relatedEntityType: 'rent_payment',
             relatedEntityId: payment.id
           });
+
+          // Notify admins about failed transaction
+          const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+          for (const admin of adminUsers.rows) {
+            await NotificationService.createNotification({
+              userId: admin.id,
+              title: 'Payment Failure Alert',
+              message: `Payment failed for tenant ${payment.first_name} ${payment.last_name}. Reason: No M-Pesa confirmation received.`,
+              type: 'payment_failed',
+              relatedEntityType: 'rent_payment',
+              relatedEntityId: payment.id
+            });
+          }
         } catch (notificationError) {
           console.error('Failed to create failure notification:', notificationError);
         }
@@ -380,13 +447,14 @@ const handleMpesaCallback = async (req, res) => {
         transactionDate: transactionDate
       });
 
-      // NEW: Track payment and handle carry-forward
+      // ENHANCED: Track payment and handle carry-forward
       const paymentDate = new Date();
       const trackingResult = await trackRentPayment(
         payment.tenant_id, 
         payment.unit_id, 
         amount || payment.amount, 
-        paymentDate
+        paymentDate,
+        payment.payment_month.toISOString().slice(0, 7) // Use the original payment month
       );
 
       // Update payment status to completed
@@ -403,17 +471,17 @@ const handleMpesaCallback = async (req, res) => {
           mpesaReceiptNumber,
           paymentDate,
           payment.tenant_id, // Using tenant_id as confirmed_by for auto-confirmation
-          trackingResult.currentMonthPayment, // Use the allocated amount for current month
+          trackingResult.allocatedAmount, // Use the allocated amount for target month
           payment.id
         ]
       );
 
       console.log('✅ Payment completed in database');
 
-      // NEW: Handle carry-forward if applicable
+      // ENHANCED: Handle carry-forward if applicable
       if (trackingResult.carryForwardAmount > 0) {
         console.log(`🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`);
-        const carryForwardPayment = await recordCarryForward(
+        const carryForwardPayments = await recordCarryForward(
           payment.tenant_id,
           payment.unit_id,
           trackingResult.carryForwardAmount,
@@ -421,11 +489,13 @@ const handleMpesaCallback = async (req, res) => {
           paymentDate
         );
         
-        // Send carry-forward notification
-        await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
+        // Send carry-forward notifications for each created payment
+        for (const carryForwardPayment of carryForwardPayments) {
+          await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
+        }
       }
 
-      // NEW: Send enhanced payment notifications
+      // ENHANCED: Send enhanced payment notifications
       await sendPaymentNotifications(payment, trackingResult, false);
 
     } else {
@@ -446,6 +516,19 @@ const handleMpesaCallback = async (req, res) => {
           relatedEntityType: 'rent_payment',
           relatedEntityId: payment.id
         });
+
+        // Notify admins about failed transaction
+        const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+        for (const admin of adminUsers.rows) {
+          await NotificationService.createNotification({
+            userId: admin.id,
+            title: 'Payment Failure Alert',
+            message: `Payment failed for tenant ${payment.first_name} ${payment.last_name}. Reason: ${failureReason}`,
+            type: 'payment_failed',
+            relatedEntityType: 'rent_payment',
+            relatedEntityId: payment.id
+          });
+        }
       } catch (notificationError) {
         console.error('Failed to create failure notification:', notificationError);
       }
@@ -461,6 +544,23 @@ const handleMpesaCallback = async (req, res) => {
 
   } catch (error) {
     console.error('❌ ERROR in M-Pesa callback:', error);
+    
+    // Notify admins about system error
+    try {
+      const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+      for (const admin of adminUsers.rows) {
+        await NotificationService.createNotification({
+          userId: admin.id,
+          title: 'Payment System Error',
+          message: `System error processing M-Pesa callback: ${error.message}`,
+          type: 'system_error',
+          relatedEntityType: 'system'
+        });
+      }
+    } catch (notificationError) {
+      console.error('Failed to create system error notification:', notificationError);
+    }
+    
     // Still return success to M-Pesa to avoid repeated callbacks
     res.status(200).json({ 
       ResultCode: 0, 
@@ -469,7 +569,7 @@ const handleMpesaCallback = async (req, res) => {
   }
 };
 
-// NEW: Manual payment recording with tracking
+// ENHANCED: Manual payment recording with tracking
 const recordManualPayment = async (req, res) => {
   try {
     const { 
@@ -496,7 +596,13 @@ const recordManualPayment = async (req, res) => {
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
 
     // Track payment
-    const trackingResult = await trackRentPayment(tenant_id, unit_id, amount, paymentDate);
+    const trackingResult = await trackRentPayment(
+      tenant_id, 
+      unit_id, 
+      amount, 
+      paymentDate,
+      formattedPaymentMonth.slice(0, 7) // Use the specified payment month
+    );
 
     // Record the main payment
     const paymentQuery = `
@@ -510,7 +616,7 @@ const recordManualPayment = async (req, res) => {
     const paymentResult = await pool.query(paymentQuery, [
       tenant_id,
       unit_id,
-      trackingResult.currentMonthPayment,
+      trackingResult.allocatedAmount,
       formattedPaymentMonth,
       paymentDate,
       mpesa_receipt_number,
@@ -525,16 +631,21 @@ const recordManualPayment = async (req, res) => {
     // Handle carry forward if applicable
     if (trackingResult.carryForwardAmount > 0) {
       console.log(`🔄 Processing carry-forward for manual payment: KSh ${trackingResult.carryForwardAmount}`);
-      await recordCarryForward(
+      const carryForwardPayments = await recordCarryForward(
         tenant_id,
         unit_id,
         trackingResult.carryForwardAmount,
         paymentRecord.id,
         paymentDate
       );
+
+      // Send notifications for carry-forward payments
+      for (const carryForwardPayment of carryForwardPayments) {
+        await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
+      }
     }
 
-    // Send notifications
+    // Send notifications for main payment
     await sendPaymentNotifications(paymentRecord, trackingResult, false);
 
     res.status(201).json({
@@ -554,7 +665,7 @@ const recordManualPayment = async (req, res) => {
   }
 };
 
-// NEW: Get payment tracking summary for tenant
+// ENHANCED: Get payment tracking summary for tenant
 const getPaymentSummary = async (req, res) => {
   try {
     const { tenantId, unitId } = req.params;
@@ -580,6 +691,7 @@ const getPaymentSummary = async (req, res) => {
     }
 
     const allocation = allocationResult.rows[0];
+    const monthlyRent = parseFloat(allocation.monthly_rent);
 
     // Get current month payments
     const currentMonthPaymentsQuery = `
@@ -587,26 +699,58 @@ const getPaymentSummary = async (req, res) => {
              COUNT(*) as payment_count
       FROM rent_payments 
       WHERE tenant_id = $1 AND unit_id = $2 
-      AND DATE_TRUNC('month', payment_date) = DATE_TRUNC('month', $3::timestamp)
+      AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
       AND status = 'completed'
     `;
-    const currentMonthResult = await pool.query(currentMonthPaymentsQuery, [tenantId, unitId, currentDate]);
+    const currentMonthResult = await pool.query(currentMonthPaymentsQuery, [tenantId, unitId, `${currentMonth}-01`]);
 
     const totalPaid = parseFloat(currentMonthResult.rows[0].total_paid);
-    const monthlyRent = parseFloat(allocation.monthly_rent);
     const balance = monthlyRent - totalPaid;
     const isFullyPaid = balance <= 0;
 
-    // Get advance payments (carry-forward)
+    // Get advance payments (carry-forward for future months)
     const advancePaymentsQuery = `
-      SELECT COALESCE(SUM(amount), 0) as advance_amount
+      SELECT COALESCE(SUM(amount), 0) as advance_amount,
+             COUNT(*) as advance_count
       FROM rent_payments 
       WHERE tenant_id = $1 AND unit_id = $2 
       AND is_advance_payment = true
       AND status = 'completed'
+      AND DATE_TRUNC('month', payment_month) > DATE_TRUNC('month', $3::date)
     `;
-    const advanceResult = await pool.query(advancePaymentsQuery, [tenantId, unitId]);
+    const advanceResult = await pool.query(advancePaymentsQuery, [tenantId, unitId, `${currentMonth}-01`]);
     const advanceAmount = parseFloat(advanceResult.rows[0].advance_amount);
+    const advanceCount = parseInt(advanceResult.rows[0].advance_count);
+
+    // Get payment history for last 12 months
+    const historyQuery = `
+      SELECT 
+        DATE_TRUNC('month', payment_month) as month,
+        COALESCE(SUM(amount), 0) as total_paid,
+        COUNT(*) as payment_count
+      FROM rent_payments 
+      WHERE tenant_id = $1 AND unit_id = $2 
+      AND payment_month >= NOW() - INTERVAL '12 months'
+      AND status = 'completed'
+      GROUP BY DATE_TRUNC('month', payment_month)
+      ORDER BY month DESC
+    `;
+    const historyResult = await pool.query(historyQuery, [tenantId, unitId]);
+
+    // Calculate monthly status
+    const monthlyStatus = historyResult.rows.map(row => {
+      const month = new Date(row.month).toISOString().slice(0, 7);
+      const totalPaid = parseFloat(row.total_paid);
+      const isComplete = totalPaid >= monthlyRent;
+      
+      return {
+        month,
+        totalPaid,
+        balance: monthlyRent - totalPaid,
+        isComplete,
+        paymentCount: parseInt(row.payment_count)
+      };
+    });
 
     res.json({
       success: true,
@@ -616,9 +760,11 @@ const getPaymentSummary = async (req, res) => {
         balance,
         isFullyPaid,
         advanceAmount,
+        advanceCount,
         paymentCount: currentMonthResult.rows[0].payment_count,
         propertyName: allocation.property_name,
-        unitNumber: allocation.unit_number
+        unitNumber: allocation.unit_number,
+        monthlyStatus
       }
     });
 
@@ -632,11 +778,11 @@ const getPaymentSummary = async (req, res) => {
   }
 };
 
-// NEW: Get payment history with tracking info
+// ENHANCED: Get payment history with detailed tracking info
 const getPaymentHistory = async (req, res) => {
   try {
     const { tenantId, unitId } = req.params;
-    const { months = 6 } = req.query;
+    const { months = 12 } = req.query;
 
     const paymentsQuery = `
       SELECT 
@@ -650,8 +796,8 @@ const getPaymentHistory = async (req, res) => {
       LEFT JOIN property_units pu ON rp.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       WHERE rp.tenant_id = $1 AND rp.unit_id = $2
-      AND rp.payment_date >= NOW() - INTERVAL '${months} months'
-      ORDER BY rp.payment_date DESC
+      AND rp.payment_month >= NOW() - INTERVAL '${months} months'
+      ORDER BY rp.payment_month DESC, rp.payment_date DESC
     `;
 
     const result = await pool.query(paymentsQuery, [tenantId, unitId]);
@@ -665,11 +811,13 @@ const getPaymentHistory = async (req, res) => {
           month: month,
           totalPaid: 0,
           payments: [],
-          isFullyPaid: false
+          isFullyPaid: false,
+          paymentCount: 0
         };
       }
       monthlySummary[month].totalPaid += parseFloat(payment.amount);
       monthlySummary[month].payments.push(payment);
+      monthlySummary[month].paymentCount++;
     });
 
     // Get monthly rent for comparison
@@ -681,16 +829,18 @@ const getPaymentHistory = async (req, res) => {
     
     const monthlyRent = allocationResult.rows.length > 0 ? parseFloat(allocationResult.rows[0].monthly_rent) : 0;
 
-    // Mark months as fully paid
+    // Mark months as fully paid and calculate balances
     Object.keys(monthlySummary).forEach(month => {
       monthlySummary[month].isFullyPaid = monthlySummary[month].totalPaid >= monthlyRent;
+      monthlySummary[month].balance = monthlyRent - monthlySummary[month].totalPaid;
     });
 
     res.json({
       success: true,
       payments: result.rows,
       monthlySummary: Object.values(monthlySummary),
-      monthlyRent
+      monthlyRent,
+      totalMonths: Object.keys(monthlySummary).length
     });
 
   } catch (error) {
@@ -703,14 +853,84 @@ const getPaymentHistory = async (req, res) => {
   }
 };
 
-// ADDED: Process Salary Payment Function
+// NEW: Get future payment status
+const getFuturePaymentsStatus = async (req, res) => {
+  try {
+    const { tenantId, unitId } = req.params;
+    const { futureMonths = 6 } = req.query;
+
+    // Get allocation details
+    const allocationQuery = `
+      SELECT monthly_rent FROM tenant_allocations 
+      WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
+    `;
+    const allocationResult = await pool.query(allocationQuery, [tenantId, unitId]);
+    
+    if (allocationResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active allocation found'
+      });
+    }
+
+    const monthlyRent = parseFloat(allocationResult.rows[0].monthly_rent);
+    const currentDate = new Date();
+    const futurePayments = [];
+
+    // Check status for future months
+    for (let i = 1; i <= parseInt(futureMonths); i++) {
+      const futureMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + i, 1);
+      const monthFormatted = futureMonth.toISOString().slice(0, 7) + '-01';
+
+      // Get payments for this future month
+      const paymentsQuery = `
+        SELECT COALESCE(SUM(amount), 0) as total_paid
+        FROM rent_payments 
+        WHERE tenant_id = $1 AND unit_id = $2 
+        AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
+        AND status = 'completed'
+      `;
+      const paymentsResult = await pool.query(paymentsQuery, [tenantId, unitId, monthFormatted]);
+      const totalPaid = parseFloat(paymentsResult.rows[0].total_paid);
+
+      futurePayments.push({
+        month: futureMonth.toISOString().slice(0, 7),
+        monthlyRent,
+        totalPaid,
+        balance: monthlyRent - totalPaid,
+        isFullyPaid: totalPaid >= monthlyRent,
+        isAdvance: totalPaid > 0
+      });
+    }
+
+    res.json({
+      success: true,
+      futurePayments,
+      monthlyRent
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting future payments status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get future payments status',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Process salary payment function
 const processSalaryPayment = async (req, res) => {
   try {
-    const { agent_id, amount, payment_month, phone_number } = req.body;
-    
-    console.log('💰 Processing salary payment:', { 
-      agent_id, amount, payment_month, phone_number 
-    });
+    const { 
+      agent_id, 
+      amount, 
+      payment_month, 
+      phone_number,
+      notes 
+    } = req.body;
+
+    console.log('💰 Processing salary payment:', { agent_id, amount, payment_month });
 
     // Validate required fields
     if (!agent_id || !amount || !payment_month || !phone_number) {
@@ -720,94 +940,192 @@ const processSalaryPayment = async (req, res) => {
       });
     }
 
-    // Check if agent exists and is active
-    const agentQuery = await pool.query(
-      'SELECT id, first_name, last_name FROM users WHERE id = $1 AND role = $2 AND is_active = true',
+    // Check if agent exists and is actually an agent
+    const agentCheck = await pool.query(
+      'SELECT id, first_name, last_name FROM users WHERE id = $1 AND role = $2',
       [agent_id, 'agent']
     );
 
-    if (agentQuery.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Agent not found or inactive'
-      });
-    }
-
-    const agent = agentQuery.rows[0];
-
-    // Check if salary for this month already processed
-    const existingPaymentQuery = await pool.query(
-      'SELECT id FROM salary_payments WHERE agent_id = $1 AND payment_month = $2',
-      [agent_id, payment_month]
-    );
-
-    if (existingPaymentQuery.rows.length > 0) {
+    if (agentCheck.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Salary for this month has already been processed'
+        message: 'Agent not found or user is not an agent'
       });
     }
 
-    // Process M-Pesa payment (simulated for now)
-    const mpesaTransactionId = `MPESA_${Date.now()}`;
-    const mpesaReceiptNumber = `R${Date.now()}`;
+    const agent = agentCheck.rows[0];
+    const paymentDate = new Date();
+    const formattedPaymentMonth = formatPaymentMonth(payment_month);
 
-    // Insert salary payment record
-    const insertQuery = `
-      INSERT INTO salary_payments (
-        agent_id, amount, payment_month, phone_number,
-        mpesa_transaction_id, mpesa_receipt_number,
-        paid_by, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    // Check for duplicate salary payment for the same month
+    const existingPayment = await pool.query(
+      `SELECT id FROM salary_payments 
+       WHERE agent_id = $1 AND payment_month = $2`,
+      [agent_id, formattedPaymentMonth]
+    );
+
+    if (existingPayment.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Salary payment for this agent and month already exists'
+      });
+    }
+
+    // Create salary payment record
+    const salaryPaymentQuery = `
+      INSERT INTO salary_payments 
+      (agent_id, amount, payment_month, phone_number, paid_by, payment_date, status)
+      VALUES ($1, $2, $3, $4, $5, $6, 'completed')
       RETURNING *
     `;
 
-    const result = await pool.query(insertQuery, [
+    const salaryResult = await pool.query(salaryPaymentQuery, [
       agent_id,
       amount,
-      payment_month,
+      formattedPaymentMonth,
       phone_number,
-      mpesaTransactionId,
-      mpesaReceiptNumber,
-      req.user.id, // The admin processing the payment
-      'completed'
+      req.user.id, // Admin user processing the payment
+      paymentDate
     ]);
 
-    const salaryPayment = result.rows[0];
-
-    console.log('✅ Salary payment processed successfully:', salaryPayment.id);
+    const salaryPayment = salaryResult.rows[0];
 
     // Create notification for the agent
-    await pool.query(
-      `INSERT INTO notifications (user_id, title, message, type, related_entity_type, related_entity_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        agent_id,
-        'Salary Processed',
-        `Your salary of KSh ${amount} for ${new Date(payment_month).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })} has been processed.`,
-        'salary_processed',
-        'salary_payment',
-        salaryPayment.id
-      ]
-    );
+    await NotificationService.createNotification({
+      userId: agent_id,
+      title: 'Salary Paid',
+      message: `Your salary of KSh ${amount} for ${payment_month} has been processed successfully.`,
+      type: 'salary_paid',
+      relatedEntityType: 'salary_payment',
+      relatedEntityId: salaryPayment.id
+    });
+
+    // Notify admins about the salary payment
+    const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+    for (const admin of adminUsers.rows) {
+      await NotificationService.createNotification({
+        userId: admin.id,
+        title: 'Salary Payment Processed',
+        message: `Salary payment of KSh ${amount} for ${agent.first_name} ${agent.last_name} (${payment_month}) has been processed.`,
+        type: 'salary_processed',
+        relatedEntityType: 'salary_payment',
+        relatedEntityId: salaryPayment.id
+      });
+    }
+
+    console.log(`✅ Salary payment processed for agent ${agent.first_name} ${agent.last_name}`);
 
     res.status(201).json({
       success: true,
       message: 'Salary payment processed successfully',
-      data: salaryPayment
+      payment: salaryPayment
     });
 
   } catch (error) {
-    console.error('❌ Process salary payment error:', error);
+    console.error('❌ ERROR processing salary payment:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error processing salary payment',
+      message: 'Failed to process salary payment',
       error: error.message
     });
   }
 };
 
-// Keep existing functions (initiateSTKPush, checkPaymentStatus, etc.) but they now use the enhanced tracking
+// NEW: Get salary payments
+const getSalaryPayments = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, agent_id } = req.query;
+    const offset = (page - 1) * limit;
+
+    let query = `
+      SELECT 
+        sp.*,
+        u.first_name as agent_first_name,
+        u.last_name as agent_last_name,
+        admin.first_name as paid_by_first_name,
+        admin.last_name as paid_by_last_name
+      FROM salary_payments sp
+      LEFT JOIN users u ON sp.agent_id = u.id
+      LEFT JOIN users admin ON sp.paid_by = admin.id
+    `;
+
+    let countQuery = `SELECT COUNT(*) FROM salary_payments sp`;
+    const queryParams = [];
+    const countParams = [];
+
+    if (agent_id) {
+      query += ` WHERE sp.agent_id = $1`;
+      countQuery += ` WHERE sp.agent_id = $1`;
+      queryParams.push(agent_id);
+      countParams.push(agent_id);
+    }
+
+    query += ` ORDER BY sp.payment_month DESC, sp.payment_date DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+
+    const paymentsResult = await pool.query(query, queryParams);
+    const countResult = await pool.query(countQuery, countParams);
+
+    const totalCount = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(totalCount / limit);
+
+    res.json({
+      success: true,
+      data: {
+        payments: paymentsResult.rows,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalCount,
+          hasNext: page < totalPages,
+          hasPrev: page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting salary payments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get salary payments',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Get agent salary payments
+const getAgentSalaryPayments = async (req, res) => {
+  try {
+    const { agentId } = req.params;
+
+    const result = await pool.query(
+      `SELECT 
+        sp.*,
+        u.first_name as agent_first_name,
+        u.last_name as agent_last_name
+      FROM salary_payments sp
+      LEFT JOIN users u ON sp.agent_id = u.id
+      WHERE sp.agent_id = $1
+      ORDER BY sp.payment_month DESC, sp.payment_date DESC`,
+      [agentId]
+    );
+
+    res.json({
+      success: true,
+      payments: result.rows
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting agent salary payments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get agent salary payments',
+      error: error.message
+    });
+  }
+};
+
+// Keep existing functions (initiateSTKPush, checkPaymentStatus, etc.) with enhanced tracking
 const initiateSTKPush = async (req, res) => {
   console.log('🚀 initiateSTKPush called with:', {
     body: req.body,
@@ -895,33 +1213,26 @@ const initiateSTKPush = async (req, res) => {
     const allocation = allocationCheck.rows[0];
     console.log('✅ Allocation found:', allocation);
 
-    // NEW: Allow any amount (removed strict amount validation)
+    // ENHANCED: Allow any amount with partial payment tracking
     const unitMonthlyRent = parseFloat(allocation.monthly_rent);
     const paymentAmount = parseFloat(amount);
     
-    // Check for existing payment for this month
+    // Check for existing pending payment for this month
     console.log('🔍 Checking for existing payment...');
     const existingPayment = await pool.query(
       `SELECT id, status FROM rent_payments 
-       WHERE tenant_id = $1 AND unit_id = $2 AND payment_month = $3`,
+       WHERE tenant_id = $1 AND unit_id = $2 AND payment_month = $3 AND status = 'pending'`,
       [req.user.id, unitId, formattedPaymentMonth]
     );
 
     if (existingPayment.rows.length > 0) {
       const payment = existingPayment.rows[0];
-      console.log('⚠️ Existing payment found:', payment);
+      console.log('⚠️ Existing pending payment found:', payment);
       
-      if (payment.status === 'completed') {
-        return res.status(400).json({
-          success: false,
-          message: 'Payment for this month already completed'
-        });
-      } else if (payment.status === 'pending') {
-        return res.status(400).json({
-          success: false,
-          message: 'Payment for this month is already pending'
-        });
-      }
+      return res.status(400).json({
+        success: false,
+        message: 'A pending payment for this month already exists. Please wait for it to complete.'
+      });
     }
 
     // REAL M-Pesa Integration
@@ -1051,7 +1362,7 @@ const initiateSTKPush = async (req, res) => {
   } catch (error) {
     console.error('❌ ERROR in initiateSTKPush:', error);
     
-    // Create error notification for tenant
+    // Create error notification for tenant and admin
     try {
       await NotificationService.createNotification({
         userId: req.user.id,
@@ -1059,6 +1370,17 @@ const initiateSTKPush = async (req, res) => {
         message: `Failed to initiate rent payment: ${error.message}`,
         type: 'payment_failed'
       });
+
+      // Notify admins
+      const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+      for (const admin of adminUsers.rows) {
+        await NotificationService.createNotification({
+          userId: admin.id,
+          title: 'Payment Initiation Failed',
+          message: `Payment initiation failed for tenant. Error: ${error.message}`,
+          type: 'payment_failed'
+        });
+      }
     } catch (notificationError) {
       console.error('Failed to create error notification:', notificationError);
     }
@@ -1072,9 +1394,7 @@ const initiateSTKPush = async (req, res) => {
   }
 };
 
-// Keep other existing functions (checkPaymentStatus, processSalaryPayment, etc.) as they are
-// ... [rest of the existing functions remain the same]
-
+// Keep other existing functions
 const checkPaymentStatus = async (req, res) => {
   try {
     const { checkoutRequestId } = req.params;
@@ -1118,7 +1438,7 @@ const checkPaymentStatus = async (req, res) => {
   }
 };
 
-// ... [other existing functions like processSalaryPayment, getPaymentById, etc.]
+// ... [other existing functions like getPaymentById, etc.]
 
 module.exports = {
   initiateSTKPush,
@@ -1180,7 +1500,7 @@ module.exports = {
          LEFT JOIN property_units pu ON rp.unit_id = pu.id
          LEFT JOIN properties p ON pu.property_id = p.id
          WHERE rp.tenant_id = $1
-         ORDER BY rp.payment_month DESC`,
+         ORDER BY rp.payment_month DESC, rp.payment_date DESC`,
         [tenantId]
       );
 
@@ -1263,6 +1583,8 @@ module.exports = {
     }
   },
   processSalaryPayment,
+  getSalaryPayments,
+  getAgentSalaryPayments,
   testMpesaConfig: async (req, res) => {
     try {
       console.log('🔧 Testing M-Pesa configuration...');
@@ -1307,9 +1629,12 @@ module.exports = {
   },
   formatPaymentMonth,
   
-  // NEW: Export the new functions
+  // Export the enhanced functions
   recordManualPayment,
   getPaymentSummary,
   getPaymentHistory,
-  trackRentPayment
+  getFuturePaymentsStatus,
+  trackRentPayment,
+  recordCarryForward,
+  sendPaymentNotifications
 };

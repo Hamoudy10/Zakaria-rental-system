@@ -18,7 +18,7 @@ const checkRateLimit = (userId, endpoint) => {
   return true;
 };
 
-// Get user notifications with pagination and filters - SIMPLIFIED QUERY
+// Get user notifications with pagination and filters - FIXED VERSION
 const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -33,75 +33,45 @@ const getNotifications = async (req, res) => {
     }
 
     const { 
-      page = 1, 
       limit = 20, 
+      offset = 0, 
       type, 
-      is_read, 
-      related_entity_type,
-      start_date,
-      end_date 
+      is_read
     } = req.query;
 
-    const offset = (page - 1) * limit;
-
     console.log(`🔍 Fetching notifications for user: ${userId}`, {
-      page, limit, type, is_read, related_entity_type
+      limit, offset, type, is_read
     });
 
-    // SIMPLIFIED QUERY - Remove complex JOIN that might be failing
+    // Build base query
     let query = `SELECT * FROM notifications WHERE user_id = $1`;
     let countQuery = `SELECT COUNT(*) FROM notifications WHERE user_id = $1`;
     
     const queryParams = [userId];
     const countParams = [userId];
-    let paramCount = 1;
 
     // Add filters
     if (type) {
-      paramCount++;
-      query += ` AND type = $${paramCount}`;
-      countQuery += ` AND type = $${paramCount}`;
+      query += ` AND type = $${queryParams.length + 1}`;
+      countQuery += ` AND type = $${countParams.length + 1}`;
       queryParams.push(type);
       countParams.push(type);
     }
 
     if (is_read !== undefined) {
-      paramCount++;
-      query += ` AND is_read = $${paramCount}`;
-      countQuery += ` AND is_read = $${paramCount}`;
+      query += ` AND is_read = $${queryParams.length + 1}`;
+      countQuery += ` AND is_read = $${countParams.length + 1}`;
       queryParams.push(is_read === 'true');
       countParams.push(is_read === 'true');
     }
 
-    if (related_entity_type) {
-      paramCount++;
-      query += ` AND related_entity_type = $${paramCount}`;
-      countQuery += ` AND related_entity_type = $${paramCount}`;
-      queryParams.push(related_entity_type);
-      countParams.push(related_entity_type);
-    }
-
-    if (start_date) {
-      paramCount++;
-      query += ` AND created_at >= $${paramCount}`;
-      countQuery += ` AND created_at >= $${paramCount}`;
-      queryParams.push(new Date(start_date));
-      countParams.push(new Date(start_date));
-    }
-
-    if (end_date) {
-      paramCount++;
-      query += ` AND created_at <= $${paramCount}`;
-      countQuery += ` AND created_at <= $${paramCount}`;
-      queryParams.push(new Date(end_date));
-      countParams.push(new Date(end_date));
-    }
-
     // Add ordering and pagination
-    query += ` ORDER BY created_at DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
-    queryParams.push(parseInt(limit), offset);
+    query += ` ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    const limitNum = parseInt(limit);
+    const offsetNum = parseInt(offset);
+    queryParams.push(limitNum, offsetNum);
 
-    console.log('📊 Executing simplified notification query');
+    console.log('📊 Final query params:', queryParams);
 
     // Execute queries
     const [notificationsResult, countResult] = await Promise.all([
@@ -109,8 +79,9 @@ const getNotifications = async (req, res) => {
       pool.query(countQuery, countParams)
     ]);
 
-    const totalCount = parseInt(countResult.rows[0].count);
-    const totalPages = Math.ceil(totalCount / limit);
+    const totalCount = parseInt(countResult.rows[0]?.count || 0);
+    const currentPage = Math.floor(offsetNum / limitNum) + 1;
+    const totalPages = Math.ceil(totalCount / limitNum);
 
     console.log(`✅ Found ${notificationsResult.rows.length} notifications for user ${userId}`);
 
@@ -119,12 +90,12 @@ const getNotifications = async (req, res) => {
       data: {
         notifications: notificationsResult.rows,
         pagination: {
-          currentPage: parseInt(page),
+          currentPage,
           totalPages,
           totalCount,
-          hasNext: page < totalPages,
-          hasPrev: page > 1,
-          limit: parseInt(limit)
+          hasNext: currentPage < totalPages,
+          hasPrev: currentPage > 1,
+          limit: limitNum
         }
       }
     });
