@@ -61,7 +61,7 @@ class NotificationService {
     }
   }
 
-  // Create payment notification with detailed information
+  // ENHANCED: Create payment notification with partial payment support
   static async createPaymentNotification(paymentData) {
     const {
       tenantId,
@@ -71,7 +71,11 @@ class NotificationService {
       amount,
       paymentMonth,
       mpesaReceipt,
-      paymentId
+      paymentId,
+      allocatedAmount,
+      carryForwardAmount,
+      remainingBalance,
+      isMonthComplete
     } = paymentData;
 
     try {
@@ -84,10 +88,20 @@ class NotificationService {
       const notifications = [];
 
       // Notification for tenant
+      let tenantMessage = `Your rent payment of KSh ${amount} has been processed successfully. `;
+      
+      if (carryForwardAmount > 0) {
+        tenantMessage += `KSh ${allocatedAmount} applied to ${paymentMonth}, KSh ${carryForwardAmount} carried forward to future months.`;
+      } else if (isMonthComplete) {
+        tenantMessage += `Your rent for ${paymentMonth} is now fully paid.`;
+      } else {
+        tenantMessage += `Your rent for ${paymentMonth} is partially paid. Remaining balance: KSh ${remainingBalance}.`;
+      }
+
       const tenantNotification = {
         userId: tenantId,
-        title: 'Rent Payment Confirmed',
-        message: `Your rent payment of KSh ${amount} for ${paymentMonth} has been successfully processed. Receipt: ${mpesaReceipt}`,
+        title: 'Payment Successful',
+        message: tenantMessage,
         type: 'payment_success',
         relatedEntityType: 'rent_payment',
         relatedEntityId: paymentId
@@ -96,10 +110,20 @@ class NotificationService {
 
       // Notifications for all admins
       admins.forEach(admin => {
+        let adminMessage = `Tenant ${tenantName} has paid KSh ${amount} for ${propertyInfo} - ${unitInfo} (${paymentMonth}). `;
+        
+        if (carryForwardAmount > 0) {
+          adminMessage += `KSh ${carryForwardAmount} carried forward to future months.`;
+        } else if (!isMonthComplete) {
+          adminMessage += `Remaining balance: KSh ${remainingBalance}.`;
+        } else {
+          adminMessage += `Payment for ${paymentMonth} is now complete.`;
+        }
+
         const adminNotification = {
           userId: admin.id,
-          title: 'Tenant Rent Payment Received',
-          message: `Tenant ${tenantName} has paid KSh ${amount} for ${unitInfo} at ${propertyInfo} for ${paymentMonth}. Receipt: ${mpesaReceipt}`,
+          title: 'Tenant Payment Received',
+          message: adminMessage,
           type: 'payment_received',
           relatedEntityType: 'rent_payment',
           relatedEntityId: paymentId
@@ -110,6 +134,83 @@ class NotificationService {
       return await this.createBulkNotifications(notifications);
     } catch (error) {
       console.error('Error creating payment notifications:', error);
+      throw error;
+    }
+  }
+
+  // ENHANCED: Create payment failure notification for both tenant and admin
+  static async createPaymentFailureNotification(paymentData) {
+    const {
+      tenantId,
+      tenantName,
+      unitInfo,
+      propertyInfo,
+      amount,
+      paymentMonth,
+      failureReason,
+      paymentId
+    } = paymentData;
+
+    try {
+      const notifications = [];
+
+      // Notification for tenant
+      const tenantNotification = {
+        userId: tenantId,
+        title: 'Payment Failed',
+        message: `Your rent payment of KSh ${amount} for ${paymentMonth} failed. Reason: ${failureReason}`,
+        type: 'payment_failed',
+        relatedEntityType: 'rent_payment',
+        relatedEntityId: paymentId
+      };
+      notifications.push(tenantNotification);
+
+      // Notifications for all admins
+      const adminQuery = await pool.query(
+        "SELECT id FROM users WHERE role = 'admin'"
+      );
+      
+      adminQuery.rows.forEach(admin => {
+        const adminNotification = {
+          userId: admin.id,
+          title: 'Payment Failure Alert',
+          message: `Payment failed for tenant ${tenantName} (${propertyInfo} - ${unitInfo}). Amount: KSh ${amount}, Month: ${paymentMonth}. Reason: ${failureReason}`,
+          type: 'payment_failed',
+          relatedEntityType: 'rent_payment',
+          relatedEntityId: paymentId
+        };
+        notifications.push(adminNotification);
+      });
+
+      return await this.createBulkNotifications(notifications);
+    } catch (error) {
+      console.error('Error creating payment failure notifications:', error);
+      throw error;
+    }
+  }
+
+  // Create carry-forward payment notification
+  static async createCarryForwardNotification(carryForwardData) {
+    const {
+      tenantId,
+      amount,
+      targetMonth,
+      paymentId
+    } = carryForwardData;
+
+    try {
+      const notification = {
+        userId: tenantId,
+        title: 'Payment Carry-Forward',
+        message: `Your payment of KSh ${amount} has been carried forward to ${targetMonth} as advance payment.`,
+        type: 'payment_carry_forward',
+        relatedEntityType: 'rent_payment',
+        relatedEntityId: paymentId
+      };
+
+      return await this.createNotification(notification);
+    } catch (error) {
+      console.error('Error creating carry-forward notification:', error);
       throw error;
     }
   }
@@ -237,6 +338,53 @@ class NotificationService {
       return parseInt(result.rows[0].unread_count);
     } catch (error) {
       console.error('Error fetching unread count:', error);
+      throw error;
+    }
+  }
+
+  // NEW: Get payment-related notifications for user
+  static async getPaymentNotifications(userId, limit = 10) {
+    try {
+      const query = `
+        SELECT 
+          n.*,
+          rp.amount as payment_amount,
+          rp.payment_month,
+          rp.mpesa_receipt_number
+        FROM notifications n
+        LEFT JOIN rent_payments rp ON n.related_entity_id = rp.id AND n.related_entity_type = 'rent_payment'
+        WHERE n.user_id = $1 
+        AND n.type IN ('payment_success', 'payment_failed', 'payment_carry_forward', 'payment_pending')
+        ORDER BY n.created_at DESC
+        LIMIT $2
+      `;
+      
+      const result = await pool.query(query, [userId, limit]);
+      return result.rows;
+    } catch (error) {
+      console.error('Error fetching payment notifications:', error);
+      throw error;
+    }
+  }
+
+  // NEW: Create system-wide notification for admins
+  static async createAdminNotification(title, message, type = 'system_alert') {
+    try {
+      const adminQuery = await pool.query(
+        "SELECT id FROM users WHERE role = 'admin'"
+      );
+      
+      const notifications = adminQuery.rows.map(admin => ({
+        userId: admin.id,
+        title,
+        message,
+        type,
+        relatedEntityType: 'system'
+      }));
+
+      return await this.createBulkNotifications(notifications);
+    } catch (error) {
+      console.error('Error creating admin notification:', error);
       throw error;
     }
   }

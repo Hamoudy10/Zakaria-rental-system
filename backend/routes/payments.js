@@ -130,6 +130,75 @@ router.get('/mpesa/test-config', protect, async (req, res) => {
   }
 });
 
+// NEW: Salary payment routes
+router.post('/salary', protect, async (req, res) => {
+  console.log('💰 Salary Payment Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.processSalaryPayment...');
+    await paymentController.processSalaryPayment(req, res);
+    console.log('✅ Salary payment processed successfully');
+  } catch (error) {
+    console.error('❌ ERROR in salary payment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in salary payment',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Get salary payments
+router.get('/salary', protect, async (req, res) => {
+  console.log('📋 GET Salary Payments Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    query: req.query,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getSalaryPayments...');
+    await paymentController.getSalaryPayments(req, res);
+    console.log('✅ Salary payments fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR getting salary payments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error getting salary payments',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Get agent salary payments
+router.get('/salary/agent/:agentId', protect, async (req, res) => {
+  console.log('👤 GET Agent Salary Payments Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    params: req.params,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getAgentSalaryPayments...');
+    await paymentController.getAgentSalaryPayments(req, res);
+    console.log('✅ Agent salary payments fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR getting agent salary payments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error getting agent salary payments',
+      error: error.message
+    });
+  }
+});
+
 router.post('/mpesa-callback', async (req, res) => {
   console.log('📞 M-Pesa Callback Received:', {
     method: req.method,
@@ -527,7 +596,7 @@ router.post('/', protect, async (req, res) => {
         mpesa_transaction_id,
         mpesa_receipt_number,
         phone_number,
-        trackingResult.currentMonthPayment, // Use tracked amount
+        trackingResult.allocatedAmount, // Use tracked amount
         payment_month,
         status,
         req.user.id,
@@ -559,7 +628,7 @@ router.post('/', protect, async (req, res) => {
       // NEW: Enhanced notification message with tracking info
       let notificationMessage = `Your rent payment of KSh ${amount} has been confirmed. `;
       if (trackingResult.carryForwardAmount > 0) {
-        notificationMessage += `KSh ${trackingResult.currentMonthPayment} applied to current month, KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
+        notificationMessage += `KSh ${trackingResult.allocatedAmount} applied to current month, KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
       } else {
         notificationMessage += `Thank you!`;
       }
@@ -1091,7 +1160,7 @@ router.put('/:id', protect, async (req, res) => {
         // NEW: Enhanced notification with tracking info
         let notificationMessage = `Your rent payment of KSh ${updatedPayment.amount} has been confirmed. `;
         if (trackingResult && trackingResult.carryForwardAmount > 0) {
-          notificationMessage += `KSh ${trackingResult.currentMonthPayment} applied to current month, KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
+          notificationMessage += `KSh ${trackingResult.allocatedAmount} applied to current month, KSh ${trackingResult.carryForwardAmount} carried forward to next month.`;
         } else {
           notificationMessage += `Thank you!`;
         }

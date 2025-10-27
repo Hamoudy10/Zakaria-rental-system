@@ -1,3 +1,4 @@
+// src/context/NotificationContext.jsx
 import React, { createContext, useState, useContext, useCallback, useEffect, useRef } from 'react';
 import { notificationAPI } from '../services/api';
 import { useAuth } from './AuthContext';
@@ -24,330 +25,277 @@ export const NotificationProvider = ({ children }) => {
     hasNext: false,
     hasPrev: false
   });
-  const [stats, setStats] = useState({
-    total: 0,
-    unread: 0,
-    byType: {},
-    recent: 0
-  });
 
   const { user: authUser } = useAuth();
-
-  // Refs for polling control
-  const pollingIntervalRef = useRef(null);
   const isMountedRef = useRef(true);
-  const lastFetchRef = useRef(0);
-  const isPollingPausedRef = useRef(false);
-
-  // Check if user is authenticated
-  const isAuthenticated = useCallback(() => {
-    return !!authUser;
-  }, [authUser]);
+  const lastUserIdRef = useRef(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
-      stopPolling();
     };
   }, []);
 
-  // Enhanced polling with debouncing and pause functionality
-  const startPolling = useCallback((interval = 60000) => {
-    if (!isAuthenticated()) {
-      return;
-    }
-
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-
-    if (isPollingPausedRef.current) {
-      return;
-    }
-
-    pollingIntervalRef.current = setInterval(async () => {
-      if (isMountedRef.current && !isPollingPausedRef.current && isAuthenticated()) {
-        try {
-          await fetchUnreadCount();
-          
-          const now = Date.now();
-          if (now - lastFetchRef.current > 300000) {
-            await fetchNotificationStats();
-            lastFetchRef.current = now;
-          }
-        } catch (error) {
-          console.warn('Polling error:', error);
-        }
-      }
-    }, interval);
-  }, [isAuthenticated]);
-
-  // Stop polling
-  const stopPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-  }, []);
-
-  // Pause polling
-  const pausePolling = useCallback(() => {
-    isPollingPausedRef.current = true;
-    stopPolling();
-  }, [stopPolling]);
-
-  // Resume polling
-  const resumePolling = useCallback(() => {
-    isPollingPausedRef.current = false;
-    if (isAuthenticated()) {
-      startPolling();
-    }
-  }, [isAuthenticated, startPolling]);
-
-  // Debounced fetch function
-  const debouncedFetch = useCallback((fn, delay = 1000) => {
-    let timeoutId;
-    return (...args) => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => fn(...args), delay);
-    };
-  }, []);
-
-  // Fetch notifications with pagination and filters
-  const fetchNotifications = useCallback(debouncedFetch(async (options = {}) => {
-    if (!isAuthenticated()) {
+  // Reset state when user changes
+  useEffect(() => {
+    if (authUser?.id !== lastUserIdRef.current) {
+      console.log('👤 User changed, resetting notification state');
       setNotifications([]);
       setUnreadCount(0);
       setLoading(false);
-      return;
+      setError(null);
+      lastUserIdRef.current = authUser?.id;
     }
+  }, [authUser?.id]);
 
-    const {
-      page = 1,
-      limit = 20,
-      type,
-      is_read,
-      related_entity_type,
-      start_date,
-      end_date
-    } = options;
+  // Check if user is authenticated
+  const isAuthenticated = useCallback(() => {
+    return !!authUser && !!localStorage.getItem('token');
+  }, [authUser]);
 
-    if (loading) return;
-
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const response = await notificationAPI.getNotifications(
-        limit,
-        (page - 1) * limit,
-        type,
-        is_read,
-        related_entity_type,
-        start_date,
-        end_date
-      );
-
-      if (response.data.success) {
-        const { notifications: newNotifications, pagination: paginationData } = response.data.data;
-        
-        setNotifications(newNotifications || []);
-        setPagination(paginationData || {
-          currentPage: 1,
-          totalPages: 1,
-          totalCount: 0,
-          hasNext: false,
-          hasPrev: false
-        });
-      }
-    } catch (err) {
-      console.error('Error fetching notifications:', err);
-      const errorMessage = err.response?.data?.message || 'Failed to fetch notifications';
-      setError(errorMessage);
-      
+  // SIMPLIFIED fetchNotifications - FIXED VERSION
+  const fetchNotifications = useCallback(async (options = {}) => {
+    if (!isAuthenticated()) {
+      console.log('❌ Not authenticated, skipping notification fetch');
       if (isMountedRef.current) {
         setNotifications([]);
         setUnreadCount(0);
+        setLoading(false);
+      }
+      return;
+    }
+
+    console.log('🔄 Starting to fetch notifications...', options);
+    if (isMountedRef.current) {
+      setLoading(true);
+      setError(null);
+    }
+    
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        type,
+        is_read
+      } = options;
+
+      // Use the API call with proper parameters
+      const response = await notificationAPI.getNotifications(limit, (page - 1) * limit, type, is_read);
+      
+      console.log('📨 API Response received:', response.data);
+
+      if (response.data && response.data.success) {
+        const { notifications: newNotifications, pagination: paginationData } = response.data.data;
+        
+        console.log(`✅ Successfully loaded ${newNotifications?.length || 0} notifications for user ${authUser?.id}`);
+        
+        if (isMountedRef.current) {
+          setNotifications(newNotifications || []);
+          setPagination(paginationData || {
+            currentPage: parseInt(page),
+            totalPages: 1,
+            totalCount: 0,
+            hasNext: false,
+            hasPrev: false
+          });
+        }
+      } else {
+        throw new Error(response.data?.message || 'Invalid response format from server');
+      }
+    } catch (err) {
+      console.error('❌ Error fetching notifications:', err);
+      if (isMountedRef.current) {
+        setError(err.response?.data?.message || err.message || 'Failed to fetch notifications');
+        setNotifications([]);
       }
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
       }
     }
-  }), [loading, isAuthenticated]);
+  }, [isAuthenticated, authUser?.id]);
 
-  // Fetch unread count
+  // SIMPLIFIED fetchUnreadCount - FIXED VERSION
   const fetchUnreadCount = useCallback(async () => {
     if (!isAuthenticated()) {
-      setUnreadCount(0);
+      if (isMountedRef.current) {
+        setUnreadCount(0);
+      }
       return 0;
     }
 
     try {
+      console.log('🔢 Fetching unread count...');
       const response = await notificationAPI.getUnreadCount();
       
-      if (response.data.success) {
-        const newUnreadCount = response.data.data.unreadCount;
-        setUnreadCount(newUnreadCount);
+      if (response.data && response.data.success) {
+        const newUnreadCount = response.data.data.unreadCount || 0;
+        console.log(`✅ Unread count: ${newUnreadCount} for user ${authUser?.id}`);
+        
+        if (isMountedRef.current) {
+          setUnreadCount(newUnreadCount);
+        }
         return newUnreadCount;
       }
+      return 0;
     } catch (err) {
-      console.error('Error fetching unread count:', err);
-    }
-    return 0;
-  }, [isAuthenticated]);
-
-  // Fetch notification statistics
-  const fetchNotificationStats = useCallback(async () => {
-    if (!isAuthenticated()) {
-      setStats({
-        total: 0,
-        unread: 0,
-        byType: {},
-        recent: 0
-      });
-      return {};
-    }
-
-    try {
-      const response = await notificationAPI.getNotificationStats();
-      
-      if (response.data.success) {
-        setStats(response.data.data);
-        return response.data.data;
+      console.error('❌ Error fetching unread count:', err);
+      if (isMountedRef.current) {
+        setUnreadCount(0);
       }
-    } catch (err) {
-      console.error('Error fetching notification stats:', err);
+      return 0;
     }
-    return {};
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authUser?.id]);
 
-  // Mark notification as read
+  // SIMPLIFIED markAsRead - FIXED VERSION
   const markAsRead = useCallback(async (notificationId) => {
-    if (!isAuthenticated()) {
-      throw new Error('User not authenticated');
+    if (!isAuthenticated() || !notificationId) {
+      throw new Error('User not authenticated or missing notification ID');
     }
 
-    if (!notificationId) {
-      console.error('Notification ID is required');
-      return;
-    }
-
-    setError(null);
-    
     try {
+      console.log(`📋 Marking notification ${notificationId} as read`);
+      
+      // Optimistic update
       const previousNotifications = [...notifications];
       const previousUnreadCount = unreadCount;
-
-      setNotifications(prev => 
-        prev.map(notification => 
-          notification.id === notificationId 
-            ? { 
-                ...notification, 
-                is_read: true, 
-                read_at: new Date().toISOString() 
-              }
-            : notification
-        )
-      );
       
-      setUnreadCount(prev => Math.max(0, prev - 1));
+      if (isMountedRef.current) {
+        setNotifications(prev => 
+          prev.map(notification => 
+            notification.id === notificationId 
+              ? { ...notification, is_read: true, read_at: new Date().toISOString() }
+              : notification
+          )
+        );
+        
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      }
 
       const response = await notificationAPI.markAsRead(notificationId);
       
       if (!response.data.success) {
-        setNotifications(previousNotifications);
-        setUnreadCount(previousUnreadCount);
+        // Revert on error
+        if (isMountedRef.current) {
+          setNotifications(previousNotifications);
+          setUnreadCount(previousUnreadCount);
+        }
         throw new Error(response.data.message || 'Failed to mark notification as read');
       }
 
       return response.data.data;
     } catch (err) {
-      console.error('Error marking notification as read:', err);
-      const errorMessage = err.response?.data?.message || 'Failed to mark notification as read';
-      setError(errorMessage);
+      console.error('❌ Error marking notification as read:', err);
+      if (isMountedRef.current) {
+        setError(err.response?.data?.message || err.message || 'Failed to mark notification as read');
+      }
       throw err;
     }
   }, [notifications, unreadCount, isAuthenticated]);
 
-  // Mark all notifications as read
+  // SIMPLIFIED markAllAsRead - FIXED VERSION
   const markAllAsRead = useCallback(async () => {
     if (!isAuthenticated()) {
       throw new Error('User not authenticated');
     }
 
-    setError(null);
-    
     try {
+      console.log('📋 Marking all notifications as read');
+      
+      // Optimistic update
       const previousNotifications = [...notifications];
       
-      setNotifications(prev => 
-        prev.map(notification => ({
-          ...notification,
-          is_read: true,
-          read_at: notification.read_at || new Date().toISOString()
-        }))
-      );
-      
-      setUnreadCount(0);
+      if (isMountedRef.current) {
+        setNotifications(prev => 
+          prev.map(notification => ({
+            ...notification,
+            is_read: true,
+            read_at: notification.read_at || new Date().toISOString()
+          }))
+        );
+        
+        setUnreadCount(0);
+      }
 
       const response = await notificationAPI.markAllAsRead();
       
       if (!response.data.success) {
-        setNotifications(previousNotifications);
-        setUnreadCount(previousNotifications.filter(n => !n.is_read).length);
+        // Revert on error
+        if (isMountedRef.current) {
+          setNotifications(previousNotifications);
+          setUnreadCount(previousNotifications.filter(n => !n.is_read).length);
+        }
         throw new Error(response.data.message || 'Failed to mark all notifications as read');
       }
 
       return response.data.data;
     } catch (err) {
-      console.error('Error marking all notifications as read:', err);
-      const errorMessage = err.response?.data?.message || 'Failed to mark all notifications as read';
-      setError(errorMessage);
+      console.error('❌ Error marking all notifications as read:', err);
+      if (isMountedRef.current) {
+        setError(err.response?.data?.message || err.message || 'Failed to mark all notifications as read');
+      }
       throw err;
     }
   }, [notifications, isAuthenticated]);
 
-  // Delete notification
+  // SIMPLIFIED deleteNotification - FIXED VERSION
   const deleteNotification = useCallback(async (notificationId) => {
-    if (!isAuthenticated()) {
-      throw new Error('User not authenticated');
+    if (!isAuthenticated() || !notificationId) {
+      throw new Error('User not authenticated or missing notification ID');
     }
 
-    if (!notificationId) {
-      console.error('Notification ID is required');
-      return;
-    }
-
-    setError(null);
-    
     try {
+      console.log(`🗑️ Deleting notification ${notificationId}`);
+      
       const notificationToDelete = notifications.find(n => n.id === notificationId);
       const previousNotifications = [...notifications];
       
-      setNotifications(prev => prev.filter(notification => notification.id !== notificationId));
-      
-      if (notificationToDelete && !notificationToDelete.is_read) {
-        setUnreadCount(prev => Math.max(0, prev - 1));
+      if (isMountedRef.current) {
+        setNotifications(prev => prev.filter(notification => notification.id !== notificationId));
+        
+        if (notificationToDelete && !notificationToDelete.is_read) {
+          setUnreadCount(prev => Math.max(0, prev - 1));
+        }
       }
 
       const response = await notificationAPI.deleteNotification(notificationId);
       
       if (!response.data.success) {
-        setNotifications(previousNotifications);
-        setUnreadCount(previousNotifications.filter(n => !n.is_read).length);
+        if (isMountedRef.current) {
+          setNotifications(previousNotifications);
+          setUnreadCount(previousNotifications.filter(n => !n.is_read).length);
+        }
         throw new Error(response.data.message || 'Failed to delete notification');
       }
 
       return response.data.data;
     } catch (err) {
-      console.error('Error deleting notification:', err);
-      const errorMessage = err.response?.data?.message || 'Failed to delete notification';
-      setError(errorMessage);
+      console.error('❌ Error deleting notification:', err);
+      if (isMountedRef.current) {
+        setError(err.response?.data?.message || err.message || 'Failed to delete notification');
+      }
       throw err;
     }
   }, [notifications, isAuthenticated]);
+
+  // SIMPLIFIED refreshNotifications - FIXED VERSION
+  const refreshNotifications = useCallback(async () => {
+    if (!isAuthenticated()) {
+      console.log('❌ Not authenticated, skipping refresh');
+      return;
+    }
+
+    try {
+      console.log('🔄 Refreshing notifications...');
+      await Promise.all([
+        fetchNotifications({ page: 1 }),
+        fetchUnreadCount()
+      ]);
+    } catch (error) {
+      console.error('❌ Error refreshing notifications:', error);
+    }
+  }, [fetchNotifications, fetchUnreadCount, isAuthenticated]);
 
   // Clear all read notifications
   const clearReadNotifications = useCallback(async () => {
@@ -355,105 +303,58 @@ export const NotificationProvider = ({ children }) => {
       throw new Error('User not authenticated');
     }
 
-    setError(null);
-    
     try {
-      const previousNotifications = [...notifications];
+      console.log('🧹 Clearing read notifications');
       
-      setNotifications(prev => prev.filter(notification => !notification.is_read));
+      const previousNotifications = [...notifications];
+      if (isMountedRef.current) {
+        setNotifications(prev => prev.filter(notification => !notification.is_read));
+      }
 
       const response = await notificationAPI.clearReadNotifications();
       
       if (!response.data.success) {
-        setNotifications(previousNotifications);
+        if (isMountedRef.current) {
+          setNotifications(previousNotifications);
+        }
         throw new Error(response.data.message || 'Failed to clear read notifications');
       }
 
       return response.data.data;
     } catch (err) {
-      console.error('Error clearing read notifications:', err);
-      const errorMessage = err.response?.data?.message || 'Failed to clear read notifications';
-      setError(errorMessage);
+      console.error('❌ Error clearing read notifications:', err);
+      if (isMountedRef.current) {
+        setError(err.response?.data?.message || err.message || 'Failed to clear read notifications');
+      }
       throw err;
     }
   }, [notifications, isAuthenticated]);
 
-  // Create notification
-  const createNotification = useCallback(async (notificationData) => {
-    if (!isAuthenticated()) {
-      throw new Error('User not authenticated');
-    }
-
-    setError(null);
-    
-    try {
-      const response = await notificationAPI.createNotification(notificationData);
-      
-      if (response.data.success) {
-        const newNotification = response.data.data;
-        
-        setNotifications(prev => [newNotification, ...prev]);
-        
-        if (!newNotification.is_read) {
-          setUnreadCount(prev => prev + 1);
-        }
-
-        return newNotification;
-      } else {
-        throw new Error(response.data.message || 'Failed to create notification');
-      }
-    } catch (err) {
-      console.error('Error creating notification:', err);
-      const errorMessage = err.response?.data?.message || 'Failed to create notification';
-      setError(errorMessage);
-      throw err;
-    }
-  }, [isAuthenticated]);
-
-  // Create broadcast notification
+  // Create broadcast notification (admin only)
   const createBroadcastNotification = useCallback(async (broadcastData) => {
     if (!isAuthenticated()) {
       throw new Error('User not authenticated');
     }
 
-    setError(null);
-    
     try {
+      console.log('📢 Creating broadcast notification:', broadcastData);
       const response = await notificationAPI.createBroadcastNotification(broadcastData);
       
-      if (response.data.success) {
-        return response.data.data;
-      } else {
+      if (!response.data.success) {
         throw new Error(response.data.message || 'Failed to create broadcast notification');
       }
+
+      return response.data.data;
     } catch (err) {
-      console.error('Error creating broadcast notification:', err);
-      const errorMessage = err.response?.data?.message || 'Failed to create broadcast notification';
-      setError(errorMessage);
+      console.error('❌ Error creating broadcast notification:', err);
+      if (isMountedRef.current) {
+        setError(err.response?.data?.message || err.message || 'Failed to create broadcast notification');
+      }
       throw err;
     }
   }, [isAuthenticated]);
 
-  // Refresh all notification data
-  const refreshNotifications = useCallback(debouncedFetch(async () => {
-    if (!isAuthenticated()) {
-      setNotifications([]);
-      setUnreadCount(0);
-      return;
-    }
-
-    try {
-      await Promise.all([
-        fetchNotifications({ page: 1 }),
-        fetchUnreadCount(),
-        fetchNotificationStats()
-      ]);
-    } catch (error) {
-      console.error('Error refreshing notifications:', error);
-    }
-  }), [fetchNotifications, fetchUnreadCount, fetchNotificationStats, isAuthenticated]);
-
-  // Filter notifications by type
+  // Get notifications by type
   const getNotificationsByType = useCallback(async (type, options = {}) => {
     if (!isAuthenticated()) {
       throw new Error('User not authenticated');
@@ -461,74 +362,89 @@ export const NotificationProvider = ({ children }) => {
 
     const { page = 1, limit = 20 } = options;
     
-    setLoading(true);
-    setError(null);
+    if (isMountedRef.current) {
+      setLoading(true);
+      setError(null);
+    }
     
     try {
       const response = await notificationAPI.getNotificationsByType(type, page, limit);
       
-      if (response.data.success) {
+      if (response.data && response.data.success) {
         const { notifications: typedNotifications, pagination: paginationData } = response.data.data;
         
-        setNotifications(typedNotifications);
-        setPagination(paginationData);
+        if (isMountedRef.current) {
+          setNotifications(typedNotifications || []);
+          setPagination(paginationData || {
+            currentPage: parseInt(page),
+            totalPages: 1,
+            totalCount: 0,
+            hasNext: false,
+            hasPrev: false
+          });
+        }
         
         return typedNotifications;
+      } else {
+        throw new Error(response.data?.message || 'Invalid response format');
       }
     } catch (err) {
-      console.error(`Error fetching ${type} notifications:`, err);
-      const errorMessage = err.response?.data?.message || `Failed to fetch ${type} notifications`;
-      setError(errorMessage);
+      console.error(`❌ Error fetching ${type} notifications:`, err);
+      if (isMountedRef.current) {
+        setError(err.response?.data?.message || err.message || `Failed to fetch ${type} notifications`);
+      }
       throw err;
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [isAuthenticated]);
 
-  // Get specific notification by ID
-  const getNotificationById = useCallback(async (notificationId) => {
-    try {
-      const localNotification = notifications.find(n => n.id === notificationId);
-      if (localNotification) {
-        return localNotification;
-      }
-
-      console.warn('Notification not found locally, API method not implemented');
-      return null;
-    } catch (error) {
-      console.error('Error getting notification by ID:', error);
-      return null;
-    }
-  }, [notifications]);
-
-  // Load initial data
-  useEffect(() => {
-    const initializeNotifications = async () => {
-      if (isAuthenticated()) {
-        await refreshNotifications();
-        startPolling(60000);
-      } else {
-        setNotifications([]);
-        setUnreadCount(0);
-        stopPolling();
-      }
-    };
-
-    initializeNotifications();
-
-    return () => {
-      stopPolling();
-    };
-  }, [isAuthenticated]);
-
-  // Listen for authentication changes
-  useEffect(() => {
+  // Get notification stats
+  const fetchNotificationStats = useCallback(async () => {
     if (!isAuthenticated()) {
-      setNotifications([]);
-      setUnreadCount(0);
-      stopPolling();
+      return {};
     }
-  }, [authUser, isAuthenticated, stopPolling]);
+
+    try {
+      const response = await notificationAPI.getNotificationStats();
+      
+      if (response.data && response.data.success) {
+        return response.data.data;
+      }
+      return {};
+    } catch (err) {
+      console.error('❌ Error fetching notification stats:', err);
+      return {};
+    }
+  }, [isAuthenticated]);
+
+  // Clear error
+  const clearError = useCallback(() => {
+    if (isMountedRef.current) {
+      setError(null);
+    }
+  }, []);
+
+  // Initialize data when authenticated or user changes
+  useEffect(() => {
+    const initializeData = async () => {
+      if (isAuthenticated()) {
+        console.log('🔐 User authenticated, initializing notification data...');
+        await refreshNotifications();
+      } else {
+        console.log('🔒 User not authenticated, clearing notification data');
+        if (isMountedRef.current) {
+          setNotifications([]);
+          setUnreadCount(0);
+          setLoading(false);
+        }
+      }
+    };
+
+    initializeData();
+  }, [isAuthenticated, refreshNotifications, authUser?.id]);
 
   const value = React.useMemo(() => ({
     // State
@@ -537,7 +453,7 @@ export const NotificationProvider = ({ children }) => {
     error,
     unreadCount,
     pagination,
-    stats,
+    stats: {}, // Simplified for now
     
     // Actions
     fetchNotifications,
@@ -547,30 +463,20 @@ export const NotificationProvider = ({ children }) => {
     markAllAsRead,
     deleteNotification,
     clearReadNotifications,
-    createNotification,
     createBroadcastNotification,
     refreshNotifications,
     getNotificationsByType,
-    getNotificationById,
-    
-    // Polling control
-    startPolling,
-    stopPolling,
-    pausePolling,
-    resumePolling,
     
     // Utility
-    clearError: () => setError(null),
+    clearError,
     hasUnread: unreadCount > 0,
-    hasNotifications: notifications.length > 0,
-    isAuthenticated: isAuthenticated()
+    hasNotifications: notifications.length > 0
   }), [
     notifications,
     loading,
     error,
     unreadCount,
     pagination,
-    stats,
     fetchNotifications,
     fetchUnreadCount,
     fetchNotificationStats,
@@ -578,16 +484,10 @@ export const NotificationProvider = ({ children }) => {
     markAllAsRead,
     deleteNotification,
     clearReadNotifications,
-    createNotification,
     createBroadcastNotification,
     refreshNotifications,
     getNotificationsByType,
-    getNotificationById,
-    startPolling,
-    stopPolling,
-    pausePolling,
-    resumePolling,
-    isAuthenticated
+    clearError
   ]);
 
   return (

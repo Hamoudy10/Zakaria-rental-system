@@ -67,46 +67,51 @@ export const mpesaUtils = {
   }
 };
 
-// Enhanced Notification API with all endpoints
+// FIXED: Enhanced Notification API with all endpoints
 export const notificationAPI = {
-  // Get notifications with pagination and filtering
-  getNotifications: (limit = 20, offset = 0, type, is_read, related_entity_type, start_date, end_date) => {
-    const params = { limit, offset };
-    if (type) params.type = type;
-    if (is_read !== undefined) params.is_read = is_read;
-    if (related_entity_type) params.related_entity_type = related_entity_type;
-    if (start_date) params.start_date = start_date;
-    if (end_date) params.end_date = end_date;
+  // FIXED: Get notifications with proper parameter handling
+  getNotifications: (limit = 20, offset = 0, type, is_read) => {
+    const params = new URLSearchParams();
+    params.append('limit', limit.toString());
+    params.append('offset', offset.toString());
     
-    return api.get('/notifications', { params });
+    if (type) params.append('type', type);
+    if (is_read !== undefined) params.append('is_read', is_read.toString());
+    
+    return api.get(`/notifications?${params.toString()}`);
   },
 
-  // Get unread notification count
+  // FIXED: Get unread notification count
   getUnreadCount: () => api.get('/notifications/unread-count'),
 
-  // Get notification statistics
+  // FIXED: Get notification statistics
   getNotificationStats: () => api.get('/notifications/stats'),
 
-  // Get notifications by type
-  getNotificationsByType: (type, page = 1, limit = 20) => 
-    api.get(`/notifications/type/${type}?page=${page}&limit=${limit}`),
+  // FIXED: Get notifications by type
+  getNotificationsByType: (type, page = 1, limit = 20) => {
+    const params = new URLSearchParams();
+    params.append('page', page.toString());
+    params.append('limit', limit.toString());
+    
+    return api.get(`/notifications/type/${type}?${params.toString()}`);
+  },
 
-  // Mark notification as read
+  // FIXED: Mark notification as read
   markAsRead: (notificationId) => api.put(`/notifications/${notificationId}/read`),
 
-  // Mark all notifications as read
+  // FIXED: Mark all notifications as read
   markAllAsRead: () => api.put('/notifications/read-all'),
 
-  // Create notification
+  // FIXED: Create notification
   createNotification: (notificationData) => api.post('/notifications', notificationData),
 
-  // Create broadcast notification (admin only)
+  // FIXED: Create broadcast notification (admin only)
   createBroadcastNotification: (broadcastData) => api.post('/notifications/broadcast', broadcastData),
 
-  // Delete notification
+  // FIXED: Delete notification
   deleteNotification: (notificationId) => api.delete(`/notifications/${notificationId}`),
 
-  // Clear all read notifications
+  // FIXED: Clear all read notifications
   clearReadNotifications: () => api.delete('/notifications/clear-read'),
 
   // Admin endpoints

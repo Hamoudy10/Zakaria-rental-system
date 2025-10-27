@@ -9,9 +9,12 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     loading, 
     error,
     processMpesaPayment, 
+    checkPaymentStatus,
+    pollPaymentStatus,
     getPaymentsByTenant,
     getPaymentSummary,
     getPaymentHistory,
+    getFuturePaymentsStatus,
     validateMpesaPhone,
     formatMpesaPhone,
     clearError
@@ -22,7 +25,9 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
   const [tenantPayments, setTenantPayments] = useState(payments || [])
   const [paymentSummary, setPaymentSummary] = useState(null)
   const [paymentHistory, setPaymentHistory] = useState([])
+  const [futurePayments, setFuturePayments] = useState([])
   const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [showFuturePayments, setShowFuturePayments] = useState(false)
   const [paymentData, setPaymentData] = useState({
     amount: '',
     payment_month: '',
@@ -32,6 +37,9 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
   const [phoneError, setPhoneError] = useState('')
   const [paymentsLoading, setPaymentsLoading] = useState(false)
   const [summaryLoading, setSummaryLoading] = useState(false)
+  const [futurePaymentsLoading, setFuturePaymentsLoading] = useState(false)
+  const [isPolling, setIsPolling] = useState(false) // Track if we're polling for status
+  const [currentCheckoutRequestId, setCurrentCheckoutRequestId] = useState(null) // Track current payment being polled
 
   // Update tenant payments when prop changes
   useEffect(() => {
@@ -40,11 +48,12 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     }
   }, [payments])
 
-  // Load payment summary and history
+  // Load payment summary, history, and future payments
   useEffect(() => {
     const loadPaymentData = async () => {
       if (user?.id && allocation?.unit_id) {
         setSummaryLoading(true);
+        setFuturePaymentsLoading(true);
         try {
           // Load payment summary
           const summary = await getPaymentSummary(user.id, allocation.unit_id);
@@ -53,16 +62,121 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
           // Load payment history
           const history = await getPaymentHistory(user.id, allocation.unit_id);
           setPaymentHistory(history.payments || []);
+          
+          // Load future payments status
+          const future = await getFuturePaymentsStatus(user.id, allocation.unit_id);
+          setFuturePayments(future.futurePayments || []);
         } catch (err) {
           console.error('Error loading payment data:', err);
         } finally {
           setSummaryLoading(false);
+          setFuturePaymentsLoading(false);
         }
       }
     }
 
     loadPaymentData();
-  }, [user, allocation, getPaymentSummary, getPaymentHistory]);
+  }, [user, allocation, getPaymentSummary, getPaymentHistory, getFuturePaymentsStatus]);
+
+  // NEW: Effect to handle payment status polling
+  useEffect(() => {
+    let pollingInterval;
+    
+    if (isPolling && currentCheckoutRequestId) {
+      console.log('🔄 Starting payment status polling for:', currentCheckoutRequestId);
+      
+      pollingInterval = setInterval(async () => {
+        try {
+          console.log('🔍 Polling payment status...');
+          const statusResult = await checkPaymentStatus(currentCheckoutRequestId);
+          const payment = statusResult.payment;
+          
+          console.log('📊 Current payment status:', payment.status);
+          
+          if (payment.status === 'completed') {
+            console.log('✅ Payment completed via M-Pesa!');
+            setIsPolling(false);
+            setCurrentCheckoutRequestId(null);
+            clearInterval(pollingInterval);
+            
+            setPaymentStatus({ 
+              type: 'success', 
+              message: 'Payment confirmed successfully! Your rent payment has been processed.',
+              receipt: payment.mpesa_receipt_number,
+              transactionId: payment.mpesa_transaction_id
+            });
+            
+            // Refresh data
+            await refreshPaymentData();
+            
+          } else if (payment.status === 'failed') {
+            console.log('❌ Payment failed via M-Pesa');
+            setIsPolling(false);
+            setCurrentCheckoutRequestId(null);
+            clearInterval(pollingInterval);
+            
+            setPaymentStatus({ 
+              type: 'error', 
+              message: `Payment failed: ${payment.failure_reason || 'M-Pesa transaction failed'}` 
+            });
+          }
+          // If still pending, continue polling...
+        } catch (error) {
+          console.error('❌ Error during status polling:', error);
+          // Continue polling on error (network issues, etc.)
+        }
+      }, 3000); // Poll every 3 seconds
+      
+      // Stop polling after 3 minutes (180 seconds)
+      setTimeout(() => {
+        if (isPolling) {
+          console.log('⏰ Polling timeout after 3 minutes');
+          setIsPolling(false);
+          setCurrentCheckoutRequestId(null);
+          clearInterval(pollingInterval);
+          
+          setPaymentStatus({ 
+            type: 'error', 
+            message: 'Payment confirmation timeout. Please check your M-Pesa messages and refresh the page to see the payment status.' 
+          });
+        }
+      }, 180000);
+    }
+    
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    };
+  }, [isPolling, currentCheckoutRequestId, checkPaymentStatus]);
+
+  // NEW: Function to refresh all payment data
+  const refreshPaymentData = async () => {
+    try {
+      // Refresh payments list
+      const updatedPayments = await getPaymentsByTenant(user.id)
+      setTenantPayments(updatedPayments || [])
+      
+      // Refresh payment summary
+      const summary = await getPaymentSummary(user.id, allocation.unit_id);
+      setPaymentSummary(summary);
+      
+      // Refresh future payments
+      const future = await getFuturePaymentsStatus(user.id, allocation.unit_id);
+      setFuturePayments(future.futurePayments || []);
+      
+      // Call parent callback to refresh dashboard data
+      if (onPaymentSuccess) {
+        onPaymentSuccess()
+      }
+
+      // Refresh notifications
+      await refreshNotifications()
+      console.log('✅ All data refreshed after payment confirmation')
+    } catch (err) {
+      console.error('Error refreshing data:', err)
+    }
+  };
 
   // Fallback phone validation functions
   const isValidMpesaPhone = (phone) => {
@@ -131,7 +245,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
       const currentDate = new Date()
       const currentMonth = currentDate.toISOString().slice(0, 7) // YYYY-MM
       
-      // FIXED: Set amount to remaining balance or monthly rent
+      // Set amount to remaining balance or monthly rent
       const remainingBalance = paymentSummary?.balance || allocation.monthly_rent;
       
       setPaymentData(prev => ({
@@ -157,6 +271,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
     }
   }, [paymentData.phone_number])
 
+  // UPDATED: Handle M-Pesa payment with proper status polling
   const handleMpesaPayment = async (e) => {
     e.preventDefault()
     
@@ -195,48 +310,40 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
       const result = await processMpesaPayment(paymentPayload)
       
       if (result && result.success) {
-        setPaymentStatus({ 
-          type: 'success', 
-          message: result.message || 'Payment initiated successfully! Check your phone for M-Pesa prompt.',
-          receipt: result.mpesa_receipt,
-          transactionId: result.transactionId
-        })
-        
-        // Refresh payments data
-        try {
-          const updatedPayments = await getPaymentsByTenant(user.id)
-          setTenantPayments(updatedPayments || [])
+        if (result.requiresPolling && result.checkoutRequestId) {
+          // Real M-Pesa payment - start polling
+          console.log('🔄 Starting payment status polling for:', result.checkoutRequestId);
+          setCurrentCheckoutRequestId(result.checkoutRequestId);
+          setIsPolling(true);
           
-          // Refresh payment summary
-          const summary = await getPaymentSummary(user.id, allocation.unit_id);
-          setPaymentSummary(summary);
+          setPaymentStatus({ 
+            type: 'pending', 
+            message: 'Payment initiated! Please check your phone and enter your M-Pesa PIN. Waiting for confirmation...',
+            checkoutRequestId: result.checkoutRequestId
+          });
+        } else {
+          // Mock payment or payment that doesn't require polling
+          setPaymentStatus({ 
+            type: 'success', 
+            message: result.message || 'Payment processed successfully!',
+            receipt: result.mpesa_receipt,
+            transactionId: result.transactionId
+          });
           
-          // Call parent callback to refresh dashboard data
-          if (onPaymentSuccess) {
-            onPaymentSuccess()
-          }
-        } catch (err) {
-          console.error('Error refreshing payments:', err)
+          // Refresh data for mock payments
+          await refreshPaymentData();
+          
+          // Reset form on success
+          setPaymentData(prev => ({
+            ...prev,
+            phone_number: user?.phone_number || ''
+          }))
+          
+          setTimeout(() => {
+            setShowPaymentModal(false)
+            setPaymentStatus(null)
+          }, 5000)
         }
-
-        // Refresh notifications to show the new payment notification
-        try {
-          await refreshNotifications()
-          console.log('✅ Notifications refreshed after payment')
-        } catch (err) {
-          console.error('Error refreshing notifications:', err)
-        }
-        
-        // Reset form on success
-        setPaymentData(prev => ({
-          ...prev,
-          phone_number: user?.phone_number || ''
-        }))
-        
-        setTimeout(() => {
-          setShowPaymentModal(false)
-          setPaymentStatus(null)
-        }, 5000)
       } else {
         setPaymentStatus({ 
           type: 'error', 
@@ -299,17 +406,26 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
   }
 
   const handleCloseModal = () => {
-    setShowPaymentModal(false)
-    setPaymentStatus(null)
-    setPhoneError('')
-    if (clearError && typeof clearError === 'function') {
-      clearError()
+    // Only allow closing if we're not polling
+    if (!isPolling) {
+      setShowPaymentModal(false)
+      setPaymentStatus(null)
+      setPhoneError('')
+      setIsPolling(false)
+      setCurrentCheckoutRequestId(null)
+      if (clearError && typeof clearError === 'function') {
+        clearError()
+      }
     }
   }
 
   const currentMonthPaid = paymentSummary?.isFullyPaid || false
-  const isDevelopment = process.env.NODE_ENV === 'development'
+  const isDevelopment = import.meta.env.MODE === 'development'
   const remainingBalance = paymentSummary?.balance || 0
+
+  // Calculate total advance payments
+  const totalAdvance = paymentSummary?.advanceAmount || 0
+  const advanceCount = paymentSummary?.advanceCount || 0
 
   if (paymentsLoading || summaryLoading) {
     return (
@@ -384,6 +500,29 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
         </div>
       )}
 
+      {/* Advance Payments Summary */}
+      {totalAdvance > 0 && (
+        <div className="card bg-blue-50 border border-blue-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="text-blue-600 text-xl mr-3">💰</div>
+              <div>
+                <h4 className="font-semibold text-blue-900">Advance Payments</h4>
+                <p className="text-blue-700 text-sm">
+                  You have {formatCurrency(totalAdvance)} in advance payments across {advanceCount} future month(s)
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowFuturePayments(true)}
+              className="btn-secondary text-sm px-4 py-2"
+            >
+              View Future Payments
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Quick Payment Card */}
       <div className="card">
         <div className="flex justify-between items-center mb-4">
@@ -404,13 +543,19 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
             <div className="text-green-500 text-4xl mb-2">✓</div>
             <h4 className="text-lg font-semibold text-gray-900 mb-2">Rent Paid for This Month</h4>
             <p className="text-gray-600">Your payment for {formatDate(paymentData.payment_month)} has been received.</p>
-            {paymentSummary?.advanceAmount > 0 && (
+            {totalAdvance > 0 && (
               <div className="mt-3 p-3 bg-blue-50 rounded-lg">
                 <p className="text-sm text-blue-800">
-                  <strong>Advance Payment:</strong> You have {formatCurrency(paymentSummary.advanceAmount)} carried forward to next month.
+                  <strong>Advance Payment:</strong> You have {formatCurrency(totalAdvance)} carried forward to future months.
                 </p>
               </div>
             )}
+            <button
+              onClick={() => setShowPaymentModal(true)}
+              className="btn-primary mt-4"
+            >
+              Make Additional Payment
+            </button>
           </div>
         ) : (
           <div className="space-y-4">
@@ -425,7 +570,6 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  {/* FIXED: Show actual monthly rent instead of "ksh 0" */}
                   <div className="text-lg font-bold text-gray-900">
                     {formatCurrency(allocation.monthly_rent)}
                   </div>
@@ -468,7 +612,6 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                     Full Rent ({formatCurrency(allocation.monthly_rent)})
                   </button>
                 </div>
-                {/* FIXED: KES alignment - added margin between input and KES text */}
                 <div className="relative">
                   <input
                     type="number"
@@ -488,7 +631,16 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
               {parseFloat(paymentData.amount) > remainingBalance && remainingBalance > 0 && (
                 <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-md">
                   <p className="text-xs text-green-700">
-                    <strong>Note:</strong> {formatCurrency(parseFloat(paymentData.amount) - remainingBalance)} will be carried forward to next month as advance payment.
+                    <strong>Note:</strong> {formatCurrency(parseFloat(paymentData.amount) - remainingBalance)} will be carried forward to future months as advance payment.
+                  </p>
+                </div>
+              )}
+
+              {/* Future month payment notice */}
+              {paymentData.payment_month > new Date().toISOString().slice(0, 7) && (
+                <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded-md">
+                  <p className="text-xs text-purple-700">
+                    <strong>Future Payment:</strong> You are making a payment for {formatDate(paymentData.payment_month)}. This will be recorded as an advance payment.
                   </p>
                 </div>
               )}
@@ -559,6 +711,9 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {formatDate(payment.payment_month)}
+                        {payment.payment_month > new Date().toISOString().slice(0, 7) && (
+                          <span className="ml-1 text-xs text-purple-600">(Future)</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {formatCurrency(payment.amount)}
@@ -600,15 +755,17 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                 <h3 className="text-lg font-semibold text-gray-900">Pay with M-Pesa</h3>
                 <p className="text-sm text-gray-600 mt-1">Complete your rent payment securely</p>
               </div>
-              <button
-                type="button"
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-                onClick={handleCloseModal}
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              {!isPolling && (
+                <button
+                  type="button"
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  onClick={handleCloseModal}
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
             
             {/* Modal Content */}
@@ -618,9 +775,13 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                   <div className={`text-center py-6 ${
                     paymentStatus.type === 'success' ? 'text-green-600' :
                     paymentStatus.type === 'error' ? 'text-red-600' :
+                    paymentStatus.type === 'pending' ? 'text-blue-600' :
                     'text-blue-600'
                   }`}>
                     {paymentStatus.type === 'processing' && (
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    )}
+                    {paymentStatus.type === 'pending' && (
                       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
                     )}
                     {paymentStatus.type === 'success' && (
@@ -631,11 +792,24 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                     )}
                     <p className="text-lg font-semibold mb-2">
                       {paymentStatus.type === 'processing' ? 'Processing Payment...' :
-                      paymentStatus.type === 'success' ? 'Payment Initiated!' :
+                      paymentStatus.type === 'pending' ? 'Waiting for M-Pesa Confirmation...' :
+                      paymentStatus.type === 'success' ? 'Payment Confirmed!' :
                       'Payment Failed'}
                     </p>
                     <p className="text-sm mb-4">{paymentStatus.message}</p>
                     
+                    {paymentStatus.type === 'pending' && (
+                      <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                        <div className="flex items-center justify-center mb-2">
+                          <div className="animate-pulse bg-blue-200 rounded-full h-3 w-3 mr-2"></div>
+                          <p className="text-sm text-blue-700">Listening for M-Pesa callback...</p>
+                        </div>
+                        <p className="text-xs text-blue-600">
+                          Please check your phone and enter your M-Pesa PIN to complete the payment.
+                        </p>
+                      </div>
+                    )}
+
                     {paymentStatus.type === 'success' && paymentStatus.receipt && (
                       <div className="mt-4 p-3 bg-green-50 rounded-lg">
                         <p className="text-sm font-semibold">Transaction Details:</p>
@@ -646,12 +820,14 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                       </div>
                     )}
 
-                    <button
-                      onClick={handleCloseModal}
-                      className="btn-secondary mt-4 px-6 py-2 text-sm"
-                    >
-                      Close
-                    </button>
+                    {!isPolling && (
+                      <button
+                        onClick={handleCloseModal}
+                        className="btn-secondary mt-4 px-6 py-2 text-sm"
+                      >
+                        {paymentStatus.type === 'success' ? 'Done' : 'Close'}
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <form onSubmit={handleMpesaPayment} className="space-y-5">
@@ -677,7 +853,16 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                       {parseFloat(paymentData.amount) > remainingBalance && remainingBalance > 0 && (
                         <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
                           <p className="text-xs text-blue-700">
-                            <strong>Note:</strong> {formatCurrency(parseFloat(paymentData.amount) - remainingBalance)} will be carried forward to next month.
+                            <strong>Note:</strong> {formatCurrency(parseFloat(paymentData.amount) - remainingBalance)} will be carried forward to future months.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Future month notice */}
+                      {paymentData.payment_month > new Date().toISOString().slice(0, 7) && (
+                        <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded-md">
+                          <p className="text-xs text-purple-700">
+                            <strong>Future Payment:</strong> This payment will be recorded as an advance for {formatDate(paymentData.payment_month)}.
                           </p>
                         </div>
                       )}
@@ -713,7 +898,11 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                         onChange={(e) => setPaymentData({...paymentData, payment_month: e.target.value})}
                         className="input-primary w-full"
                         required
+                        min={new Date().toISOString().slice(0, 7)}
                       />
+                      <p className="text-xs text-gray-500 mt-1">
+                        You can pay for current or future months
+                      </p>
                     </div>
 
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -722,6 +911,7 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                         <div className="text-xs text-blue-800">
                           <strong className="text-sm">M-Pesa Instructions:</strong> 
                           <p className="mt-1">You will receive a prompt on your phone to enter your M-Pesa PIN. Ensure your phone is nearby and has sufficient signal.</p>
+                          <p className="mt-1 font-semibold">The payment will only be confirmed after you enter your PIN and M-Pesa processes the transaction.</p>
                         </div>
                       </div>
                     </div>
@@ -745,6 +935,88 @@ const TenantPayment = ({ allocation, payments, onPaymentSuccess }) => {
                   </form>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Future Payments Modal */}
+      {showFuturePayments && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg w-full max-w-2xl my-8 mx-auto max-h-[85vh] flex flex-col">
+            <div className="border-b border-gray-200 px-6 py-3 flex-shrink-0 flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Future Payments Status</h3>
+                <p className="text-sm text-gray-600 mt-1">Your advance payments and future rent status</p>
+              </div>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                onClick={() => setShowFuturePayments(false)}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6">
+              {futurePaymentsLoading ? (
+                <div className="flex justify-center items-center h-32">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : futurePayments.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <div className="text-4xl mb-2">📅</div>
+                  <p>No future payments recorded</p>
+                  <p className="text-sm">Make advance payments to see them here</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {futurePayments.map((future, index) => (
+                    <div key={index} className="border border-gray-200 rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <h4 className="font-semibold text-gray-900">
+                          {formatDate(future.month + '-01')}
+                        </h4>
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                          future.isFullyPaid 
+                            ? 'bg-green-100 text-green-800'
+                            : future.totalPaid > 0
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {future.isFullyPaid ? 'Paid' : future.totalPaid > 0 ? 'Partial' : 'Pending'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="text-gray-600">Monthly Rent:</span>
+                          <div className="font-semibold">{formatCurrency(future.monthlyRent)}</div>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Paid:</span>
+                          <div className="font-semibold">{formatCurrency(future.totalPaid)}</div>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Balance:</span>
+                          <div className={`font-semibold ${
+                            future.balance > 0 ? 'text-orange-600' : 'text-green-600'
+                          }`}>
+                            {formatCurrency(future.balance)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Status:</span>
+                          <div className="font-semibold">
+                            {future.isAdvance ? 'Advance Payment' : 'Not Paid'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
