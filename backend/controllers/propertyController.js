@@ -96,6 +96,23 @@ const createProperty = async (req, res) => {
       });
     }
 
+    // Validate property_code format (alphanumeric, uppercase, no spaces)
+    const propertyCodeRegex = /^[A-Z0-9]+$/;
+    if (!propertyCodeRegex.test(property_code)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Property code must be uppercase alphanumeric with no spaces (e.g., PROP001)'
+      });
+    }
+
+    // Validate total_units is a positive number
+    if (total_units <= 0 || total_units > 1000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Total units must be a positive number between 1 and 1000'
+      });
+    }
+
     // Validate unit_type
     const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
     if (!validUnitTypes.includes(unit_type)) {
@@ -127,24 +144,51 @@ const createProperty = async (req, res) => {
       [property_code, name, address, county, town, description, total_units, total_units, unit_type, req.user.id]
     );
 
-    // Create default units if total_units > 0
+    // Create default units with improved unit codes
     if (total_units > 0) {
       for (let i = 1; i <= total_units; i++) {
+        // Generate unit code: PROP001-001, PROP001-002, etc.
+        const unitCode = `${property_code}-${i.toString().padStart(3, '0')}`;
+        
+        // Generate descriptive unit number based on unit type
+        let unitNumber;
+        switch(unit_type) {
+          case 'bedsitter':
+            unitNumber = `BS${i}`;
+            break;
+          case 'studio':
+            unitNumber = `ST${i}`;
+            break;
+          case 'one_bedroom':
+            unitNumber = `1B${i}`;
+            break;
+          case 'two_bedroom':
+            unitNumber = `2B${i}`;
+            break;
+          case 'three_bedroom':
+            unitNumber = `3B${i}`;
+            break;
+          default:
+            unitNumber = i.toString();
+        }
+
         await client.query(
           `INSERT INTO property_units 
             (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             propertyResult.rows[0].id,
-            `${property_code}-UNIT-${i}`,
-            unit_type, // Use the property's unit_type
-            i.toString(),
+            unitCode, // Format: PROP001-001
+            unit_type,
+            unitNumber, // More descriptive unit number
             0, // default rent amount
             0, // default deposit amount
-            `Unit ${i} of ${name}`,
+            `${unit_type.replace('_', ' ').toUpperCase()} - Unit ${i} of ${name}`,
             req.user.id
           ]
         );
+
+        console.log(`✅ Created unit: ${unitCode} (${unitNumber})`);
       }
     }
 
@@ -204,6 +248,17 @@ const updateProperty = async (req, res) => {
         success: false, 
         message: 'Property not found' 
       });
+    }
+
+    // Validate property_code format if provided
+    if (property_code) {
+      const propertyCodeRegex = /^[A-Z0-9]+$/;
+      if (!propertyCodeRegex.test(property_code)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Property code must be uppercase alphanumeric with no spaces (e.g., PROP001)'
+        });
+      }
     }
 
     // Validate unit_type if provided
@@ -350,10 +405,319 @@ const deleteProperty = async (req, res) => {
   }
 };
 
+// NEW: Get unit by unit code (for payment processing)
+const getUnitByCode = async (req, res) => {
+  try {
+    const { unitCode } = req.params;
+    
+    console.log('🔍 Looking up unit by code:', unitCode);
+    
+    const query = `
+      SELECT 
+        pu.*,
+        p.name as property_name,
+        p.property_code,
+        p.address as property_address,
+        p.county,
+        p.town,
+        ta.tenant_id,
+        t.first_name as tenant_first_name,
+        t.last_name as tenant_last_name,
+        t.phone_number as tenant_phone,
+        t.email as tenant_email,
+        ta.monthly_rent,
+        ta.lease_start_date,
+        ta.lease_end_date,
+        ta.is_active as allocation_active
+      FROM property_units pu
+      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
+      LEFT JOIN tenants t ON ta.tenant_id = t.id
+      WHERE pu.unit_code = $1
+    `;
+    
+    const { rows } = await pool.query(query, [unitCode]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found'
+      });
+    }
+    
+    const unit = rows[0];
+    
+    // Get payment history for this unit
+    if (unit.tenant_id) {
+      const paymentsQuery = `
+        SELECT 
+          amount,
+          payment_month,
+          status,
+          payment_date,
+          mpesa_receipt_number
+        FROM rent_payments 
+        WHERE unit_id = $1 
+        ORDER BY payment_month DESC 
+        LIMIT 6
+      `;
+      const paymentsResult = await pool.query(paymentsQuery, [unit.id]);
+      unit.payment_history = paymentsResult.rows;
+    }
+    
+    console.log('✅ Unit found:', {
+      unit_code: unit.unit_code,
+      property: unit.property_name,
+      tenant: unit.tenant_first_name ? `${unit.tenant_first_name} ${unit.tenant_last_name}` : 'No tenant',
+      monthly_rent: unit.monthly_rent
+    });
+    
+    res.json({
+      success: true,
+      data: unit
+    });
+  } catch (error) {
+    console.error('Get unit by code error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching unit',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Create individual unit
+const createUnit = async (req, res) => {
+  try {
+    const { propertyId } = req.params;
+    const {
+      unit_code,
+      unit_type,
+      unit_number,
+      rent_amount,
+      deposit_amount,
+      description,
+      features
+    } = req.body;
+
+    // Validate required fields
+    if (!unit_code || !unit_type || !unit_number || !rent_amount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: unit_code, unit_type, unit_number, rent_amount'
+      });
+    }
+
+    // Check if property exists
+    const propertyCheck = await pool.query(
+      'SELECT id, property_code FROM properties WHERE id = $1',
+      [propertyId]
+    );
+
+    if (propertyCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Property not found'
+      });
+    }
+
+    // Check if unit code already exists
+    const existingUnit = await pool.query(
+      'SELECT id FROM property_units WHERE unit_code = $1',
+      [unit_code]
+    );
+
+    if (existingUnit.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Unit code already exists'
+      });
+    }
+
+    // Validate unit_type
+    const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+    if (!validUnitTypes.includes(unit_type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
+      });
+    }
+
+    // Create the unit
+    const result = await pool.query(
+      `INSERT INTO property_units 
+        (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, features, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        propertyId,
+        unit_code,
+        unit_type,
+        unit_number,
+        rent_amount,
+        deposit_amount || 0,
+        description,
+        features || {},
+        req.user.id
+      ]
+    );
+
+    // Update property unit count
+    await pool.query(
+      `UPDATE properties 
+       SET total_units = total_units + 1,
+           available_units = available_units + 1
+       WHERE id = $1`,
+      [propertyId]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Unit created successfully',
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Create unit error:', error);
+    
+    // Handle invalid unit_type enum value
+    if (error.code === '22P02') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid unit_type value. Must be one of: bedsitter, studio, one_bedroom, two_bedroom, three_bedroom'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error creating unit',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Update unit
+const updateUnit = async (req, res) => {
+  try {
+    const { unitId } = req.params;
+    const {
+      unit_code,
+      unit_type,
+      unit_number,
+      rent_amount,
+      deposit_amount,
+      description,
+      features,
+      is_active
+    } = req.body;
+
+    // Check if unit exists
+    const unitCheck = await pool.query(
+      'SELECT id, unit_code, is_occupied FROM property_units WHERE id = $1',
+      [unitId]
+    );
+
+    if (unitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found'
+      });
+    }
+
+    const currentUnit = unitCheck.rows[0];
+
+    // Prevent updating unit code if unit is occupied
+    if (unit_code && unit_code !== currentUnit.unit_code && currentUnit.is_occupied) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot change unit code for an occupied unit'
+      });
+    }
+
+    // Check if new unit code already exists
+    if (unit_code && unit_code !== currentUnit.unit_code) {
+      const existingUnit = await pool.query(
+        'SELECT id FROM property_units WHERE unit_code = $1 AND id != $2',
+        [unit_code, unitId]
+      );
+
+      if (existingUnit.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Unit code already exists'
+        });
+      }
+    }
+
+    // Validate unit_type if provided
+    if (unit_type) {
+      const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+      if (!validUnitTypes.includes(unit_type)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
+        });
+      }
+    }
+
+    const result = await pool.query(
+      `UPDATE property_units 
+       SET unit_code = COALESCE($1, unit_code),
+           unit_type = COALESCE($2, unit_type),
+           unit_number = COALESCE($3, unit_number),
+           rent_amount = COALESCE($4, rent_amount),
+           deposit_amount = COALESCE($5, deposit_amount),
+           description = COALESCE($6, description),
+           features = COALESCE($7, features),
+           is_active = COALESCE($8, is_active),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $9
+       RETURNING *`,
+      [
+        unit_code,
+        unit_type,
+        unit_number,
+        rent_amount,
+        deposit_amount,
+        description,
+        features,
+        is_active,
+        unitId
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: 'Unit updated successfully',
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Update unit error:', error);
+    
+    // Handle invalid unit_type enum value
+    if (error.code === '22P02') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid unit_type value. Must be one of: bedsitter, studio, one_bedroom, two_bedroom, three_bedroom'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error updating unit',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getProperties,
   getProperty,
   createProperty,
   updateProperty,
-  deleteProperty
+  deleteProperty,
+  getUnitByCode,
+  createUnit,
+  updateUnit
 };

@@ -14,11 +14,35 @@ const TabLoadingSpinner = () => (
   </div>
 );
 
+// Safe hook usage with error boundary
+const useSafePayment = () => {
+  try {
+    return usePayment();
+  } catch (error) {
+    console.warn('Payment context not available:', error);
+    return {
+      getPaymentsByTenant: () => Promise.resolve([]),
+      getPaymentSummary: () => ({})
+    };
+  }
+};
+
+const useSafeAllocation = () => {
+  try {
+    return useAllocation();
+  } catch (error) {
+    console.warn('Allocation context not available:', error);
+    return {
+      getTenantAllocations: () => Promise.resolve([])
+    };
+  }
+};
+
 const TenantDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
   const { user } = useAuth()
-  const { getTenantAllocations } = useAllocation()
-  const { getPaymentsByTenant, getPaymentSummary } = usePayment()
+  const { getTenantAllocations } = useSafeAllocation()
+  const { getPaymentsByTenant, getPaymentSummary } = useSafePayment()
 
   const [tenantData, setTenantData] = useState({
     allocation: null,

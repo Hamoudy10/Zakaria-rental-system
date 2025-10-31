@@ -34,7 +34,8 @@ const coreRoutes = [
   { path: '/api/payments', file: './routes/payments', name: 'Payments' },
   { path: '/api/complaints', file: './routes/complaints', name: 'Complaints' },
   { path: '/api/reports', file: './routes/reports', name: 'Reports' },
-  { path: '/api/notifications', file: './routes/notifications', name: 'Notifications' }
+  { path: '/api/notifications', file: './routes/notifications', name: 'Notifications' },
+  { path: '/api/tenants', file: './routes/tenants', name: 'Tenants' } // Added tenants route
 ];
 
 coreRoutes.forEach(route => {
@@ -137,4 +138,5 @@ app.listen(PORT, () => {
   console.log(`🔗 Test URL: http://localhost:${PORT}/api/test`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🔗 Allocations endpoint: http://localhost:${PORT}/api/allocations`);
+  console.log(`🔗 Tenants endpoint: http://localhost:${PORT}/api/tenants`); // Added tenants endpoint
 });

@@ -2,6 +2,7 @@ const axios = require('axios');
 const moment = require('moment');
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
+const SMSService = require('../services/smsService');
 
 // Check database connection
 const checkDatabase = async () => {
@@ -323,6 +324,476 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
     
   } catch (error) {
     console.error('❌ Error sending payment notifications:', error);
+  }
+};
+
+// NEW: Send SMS notifications for paybill payments
+const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
+  try {
+    const tenantName = `${unit.tenant_first_name} ${unit.tenant_last_name}`;
+    const tenantPhone = unit.tenant_phone;
+    const unitCode = unit.unit_code;
+    const month = trackingResult.targetMonth;
+    const balance = trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
+
+    console.log('📱 Preparing SMS notifications:', {
+      tenantName,
+      tenantPhone,
+      unitCode,
+      amount: payment.amount,
+      balance,
+      month
+    });
+
+    // Send confirmation to tenant
+    const tenantSMSResult = await SMSService.sendPaymentConfirmation(
+      tenantPhone,
+      tenantName,
+      payment.amount,
+      unitCode,
+      balance,
+      month
+    );
+
+    console.log('✅ Tenant SMS result:', tenantSMSResult);
+
+    // Get admin phone numbers and send alerts
+    const adminUsers = await pool.query(
+      'SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL',
+      ['admin']
+    );
+
+    console.log(`👨‍💼 Found ${adminUsers.rows.length} admins to notify`);
+
+    const adminSMSResults = [];
+    for (const admin of adminUsers.rows) {
+      const adminResult = await SMSService.sendAdminAlert(
+        admin.phone_number,
+        tenantName,
+        payment.amount,
+        unitCode,
+        balance,
+        month
+      );
+      adminSMSResults.push(adminResult);
+    }
+
+    // Record SMS notifications in database
+    await pool.query(
+      `INSERT INTO payment_notifications 
+        (payment_id, recipient_id, message_type, message_content, mpesa_code, amount, 
+         payment_date, property_info, unit_info, is_sent, sent_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+      [
+        payment.id,
+        unit.tenant_id,
+        'payment_confirmation',
+        `Payment of KSh ${payment.amount} confirmed for ${unitCode}`,
+        payment.mpesa_receipt_number,
+        payment.amount,
+        payment.payment_date,
+        unit.property_name,
+        unitCode,
+        tenantSMSResult.success
+      ]
+    );
+
+    console.log('✅ Paybill SMS notifications processed', {
+      tenantSMS: tenantSMSResult.success,
+      adminSMS: adminSMSResults.filter(r => r.success).length
+    });
+
+  } catch (error) {
+    console.error('❌ Error sending paybill SMS notifications:', error);
+  }
+};
+
+// NEW: Process M-Pesa paybill payment using unit code
+const processPaybillPayment = async (req, res) => {
+  try {
+    const { 
+      unit_code, 
+      amount, 
+      mpesa_receipt_number, 
+      phone_number, 
+      transaction_date,
+      payment_month 
+    } = req.body;
+
+    console.log('💰 Processing paybill payment:', { 
+      unit_code, 
+      amount, 
+      mpesa_receipt_number, 
+      phone_number 
+    });
+
+    // Validate required fields
+    if (!unit_code || !amount || !mpesa_receipt_number || !phone_number) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: unit_code, amount, mpesa_receipt_number, phone_number'
+      });
+    }
+
+    // Find unit by unit code
+    const unitResult = await pool.query(
+      `SELECT 
+        pu.*,
+        p.name as property_name,
+        p.property_code,
+        ta.tenant_id,
+        t.first_name as tenant_first_name,
+        t.last_name as tenant_last_name,
+        t.phone_number as tenant_phone,
+        ta.monthly_rent,
+        ta.is_active as allocation_active
+      FROM property_units pu
+      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
+      LEFT JOIN tenants t ON ta.tenant_id = t.id
+      WHERE pu.unit_code = $1`,
+      [unit_code]
+    );
+
+    if (unitResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found with the provided unit code'
+      });
+    }
+
+    const unit = unitResult.rows[0];
+
+    if (!unit.tenant_id || !unit.allocation_active) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active tenant allocated to this unit'
+      });
+    }
+
+    console.log('✅ Unit and tenant found:', {
+      unit: unit.unit_code,
+      tenant: `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+      monthly_rent: unit.monthly_rent
+    });
+
+    const paymentDate = transaction_date ? new Date(transaction_date) : new Date();
+    const formattedPaymentMonth = formatPaymentMonth(payment_month);
+
+    // Track payment
+    const trackingResult = await trackRentPayment(
+      unit.tenant_id, 
+      unit.id, 
+      amount, 
+      paymentDate,
+      formattedPaymentMonth.slice(0, 7)
+    );
+
+    // Record the payment
+    const paymentQuery = `
+      INSERT INTO rent_payments 
+      (tenant_id, unit_id, amount, payment_month, payment_date, status,
+       mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, payment_method)
+      VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10)
+      RETURNING *
+    `;
+
+    const paymentResult = await pool.query(paymentQuery, [
+      unit.tenant_id,
+      unit.id,
+      trackingResult.allocatedAmount,
+      formattedPaymentMonth,
+      paymentDate,
+      mpesa_receipt_number,
+      phone_number,
+      req.user?.id || unit.tenant_id, // Use current user or tenant ID
+      paymentDate,
+      'paybill'
+    ]);
+
+    const paymentRecord = paymentResult.rows[0];
+
+    // Handle carry forward if applicable
+    if (trackingResult.carryForwardAmount > 0) {
+      console.log(`🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`);
+      const carryForwardPayments = await recordCarryForward(
+        unit.tenant_id,
+        unit.id,
+        trackingResult.carryForwardAmount,
+        paymentRecord.id,
+        paymentDate
+      );
+
+      // Send notifications for carry-forward payments
+      for (const carryForwardPayment of carryForwardPayments) {
+        await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
+      }
+    }
+
+    // Send SMS notifications
+    await sendPaybillSMSNotifications(paymentRecord, trackingResult, unit);
+
+    // Also send in-app notifications
+    await sendPaymentNotifications(paymentRecord, trackingResult, false);
+
+    res.status(201).json({
+      success: true,
+      message: 'Paybill payment processed successfully',
+      payment: paymentRecord,
+      tracking: trackingResult
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR processing paybill payment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process paybill payment',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Get payment status by unit code
+const getPaymentStatusByUnitCode = async (req, res) => {
+  try {
+    const { unitCode } = req.params;
+    const { month } = req.query;
+
+    const currentDate = new Date();
+    const targetMonth = month || currentDate.toISOString().slice(0, 7); // YYYY-MM
+
+    console.log('🔍 Checking payment status for unit:', unitCode, 'month:', targetMonth);
+
+    // Find unit and tenant
+    const unitResult = await pool.query(
+      `SELECT 
+        pu.*,
+        p.name as property_name,
+        ta.tenant_id,
+        t.first_name as tenant_first_name,
+        t.last_name as tenant_last_name,
+        t.phone_number as tenant_phone,
+        ta.monthly_rent
+      FROM property_units pu
+      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
+      LEFT JOIN tenants t ON ta.tenant_id = t.id
+      WHERE pu.unit_code = $1`,
+      [unitCode]
+    );
+
+    if (unitResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found'
+      });
+    }
+
+    const unit = unitResult.rows[0];
+
+    if (!unit.tenant_id) {
+      return res.json({
+        success: true,
+        data: {
+          unit_code: unitCode,
+          property_name: unit.property_name,
+          status: 'no_tenant',
+          message: 'No active tenant allocated to this unit'
+        }
+      });
+    }
+
+    // Get payment summary for the month
+    const paymentSummaryQuery = `
+      SELECT 
+        COALESCE(SUM(amount), 0) as total_paid,
+        COUNT(*) as payment_count
+      FROM rent_payments 
+      WHERE unit_id = $1 
+      AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $2::date)
+      AND status = 'completed'
+    `;
+
+    const summaryResult = await pool.query(paymentSummaryQuery, [
+      unit.id,
+      `${targetMonth}-01`
+    ]);
+
+    const totalPaid = parseFloat(summaryResult.rows[0].total_paid);
+    const monthlyRent = parseFloat(unit.monthly_rent);
+    const balance = monthlyRent - totalPaid;
+    const isFullyPaid = balance <= 0;
+    const paymentCount = parseInt(summaryResult.rows[0].payment_count);
+
+    // Get payment history for the month
+    const paymentHistoryQuery = `
+      SELECT * FROM rent_payments 
+      WHERE unit_id = $1 
+      AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $2::date)
+      ORDER BY payment_date DESC
+    `;
+
+    const historyResult = await pool.query(paymentHistoryQuery, [
+      unit.id,
+      `${targetMonth}-01`
+    ]);
+
+    // Get future payment status (advance payments)
+    const futurePaymentsQuery = `
+      SELECT 
+        DATE_TRUNC('month', payment_month) as month,
+        COALESCE(SUM(amount), 0) as total_paid
+      FROM rent_payments 
+      WHERE unit_id = $1 
+      AND DATE_TRUNC('month', payment_month) > DATE_TRUNC('month', $2::date)
+      AND status = 'completed'
+      GROUP BY DATE_TRUNC('month', payment_month)
+      ORDER BY month ASC
+    `;
+
+    const futureResult = await pool.query(futurePaymentsQuery, [
+      unit.id,
+      `${targetMonth}-01`
+    ]);
+
+    const futurePayments = futureResult.rows.map(row => ({
+      month: new Date(row.month).toISOString().slice(0, 7),
+      total_paid: parseFloat(row.total_paid),
+      is_fully_paid: parseFloat(row.total_paid) >= monthlyRent
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        unit_code: unitCode,
+        property_name: unit.property_name,
+        tenant_name: `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+        tenant_phone: unit.tenant_phone,
+        monthly_rent: monthlyRent,
+        total_paid: totalPaid,
+        balance: balance,
+        is_fully_paid: isFullyPaid,
+        payment_count: paymentCount,
+        payment_history: historyResult.rows,
+        future_payments: futurePayments,
+        current_month: targetMonth
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting payment status by unit code:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get payment status',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Send balance reminders for overdue payments
+const sendBalanceReminders = async (req, res) => {
+  try {
+    console.log('🔔 Sending balance reminders...');
+
+    // Find units with outstanding balances for current month
+    const currentDate = new Date();
+    const currentMonth = currentDate.toISOString().slice(0, 7); // YYYY-MM
+
+    const overdueUnitsQuery = `
+      SELECT 
+        pu.unit_code,
+        p.name as property_name,
+        ta.tenant_id,
+        t.first_name as tenant_first_name,
+        t.last_name as tenant_last_name,
+        t.phone_number as tenant_phone,
+        ta.monthly_rent,
+        COALESCE(SUM(rp.amount), 0) as total_paid,
+        (ta.monthly_rent - COALESCE(SUM(rp.amount), 0)) as balance,
+        ta.rent_due_day,
+        ta.grace_period_days
+      FROM property_units pu
+      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
+      LEFT JOIN tenants t ON ta.tenant_id = t.id
+      LEFT JOIN rent_payments rp ON pu.id = rp.unit_id 
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
+        AND rp.status = 'completed'
+      WHERE ta.tenant_id IS NOT NULL
+      GROUP BY pu.id, p.name, ta.tenant_id, t.first_name, t.last_name, t.phone_number, 
+               ta.monthly_rent, ta.rent_due_day, ta.grace_period_days
+      HAVING (ta.monthly_rent - COALESCE(SUM(rp.amount), 0)) > 0
+    `;
+
+    const overdueResult = await pool.query(overdueUnitsQuery, [`${currentMonth}-01`]);
+    const overdueUnits = overdueResult.rows;
+
+    console.log(`📊 Found ${overdueUnits.length} units with outstanding balances`);
+
+    const results = {
+      total_units: overdueUnits.length,
+      sms_sent: 0,
+      errors: 0,
+      details: []
+    };
+
+    // Send reminders for each overdue unit
+    for (const unit of overdueUnits) {
+      try {
+        const dueDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), unit.rent_due_day);
+        const gracePeriodEnd = new Date(dueDate);
+        gracePeriodEnd.setDate(gracePeriodEnd.getDate() + unit.grace_period_days);
+
+        // Only send reminder if we're past the due date but within grace period
+        if (currentDate > dueDate && currentDate <= gracePeriodEnd) {
+          const smsResult = await SMSService.sendBalanceReminder(
+            unit.tenant_phone,
+            `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+            unit.unit_code,
+            unit.balance,
+            currentMonth,
+            gracePeriodEnd.toISOString().slice(0, 10)
+          );
+
+          results.details.push({
+            unit_code: unit.unit_code,
+            tenant_name: `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+            balance: unit.balance,
+            sms_sent: smsResult.success,
+            error: smsResult.error
+          });
+
+          if (smsResult.success) {
+            results.sms_sent++;
+          } else {
+            results.errors++;
+          }
+
+          console.log(`✅ Balance reminder sent for ${unit.unit_code}: ${smsResult.success ? 'Success' : 'Failed'}`);
+        }
+      } catch (error) {
+        console.error(`❌ Error sending reminder for ${unit.unit_code}:`, error);
+        results.errors++;
+        results.details.push({
+          unit_code: unit.unit_code,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Balance reminders sent: ${results.sms_sent} successful, ${results.errors} failed`,
+      data: results
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR sending balance reminders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send balance reminders',
+      error: error.message
+    });
   }
 };
 
@@ -1438,7 +1909,36 @@ const checkPaymentStatus = async (req, res) => {
   }
 };
 
-// ... [other existing functions like getPaymentById, etc.]
+// NEW: Test SMS service
+const testSMSService = async (req, res) => {
+  try {
+    const { phone, message } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number is required'
+      });
+    }
+
+    const testMessage = message || 'Test SMS from Rental System. If you receive this, SMS service is working!';
+    const result = await SMSService.sendSMS(phone, testMessage);
+
+    res.json({
+      success: true,
+      message: 'SMS test completed',
+      result
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR testing SMS service:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to test SMS service',
+      error: error.message
+    });
+  }
+};
 
 module.exports = {
   initiateSTKPush,
@@ -1636,5 +2136,11 @@ module.exports = {
   getFuturePaymentsStatus,
   trackRentPayment,
   recordCarryForward,
-  sendPaymentNotifications
+  sendPaymentNotifications,
+
+  // NEW: Export paybill payment functions
+  processPaybillPayment,
+  getPaymentStatusByUnitCode,
+  sendBalanceReminders,
+  testSMSService
 };
