@@ -27,28 +27,6 @@ const LoadingSpinner = () => (
   </div>
 );
 
-// Protected Route component - FIXED VERSION
-const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user, loading } = useAuth()
-  const navigate = useNavigate()
-  
-  if (loading) {
-    return <LoadingSpinner />
-  }
-  
-  if (!user) {
-    console.log('No user, redirecting to login');
-    return <Navigate to="/login" replace />
-  }
-  
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
-    console.log('User role not allowed, redirecting to unauthorized');
-    return <Navigate to="/unauthorized" replace />
-  }
-  
-  return <Layout>{children}</Layout>
-}
-
 // Layout component with notification bell
 const Layout = ({ children }) => {
   const { user, logout } = useAuth()
@@ -200,6 +178,28 @@ const Layout = ({ children }) => {
   )
 }
 
+// Protected Route component - FIXED VERSION
+const ProtectedRoute = ({ children, allowedRoles }) => {
+  const { user, loading } = useAuth()
+  const navigate = useNavigate()
+  
+  if (loading) {
+    return <LoadingSpinner />
+  }
+  
+  if (!user) {
+    console.log('No user, redirecting to login');
+    return <Navigate to="/login" replace />
+  }
+  
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    console.log('User role not allowed, redirecting to unauthorized');
+    return <Navigate to="/unauthorized" replace />
+  }
+  
+  return <Layout>{children}</Layout>
+}
+
 // Public Route - redirect to dashboard if already authenticated
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth()
@@ -224,7 +224,8 @@ const PublicRoute = ({ children }) => {
   return children
 }
 
-function AppRoutes() {
+// Move AppRoutes inside the providers to ensure proper context availability
+function AppContent() {
   const { user, loading } = useAuth()
 
   // Show loading spinner while checking authentication
@@ -370,7 +371,7 @@ function App() {
                     <ComplaintProvider>
                       <ReportProvider>
                         <SystemSettingsProvider>
-                          <AppRoutes />
+                          <AppContent />
                         </SystemSettingsProvider>
                       </ReportProvider>
                     </ComplaintProvider>

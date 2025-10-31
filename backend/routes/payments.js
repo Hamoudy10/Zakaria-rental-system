@@ -10,6 +10,103 @@ console.log('🔗 Payments routes loaded - checking for controller...');
 // FIXED: Use the actual auth middleware instead of mock
 const { protect } = require('../middleware/authMiddleware');
 
+// ==================== NEW PAYBILL PAYMENT ROUTES ====================
+
+// NEW: Process M-Pesa paybill payment using unit code
+router.post('/paybill', protect, async (req, res) => {
+  console.log('💰 Paybill Payment Request Received:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.processPaybillPayment...');
+    await paymentController.processPaybillPayment(req, res);
+    console.log('✅ Paybill payment processed successfully');
+  } catch (error) {
+    console.error('❌ ERROR in paybill payment route:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in paybill payment route',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Get payment status by unit code
+router.get('/unit/:unitCode/status', protect, async (req, res) => {
+  console.log('📊 Payment Status by Unit Code Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    params: req.params,
+    query: req.query,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getPaymentStatusByUnitCode...');
+    await paymentController.getPaymentStatusByUnitCode(req, res);
+    console.log('✅ Payment status by unit code fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR in payment status by unit code:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in payment status by unit code',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Send balance reminders for overdue payments
+router.post('/send-reminders', protect, async (req, res) => {
+  console.log('🔔 Send Balance Reminders Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.sendBalanceReminders...');
+    await paymentController.sendBalanceReminders(req, res);
+    console.log('✅ Balance reminders sent successfully');
+  } catch (error) {
+    console.error('❌ ERROR in sending balance reminders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in sending balance reminders',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Test SMS service
+router.post('/test-sms', protect, async (req, res) => {
+  console.log('📱 Test SMS Service Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.testSMSService...');
+    await paymentController.testSMSService(req, res);
+    console.log('✅ SMS test completed successfully');
+  } catch (error) {
+    console.error('❌ ERROR in SMS test:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in SMS test',
+      error: error.message
+    });
+  }
+});
+
+// ==================== EXISTING PAYMENT ROUTES (UPDATED) ====================
+
 // M-Pesa payment routes - FIXED: Using real auth middleware
 router.post('/mpesa', protect, async (req, res) => {
   console.log('💰 M-Pesa STK Push Request Received:', {
@@ -108,6 +205,30 @@ router.get('/history/:tenantId/:unitId', protect, async (req, res) => {
   }
 });
 
+// NEW: Get future payments status
+router.get('/future/:tenantId/:unitId', protect, async (req, res) => {
+  console.log('🔮 Future Payments Status Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    params: req.params,
+    query: req.query,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getFuturePaymentsStatus...');
+    await paymentController.getFuturePaymentsStatus(req, res);
+    console.log('✅ Future payments status fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR in future payments status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in future payments status',
+      error: error.message
+    });
+  }
+});
+
 // ADDED: M-Pesa configuration test route
 router.get('/mpesa/test-config', protect, async (req, res) => {
   console.log('🔧 M-Pesa Configuration Test Request:', {
@@ -199,6 +320,7 @@ router.get('/salary/agent/:agentId', protect, async (req, res) => {
   }
 });
 
+// M-Pesa callback route (no auth required - called by Safaricom)
 router.post('/mpesa-callback', async (req, res) => {
   console.log('📞 M-Pesa Callback Received:', {
     method: req.method,
@@ -221,6 +343,7 @@ router.post('/mpesa-callback', async (req, res) => {
   }
 });
 
+// Check M-Pesa payment status
 router.get('/mpesa/status/:checkoutRequestId', protect, async (req, res) => {
   console.log('📊 M-Pesa Status Check Request:', {
     method: req.method,
