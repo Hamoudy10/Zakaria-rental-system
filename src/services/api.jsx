@@ -133,7 +133,7 @@ export const notificationAPI = {
   healthCheck: () => api.get('/notifications/health')
 };
 
-// Enhanced Payment API with salary payments
+// Enhanced Payment API with salary payments and paybill integration
 export const paymentAPI = {
   // Payment operations
   getPayments: (params = {}) => api.get('/payments', { params }),
@@ -152,6 +152,16 @@ export const paymentAPI = {
   verifyMpesaTransaction: (transactionId) => api.get(`/payments/mpesa/verify/${transactionId}`),
   getMpesaTransactions: () => api.get('/payments/mpesa/transactions'),
   
+  // NEW: Paybill payment endpoints
+  processPaybillPayment: (paymentData) => api.post('/payments/paybill', paymentData),
+  getPaymentStatusByUnitCode: (unitCode, month = null) => {
+    const params = month ? { month } : {};
+    return api.get(`/payments/unit/${unitCode}/status`, { params });
+  },
+  sendBalanceReminders: () => api.post('/payments/send-reminders'),
+  testSMSService: (testData) => api.post('/payments/test-sms', testData),
+  getPaybillStats: (period = '30days') => api.get('/payments/paybill/stats', { params: { period } }),
+  
   // Statistics and reports
   getPaymentStats: () => api.get('/payments/stats/overview'),
   getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
@@ -161,16 +171,23 @@ export const paymentAPI = {
   // Tenant payment functions
   getTenantPayments: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
   getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`),
-  getPaymentSummary: (tenantId) => api.get(`/payments/summary/${tenantId}`),
+  getPaymentSummary: (tenantId, unitId) => api.get(`/payments/summary/${tenantId}/${unitId}`),
   
   // Payment status and updates
   checkPaymentStatus: (checkoutRequestId) => api.get(`/payments/mpesa/status/${checkoutRequestId}`),
   updatePayment: (paymentId, updates) => api.put(`/payments/${paymentId}`, updates),
   
+  // NEW: Enhanced payment tracking endpoints
+  getFuturePaymentsStatus: (tenantId, unitId, params = {}) => 
+    api.get(`/payments/future/${tenantId}/${unitId}`, { params }),
+  
   // Salary payments
   processSalaryPayment: (salaryData) => api.post('/payments/salary', salaryData),
   getSalaryPayments: (params = {}) => api.get('/payments/salary', { params }),
-  getAgentSalaryPayments: (agentId) => api.get(`/payments/salary/agent/${agentId}`)
+  getAgentSalaryPayments: (agentId) => api.get(`/payments/salary/agent/${agentId}`),
+
+  // M-Pesa configuration test
+  testMpesaConfig: () => api.get('/payments/mpesa/test-config')
 };
 
 // Mock M-Pesa API for testing
@@ -179,6 +196,17 @@ export const mockMpesaAPI = {
   confirmPayment: (transactionId) => api.post(`/payments/mpesa/confirm/${transactionId}`),
   checkStatus: (transactionId) => api.get(`/payments/mpesa/status/${transactionId}`),
   simulateCallback: (callbackData) => api.post('/payments/mpesa/simulate-callback', callbackData),
+};
+
+// Paybill API for external integrations
+export const paybillAPI = {
+  processPayment: (paymentData) => api.post('/payments/paybill', paymentData),
+  getPaymentStatus: (unitCode, month = null) => {
+    const params = month ? { month } : {};
+    return api.get(`/payments/unit/${unitCode}/status`, { params });
+  },
+  sendReminders: () => api.post('/payments/send-reminders'),
+  getStats: (period = '30days') => api.get('/payments/paybill/stats', { params: { period } })
 };
 
 // Auth API
@@ -568,6 +596,7 @@ export const API = {
   paymentUtils: paymentUtils,
   notificationUtils: notificationUtils,
   mockMpesa: mockMpesaAPI,
+  paybill: paybillAPI, // NEW: Added paybill API
 };
 
 // Health check function

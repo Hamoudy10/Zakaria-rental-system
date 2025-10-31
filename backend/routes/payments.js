@@ -4,6 +4,7 @@ const pool = require('../config/database');
 
 // Import the payment controller
 const paymentController = require('../controllers/paymentController');
+const mpesaController = require('../controllers/mpesaController');
 
 console.log('🔗 Payments routes loaded - checking for controller...');
 
@@ -100,6 +101,52 @@ router.post('/test-sms', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error in SMS test',
+      error: error.message
+    });
+  }
+});
+
+// NEW: M-Pesa paybill callback route (called by Safaricom)
+router.post('/mpesa-paybill-callback', async (req, res) => {
+  console.log('📞 M-Pesa Paybill Callback Received:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    headers: req.headers
+  });
+  
+  try {
+    console.log('🔄 Calling mpesaController.handlePaybillPayment...');
+    await mpesaController.handlePaybillPayment(req, res);
+    console.log('✅ M-Pesa paybill callback handled successfully');
+  } catch (error) {
+    console.error('❌ CRITICAL ERROR in M-Pesa paybill callback:', error);
+    // Still return success to M-Pesa to avoid repeated callbacks
+    res.status(200).json({ 
+      ResultCode: 0, 
+      ResultDesc: 'Success' 
+    });
+  }
+});
+
+// NEW: Get paybill statistics
+router.get('/paybill/stats', protect, async (req, res) => {
+  console.log('📊 GET Paybill Stats Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    query: req.query,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling mpesaController.getPaybillStats...');
+    await mpesaController.getPaybillStats(req, res);
+    console.log('✅ Paybill stats fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR getting paybill stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error getting paybill stats',
       error: error.message
     });
   }
@@ -1360,7 +1407,7 @@ router.delete('/:id', protect, async (req, res) => {
     console.log(`🔄 Deleting payment with ID: ${id}`);
     
     // Check if payment exists
-    const paymentCheck = await client.query(
+    const paymentCheck = await pool.query(
       'SELECT id, mpesa_receipt_number, amount, is_advance_payment FROM rent_payments WHERE id = $1',
       [id]
     );
