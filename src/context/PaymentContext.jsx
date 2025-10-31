@@ -268,6 +268,90 @@ export const PaymentProvider = ({ children }) => {
     }
   }, [fetchPayments, pollPaymentStatus]);
 
+  // NEW: Process paybill payment
+  const processPaybillPayment = useCallback(async (paymentData) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await paymentAPI.processPaybillPayment(paymentData);
+      if (response.success) {
+        await fetchPayments();
+        return response;
+      }
+      throw new Error(response.message || 'Failed to process paybill payment');
+    } catch (err) {
+      console.error('Error processing paybill payment:', err);
+      setError('Failed to process paybill payment');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchPayments]);
+
+  // NEW: Get payment status by unit code
+  const getPaymentStatusByUnitCode = useCallback(async (unitCode, month = null) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await paymentAPI.getPaymentStatusByUnitCode(unitCode, month);
+      return response.data;
+    } catch (err) {
+      console.error('Error getting payment status:', err);
+      setError('Failed to get payment status');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // NEW: Send balance reminders
+  const sendBalanceReminders = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await paymentAPI.sendBalanceReminders();
+      return response.data;
+    } catch (err) {
+      console.error('Error sending balance reminders:', err);
+      setError('Failed to send balance reminders');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // NEW: Test SMS service
+  const testSMSService = useCallback(async (testData) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await paymentAPI.testSMSService(testData);
+      return response.data;
+    } catch (err) {
+      console.error('Error testing SMS service:', err);
+      setError('Failed to test SMS service');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // NEW: Get paybill statistics
+  const getPaybillStats = useCallback(async (period = '30days') => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await paymentAPI.getPaybillStats(period);
+      return response.data;
+    } catch (err) {
+      console.error('Error getting paybill stats:', err);
+      setError('Failed to get paybill statistics');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // NEW: Function to check payment status (for polling)
   const checkPaymentStatus = useCallback(async (checkoutRequestId) => {
     try {
@@ -670,6 +754,13 @@ export const PaymentProvider = ({ children }) => {
     checkPaymentStatus,
     pollPaymentStatus,
     
+    // NEW: Paybill functions
+    processPaybillPayment,
+    getPaymentStatusByUnitCode,
+    sendBalanceReminders,
+    testSMSService,
+    getPaybillStats,
+    
     // Allocation functions
     getAllocationByTenantId,
     getUpcomingPayments,
@@ -702,6 +793,11 @@ export const PaymentProvider = ({ children }) => {
     processMpesaPayment,
     checkPaymentStatus,
     pollPaymentStatus,
+    processPaybillPayment,
+    getPaymentStatusByUnitCode,
+    sendBalanceReminders,
+    testSMSService,
+    getPaybillStats,
     getAllocationByTenantId,
     getUpcomingPayments,
     getPaymentSummary,
