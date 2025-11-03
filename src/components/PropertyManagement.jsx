@@ -64,29 +64,29 @@ const PropertyManagement = () => {
     if (!isOpen) return null
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-        <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-2 md:p-4">
+        <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] md:max-h-[85vh] flex flex-col mx-2">
           {/* Compact Header */}
           <div className="flex items-center justify-between p-3 border-b border-gray-200 flex-shrink-0">
-            <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+            <h2 className="text-base md:text-lg font-semibold text-gray-900">{title}</h2>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
+              className="text-gray-400 hover:text-gray-600 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center touch-manipulation"
               type="button"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
 
           {/* Expanded Form Content Area */}
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="space-y-4">
+          <div className="flex-1 overflow-y-auto p-3 md:p-4">
+            <div className="space-y-3 md:space-y-4">
               {/* Property Code and Name */}
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                  <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                     Property Code *
                   </label>
                   <input
@@ -94,13 +94,13 @@ const PropertyManagement = () => {
                     placeholder="e.g., WL001"
                     value={formData.property_code}
                     onChange={(e) => handleInputChange('property_code', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] touch-manipulation"
                     required
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                  <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                     Property Name *
                   </label>
                   <input
@@ -108,7 +108,7 @@ const PropertyManagement = () => {
                     placeholder="e.g., Westlands Apartments"
                     value={formData.name}
                     onChange={(e) => handleInputChange('name', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] touch-manipulation"
                     required
                   />
                 </div>
@@ -116,13 +116,13 @@ const PropertyManagement = () => {
 
               {/* Unit Type Field */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
+                <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                   Unit Type *
                 </label>
                 <select
                   value={formData.unit_type}
                   onChange={(e) => handleInputChange('unit_type', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] touch-manipulation"
                   required
                 >
                   <option value="bedsitter">Bedsitter</option>
@@ -135,13 +135,13 @@ const PropertyManagement = () => {
 
               {/* Address */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
+                <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                   Address *
                 </label>
                 <textarea
                   value={formData.address}
                   onChange={(e) => handleInputChange('address', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-vertical touch-manipulation"
                   rows="2"
                   placeholder="Full property address"
                   required
@@ -149,29 +149,29 @@ const PropertyManagement = () => {
               </div>
 
               {/* County and Town */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                  <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                     County *
                   </label>
                   <input
                     type="text"
                     value={formData.county}
                     onChange={(e) => handleInputChange('county', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] touch-manipulation"
                     placeholder="e.g., Nairobi"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                  <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                     Town/Area *
                   </label>
                   <input
                     type="text"
                     value={formData.town}
                     onChange={(e) => handleInputChange('town', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] touch-manipulation"
                     placeholder="e.g., Westlands"
                     required
                   />
@@ -180,13 +180,13 @@ const PropertyManagement = () => {
 
               {/* Description */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
+                <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                   Description
                 </label>
                 <textarea
                   value={formData.description}
                   onChange={(e) => handleInputChange('description', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-vertical touch-manipulation"
                   rows="3"
                   placeholder="Property features and amenities..."
                 />
@@ -194,7 +194,7 @@ const PropertyManagement = () => {
 
               {/* Total Units - Note: This is now informational only for new properties */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
+                <label className="block text-xs md:text-sm font-medium text-gray-600 mb-1">
                   Initial Total Units *
                 </label>
                 <input
@@ -202,7 +202,7 @@ const PropertyManagement = () => {
                   min="1"
                   value={formData.total_units}
                   onChange={(e) => handleInputChange('total_units', parseInt(e.target.value) || 0)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 max-w-xs"
+                  className="w-full md:max-w-xs px-3 py-3 text-sm md:text-base border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] touch-manipulation"
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
@@ -213,20 +213,20 @@ const PropertyManagement = () => {
           </div>
 
           {/* Compact Footer with Buttons */}
-          <div className="flex justify-end space-x-2 p-3 border-t border-gray-200 bg-gray-50 flex-shrink-0">
+          <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-2 p-3 border-t border-gray-200 bg-gray-50 flex-shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-red-600 border border-transparent rounded hover:bg-red-700 focus:outline-none focus:ring-1 focus:ring-red-500"
+              className="px-4 py-3 text-sm md:text-base font-medium text-white bg-red-600 border border-transparent rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 min-h-[44px] touch-manipulation transition-colors w-full sm:w-auto"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={handleLocalSubmit}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-transparent rounded hover:bg-blue-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="px-4 py-3 text-sm md:text-base font-medium text-white bg-blue-600 border border-transparent rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation transition-colors w-full sm:w-auto"
             >
-              {isEdit ? 'Update' : 'Create'}
+              {isEdit ? 'Update Property' : 'Create Property'}
             </button>
           </div>
         </div>
@@ -270,18 +270,19 @@ const PropertyManagement = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="space-y-4 md:space-y-6 px-2 md:px-0">
+      {/* Header Section */}
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Property Management</h2>
-          <p className="text-gray-600">Manage properties and their rental units</p>
+          <h2 className="text-xl md:text-2xl font-bold text-gray-900">Property Management</h2>
+          <p className="text-sm md:text-base text-gray-600">Manage properties and their rental units</p>
         </div>
         <button
           onClick={() => {
             setEditingProperty(null)
             setShowPropertyModal(true)
           }}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium"
+          className="bg-blue-600 text-white px-4 py-3 rounded-md hover:bg-blue-700 text-sm md:text-base font-medium min-h-[44px] touch-manipulation transition-colors w-full sm:w-auto"
         >
           Add New Property
         </button>
@@ -306,20 +307,20 @@ const PropertyManagement = () => {
         } : null}
       />
 
-      {/* Properties Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {/* Properties Grid - Mobile Responsive */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
         {properties.map((property) => {
           const occupancyRate = getOccupancyRate(property)
           const occupiedUnits = property.occupied_units || (property.total_units - property.available_units)
           
           return (
-            <div key={property.id} className="bg-white rounded-lg shadow-md border border-gray-200 p-4 hover:shadow-lg transition-shadow duration-200">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-900">{property.name}</h3>
-                  <p className="text-sm text-gray-500">{property.property_code}</p>
+            <div key={property.id} className="bg-white rounded-lg shadow-md border border-gray-200 p-3 md:p-4 hover:shadow-lg transition-shadow duration-200">
+              <div className="flex justify-between items-start mb-3 md:mb-4">
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base md:text-lg font-semibold text-gray-900 truncate">{property.name}</h3>
+                  <p className="text-xs md:text-sm text-gray-500 truncate">{property.property_code}</p>
                 </div>
-                <div className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                <div className={`px-2 py-1 rounded-full text-xs font-semibold ml-2 ${
                   occupancyRate >= 90 ? 'bg-green-100 text-green-800' :
                   occupancyRate >= 70 ? 'bg-yellow-100 text-yellow-800' :
                   'bg-red-100 text-red-800'
@@ -328,55 +329,59 @@ const PropertyManagement = () => {
                 </div>
               </div>
 
-              <div className="space-y-2 mb-4">
-                <p className="text-sm text-gray-600">
+              <div className="space-y-2 mb-3 md:mb-4">
+                <p className="text-xs md:text-sm text-gray-600">
                   <span className="font-medium">Location:</span> {property.town}, {property.county}
                 </p>
-                <p className="text-sm text-gray-600 line-clamp-2">{property.description}</p>
+                <p className="text-xs md:text-sm text-gray-600 line-clamp-2">{property.description}</p>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 mb-4">
+              {/* Stats Grid - Mobile Optimized */}
+              <div className="grid grid-cols-3 gap-2 mb-3 md:mb-4">
                 <div className="text-center p-2 bg-gray-50 rounded">
-                  <div className="text-lg font-bold text-gray-900">{property.total_units}</div>
+                  <div className="text-base md:text-lg font-bold text-gray-900">{property.total_units}</div>
                   <div className="text-xs text-gray-500">Total Units</div>
                 </div>
                 <div className="text-center p-2 bg-green-50 rounded">
-                  <div className="text-lg font-bold text-green-600">{property.available_units}</div>
+                  <div className="text-base md:text-lg font-bold text-green-600">{property.available_units}</div>
                   <div className="text-xs text-gray-500">Available</div>
                 </div>
                 <div className="text-center p-2 bg-blue-50 rounded">
-                  <div className="text-lg font-bold text-blue-600">{occupiedUnits}</div>
+                  <div className="text-base md:text-lg font-bold text-blue-600">{occupiedUnits}</div>
                   <div className="text-xs text-gray-500">Occupied</div>
                 </div>
               </div>
 
-              <div className="flex space-x-2">
+              {/* Action Buttons - Mobile Responsive */}
+              <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
                 <button
                   onClick={() => {
                     setSelectedProperty(property)
                     setShowUnits(showUnits === property.id ? null : property.id)
                   }}
-                  className="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 text-sm flex-1"
+                  className="bg-blue-600 text-white px-3 py-3 rounded hover:bg-blue-700 text-sm min-h-[44px] touch-manipulation transition-colors flex-1"
                 >
                   {showUnits === property.id ? 'Hide Units' : 'Manage Units'}
                 </button>
-                <button
-                  onClick={() => handleEditProperty(property)}
-                  className="bg-gray-600 text-white px-3 py-2 rounded hover:bg-gray-700 text-sm"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDeleteProperty(property.id)}
-                  className="bg-red-600 text-white px-3 py-2 rounded hover:bg-red-700 text-sm"
-                >
-                  Delete
-                </button>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => handleEditProperty(property)}
+                    className="bg-gray-600 text-white px-3 py-3 rounded hover:bg-gray-700 text-sm min-h-[44px] touch-manipulation transition-colors flex-1"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDeleteProperty(property.id)}
+                    className="bg-red-600 text-white px-3 py-3 rounded hover:bg-red-700 text-sm min-h-[44px] touch-manipulation transition-colors flex-1"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
 
               {/* Units Section */}
               {showUnits === property.id && (
-                <div className="mt-4 border-t pt-4">
+                <div className="mt-3 md:mt-4 border-t pt-3 md:pt-4">
                   <UnitManagement property={property} />
                 </div>
               )}
@@ -385,14 +390,15 @@ const PropertyManagement = () => {
         })}
       </div>
 
+      {/* Empty State */}
       {properties.length === 0 && (
-        <div className="bg-white rounded-lg shadow-md border border-gray-200 text-center py-12">
-          <div className="text-gray-400 text-6xl mb-4">🏠</div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">No Properties Yet</h3>
-          <p className="text-gray-600 mb-4">Get started by adding your first property</p>
+        <div className="bg-white rounded-lg shadow-md border border-gray-200 text-center py-8 md:py-12">
+          <div className="text-gray-400 text-4xl md:text-6xl mb-3 md:mb-4">🏠</div>
+          <h3 className="text-base md:text-lg font-semibold text-gray-900 mb-2">No Properties Yet</h3>
+          <p className="text-sm md:text-base text-gray-600 mb-4">Get started by adding your first property</p>
           <button
             onClick={() => setShowPropertyModal(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium"
+            className="bg-blue-600 text-white px-4 py-3 rounded-md hover:bg-blue-700 text-sm md:text-base font-medium min-h-[44px] touch-manipulation transition-colors"
           >
             Add Your First Property
           </button>

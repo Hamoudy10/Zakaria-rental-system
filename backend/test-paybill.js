@@ -1,97 +1,39 @@
-const axios = require('axios');
+# Africa's Talking Specific Test
+Write-Host "`n🎯 AFRICA'S TALKING SANDBOX SPECIFIC TEST" -ForegroundColor Green
 
-const testPaybillPayment = async () => {
-  const testPayment = {
-    unit_code: 'PROP001-UNIT01', // Use an actual unit code from your database
-    amount: 5000,
-    mpesa_receipt_number: 'TEST' + Date.now(),
-    phone_number: '254712345678',
-    payment_month: new Date().toISOString().slice(0, 7)
-  };
+$ATTestNumbers = @(
+    "+254742773562"  # Official test number
+)
 
-  try {
-    console.log('🧪 Testing paybill payment:', testPayment);
+foreach ($Number in $ATTestNumbers) {
+    Write-Host "`nTesting Africa's Talking Sandbox: $Number" -ForegroundColor Yellow
     
-    const response = await axios.post('http://localhost:3001/api/payments/paybill', testPayment, {
-      headers: {
-        'Authorization': `Bearer ${process.env.TEST_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
+    $TestBody = @{
+        unit_code = "UNGAAPT005"
+        amount = 1000
+        mpesa_receipt_number = "AT_TEST_$(Get-Date -Format 'yyyyMMddHHmmss')"
+        phone_number = $Number
+        transaction_date = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
+        payment_month = (Get-Date).ToString("yyyy-MM")
+    } | ConvertTo-Json
 
-    console.log('✅ Paybill test successful:', response.data);
-  } catch (error) {
-    console.error('❌ Paybill test failed:', error.response?.data || error.message);
-  }
-};
+    try {
+        $Response = Invoke-RestMethod -Uri "http://localhost:3001/api/payments/paybill" `
+            -Method POST `
+            -Headers @{
+                "Content-Type" = "application/json"
+                "Authorization" = "Bearer $Token"
+            } `
+            -Body $TestBody
 
-// Test SMS service
-const testSMSService = async () => {
-  try {
-    const response = await axios.post('http://localhost:3001/api/payments/test-sms', {
-      phone: '254712345678',
-      message: 'Test SMS from Rental System - Paybill integration working!'
-    }, {
-      headers: {
-        'Authorization': `Bearer ${process.env.TEST_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    console.log('✅ SMS test successful:', response.data);
-  } catch (error) {
-    console.error('❌ SMS test failed:', error.response?.data || error.message);
-  }
-};
-
-// Run tests
-testPaybillPayment();
-testSMSService();const axios = require('axios');
-
-const testPaybillPayment = async () => {
-  const testPayment = {
-    unit_code: 'PROP001-UNIT01', // Use an actual unit code from your database
-    amount: 5000,
-    mpesa_receipt_number: 'TEST' + Date.now(),
-    phone_number: '254712345678',
-    payment_month: new Date().toISOString().slice(0, 7)
-  };
-
-  try {
-    console.log('🧪 Testing paybill payment:', testPayment);
-    
-    const response = await axios.post('http://localhost:3001/api/payments/paybill', testPayment, {
-      headers: {
-        'Authorization': `Bearer ${process.env.TEST_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    console.log('✅ Paybill test successful:', response.data);
-  } catch (error) {
-    console.error('❌ Paybill test failed:', error.response?.data || error.message);
-  }
-};
-
-// Test SMS service
-const testSMSService = async () => {
-  try {
-    const response = await axios.post('http://localhost:3001/api/payments/test-sms', {
-      phone: '254712345678',
-      message: 'Test SMS from Rental System - Paybill integration working!'
-    }, {
-      headers: {
-        'Authorization': `Bearer ${process.env.TEST_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    console.log('✅ SMS test successful:', response.data);
-  } catch (error) {
-    console.error('❌ SMS test failed:', error.response?.data || error.message);
-  }
-};
-
-// Run tests
-testPaybillPayment();
-testSMSService();
+        Write-Host "✅ Payment + SMS Sent to $Number" -ForegroundColor Green
+        Write-Host "   Payment ID: $($Response.payment.id)" -ForegroundColor White
+        Write-Host "   Check Africa's Talking dashboard for SMS status" -ForegroundColor Yellow
+        
+        # Wait between tests
+        Start-Sleep -Seconds 2
+        
+    } catch {
+        Write-Host "❌ Failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}

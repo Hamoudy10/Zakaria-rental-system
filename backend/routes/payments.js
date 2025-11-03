@@ -11,6 +11,17 @@ console.log('🔗 Payments routes loaded - checking for controller...');
 // FIXED: Use the actual auth middleware instead of mock
 const { protect } = require('../middleware/authMiddleware');
 
+// Add this route to debug environment variables
+router.get('/debug-env', (req, res) => {
+  res.json({
+    SMS_API_KEY: process.env.SMS_API_KEY ? '✅ Set' : '❌ Missing',
+    SMS_SENDER_ID: process.env.SMS_SENDER_ID ? '✅ Set' : '❌ Missing', 
+    SMS_USERNAME: process.env.SMS_USERNAME ? '✅ Set' : '❌ Missing',
+    SMS_BASE_URL: process.env.SMS_BASE_URL ? '✅ Set' : '❌ Missing',
+    NODE_ENV: process.env.NODE_ENV
+  });
+});
+
 // ==================== NEW PAYBILL PAYMENT ROUTES ====================
 
 // NEW: Process M-Pesa paybill payment using unit code
@@ -412,6 +423,8 @@ router.get('/mpesa/status/:checkoutRequestId', protect, async (req, res) => {
     });
   }
 });
+
+// ==================== PAYMENT MANAGEMENT ROUTES ====================
 
 // GET ALL PAYMENTS
 router.get('/', protect, async (req, res) => {
@@ -1478,6 +1491,100 @@ router.delete('/:id', protect, async (req, res) => {
   } finally {
     console.log('🔄 Releasing database client...');
     client.release();
+  }
+});
+
+// ==================== NEW PAYMENT REMINDER ROUTES ====================
+
+// NEW: Get overdue reminders
+router.get('/overdue/reminders', protect, async (req, res) => {
+  console.log('🔔 GET Overdue Reminders Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    query: req.query,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getOverdueReminders...');
+    await paymentController.getOverdueReminders(req, res);
+    console.log('✅ Overdue reminders fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR in overdue reminders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in overdue reminders',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Send overdue reminders
+router.post('/overdue/reminders/send', protect, async (req, res) => {
+  console.log('📤 POST Send Overdue Reminders Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.sendOverdueReminders...');
+    await paymentController.sendOverdueReminders(req, res);
+    console.log('✅ Overdue reminders sent successfully');
+  } catch (error) {
+    console.error('❌ ERROR sending overdue reminders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error sending overdue reminders',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Get upcoming reminders
+router.get('/upcoming/reminders', protect, async (req, res) => {
+  console.log('🔔 GET Upcoming Reminders Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    query: req.query,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.getUpcomingReminders...');
+    await paymentController.getUpcomingReminders(req, res);
+    console.log('✅ Upcoming reminders fetched successfully');
+  } catch (error) {
+    console.error('❌ ERROR in upcoming reminders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error in upcoming reminders',
+      error: error.message
+    });
+  }
+});
+
+// NEW: Send upcoming reminders
+router.post('/upcoming/reminders/send', protect, async (req, res) => {
+  console.log('📤 POST Send Upcoming Reminders Request:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    user: req.user
+  });
+  
+  try {
+    console.log('🔄 Calling paymentController.sendUpcomingReminders...');
+    await paymentController.sendUpcomingReminders(req, res);
+    console.log('✅ Upcoming reminders sent successfully');
+  } catch (error) {
+    console.error('❌ ERROR sending upcoming reminders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error sending upcoming reminders',
+      error: error.message
+    });
   }
 });
 
