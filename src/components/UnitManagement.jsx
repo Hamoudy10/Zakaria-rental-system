@@ -175,11 +175,12 @@ const UnitManagement = () => {
   const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="space-y-4 md:space-y-6">
+      {/* Header */}
+      <div className="flex flex-col xs:flex-row justify-between items-start xs:items-center gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Unit Management</h2>
-          <p className="text-gray-600">Manage property units and their relationships to properties</p>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900">Unit Management</h2>
+          <p className="text-xs text-gray-600 mt-1">Manage property units and their relationships to properties</p>
         </div>
         <button
           onClick={() => {
@@ -196,7 +197,7 @@ const UnitManagement = () => {
             })
             setShowUnitModal(true)
           }}
-          className="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-purple-600 text-white px-3 sm:px-4 py-2 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm font-medium transition-colors touch-target w-full xs:w-auto"
           disabled={properties.length === 0}
         >
           Add New Unit
@@ -204,16 +205,16 @@ const UnitManagement = () => {
       </div>
 
       {properties.length === 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 sm:p-4">
           <div className="flex">
             <div className="flex-shrink-0">
-              <span className="text-yellow-400 text-lg">⚠️</span>
+              <span className="text-yellow-400 text-base">⚠️</span>
             </div>
             <div className="ml-3">
               <h3 className="text-sm font-medium text-yellow-800">
                 No Properties Found
               </h3>
-              <div className="mt-2 text-sm text-yellow-700">
+              <div className="mt-1 text-xs text-yellow-700">
                 <p>
                   You need to create properties first before adding units. 
                   Units must be associated with existing properties.
@@ -225,63 +226,63 @@ const UnitManagement = () => {
       )}
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white p-3 sm:p-4 rounded-lg border border-gray-200">
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">{totalUnits}</div>
-            <div className="text-sm text-gray-600">Total Units</div>
+            <div className="text-lg sm:text-xl font-bold text-purple-600">{totalUnits}</div>
+            <div className="text-xs text-gray-600">Total Units</div>
           </div>
         </div>
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white p-3 sm:p-4 rounded-lg border border-gray-200">
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{occupiedUnits}</div>
-            <div className="text-sm text-gray-600">Occupied Units</div>
+            <div className="text-lg sm:text-xl font-bold text-green-600">{occupiedUnits}</div>
+            <div className="text-xs text-gray-600">Occupied Units</div>
           </div>
         </div>
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white p-3 sm:p-4 rounded-lg border border-gray-200">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{availableUnits}</div>
-            <div className="text-sm text-gray-600">Available Units</div>
+            <div className="text-lg sm:text-xl font-bold text-blue-600">{availableUnits}</div>
+            <div className="text-xs text-gray-600">Available Units</div>
           </div>
         </div>
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white p-3 sm:p-4 rounded-lg border border-gray-200">
           <div className="text-center">
-            <div className="text-2xl font-bold text-orange-600">{occupancyRate}%</div>
-            <div className="text-sm text-gray-600">Occupancy Rate</div>
+            <div className="text-lg sm:text-xl font-bold text-orange-600">{occupancyRate}%</div>
+            <div className="text-xs text-gray-600">Occupancy Rate</div>
           </div>
         </div>
       </div>
 
       {/* Add/Edit Unit Modal */}
       {showUnitModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-3 sm:p-4 z-50">
+          <div className="bg-white rounded-lg p-4 sm:p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <h3 className="text-base sm:text-lg font-bold mb-4">
               {editingUnit ? 'Edit Unit' : 'Add New Unit'}
             </h3>
             
             {properties.length === 0 ? (
-              <div className="text-center py-8">
-                <div className="text-4xl mb-2">🏠</div>
-                <p className="text-gray-600">No properties available</p>
-                <p className="text-sm text-gray-500">Create properties first to add units</p>
+              <div className="text-center py-6 sm:py-8">
+                <div className="text-3xl sm:text-4xl mb-2">🏠</div>
+                <p className="text-sm text-gray-600">No properties available</p>
+                <p className="text-xs text-gray-500">Create properties first to add units</p>
               </div>
             ) : (
-              <form onSubmit={editingUnit ? handleUpdateUnit : handleAddUnit} className="space-y-4">
+              <form onSubmit={editingUnit ? handleUpdateUnit : handleAddUnit} className="space-y-3 sm:space-y-4">
                 {/* Property Selection */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Select Property *</label>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700">Select Property *</label>
                   <select
                     value={selectedProperty}
                     onChange={(e) => setSelectedProperty(e.target.value)}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
                     required
                     disabled={!!editingUnit} // Disable when editing since we can't change property
                   >
                     <option value="">Choose a property</option>
                     {properties.map(property => (
                       <option key={property.id} value={property.id}>
-                        {property.name} ({property.property_code}) - {property.address}
+                        {property.name} ({property.property_code})
                       </option>
                     ))}
                   </select>
@@ -292,14 +293,14 @@ const UnitManagement = () => {
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Unit Code *</label>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700">Unit Code *</label>
                     <input
                       type="text"
                       value={newUnit.unit_code}
                       onChange={(e) => setNewUnit({...newUnit, unit_code: e.target.value})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
                       placeholder="e.g., WL001-101"
                       required
                     />
@@ -308,25 +309,25 @@ const UnitManagement = () => {
                     </p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Unit Number *</label>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700">Unit Number *</label>
                     <input
                       type="text"
                       value={newUnit.unit_number}
                       onChange={(e) => setNewUnit({...newUnit, unit_number: e.target.value})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
                       placeholder="e.g., 101"
                       required
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Unit Type *</label>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700">Unit Type *</label>
                     <select
                       value={newUnit.unit_type}
                       onChange={(e) => setNewUnit({...newUnit, unit_type: e.target.value})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
                       required
                     >
                       {Object.entries(unitTypes).map(([value, label]) => (
@@ -335,64 +336,64 @@ const UnitManagement = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Rent Amount (KES) *</label>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700">Rent Amount (KES) *</label>
                     <input
                       type="number"
                       min="0"
                       step="1000"
                       value={newUnit.rent_amount}
                       onChange={(e) => setNewUnit({...newUnit, rent_amount: e.target.value})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
                       required
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Deposit Amount (KES) *</label>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700">Deposit Amount (KES) *</label>
                   <input
                     type="number"
                     min="0"
                     step="1000"
                     value={newUnit.deposit_amount}
                     onChange={(e) => setNewUnit({...newUnit, deposit_amount: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Description</label>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700">Description</label>
                   <textarea
                     value={newUnit.description}
                     onChange={(e) => setNewUnit({...newUnit, description: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    rows="3"
+                    className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
+                    rows="2"
                     placeholder="Describe the unit features, size, amenities, etc."
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Features</label>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">Features</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {availableFeatures.map((feature) => (
-                      <label key={feature} className="flex items-center space-x-2">
+                      <label key={feature} className="flex items-center space-x-2 touch-target">
                         <input
                           type="checkbox"
                           checked={newUnit.features.includes(feature)}
                           onChange={() => toggleFeature(feature)}
-                          className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                          className="h-3 w-3 sm:h-4 sm:w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
                         />
-                        <span className="text-sm text-gray-700">{feature}</span>
+                        <span className="text-xs text-gray-700">{feature}</span>
                       </label>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex space-x-4 pt-4">
+                <div className="flex flex-col xs:flex-row space-y-2 xs:space-y-0 xs:space-x-3 pt-3 sm:pt-4">
                   <button 
                     type="submit" 
-                    className="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="bg-purple-600 text-white px-3 sm:px-4 py-2 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm font-medium transition-colors touch-target flex-1"
                     disabled={!selectedProperty}
                   >
                     {editingUnit ? 'Update Unit' : 'Create Unit'}
@@ -413,7 +414,7 @@ const UnitManagement = () => {
                       })
                       setSelectedProperty('')
                     }}
-                    className="bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 flex-1"
+                    className="bg-gray-500 text-white px-3 sm:px-4 py-2 rounded-md hover:bg-gray-600 text-xs sm:text-sm font-medium transition-colors touch-target flex-1"
                   >
                     Cancel
                   </button>
@@ -425,18 +426,18 @@ const UnitManagement = () => {
       )}
 
       {/* Units List */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-          <h3 className="text-lg font-semibold">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+          <h3 className="text-base sm:text-lg font-semibold">
             All Units ({filteredUnits.length})
             {filterProperty && ` in ${properties.find(p => p.id === filterProperty)?.name}`}
           </h3>
           
-          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <div className="flex flex-col xs:flex-row gap-2 w-full sm:w-auto">
             <select
               value={filterProperty}
               onChange={(e) => setFilterProperty(e.target.value)}
-              className="w-full sm:w-64 p-2 border border-gray-300 rounded-md text-sm"
+              className="w-full sm:w-48 p-2 border border-gray-300 rounded-md text-xs sm:text-sm touch-target"
             >
               <option value="">All Properties</option>
               {properties.map(property => (
@@ -449,7 +450,7 @@ const UnitManagement = () => {
             {filterProperty && (
               <button
                 onClick={() => setFilterProperty('')}
-                className="w-full sm:w-auto bg-gray-500 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-600 whitespace-nowrap"
+                className="w-full xs:w-auto bg-gray-500 text-white px-3 py-2 rounded-md text-xs sm:text-sm hover:bg-gray-600 whitespace-nowrap transition-colors touch-target"
               >
                 Clear Filter
               </button>
@@ -458,33 +459,33 @@ const UnitManagement = () => {
         </div>
         
         {filteredUnits.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-2">🏢</div>
-            <p>No units found</p>
-            <p className="text-sm">
+          <div className="text-center py-6 sm:py-8 text-gray-500">
+            <div className="text-3xl sm:text-4xl mb-2">🏢</div>
+            <p className="text-sm">No units found</p>
+            <p className="text-xs mt-1">
               {filterProperty 
                 ? 'No units in this property. Add units to get started.' 
                 : 'No units created yet. Add your first unit to get started.'}
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
+          <div className="table-container">
+            <table className="min-w-full divide-y divide-gray-200 text-xs sm:text-sm">
+              <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Unit Details
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap hidden sm:table-cell">
                     Property
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Financial Info
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap hidden xs:table-cell">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     Actions
                   </th>
                 </tr>
@@ -492,41 +493,44 @@ const UnitManagement = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredUnits.map((unit) => (
                   <tr key={unit.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 sm:px-6 py-4">
                       <div>
-                        <div className="text-sm font-medium text-gray-900">{unit.unit_code}</div>
-                        <div className="text-sm text-gray-500">
+                        <div className="text-xs sm:text-sm font-medium text-gray-900">{unit.unit_code}</div>
+                        <div className="text-xs text-gray-500">
                           {unitTypes[unit.unit_type]} • Unit {unit.unit_number}
+                        </div>
+                        <div className="text-xs text-gray-500 sm:hidden mt-1">
+                          {unit.property_name}
                         </div>
                         {unit.features && unit.features.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
-                            {unit.features.slice(0, 3).map((feature, index) => (
+                            {unit.features.slice(0, 2).map((feature, index) => (
                               <span key={index} className="px-1 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
                                 {feature}
                               </span>
                             ))}
-                            {unit.features.length > 3 && (
+                            {unit.features.length > 2 && (
                               <span className="px-1 py-0.5 bg-gray-100 text-gray-800 rounded text-xs">
-                                +{unit.features.length - 3} more
+                                +{unit.features.length - 2} more
                               </span>
                             )}
                           </div>
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{unit.property_name}</div>
-                      <div className="text-sm text-gray-500">{unit.property_code}</div>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap hidden sm:table-cell">
+                      <div className="text-xs sm:text-sm font-medium text-gray-900">{unit.property_name}</div>
+                      <div className="text-xs text-gray-500">{unit.property_code}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <div className="text-xs sm:text-sm font-medium text-gray-900">
                         {formatCurrency(unit.rent_amount)}
                       </div>
-                      <div className="text-sm text-gray-500">
+                      <div className="text-xs text-gray-500">
                         Deposit: {formatCurrency(unit.deposit_amount)}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap hidden xs:table-cell">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
                         ${unit.is_occupied 
                           ? 'bg-green-100 text-green-800' 
@@ -534,19 +538,21 @@ const UnitManagement = () => {
                         {unit.is_occupied ? 'Occupied' : 'Available'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                      <button
-                        onClick={() => handleEditUnit(unit)}
-                        className="text-blue-600 hover:text-blue-900"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteUnit(unit.property_id, unit.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Delete
-                      </button>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <div className="flex flex-col xs:flex-row gap-1 xs:gap-2">
+                        <button
+                          onClick={() => handleEditUnit(unit)}
+                          className="text-blue-600 hover:text-blue-900 text-xs transition-colors touch-target px-2 py-1 rounded hover:bg-blue-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUnit(unit.property_id, unit.id)}
+                          className="text-red-600 hover:text-red-900 text-xs transition-colors touch-target px-2 py-1 rounded hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

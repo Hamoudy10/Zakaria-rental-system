@@ -218,74 +218,76 @@ const PaymentManagement = () => {
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="text-gray-500">Loading payments...</div>
+        <div className="text-gray-500 text-sm md:text-base">Loading payments...</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex justify-between items-center">
+    <div className="space-y-4 md:space-y-6 px-2 md:px-0">
+      {/* Header Section */}
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Payment Management</h2>
-          <p className="text-gray-600">Manage tenant rent payments and records</p>
+          <h2 className="text-xl md:text-2xl font-bold text-gray-900">Payment Management</h2>
+          <p className="text-sm md:text-base text-gray-600">Manage tenant rent payments and records</p>
         </div>
         <button
           onClick={() => setShowPaymentModal(true)}
-          className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base min-h-[44px] touch-manipulation transition-colors w-full sm:w-auto"
           disabled={activeAllocations.length === 0}
         >
           Record Payment
         </button>
       </div>
 
+      {/* Error Message */}
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm">
           {error}
           <button 
             onClick={clearError}
-            className="float-right text-red-800 font-bold"
+            className="float-right text-red-800 font-bold text-lg"
           >
             ×
           </button>
         </div>
       )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow-md">
+      {/* Stats Cards - Mobile Responsive */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{safePayments.length}</div>
-            <div className="text-sm text-gray-600">Total Payments</div>
+            <div className="text-lg md:text-2xl font-bold text-blue-600">{safePayments.length}</div>
+            <div className="text-xs md:text-sm text-gray-600">Total Payments</div>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{currentMonthSummary.completedPayments}</div>
-            <div className="text-sm text-gray-600">Completed This Month</div>
+            <div className="text-lg md:text-2xl font-bold text-green-600">{currentMonthSummary.completedPayments}</div>
+            <div className="text-xs md:text-sm text-gray-600">Completed This Month</div>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">{activeAllocations.length}</div>
-            <div className="text-sm text-gray-600">Active Tenants</div>
+            <div className="text-lg md:text-2xl font-bold text-purple-600">{activeAllocations.length}</div>
+            <div className="text-xs md:text-sm text-gray-600">Active Tenants</div>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-orange-600">
+            <div className="text-lg md:text-2xl font-bold text-orange-600">
               {formatCurrency(currentMonthSummary.totalAmount)}
             </div>
-            <div className="text-sm text-gray-600">Collected This Month</div>
+            <div className="text-xs md:text-sm text-gray-600">Collected This Month</div>
           </div>
         </div>
       </div>
 
-      {/* Payment Modal */}
+      {/* Payment Modal - Mobile Optimized */}
       {showPaymentModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-4">Record Rent Payment</h3>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="bg-white rounded-lg p-4 md:p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-2">
+            <h3 className="text-lg md:text-xl font-bold mb-4">Record Rent Payment</h3>
             <form onSubmit={handleCreatePayment} className="space-y-4">
               {/* Tenant Selection */}
               <div>
@@ -293,7 +295,7 @@ const PaymentManagement = () => {
                 <select
                   value={selectedAllocation}
                   onChange={(e) => setSelectedAllocation(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                   required
                 >
                   <option value="">Choose a tenant</option>
@@ -314,8 +316,8 @@ const PaymentManagement = () => {
                 )}
               </div>
 
-              {/* Payment Details */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* Payment Details - Responsive Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Amount (KES) *</label>
                   <input
@@ -324,7 +326,7 @@ const PaymentManagement = () => {
                     step="1000"
                     value={paymentData.amount}
                     onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                     required
                   />
                 </div>
@@ -334,14 +336,14 @@ const PaymentManagement = () => {
                     type="month"
                     value={paymentData.payment_month}
                     onChange={(e) => setPaymentData({...paymentData, payment_month: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                     required
                   />
                 </div>
               </div>
 
-              {/* M-Pesa Details */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* M-Pesa Details - Responsive Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Phone Number *</label>
                   <input
@@ -349,7 +351,7 @@ const PaymentManagement = () => {
                     placeholder="254712345678"
                     value={paymentData.phone_number}
                     onChange={(e) => setPaymentData({...paymentData, phone_number: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                     required
                   />
                 </div>
@@ -360,7 +362,7 @@ const PaymentManagement = () => {
                     placeholder="Optional"
                     value={paymentData.mpesa_transaction_id}
                     onChange={(e) => setPaymentData({...paymentData, mpesa_transaction_id: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                   />
                 </div>
               </div>
@@ -372,21 +374,21 @@ const PaymentManagement = () => {
                   placeholder="Optional"
                   value={paymentData.mpesa_receipt_number}
                   onChange={(e) => setPaymentData({...paymentData, mpesa_receipt_number: e.target.value})}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                 />
               </div>
 
-              <div className="flex space-x-4 pt-4">
+              <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 pt-4">
                 <button 
                   type="submit" 
-                  className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex-1"
+                  className="bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 flex-1 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors"
                 >
                   Record Payment
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowPaymentModal(false)}
-                  className="bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 flex-1"
+                  className="bg-gray-500 text-white px-4 py-3 rounded-md hover:bg-gray-600 flex-1 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors"
                 >
                   Cancel
                 </button>
@@ -396,10 +398,10 @@ const PaymentManagement = () => {
         </div>
       )}
 
-      {/* Payments List */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-          <h3 className="text-lg font-semibold">
+      {/* Payments List - Mobile Responsive */}
+      <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 md:gap-4 mb-4">
+          <h3 className="text-base md:text-lg font-semibold">
             Payment Records ({filteredPayments.length})
             {(filterMonth || filterStatus) && ' (Filtered)'}
           </h3>
@@ -408,13 +410,13 @@ const PaymentManagement = () => {
               type="month"
               value={filterMonth}
               onChange={(e) => setFilterMonth(e.target.value)}
-              className="w-full sm:w-40 p-2 border border-gray-300 rounded-md text-sm"
+              className="w-full sm:w-40 p-3 text-sm md:text-base border border-gray-300 rounded-md min-h-[44px] touch-manipulation"
               placeholder="Filter by month"
             />
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full sm:w-32 p-2 border border-gray-300 rounded-md text-sm"
+              className="w-full sm:w-32 p-3 text-sm md:text-base border border-gray-300 rounded-md min-h-[44px] touch-manipulation"
             >
               <option value="">All Status</option>
               <option value="pending">Pending</option>
@@ -422,7 +424,7 @@ const PaymentManagement = () => {
             </select>
             <button
               onClick={() => { setFilterMonth(''); setFilterStatus(''); }}
-              className="w-full sm:w-auto bg-gray-500 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-600 whitespace-nowrap"
+              className="w-full sm:w-auto bg-gray-500 text-white px-3 py-3 rounded-md text-sm md:text-base hover:bg-gray-600 whitespace-nowrap min-h-[44px] touch-manipulation transition-colors"
             >
               Clear Filters
             </button>
@@ -431,119 +433,197 @@ const PaymentManagement = () => {
         
         {filteredPayments.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-2">💳</div>
-            <p>No payment records found</p>
-            <p className="text-sm">
+            <div className="text-3xl md:text-4xl mb-2">💳</div>
+            <p className="text-sm md:text-base">No payment records found</p>
+            <p className="text-xs md:text-sm">
               {filterMonth || filterStatus ? 'Try changing your filters' : 'Record payments to get started'}
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            {/* Added scrollable container with max height */}
-            <div className="max-h-96 overflow-y-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
-                      Tenant & Unit
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
-                      Payment Details
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
-                      M-Pesa Info
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredPayments.map((payment) => (
-                    <tr key={payment.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
-                            {getTenantName(payment.tenant_id).split(' ').map(n => n[0]).join('').toUpperCase()}
-                          </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                              {getTenantName(payment.tenant_id)}
-                            </div>
-                            <div className="text-sm text-gray-500 whitespace-nowrap">
-                              {getUnitDetails(payment.unit_id)}
-                            </div>
-                            {getPropertyName(payment.unit_id) && (
-                              <div className="text-xs text-gray-400 whitespace-nowrap">
-                                {getPropertyName(payment.unit_id)}
-                              </div>
-                            )}
-                          </div>
+          <div className="space-y-4">
+            {/* Mobile Card View */}
+            <div className="md:hidden space-y-3">
+              {filteredPayments.map((payment) => (
+                <div key={payment.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0 h-8 w-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-xs">
+                        {getTenantName(payment.tenant_id).split(' ').map(n => n[0]).join('').toUpperCase()}
+                      </div>
+                      <div className="ml-3">
+                        <div className="text-sm font-medium text-gray-900">
+                          {getTenantName(payment.tenant_id)}
                         </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                          {formatCurrency(payment.amount)}
+                        <div className="text-xs text-gray-500">
+                          {getUnitDetails(payment.unit_id)}
                         </div>
-                        <div className="text-sm text-gray-500 whitespace-nowrap">
-                          {formatDate(payment.payment_month)}
-                        </div>
-                        {payment.payment_date && (
-                          <div className="text-xs text-gray-400 whitespace-nowrap">
-                            Paid: {new Date(payment.payment_date).toLocaleDateString()}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900 whitespace-nowrap">
-                          {payment.mpesa_transaction_id || 'N/A'}
-                        </div>
-                        <div className="text-sm text-gray-500 whitespace-nowrap">
-                          {payment.mpesa_receipt_number || 'N/A'}
-                        </div>
-                        {payment.phone_number && (
-                          <div className="text-xs text-gray-400 whitespace-nowrap">
-                            {payment.phone_number}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                          ${payment.status === 'completed' ? 'bg-green-100 text-green-800' : 
-                            'bg-yellow-100 text-yellow-800'}`}>
-                          {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1) || 'Unknown'}
-                        </span>
-                        {payment.is_late_payment && (
-                          <div className="mt-1">
-                            <span className="px-1 inline-flex text-xs leading-4 font-semibold rounded-full bg-red-100 text-red-800">
-                              Late
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                        {payment.status !== 'completed' && (
-                          <button
-                            onClick={() => handleConfirmPayment(payment.id)}
-                            className="text-green-600 hover:text-green-900 whitespace-nowrap"
-                          >
-                            Confirm
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDeletePayment(payment.id)}
-                          className="text-red-600 hover:text-red-900 whitespace-nowrap"
-                        >
-                          Delete
-                        </button>
-                      </td>
+                      </div>
+                    </div>
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full 
+                      ${payment.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                        'bg-yellow-100 text-yellow-800'}`}>
+                      {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1) || 'Unknown'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 text-sm mb-3">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Amount:</span>
+                      <span className="font-medium">{formatCurrency(payment.amount)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Month:</span>
+                      <span className="font-medium">{formatDate(payment.payment_month)}</span>
+                    </div>
+                    {payment.payment_date && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Paid:</span>
+                        <span className="font-medium text-xs">{new Date(payment.payment_date).toLocaleDateString()}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">M-Pesa ID:</span>
+                      <span className="font-medium text-xs">{payment.mpesa_transaction_id || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Receipt:</span>
+                      <span className="font-medium text-xs">{payment.mpesa_receipt_number || 'N/A'}</span>
+                    </div>
+                    {payment.phone_number && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Phone:</span>
+                        <span className="font-medium text-xs">{payment.phone_number}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex space-x-2">
+                    {payment.status !== 'completed' && (
+                      <button
+                        onClick={() => handleConfirmPayment(payment.id)}
+                        className="flex-1 bg-green-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-green-700 transition-colors min-h-[44px] touch-manipulation"
+                      >
+                        Confirm
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeletePayment(payment.id)}
+                      className="flex-1 bg-red-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-red-700 transition-colors min-h-[44px] touch-manipulation"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
+              <div className="max-h-96 overflow-y-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                        Tenant & Unit
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                        Payment Details
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                        M-Pesa Info
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                        Status
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-gray-50">
+                        Actions
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {filteredPayments.map((payment) => (
+                      <tr key={payment.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <div className="flex-shrink-0 h-10 w-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
+                              {getTenantName(payment.tenant_id).split(' ').map(n => n[0]).join('').toUpperCase()}
+                            </div>
+                            <div className="ml-4">
+                              <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                                {getTenantName(payment.tenant_id)}
+                              </div>
+                              <div className="text-sm text-gray-500 whitespace-nowrap">
+                                {getUnitDetails(payment.unit_id)}
+                              </div>
+                              {getPropertyName(payment.unit_id) && (
+                                <div className="text-xs text-gray-400 whitespace-nowrap">
+                                  {getPropertyName(payment.unit_id)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+                            {formatCurrency(payment.amount)}
+                          </div>
+                          <div className="text-sm text-gray-500 whitespace-nowrap">
+                            {formatDate(payment.payment_month)}
+                          </div>
+                          {payment.payment_date && (
+                            <div className="text-xs text-gray-400 whitespace-nowrap">
+                              Paid: {new Date(payment.payment_date).toLocaleDateString()}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900 whitespace-nowrap">
+                            {payment.mpesa_transaction_id || 'N/A'}
+                          </div>
+                          <div className="text-sm text-gray-500 whitespace-nowrap">
+                            {payment.mpesa_receipt_number || 'N/A'}
+                          </div>
+                          {payment.phone_number && (
+                            <div className="text-xs text-gray-400 whitespace-nowrap">
+                              {payment.phone_number}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                            ${payment.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                              'bg-yellow-100 text-yellow-800'}`}>
+                            {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1) || 'Unknown'}
+                          </span>
+                          {payment.is_late_payment && (
+                            <div className="mt-1">
+                              <span className="px-1 inline-flex text-xs leading-4 font-semibold rounded-full bg-red-100 text-red-800">
+                                Late
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                          {payment.status !== 'completed' && (
+                            <button
+                              onClick={() => handleConfirmPayment(payment.id)}
+                              className="text-green-600 hover:text-green-900 whitespace-nowrap min-h-[44px] px-3 touch-manipulation"
+                            >
+                              Confirm
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeletePayment(payment.id)}
+                            className="text-red-600 hover:text-red-900 whitespace-nowrap min-h-[44px] px-3 touch-manipulation"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}

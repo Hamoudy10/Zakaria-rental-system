@@ -111,73 +111,73 @@ const ReportsManagement = () => {
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="text-gray-500">Generating report...</div>
+        <div className="text-gray-500 text-sm md:text-base">Generating report...</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Reports & Analytics</h2>
-          <p className="text-gray-600">Generate and export various business reports</p>
-        </div>
+    <div className="space-y-4 md:space-y-6 px-2 md:px-0">
+      {/* Header */}
+      <div className="bg-white rounded-lg shadow-sm p-4 md:p-6">
+        <h2 className="text-xl md:text-2xl font-bold text-gray-900">Reports & Analytics</h2>
+        <p className="text-sm md:text-base text-gray-600">Generate and export various business reports</p>
       </div>
 
+      {/* Error Message */}
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm">
           {error}
           <button 
             onClick={clearError}
-            className="float-right text-red-800 font-bold"
+            className="float-right text-red-800 font-bold text-lg"
           >
             ×
           </button>
         </div>
       )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow-md">
+      {/* Stats Cards - Mobile Responsive */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-6">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{reportStats.total}</div>
-            <div className="text-sm text-gray-600">Total Reports</div>
+            <div className="text-lg md:text-2xl font-bold text-blue-600">{reportStats.total}</div>
+            <div className="text-xs md:text-sm text-gray-600">Total Reports</div>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{reportStats.financial}</div>
-            <div className="text-sm text-gray-600">Financial</div>
+            <div className="text-lg md:text-2xl font-bold text-green-600">{reportStats.financial}</div>
+            <div className="text-xs md:text-sm text-gray-600">Financial</div>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">{reportStats.occupancy}</div>
-            <div className="text-sm text-gray-600">Occupancy</div>
+            <div className="text-lg md:text-2xl font-bold text-purple-600">{reportStats.occupancy}</div>
+            <div className="text-xs md:text-sm text-gray-600">Occupancy</div>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-orange-600">{reportStats.payment}</div>
-            <div className="text-sm text-gray-600">Payment</div>
+            <div className="text-lg md:text-2xl font-bold text-orange-600">{reportStats.payment}</div>
+            <div className="text-xs md:text-sm text-gray-600">Payment</div>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
           <div className="text-center">
-            <div className="text-2xl font-bold text-indigo-600">{reportStats.custom}</div>
-            <div className="text-sm text-gray-600">Custom</div>
+            <div className="text-lg md:text-2xl font-bold text-indigo-600">{reportStats.custom}</div>
+            <div className="text-xs md:text-sm text-gray-600">Custom</div>
           </div>
         </div>
       </div>
 
-      {/* Report Generator */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold mb-4">Generate Report</h3>
+      {/* Report Generator - Mobile Responsive */}
+      <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+        <h3 className="text-base md:text-lg font-semibold mb-4">Generate Report</h3>
         
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="flex flex-col lg:flex-row gap-4 md:gap-6">
           {/* Report Type Selection */}
-          <div className="lg:col-span-1">
+          <div className="lg:w-1/4">
             <label className="block text-sm font-medium text-gray-700 mb-2">Report Type</label>
             <div className="space-y-2">
               {[
@@ -189,15 +189,15 @@ const ReportsManagement = () => {
                 <button
                   key={type.value}
                   onClick={() => setSelectedReportType(type.value)}
-                  className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
+                  className={`w-full text-left p-3 rounded-lg border-2 transition-colors min-h-[44px] touch-manipulation ${
                     selectedReportType === type.value
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
                   <div className="flex items-center space-x-3">
-                    <span className="text-xl">{type.icon}</span>
-                    <span className="font-medium">{type.label}</span>
+                    <span className="text-lg md:text-xl">{type.icon}</span>
+                    <span className="font-medium text-sm md:text-base">{type.label}</span>
                   </div>
                 </button>
               ))}
@@ -205,14 +205,14 @@ const ReportsManagement = () => {
           </div>
 
           {/* Report Parameters */}
-          <div className="lg:col-span-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="lg:w-3/4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Period</label>
                 <select
                   value={reportParams.period}
                   onChange={(e) => setReportParams({...reportParams, period: e.target.value})}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                 >
                   <option value="daily">Daily</option>
                   <option value="weekly">Weekly</option>
@@ -231,7 +231,7 @@ const ReportsManagement = () => {
                       type="date"
                       value={reportParams.start_date}
                       onChange={(e) => setReportParams({...reportParams, start_date: e.target.value})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                     />
                   </div>
                   <div>
@@ -240,7 +240,7 @@ const ReportsManagement = () => {
                       type="date"
                       value={reportParams.end_date}
                       onChange={(e) => setReportParams({...reportParams, end_date: e.target.value})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                     />
                   </div>
                 </>
@@ -248,14 +248,14 @@ const ReportsManagement = () => {
             </div>
 
             {selectedReportType === 'custom' && (
-              <div className="space-y-4 mb-4">
+              <div className="space-y-3 md:space-y-4 mb-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Report Title</label>
                   <input
                     type="text"
                     value={customReportData.title}
                     onChange={(e) => setCustomReportData({...customReportData, title: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                     placeholder="Enter report title"
                   />
                 </div>
@@ -265,31 +265,31 @@ const ReportsManagement = () => {
                     value={customReportData.description}
                     onChange={(e) => setCustomReportData({...customReportData, description: e.target.value})}
                     rows={3}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-vertical touch-manipulation"
                     placeholder="Describe the purpose of this report"
                   />
                 </div>
               </div>
             )}
 
-            <div className="flex space-x-4">
+            <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleGenerateReport}
-                className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700"
+                className="bg-blue-600 text-white px-4 py-3 rounded-md hover:bg-blue-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1"
               >
                 Generate Report
               </button>
               {generatedReport && (
-                <div className="flex space-x-2">
+                <div className="flex flex-col sm:flex-row gap-2 flex-1">
                   <button
                     onClick={() => handleExportReport('pdf')}
-                    className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700"
+                    className="bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1"
                   >
                     Export PDF
                   </button>
                   <button
                     onClick={() => handleExportReport('excel')}
-                    className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
+                    className="bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1"
                   >
                     Export Excel
                   </button>
@@ -300,57 +300,58 @@ const ReportsManagement = () => {
         </div>
       </div>
 
-      {/* Generated Report Display */}
+      {/* Generated Report Display - Mobile Responsive */}
       {generatedReport && (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold">
+        <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+          <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-4 gap-2">
+            <h3 className="text-base md:text-lg font-semibold">
               Generated Report: {generatedReport.type?.charAt(0).toUpperCase() + generatedReport.type?.slice(1)}
             </h3>
-            <div className="text-sm text-gray-500">
+            <div className="text-xs md:text-sm text-gray-500">
               Generated on: {formatDate(generatedReport.generated_at)}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          {/* Stats Cards - Mobile Responsive */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6 mb-4 md:mb-6">
             {generatedReport.total_income !== undefined && (
-              <div className="bg-green-50 p-4 rounded-lg">
-                <div className="text-2xl font-bold text-green-600">
+              <div className="bg-green-50 p-3 md:p-4 rounded-lg">
+                <div className="text-lg md:text-2xl font-bold text-green-600">
                   {formatCurrency(generatedReport.total_income)}
                 </div>
-                <div className="text-sm text-green-800">Total Income</div>
+                <div className="text-xs md:text-sm text-green-800">Total Income</div>
               </div>
             )}
             {generatedReport.total_expenses !== undefined && (
-              <div className="bg-red-50 p-4 rounded-lg">
-                <div className="text-2xl font-bold text-red-600">
+              <div className="bg-red-50 p-3 md:p-4 rounded-lg">
+                <div className="text-lg md:text-2xl font-bold text-red-600">
                   {formatCurrency(generatedReport.total_expenses)}
                 </div>
-                <div className="text-sm text-red-800">Total Expenses</div>
+                <div className="text-xs md:text-sm text-red-800">Total Expenses</div>
               </div>
             )}
             {generatedReport.net_profit !== undefined && (
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-2xl font-bold text-blue-600">
+              <div className="bg-blue-50 p-3 md:p-4 rounded-lg">
+                <div className="text-lg md:text-2xl font-bold text-blue-600">
                   {formatCurrency(generatedReport.net_profit)}
                 </div>
-                <div className="text-sm text-blue-800">Net Profit</div>
+                <div className="text-xs md:text-sm text-blue-800">Net Profit</div>
               </div>
             )}
             {generatedReport.occupancy_rate !== undefined && (
-              <div className="bg-purple-50 p-4 rounded-lg">
-                <div className="text-2xl font-bold text-purple-600">
+              <div className="bg-purple-50 p-3 md:p-4 rounded-lg">
+                <div className="text-lg md:text-2xl font-bold text-purple-600">
                   {generatedReport.occupancy_rate}%
                 </div>
-                <div className="text-sm text-purple-800">Occupancy Rate</div>
+                <div className="text-xs md:text-sm text-purple-800">Occupancy Rate</div>
               </div>
             )}
             {generatedReport.collection_rate !== undefined && (
-              <div className="bg-orange-50 p-4 rounded-lg">
-                <div className="text-2xl font-bold text-orange-600">
+              <div className="bg-orange-50 p-3 md:p-4 rounded-lg">
+                <div className="text-lg md:text-2xl font-bold text-orange-600">
                   {generatedReport.collection_rate}%
                 </div>
-                <div className="text-sm text-orange-800">Collection Rate</div>
+                <div className="text-xs md:text-sm text-orange-800">Collection Rate</div>
               </div>
             )}
           </div>
@@ -358,16 +359,16 @@ const ReportsManagement = () => {
           {/* Detailed Data */}
           {generatedReport.data && (
             <div className="border-t pt-4">
-              <h4 className="font-semibold mb-3">Detailed Breakdown</h4>
+              <h4 className="font-semibold text-sm md:text-base mb-3">Detailed Breakdown</h4>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <tbody className="bg-white divide-y divide-gray-200">
                     {Object.entries(generatedReport.data).map(([key, value]) => (
-                      <tr key={key}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 capitalize">
+                      <tr key={key} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-xs md:text-sm font-medium text-gray-900 capitalize">
                           {key.replace(/_/g, ' ')}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-xs md:text-sm text-gray-500">
                           {typeof value === 'number' ? formatCurrency(value) : value}
                         </td>
                       </tr>
@@ -380,82 +381,134 @@ const ReportsManagement = () => {
         </div>
       )}
 
-      {/* Previous Reports */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold mb-4">Previous Reports ({safeReports.length})</h3>
+      {/* Previous Reports - Mobile Responsive */}
+      <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+        <h3 className="text-base md:text-lg font-semibold mb-4">Previous Reports ({safeReports.length})</h3>
         
         {safeReports.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-2">📋</div>
-            <p>No reports generated yet</p>
-            <p className="text-sm">Generate your first report to see it here</p>
+            <div className="text-3xl md:text-4xl mb-2">📋</div>
+            <p className="text-sm md:text-base">No reports generated yet</p>
+            <p className="text-xs md:text-sm">Generate your first report to see it here</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Report
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Type
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Period
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Generated
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {safeReports.map((report) => (
-                  <tr key={report.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
+          <div className="space-y-4">
+            {/* Mobile Card View */}
+            <div className="md:hidden space-y-3">
+              {safeReports.map((report) => (
+                <div key={report.id} className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h4 className="font-medium text-gray-900 text-sm">
                         {report.title || `${report.type} Report`}
-                      </div>
-                      <div className="text-sm text-gray-500">
+                      </h4>
+                      <p className="text-xs text-gray-500 mt-1">
                         {report.description || 'No description'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                        ${report.type === 'financial' ? 'bg-green-100 text-green-800' : 
-                          report.type === 'occupancy' ? 'bg-purple-100 text-purple-800' : 
-                          report.type === 'payment' ? 'bg-orange-100 text-orange-800' : 
-                          'bg-indigo-100 text-indigo-800'}`}>
-                        {report.type}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {report.period || 'N/A'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(report.generated_at)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                      <button
-                        onClick={() => exportReport(report.id, 'pdf')}
-                        className="text-red-600 hover:text-red-900 whitespace-nowrap"
-                      >
-                        Export PDF
-                      </button>
-                      <button
-                        onClick={() => exportReport(report.id, 'excel')}
-                        className="text-green-600 hover:text-green-900 whitespace-nowrap"
-                      >
-                        Export Excel
-                      </button>
-                    </td>
+                      </p>
+                    </div>
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full 
+                      ${report.type === 'financial' ? 'bg-green-100 text-green-800' : 
+                        report.type === 'occupancy' ? 'bg-purple-100 text-purple-800' : 
+                        report.type === 'payment' ? 'bg-orange-100 text-orange-800' : 
+                        'bg-indigo-100 text-indigo-800'}`}>
+                      {report.type}
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 mb-3">
+                    <div>
+                      <span className="font-medium">Period:</span> {report.period || 'N/A'}
+                    </div>
+                    <div>
+                      <span className="font-medium">Generated:</span> {formatDate(report.generated_at)}
+                    </div>
+                  </div>
+                  
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => exportReport(report.id, 'pdf')}
+                      className="flex-1 bg-red-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-red-700 transition-colors min-h-[44px] touch-manipulation"
+                    >
+                      Export PDF
+                    </button>
+                    <button
+                      onClick={() => exportReport(report.id, 'excel')}
+                      className="flex-1 bg-green-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-green-700 transition-colors min-h-[44px] touch-manipulation"
+                    >
+                      Export Excel
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead>
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      Report
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      Type
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      Period
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      Generated
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      Actions
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {safeReports.map((report) => (
+                    <tr key={report.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">
+                          {report.title || `${report.type} Report`}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {report.description || 'No description'}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                          ${report.type === 'financial' ? 'bg-green-100 text-green-800' : 
+                            report.type === 'occupancy' ? 'bg-purple-100 text-purple-800' : 
+                            report.type === 'payment' ? 'bg-orange-100 text-orange-800' : 
+                            'bg-indigo-100 text-indigo-800'}`}>
+                          {report.type}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {report.period || 'N/A'}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {formatDate(report.generated_at)}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                        <button
+                          onClick={() => exportReport(report.id, 'pdf')}
+                          className="text-red-600 hover:text-red-900 whitespace-nowrap min-h-[44px] px-3 touch-manipulation"
+                        >
+                          Export PDF
+                        </button>
+                        <button
+                          onClick={() => exportReport(report.id, 'excel')}
+                          className="text-green-600 hover:text-green-900 whitespace-nowrap min-h-[44px] px-3 touch-manipulation"
+                        >
+                          Export Excel
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

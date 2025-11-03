@@ -159,13 +159,14 @@ const trackRentPayment = async (tenantId, unitId, amount, paymentDate, targetMon
 };
 
 // ENHANCED: Record carry-forward payment with future month support
-const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, paymentDate) => {
+const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, paymentDate, mpesa_receipt_number,phone_number, confirmedBy) => {
   try {
     let nextMonth = new Date(paymentDate);
     let remainingAmount = amount;
     const createdPayments = [];
-
+    let index = 0; 
     while (remainingAmount > 0) {
+      index++;
       nextMonth.setMonth(nextMonth.getMonth() + 1);
       const nextMonthFormatted = nextMonth.toISOString().slice(0, 7) + '-01';
       
@@ -192,19 +193,27 @@ const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, p
       const allocationAmount = Math.min(remainingAmount, remainingForFutureMonth);
       
       if (allocationAmount > 0) {
-        const carryForwardQuery = `
+         const carryForwardQuery = `
           INSERT INTO rent_payments 
-          (tenant_id, unit_id, amount, payment_month, status, is_advance_payment, original_payment_id, payment_date)
-          VALUES ($1, $2, $3, $4, 'completed', true, $5, $6)
+          (tenant_id, unit_id, amount, payment_month, status, is_advance_payment, 
+           original_payment_id, payment_date, mpesa_transaction_id, mpesa_receipt_number, 
+           phone_number, payment_method, confirmed_by, confirmed_at)
+          VALUES ($1, $2, $3, $4, 'completed', true, $5, $6, $7, $8, $9, $10, $11, $12)
           RETURNING *
         `;
         
         const result = await pool.query(carryForwardQuery, [
           tenantId, 
           unitId, 
-          allocationAmount, 
+          amount,
           nextMonthFormatted, 
           originalPaymentId,
+          paymentDate,
+          `CF_${originalPaymentId}_${index}`, // Generate carry-forward transaction ID
+          `${mpesa_receipt_number}_CF${index}`, // Carry-forward receipt number
+          phone_number, // Use original phone number
+          'paybill', // Payment method
+          confirmedBy,
           paymentDate
         ]);
         
@@ -215,6 +224,8 @@ const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, p
         
         // If we've allocated all remaining amount, break the loop
         if (remainingAmount <= 0) break;
+
+         return [result.rows[0]]; 
       } else {
         // If this month is already fully paid, move to next month
         continue;
@@ -490,27 +501,29 @@ const processPaybillPayment = async (req, res) => {
     );
 
     // Record the payment
-    const paymentQuery = `
-      INSERT INTO rent_payments 
-      (tenant_id, unit_id, amount, payment_month, payment_date, status,
-       mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, payment_method)
-      VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10)
-      RETURNING *
-    `;
+   const paymentQuery = `
+    INSERT INTO rent_payments 
+    (tenant_id, unit_id, amount, payment_month, payment_date, status,
+    mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, 
+    payment_method, mpesa_transaction_id)
+    VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11)
+    RETURNING *
+  `;
 
-    const paymentResult = await pool.query(paymentQuery, [
-      unit.tenant_id,
-      unit.id,
-      trackingResult.allocatedAmount,
-      formattedPaymentMonth,
-      paymentDate,
-      mpesa_receipt_number,
-      phone_number,
-      req.user?.id || unit.tenant_id, // Use current user or tenant ID
-      paymentDate,
-      'paybill'
-    ]);
-
+   const paymentResult = await pool.query(paymentQuery, [
+    unit.tenant_id,
+    unit.id,
+    trackingResult.allocatedAmount,
+    formattedPaymentMonth,
+    paymentDate,
+    mpesa_receipt_number,
+    phone_number,
+    req.user?.id || unit.tenant_id,
+    paymentDate,
+    'paybill',
+    `PB_${mpesa_receipt_number}` // Generate paybill transaction ID
+  ]);
+  
     const paymentRecord = paymentResult.rows[0];
 
     // Handle carry forward if applicable
@@ -521,7 +534,10 @@ const processPaybillPayment = async (req, res) => {
         unit.id,
         trackingResult.carryForwardAmount,
         paymentRecord.id,
-        paymentDate
+        paymentDate,
+        mpesa_receipt_number, // Pass receipt number
+        phone_number,
+        req.user?.id || unit.tenant_id
       );
 
       // Send notifications for carry-forward payments

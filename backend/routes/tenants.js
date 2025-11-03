@@ -3,8 +3,8 @@ const router = express.Router();
 const tenantController = require('../controllers/tenantController');
 const authMiddleware = require('../middleware/authMiddleware');
 
-// All routes require authentication
-router.use(authMiddleware);
+// All routes require authentication - FIXED: use protect function
+router.use(authMiddleware.protect);
 
 // Tenant routes
 router.get('/', tenantController.getTenants);
