@@ -1,11 +1,13 @@
 // src/pages/AgentDashboard.jsx
 import React, { useState, Suspense, lazy, useEffect } from 'react'
-import agentService from '../services/agentService';
+import agentService from '../services/AgentService';
 import { useAuth } from '../context/AuthContext';
 
-// Lazy load agent components - only complaints and salary payments
+// Lazy load agent components
 const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'));
-const SalaryPayment = lazy(() => import('../components/SalaryPayment'));
+const PaymentManagement = lazy(() => import('../components/PaymentManagement'));
+const NotificationManagement = lazy(() => import('../components/NotificationManagement'));
+const ProfilePage = lazy(() => import('../components/ProfilePage'));
 
 // Loading component for Suspense fallback
 const TabLoadingSpinner = () => (
@@ -18,12 +20,13 @@ const AgentDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
   const { user } = useAuth();
 
+  // Simplified tabs focusing on core agent functions
   const tabs = [
     { id: 'overview', name: 'Overview', shortName: 'Overview' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
-    { id: 'properties', name: 'My Properties', shortName: 'Properties' },
-    { id: 'tenants', name: 'Tenant Management', shortName: 'Tenants' },
-    { id: 'salaries', name: 'Salary Payments', shortName: 'Salaries' }
+    { id: 'payments', name: 'Payment Tracking', shortName: 'Payments' },
+    { id: 'notifications', name: 'Send Notifications', shortName: 'Notify' },
+    { id: 'profile', name: 'My Profile', shortName: 'Profile' }
   ]
 
   const renderContent = () => {
@@ -34,16 +37,24 @@ const AgentDashboard = () => {
             <ComplaintManagement />
           </Suspense>
         )
-      case 'salaries':
+      case 'payments':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
-            <SalaryPayment />
+            <PaymentManagement />
           </Suspense>
         )
-      case 'properties':
-        return <PropertyManagement />
-      case 'tenants':
-        return <TenantManagement />
+      case 'notifications':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <NotificationManagement />
+          </Suspense>
+        )
+      case 'profile':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <ProfilePage />
+          </Suspense>
+        )
       case 'overview':
       default:
         return <AgentOverview setActiveTab={setActiveTab} />
@@ -53,7 +64,7 @@ const AgentDashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50 mobile-optimized no-horizontal-scroll">
       <div className="responsive-container py-4">
-        {/* Tab Navigation - Improved for Mobile */}
+        {/* Tab Navigation - Simplified for core functions */}
         <div className="border-b border-gray-200 mb-4">
           <nav className="-mb-px flex space-x-1 xs:space-x-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
             {tabs.map((tab) => (
@@ -86,16 +97,15 @@ const AgentDashboard = () => {
   )
 }
 
-// Agent Overview Component (Updated with real data)
+// Agent Overview Component (Simplified for core functions)
 const AgentOverview = ({ setActiveTab }) => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dashboardData, setDashboardData] = useState({
     stats: {},
-    recentActivities: [],
-    assignedProperties: [],
-    performanceMetrics: {}
+    recentComplaints: [],
+    paymentAlerts: []
   });
 
   useEffect(() => {
@@ -107,35 +117,22 @@ const AgentOverview = ({ setActiveTab }) => {
       setLoading(true);
       setError(null);
       
-      const [statsResponse, propertiesResponse, activitiesResponse, metricsResponse] = await Promise.all([
+      const [statsResponse, complaintsResponse, paymentsResponse] = await Promise.all([
         agentService.getDashboardStats(),
-        agentService.getAssignedProperties(),
-        agentService.getRecentActivities(),
-        agentService.getPerformanceMetrics()
+        agentService.getRecentComplaints(),
+        agentService.getPaymentAlerts()
       ]);
 
       setDashboardData({
-        stats: statsResponse.data || {},
-        assignedProperties: propertiesResponse.data || [],
-        recentActivities: activitiesResponse.data || [],
-        performanceMetrics: metricsResponse.data || {}
+        stats: statsResponse.data?.data || statsResponse.data || {},
+        recentComplaints: complaintsResponse.data?.data || complaintsResponse.data || [],
+        paymentAlerts: paymentsResponse.data?.data || paymentsResponse.data || []
       });
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
       setError('Failed to load dashboard data. Please try again.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const getActivityIcon = (type) => {
-    switch (type) {
-      case 'complaint': return '🛠️'
-      case 'maintenance': return '🔧'
-      case 'inspection': return '📋'
-      case 'payment': return '💰'
-      case 'registration': return '👤'
-      default: return '📝'
     }
   };
 
@@ -147,6 +144,21 @@ const AgentOverview = ({ setActiveTab }) => {
     };
     
     const config = priorityConfig[priority] || priorityConfig.medium;
+    return (
+      <span className={`px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
+        {config.label}
+      </span>
+    );
+  };
+
+  const getStatusBadge = (status) => {
+    const statusConfig = {
+      open: { color: 'bg-red-100 text-red-800', label: 'Open' },
+      'in-progress': { color: 'bg-yellow-100 text-yellow-800', label: 'In Progress' },
+      resolved: { color: 'bg-green-100 text-green-800', label: 'Resolved' }
+    };
+    
+    const config = statusConfig[status] || statusConfig.open;
     return (
       <span className={`px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
         {config.label}
@@ -203,10 +215,10 @@ const AgentOverview = ({ setActiveTab }) => {
       {/* Header */}
       <div className="text-center sm:text-left">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Agent Dashboard</h1>
-        <p className="text-gray-600 text-sm mt-1">Welcome back, {user?.first_name}! Manage complaints and view assigned properties</p>
+        <p className="text-gray-600 text-sm mt-1">Welcome back, {user?.first_name}! Manage complaints and tenant communications</p>
       </div>
 
-      {/* Stats Grid - Real data from database */}
+      {/* Stats Grid - Focused on core metrics */}
       <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -237,32 +249,32 @@ const AgentOverview = ({ setActiveTab }) => {
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs sm:text-sm font-medium text-gray-600">Resolved This Month</p>
-              <p className="text-lg sm:text-xl font-bold text-green-600">
-                {dashboardData.stats.resolvedThisMonth || 0}
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Pending Payments</p>
+              <p className="text-lg sm:text-xl font-bold text-red-600">
+                {dashboardData.stats.pendingPayments || 0}
               </p>
-              <p className="text-xs text-gray-500">Complaints closed</p>
+              <p className="text-xs text-gray-500">Tenants with balance</p>
             </div>
-            <div className="text-lg sm:text-xl text-green-600">✅</div>
+            <div className="text-lg sm:text-xl text-red-600">💰</div>
           </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs sm:text-sm font-medium text-gray-600">Pending Tasks</p>
-              <p className="text-lg sm:text-xl font-bold text-purple-600">
-                {dashboardData.stats.pendingTasks || 0}
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Resolved This Week</p>
+              <p className="text-lg sm:text-xl font-bold text-green-600">
+                {dashboardData.stats.resolvedThisWeek || 0}
               </p>
-              <p className="text-xs text-gray-500">To complete</p>
+              <p className="text-xs text-gray-500">Complaints closed</p>
             </div>
-            <div className="text-lg sm:text-xl text-purple-600">📋</div>
+            <div className="text-lg sm:text-xl text-green-600">✅</div>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-        {/* Quick Actions - Limited to complaints and basic management */}
+        {/* Quick Actions - Focused on core functions */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
           <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Quick Actions</h3>
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
@@ -274,51 +286,61 @@ const AgentOverview = ({ setActiveTab }) => {
               <span className="text-xs sm:text-sm text-center">Manage Complaints</span>
             </button>
             <button 
-              onClick={() => setActiveTab('properties')}
-              className="bg-gray-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-gray-700 transition-colors touch-target active:bg-gray-800"
-            >
-              <span className="text-sm sm:text-lg mb-1">🏠</span>
-              <span className="text-xs sm:text-sm text-center">View Properties</span>
-            </button>
-            <button 
-              onClick={() => setActiveTab('tenants')}
+              onClick={() => setActiveTab('payments')}
               className="bg-green-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-green-700 transition-colors touch-target active:bg-green-800"
             >
-              <span className="text-sm sm:text-lg mb-1">👥</span>
-              <span className="text-xs sm:text-sm text-center">View Tenants</span>
+              <span className="text-sm sm:text-lg mb-1">💰</span>
+              <span className="text-xs sm:text-sm text-center">Track Payments</span>
             </button>
             <button 
-              onClick={() => setActiveTab('salaries')}
+              onClick={() => setActiveTab('notifications')}
               className="bg-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors touch-target active:bg-purple-800"
             >
-              <span className="text-sm sm:text-lg mb-1">💰</span>
-              <span className="text-xs sm:text-sm text-center">Salary History</span>
+              <span className="text-sm sm:text-lg mb-1">📢</span>
+              <span className="text-xs sm:text-sm text-center">Send Notices</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('profile')}
+              className="bg-gray-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-gray-700 transition-colors touch-target active:bg-gray-800"
+            >
+              <span className="text-sm sm:text-lg mb-1">👤</span>
+              <span className="text-xs sm:text-sm text-center">My Profile</span>
             </button>
           </div>
         </div>
 
-        {/* Recent Activity - Real data from database */}
+        {/* Recent Complaints */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
-          <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Recent Activity</h3>
+          <div className="flex justify-between items-center mb-3 sm:mb-4">
+            <h3 className="text-base sm:text-lg font-semibold">Recent Complaints</h3>
+            <button 
+              onClick={() => setActiveTab('complaints')}
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              View All
+            </button>
+          </div>
           <div className="space-y-2 sm:space-y-3">
-            {dashboardData.recentActivities.length === 0 ? (
+            {dashboardData.recentComplaints.length === 0 ? (
               <div className="text-center py-4 text-gray-500">
-                No recent activities
+                No recent complaints
               </div>
             ) : (
-              dashboardData.recentActivities.slice(0, 4).map((activity, index) => (
-                <div key={index} className="flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 bg-gray-50 rounded-lg">
-                  <div className="text-base sm:text-lg">{getActivityIcon(activity.type)}</div>
+              dashboardData.recentComplaints.slice(0, 4).map((complaint, index) => (
+                <div key={complaint.id || index} className="flex items-center justify-between p-2 sm:p-3 bg-gray-50 rounded-lg">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs sm:text-sm font-medium text-gray-900 truncate">
-                      {activity.description}
+                      {complaint.title}
                     </p>
-                    <div className="flex justify-between items-center mt-1">
+                    <div className="flex items-center space-x-2 mt-1">
                       <p className="text-xs text-gray-500 truncate">
-                        {activity.property_name} • {formatTimeAgo(activity.created_at)}
+                        {complaint.property_name} • {formatTimeAgo(complaint.raised_at)}
                       </p>
-                      {activity.priority && getPriorityBadge(activity.priority)}
                     </div>
+                  </div>
+                  <div className="flex space-x-1 ml-2">
+                    {getPriorityBadge(complaint.priority)}
+                    {getStatusBadge(complaint.status)}
                   </div>
                 </div>
               ))
@@ -327,317 +349,44 @@ const AgentOverview = ({ setActiveTab }) => {
         </div>
       </div>
 
-      {/* Assigned Properties - Real data from database */}
+      {/* Payment Alerts */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
-        <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Assigned Properties</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-          {dashboardData.assignedProperties.length === 0 ? (
-            <div className="col-span-full text-center py-8 text-gray-500">
-              No properties assigned
+        <div className="flex justify-between items-center mb-3 sm:mb-4">
+          <h3 className="text-base sm:text-lg font-semibold">Payment Alerts</h3>
+          <button 
+            onClick={() => setActiveTab('payments')}
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            View All
+          </button>
+        </div>
+        <div className="space-y-2 sm:space-y-3">
+          {dashboardData.paymentAlerts.length === 0 ? (
+            <div className="text-center py-4 text-gray-500">
+              No payment alerts
             </div>
           ) : (
-            dashboardData.assignedProperties.slice(0, 3).map((property, index) => (
-              <div key={property.id || index} className="border border-gray-200 rounded-lg p-3 sm:p-4">
-                <h4 className="font-semibold text-gray-900 text-sm sm:text-base">{property.name}</h4>
-                <p className="text-xs text-gray-600 mt-1">{property.address}</p>
-                <div className="mt-2 space-y-1 sm:space-y-2">
-                  <div className="flex justify-between text-xs sm:text-sm">
-                    <span>Units:</span>
-                    <span className="font-semibold">{property.occupied_units || 0}/{property.total_units || 0} occupied</span>
-                  </div>
-                  <div className="flex justify-between text-xs sm:text-sm">
-                    <span>Occupancy:</span>
-                    <span className="font-semibold text-green-600">
-                      {property.total_units ? Math.round(((property.occupied_units || 0) / property.total_units) * 100) : 0}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-xs sm:text-sm">
-                    <span>Active Complaints:</span>
-                    <span className="font-semibold text-orange-600">{property.active_complaints || 0}</span>
-                  </div>
+            dashboardData.paymentAlerts.slice(0, 5).map((alert, index) => (
+              <div key={alert.tenant_id || index} className="flex items-center justify-between p-2 sm:p-3 bg-red-50 rounded-lg">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs sm:text-sm font-medium text-gray-900">
+                    {alert.tenant_name}
+                  </p>
+                  <p className="text-xs text-gray-600">
+                    {alert.property_name} • {alert.unit_number}
+                  </p>
                 </div>
-                <button 
-                  onClick={() => setActiveTab('complaints')}
-                  className="w-full mt-3 bg-blue-600 text-white py-2 px-3 rounded-md hover:bg-blue-700 text-xs sm:text-sm touch-target active:bg-blue-800"
-                >
-                  Manage Issues
-                </button>
+                <div className="text-right">
+                  <p className="text-xs sm:text-sm font-semibold text-red-600">
+                    KES {alert.balance_due}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Due {alert.due_date}
+                  </p>
+                </div>
               </div>
             ))
           )}
-        </div>
-      </div>
-
-      {/* Performance Metrics - Real data from database */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
-        <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Performance Metrics</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 md:gap-4">
-          <div className="text-center p-3 sm:p-4 border border-gray-200 rounded-lg">
-            <p className="text-lg sm:text-xl font-bold text-green-600">
-              {dashboardData.performanceMetrics.satisfactionRate || '0'}%
-            </p>
-            <p className="text-xs text-gray-600">Satisfaction Rate</p>
-          </div>
-          <div className="text-center p-3 sm:p-4 border border-gray-200 rounded-lg">
-            <p className="text-lg sm:text-xl font-bold text-blue-600">
-              {dashboardData.performanceMetrics.avgResolutionTime || '0'} days
-            </p>
-            <p className="text-xs text-gray-600">Avg. Resolution Time</p>
-          </div>
-          <div className="text-center p-3 sm:p-4 border border-gray-200 rounded-lg">
-            <p className="text-lg sm:text-xl font-bold text-purple-600">
-              {dashboardData.performanceMetrics.onTimeCompletion || '0'}%
-            </p>
-            <p className="text-xs text-gray-600">On-time Completion</p>
-          </div>
-          <div className="text-center p-3 sm:p-4 border border-gray-200 rounded-lg">
-            <p className="text-lg sm:text-xl font-bold text-orange-600">
-              {dashboardData.performanceMetrics.monthlyTasks || '0'}
-            </p>
-            <p className="text-xs text-gray-600">This Month's Tasks</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Property Management Component (View only - real data)
-const PropertyManagement = () => {
-  const [properties, setProperties] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    fetchProperties();
-  }, []);
-
-  const fetchProperties = async () => {
-    try {
-      setLoading(true);
-      const response = await agentService.getAssignedProperties();
-      setProperties(response.data || []);
-    } catch (err) {
-      console.error('Error fetching properties:', err);
-      setError('Failed to load properties. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-center py-8">
-        <div className="text-red-600 mb-4">{error}</div>
-        <button
-          onClick={fetchProperties}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4 md:space-y-6">
-      <div className="text-center sm:text-left">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">My Properties</h1>
-        <p className="text-gray-600 text-sm mt-1">View your assigned properties - Read Only Access</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-        {properties.length === 0 ? (
-          <div className="col-span-full text-center py-8 text-gray-500">
-            No properties assigned to you
-          </div>
-        ) : (
-          properties.map(property => (
-            <div key={property.id} className="border border-gray-200 rounded-lg p-4 sm:p-6">
-              <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-2">{property.name}</h3>
-              <p className="text-xs sm:text-sm text-gray-600 mb-4">{property.address}</p>
-              
-              <div className="space-y-2 sm:space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-xs sm:text-sm text-gray-600">Units:</span>
-                  <span className="text-xs sm:text-sm font-medium">
-                    {property.occupied_units || 0}/{property.total_units || 0} occupied
-                  </span>
-                </div>
-                
-                <div className="flex justify-between">
-                  <span className="text-xs sm:text-sm text-gray-600">Occupancy Rate:</span>
-                  <span className="text-xs sm:text-sm font-medium text-green-600">
-                    {property.total_units ? Math.round(((property.occupied_units || 0) / property.total_units) * 100) : 0}%
-                  </span>
-                </div>
-                
-                <div className="flex justify-between">
-                  <span className="text-xs sm:text-sm text-gray-600">Active Complaints:</span>
-                  <span className="text-xs sm:text-sm font-medium text-orange-600">
-                    {property.active_complaints || 0}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <button 
-                  onClick={() => {/* View property details */}}
-                  className="w-full bg-blue-600 text-white py-2 px-2 sm:px-3 rounded-md text-xs sm:text-sm hover:bg-blue-700 touch-target active:bg-blue-800"
-                >
-                  View Details
-                </button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-};
-
-// Tenant Management Component (View only - real data)
-const TenantManagement = () => {
-  const [tenants, setTenants] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    fetchTenants();
-  }, []);
-
-  const fetchTenants = async () => {
-    try {
-      setLoading(true);
-      const response = await agentService.getTenantsWithPaymentStatus();
-      setTenants(response.data || []);
-    } catch (err) {
-      console.error('Error fetching tenants:', err);
-      setError('Failed to load tenants. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusBadge = (status) => {
-    const statusConfig = {
-      paid: { color: 'bg-green-100 text-green-800', label: 'Paid' },
-      due: { color: 'bg-yellow-100 text-yellow-800', label: 'Due' },
-      overdue: { color: 'bg-red-100 text-red-800', label: 'Overdue' }
-    };
-    
-    const config = statusConfig[status?.toLowerCase()] || statusConfig.due;
-    return (
-      <span className={`px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
-        {config.label}
-      </span>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-center py-8">
-        <div className="text-red-600 mb-4">{error}</div>
-        <button
-          onClick={fetchTenants}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4 md:space-y-6">
-      <div className="text-center sm:text-left">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Tenant Management</h1>
-        <p className="text-gray-600 text-sm mt-1">View tenant information and payment status - Read Only Access</p>
-      </div>
-
-      <div className="table-container overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 text-xs sm:text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant</th>
-              <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
-              <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
-              <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment Status</th>
-              <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Complaints</th>
-              <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {tenants.length === 0 ? (
-              <tr>
-                <td colSpan="6" className="px-3 sm:px-6 py-4 text-center text-gray-500">
-                  No tenants found
-                </td>
-              </tr>
-            ) : (
-              tenants.map(tenant => (
-                <tr key={tenant.id} className="hover:bg-gray-50">
-                  <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
-                    <div className="text-xs sm:text-sm font-medium text-gray-900">
-                      {tenant.first_name} {tenant.last_name}
-                    </div>
-                  </td>
-                  <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-900">
-                    {tenant.unit_name || 'N/A'}
-                  </td>
-                  <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-900">
-                    {tenant.phone_number}
-                  </td>
-                  <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
-                    {getStatusBadge(tenant.payment_status)}
-                  </td>
-                  <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-900">
-                    {tenant.active_complaints || 0}
-                  </td>
-                  <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
-                    <button className="text-blue-600 hover:text-blue-900 mr-2 sm:mr-3 touch-target active:text-blue-700">
-                      Contact
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Payment Status Legend */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h4 className="text-sm font-semibold text-blue-900 mb-2">Payment Status Legend</h4>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-          <div className="flex items-center">
-            <span className="w-3 h-3 bg-green-500 rounded-full mr-2"></span>
-            <span>Paid - Rent payment completed for current period</span>
-          </div>
-          <div className="flex items-center">
-            <span className="w-3 h-3 bg-yellow-500 rounded-full mr-2"></span>
-            <span>Due - Payment expected within current period</span>
-          </div>
-          <div className="flex items-center">
-            <span className="w-3 h-3 bg-red-500 rounded-full mr-2"></span>
-            <span>Overdue - Payment past due date</span>
-          </div>
         </div>
       </div>
     </div>

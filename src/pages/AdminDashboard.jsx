@@ -1,3 +1,4 @@
+// src/pages/AdminDashboard.jsx
 import React, { useState, Suspense, lazy } from 'react'
 
 // Lazy load all admin components
@@ -10,6 +11,7 @@ const TenantAllocation = lazy(() => import('../components/TenantAllocation'));
 const PaymentManagement = lazy(() => import('../components/PaymentManagement'));
 const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'));
 const UnitManagement = lazy(() => import('../components/UnitManagement'));
+const AgentAllocation = lazy(() => import('../components/AgentAllocation'));
 
 // Loading component for Suspense fallback
 const TabLoadingSpinner = () => (
@@ -27,6 +29,7 @@ const AdminDashboard = () => {
     { id: 'properties', name: 'Properties', shortName: 'Properties' },
     { id: 'units', name: 'Unit Management', shortName: 'Units' },
     { id: 'allocations', name: 'Tenant Allocation', shortName: 'Allocations' },
+    { id: 'agentAllocation', name: 'Agent Allocation', shortName: 'Agents' },
     { id: 'payments', name: 'Payment Management', shortName: 'Payments' }, 
     { id: 'salaries', name: 'Salary Payments', shortName: 'Salaries' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
@@ -58,6 +61,12 @@ const AdminDashboard = () => {
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
             <TenantAllocation />
+          </Suspense>
+        )
+      case 'agentAllocation':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AgentAllocation />
           </Suspense>
         )
       case 'payments':
@@ -143,7 +152,9 @@ const DashboardOverview = ({ setActiveTab }) => {
     pendingComplaints: 8,
     pendingPayments: 12,
     activeTenants: 120,
-    monthlyGrowth: '+12%'
+    monthlyGrowth: '+12%',
+    assignedAgents: 15,
+    unassignedProperties: 3
   })
 
   const recentActivities = [
@@ -155,9 +166,9 @@ const DashboardOverview = ({ setActiveTab }) => {
   ]
 
   const topProperties = [
-    { name: 'Kilimani Towers', revenue: 'KSh 450,000', occupancy: '95%', complaints: 2, units: 24 },
-    { name: 'Westlands Apartments', revenue: 'KSh 380,000', occupancy: '92%', complaints: 1, units: 18 },
-    { name: 'Kileleshwa Gardens', revenue: 'KSh 320,000', occupancy: '88%', complaints: 3, units: 16 },
+    { name: 'Kilimani Towers', revenue: 'KSh 450,000', occupancy: '95%', complaints: 2, units: 24, agent: 'John Smith' },
+    { name: 'Westlands Apartments', revenue: 'KSh 380,000', occupancy: '92%', complaints: 1, units: 18, agent: 'Mary Johnson' },
+    { name: 'Kileleshwa Gardens', revenue: 'KSh 320,000', occupancy: '88%', complaints: 3, units: 16, agent: 'David Kimani' },
   ]
 
   const getActivityIcon = (type) => {
@@ -215,11 +226,11 @@ const DashboardOverview = ({ setActiveTab }) => {
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs sm:text-sm font-medium text-gray-600">Total Units</p>
-              <p className="text-lg sm:text-xl font-bold text-purple-600">{adminStats.totalUnits}</p>
-              <p className="text-xs text-gray-500">Available units</p>
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Assigned Agents</p>
+              <p className="text-lg sm:text-xl font-bold text-purple-600">{adminStats.assignedAgents}</p>
+              <p className="text-xs text-gray-500">Active agents</p>
             </div>
-            <div className="text-lg sm:text-xl text-purple-600">🏢</div>
+            <div className="text-lg sm:text-xl text-purple-600">👥</div>
           </div>
         </div>
 
@@ -255,11 +266,11 @@ const DashboardOverview = ({ setActiveTab }) => {
               <span className="text-xs sm:text-sm">Properties</span>
             </button>
             <button 
-              onClick={() => setActiveTab('units')}
-              className="bg-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors touch-target"
+              onClick={() => setActiveTab('agentAllocation')}
+              className="bg-indigo-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-indigo-700 transition-colors touch-target"
             >
-              <span className="text-sm sm:text-lg mb-1">🏢</span>
-              <span className="text-xs sm:text-sm">Unit Mgmt</span>
+              <span className="text-sm sm:text-lg mb-1">👥</span>
+              <span className="text-xs sm:text-sm">Assign Agents</span>
             </button>
             <button 
               onClick={() => setActiveTab('payments')}
@@ -277,7 +288,7 @@ const DashboardOverview = ({ setActiveTab }) => {
             </button>
             <button 
               onClick={() => setActiveTab('reports')}
-              className="bg-indigo-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-indigo-700 transition-colors touch-target"
+              className="bg-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors touch-target"
             >
               <span className="text-sm sm:text-lg mb-1">📊</span>
               <span className="text-xs sm:text-sm">View Reports</span>
@@ -310,11 +321,20 @@ const DashboardOverview = ({ setActiveTab }) => {
 
       {/* Top Performing Properties */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
-        <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Top Performing Properties</h3>
+        <div className="flex justify-between items-center mb-3 sm:mb-4">
+          <h3 className="text-base sm:text-lg font-semibold">Top Performing Properties</h3>
+          <button 
+            onClick={() => setActiveTab('agentAllocation')}
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            Manage Agents
+          </button>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           {topProperties.map((property, index) => (
             <div key={index} className="border border-gray-200 rounded-lg p-3 sm:p-4">
               <h4 className="font-semibold text-gray-900 text-sm sm:text-base">{property.name}</h4>
+              <p className="text-xs text-gray-600">Assigned to: {property.agent}</p>
               <div className="mt-2 space-y-1 sm:space-y-2">
                 <div className="flex justify-between text-xs sm:text-sm">
                   <span>Monthly Revenue:</span>
@@ -341,10 +361,10 @@ const DashboardOverview = ({ setActiveTab }) => {
                   View Property
                 </button>
                 <button 
-                  onClick={() => setActiveTab('units')}
-                  className="flex-1 bg-purple-600 text-white py-2 px-2 sm:px-3 rounded-md hover:bg-purple-700 text-xs touch-target"
+                  onClick={() => setActiveTab('agentAllocation')}
+                  className="flex-1 bg-indigo-600 text-white py-2 px-2 sm:px-3 rounded-md hover:bg-indigo-700 text-xs touch-target"
                 >
-                  Manage Units
+                  Reassign Agent
                 </button>
               </div>
             </div>
@@ -384,6 +404,19 @@ const DashboardOverview = ({ setActiveTab }) => {
               </button>
             </div>
             
+            <div className="flex justify-between items-center p-2 sm:p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-indigo-900 text-sm">Agent Allocation</p>
+                <p className="text-xs text-indigo-700 truncate">{adminStats.unassignedProperties} properties need agent assignment</p>
+              </div>
+              <button 
+                onClick={() => setActiveTab('agentAllocation')}
+                className="bg-indigo-600 text-white px-2 sm:px-3 py-1 rounded text-xs hover:bg-indigo-700 touch-target ml-2 flex-shrink-0"
+              >
+                Assign
+              </button>
+            </div>
+
             <div className="flex justify-between items-center p-2 sm:p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-blue-900 text-sm">Salary Payments</p>
@@ -394,19 +427,6 @@ const DashboardOverview = ({ setActiveTab }) => {
                 className="bg-blue-600 text-white px-2 sm:px-3 py-1 rounded text-xs hover:bg-blue-700 touch-target ml-2 flex-shrink-0"
               >
                 Process
-              </button>
-            </div>
-
-            <div className="flex justify-between items-center p-2 sm:p-3 bg-purple-50 border border-purple-200 rounded-lg">
-              <div className="min-w-0 flex-1">
-                <p className="font-medium text-purple-900 text-sm">Unit Management</p>
-                <p className="text-xs text-purple-700 truncate">Manage property units and availability</p>
-              </div>
-              <button 
-                onClick={() => setActiveTab('units')}
-                className="bg-purple-600 text-white px-2 sm:px-3 py-1 rounded text-xs hover:bg-purple-700 touch-target ml-2 flex-shrink-0"
-              >
-                Manage
               </button>
             </div>
           </div>
@@ -438,21 +458,21 @@ const DashboardOverview = ({ setActiveTab }) => {
             
             <div>
               <div className="flex justify-between text-xs sm:text-sm mb-1">
-                <span className="text-gray-600">Storage</span>
-                <span className="font-medium text-yellow-600">65% Used</span>
+                <span className="text-gray-600">Agent Allocation</span>
+                <span className="font-medium text-blue-600">{adminStats.assignedAgents} Active</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-1.5 sm:h-2">
-                <div className="bg-yellow-500 h-1.5 sm:h-2 rounded-full" style={{ width: '65%' }}></div>
+                <div className="bg-blue-600 h-1.5 sm:h-2 rounded-full" style={{ width: '90%' }}></div>
               </div>
             </div>
             
             <div>
               <div className="flex justify-between text-xs sm:text-sm mb-1">
                 <span className="text-gray-600">Active Users</span>
-                <span className="font-medium text-blue-600">24 Online</span>
+                <span className="font-medium text-purple-600">24 Online</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-1.5 sm:h-2">
-                <div className="bg-blue-600 h-1.5 sm:h-2 rounded-full" style={{ width: '80%' }}></div>
+                <div className="bg-purple-600 h-1.5 sm:h-2 rounded-full" style={{ width: '80%' }}></div>
               </div>
             </div>
           </div>
@@ -489,10 +509,10 @@ const DashboardOverview = ({ setActiveTab }) => {
             View Detailed Reports
           </button>
           <button 
-            onClick={() => setActiveTab('units')}
-            className="bg-purple-600 text-white px-4 sm:px-6 py-2 rounded-md hover:bg-purple-700 text-sm touch-target"
+            onClick={() => setActiveTab('agentAllocation')}
+            className="bg-indigo-600 text-white px-4 sm:px-6 py-2 rounded-md hover:bg-indigo-700 text-sm touch-target"
           >
-            Manage All Units
+            Manage Agent Allocation
           </button>
         </div>
       </div>

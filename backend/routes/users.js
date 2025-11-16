@@ -1,13 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
-const { protect, authorize } = require('../middleware/authMiddleware');
+const { authMiddleware, requireAdmin, requireAgent } = require('../middleware/authMiddleware');
 const bcrypt = require('bcryptjs');
 
 console.log('Users routes loaded');
 
-// GET ALL USERS
-router.get('/', protect, authorize('admin'), async (req, res) => {
+// Apply auth middleware to all routes
+router.use(authMiddleware);
+
+// GET ALL USERS (Admin only)
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const query = `
       SELECT id, national_id, first_name, last_name, email, phone_number, 
@@ -31,8 +34,8 @@ router.get('/', protect, authorize('admin'), async (req, res) => {
   }
 });
 
-// GET USER BY ID
-router.get('/:id', protect, authorize('admin'), async (req, res) => {
+// GET USER BY ID (Admin only)
+router.get('/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -64,8 +67,8 @@ router.get('/:id', protect, authorize('admin'), async (req, res) => {
   }
 });
 
-// CREATE NEW USER (POST)
-router.post('/', protect, authorize('admin'), async (req, res) => {
+// CREATE NEW USER (Admin only)
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const { 
       national_id, 
@@ -73,7 +76,7 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
       last_name, 
       email, 
       phone_number, 
-      password,  // Changed from password_hash to password
+      password,
       role 
     } = req.body;
 
@@ -118,7 +121,7 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
       phone_number, 
       password_hash, 
       role, 
-      req.user.id // This will now be a proper UUID from the real auth middleware
+      req.user.id
     ];
 
     console.log('📊 Executing user creation query with values:', values);
@@ -136,7 +139,7 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
     console.error('❌ Create user error:', error);
     
     // Handle duplicate key errors
-    if (error.code === '23505') { // PostgreSQL unique violation
+    if (error.code === '23505') {
       if (error.constraint.includes('email')) {
         return res.status(400).json({
           success: false,
@@ -158,8 +161,8 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
   }
 });
 
-// UPDATE USER (PUT)
-router.put('/:id', protect, authorize('admin'), async (req, res) => {
+// UPDATE USER (Admin only)
+router.put('/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { 
@@ -231,8 +234,8 @@ router.put('/:id', protect, authorize('admin'), async (req, res) => {
   }
 });
 
-// DELETE USER (DELETE)
-router.delete('/:id', protect, authorize('admin'), async (req, res) => {
+// DELETE USER (Admin only)
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -247,7 +250,6 @@ router.delete('/:id', protect, authorize('admin'), async (req, res) => {
       });
     }
 
-    // In a real application, you might want to soft delete instead
     const query = 'DELETE FROM users WHERE id = $1';
     await db.query(query, [id]);
     
@@ -273,8 +275,8 @@ router.delete('/:id', protect, authorize('admin'), async (req, res) => {
   }
 });
 
-// GET USER PROFILE (Additional endpoint)
-router.get('/profile/me', protect, async (req, res) => {
+// GET USER PROFILE (Authenticated user)
+router.get('/profile/me', async (req, res) => {
   try {
     const query = `
       SELECT id, national_id, first_name, last_name, email, phone_number, 
@@ -300,6 +302,52 @@ router.get('/profile/me', protect, async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Failed to fetch profile' 
+    });
+  }
+});
+
+// GET TENANTS FOR AGENT (Agent and Admin only)
+router.get('/role/tenants', requireAgent, async (req, res) => {
+  try {
+    const agentId = req.user.id;
+
+    const query = `
+      SELECT DISTINCT 
+        u.id,
+        u.national_id,
+        u.first_name,
+        u.last_name,
+        u.email,
+        u.phone_number,
+        u.role,
+        u.is_active,
+        u.created_at,
+        p.name as property_name,
+        pu.unit_number,
+        ta.lease_start_date,
+        ta.monthly_rent
+      FROM users u
+      INNER JOIN tenant_allocations ta ON u.id = ta.tenant_id
+      INNER JOIN property_units pu ON ta.unit_id = pu.id
+      INNER JOIN properties p ON pu.property_id = p.id
+      INNER JOIN complaints c ON pu.id = c.unit_id
+      WHERE c.assigned_agent = $1 
+        AND u.role = 'tenant'
+        AND ta.is_active = true
+      ORDER BY u.first_name, u.last_name
+    `;
+
+    const result = await db.query(query, [agentId]);
+    
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching tenants for agent:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch tenants'
     });
   }
 });

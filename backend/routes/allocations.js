@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-const { protect, authorize } = require('../middleware/authMiddleware');
+const { authMiddleware, requireRole } = require('../middleware/authMiddleware'); // FIXED: Changed to use requireRole
 
 console.log('Allocations routes loaded');
 
 // GET ALL ALLOCATIONS (with advanced filtering)
-router.get('/', protect, authorize('admin', 'agent'), async (req, res) => {
+router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
   try {
     console.log('Fetching all tenant allocations...');
     
@@ -123,7 +123,7 @@ router.get('/', protect, authorize('admin', 'agent'), async (req, res) => {
 });
 
 // GET ALLOCATION BY ID
-router.get('/:id', protect, authorize('admin', 'agent'), async (req, res) => {
+router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
   try {
     const { id } = req.params;
     
@@ -176,7 +176,7 @@ router.get('/:id', protect, authorize('admin', 'agent'), async (req, res) => {
 });
 
 // GET ALLOCATIONS BY TENANT
-router.get('/tenant/:tenantId', protect, authorize('admin', 'agent', 'tenant'), async (req, res) => {
+router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', 'tenant']), async (req, res) => { // FIXED: Changed authorize to requireRole
   try {
     const { tenantId } = req.params;
     
@@ -221,7 +221,7 @@ router.get('/tenant/:tenantId', protect, authorize('admin', 'agent', 'tenant'), 
 });
 
 // CREATE NEW ALLOCATION (POST)
-router.post('/', protect, authorize('admin', 'agent'), async (req, res) => {
+router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
   console.log('=== ALLOCATION POST REQUEST RECEIVED ===');
   console.log('Headers:', req.headers);
   console.log('Body:', req.body);
@@ -417,7 +417,7 @@ router.post('/', protect, authorize('admin', 'agent'), async (req, res) => {
 });
 
 // UPDATE ALLOCATION (PUT)
-router.put('/:id', protect, authorize('admin', 'agent'), async (req, res) => {
+router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
   const client = await pool.connect();
   
   try {
@@ -575,7 +575,7 @@ router.put('/:id', protect, authorize('admin', 'agent'), async (req, res) => {
 });
 
 // DELETE ALLOCATION (DELETE)
-router.delete('/:id', protect, authorize('admin'), async (req, res) => {
+router.delete('/:id', authMiddleware, requireRole(['admin']), async (req, res) => { // FIXED: Changed authorize to requireRole
   const client = await pool.connect();
   
   try {
@@ -659,7 +659,7 @@ router.delete('/:id', protect, authorize('admin'), async (req, res) => {
 });
 
 // GET ALLOCATION STATISTICS
-router.get('/stats/overview', protect, authorize('admin', 'agent'), async (req, res) => {
+router.get('/stats/overview', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
   try {
     const statsResult = await pool.query(`
       SELECT 
@@ -709,7 +709,7 @@ router.get('/stats/overview', protect, authorize('admin', 'agent'), async (req, 
 });
 
 // GET CURRENT TENANT ALLOCATION
-router.get('/my/allocation', protect, authorize('tenant'), async (req, res) => {
+router.get('/my/allocation', authMiddleware, requireRole(['tenant']), async (req, res) => { // FIXED: Changed authorize to requireRole
   try {
     const result = await pool.query(`
       SELECT 
