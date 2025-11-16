@@ -93,125 +93,120 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-8 px-4 sm:px-6 lg:px-8 mobile-optimized safe-area-top safe-area-bottom">
-      <div className="max-w-md w-full space-y-6">
-        {/* Header */}
-        <div className="text-center">
-          <div className="mx-auto h-12 w-12 bg-blue-600 rounded-full flex items-center justify-center mb-4">
-            <span className="text-white font-bold text-lg">ZR</span>
-          </div>
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
-            Zakaria Rental System
-          </h2>
-          <p className="mt-1 text-xs sm:text-sm text-gray-600">
-            Sign in to your account
-          </p>
-        </div>
-        
-        {/* Demo Account Buttons - Tenant removed */}
-        <div className="space-y-3">
-          <h3 className="text-center text-xs sm:text-sm font-medium text-gray-700">Quick Demo Login:</h3>
-          <div className="grid grid-cols-1 gap-2">
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('admin@example.com', 'test123')}
-              className="w-full py-2 px-4 border border-transparent text-xs sm:text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors touch-target"
-            >
-              Login as Admin
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('agent@example.com', 'test123')}
-              className="w-full py-2 px-4 border border-transparent text-xs sm:text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors touch-target"
-            >
-              Login as Agent
-            </button>
-          </div>
-        </div>
-
-        {/* Divider */}
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300"></div>
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-gray-50 text-gray-500">Or continue with</span>
-          </div>
-        </div>
-
-        {/* Login Form */}
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded text-xs">
-              {error}
+    <div className="min-h-screen flex flex-col justify-center items-center bg-gray-50 p-4 safe-area-top safe-area-bottom">
+      {/* Main Login Card - Extremely Compact */}
+      <div className="w-full max-w-xs bg-white rounded-lg shadow-sm border border-gray-200">
+        {/* Header - Very Compact */}
+        <div className="p-4 text-center border-b border-gray-200">
+          <div className="flex justify-center mb-2">
+            <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+              <span className="text-white font-bold text-sm">ZR</span>
             </div>
-          )}
-          
-          <div className="space-y-3">
-            <div>
-              <label htmlFor="email" className="sr-only">Email address</label>
+          </div>
+          <h1 className="text-lg font-bold text-gray-900">Zakaria Rentals</h1>
+          <p className="text-xs text-gray-600 mt-1">Property Management System</p>
+        </div>
+
+        {/* Form Section - Ultra Compact */}
+        <div className="p-4">
+          <form className="space-y-3" onSubmit={handleSubmit}>
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-600 px-3 py-2 rounded text-xs text-center">
+                {error}
+              </div>
+            )}
+            
+            <div className="space-y-2">
               <input
                 id="email"
                 name="email"
                 type="email"
                 autoComplete="email"
                 required
-                className="appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 text-xs sm:text-sm touch-target"
+                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">Password</label>
+              
               <input
                 id="password"
                 name="password"
                 type="password"
                 autoComplete="current-password"
                 required
-                className="appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 text-xs sm:text-sm touch-target"
+                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-          </div>
 
-          <div>
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-xs sm:text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-colors touch-target"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded font-medium text-sm transition-colors disabled:opacity-50"
             >
-              {loading ? (
-                <span className="flex items-center">
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Signing in...
-                </span>
-              ) : 'Sign in'}
+              {loading ? 'Logging in...' : 'Log In'}
             </button>
-          </div>
-          
-          {/* Demo credentials info */}
-          <div className="text-center text-xs text-gray-600 bg-gray-50 p-3 rounded border">
-            <p className="font-medium mb-2">Demo Credentials:</p>
-            <div className="space-y-1">
-              <p><span className="font-medium">Admin:</span> admin@example.com | test123</p>
-              <p><span className="font-medium">Agent:</span> agent@example.com | test123</p>
+          </form>
+
+          {/* Divider - Minimal Space */}
+          <div className="relative my-3">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300"></div>
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="px-2 bg-white text-gray-500">OR</span>
             </div>
           </div>
-        </form>
 
-        {/* Additional Info */}
-        <div className="text-center">
-          <p className="text-xs text-gray-500">
-            Secure login for authorized personnel only
-          </p>
+          {/* Quick Login Buttons - Compact */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('admin@example.com', 'test123')}
+              className="w-full bg-green-600 hover:bg-green-700 text-white py-2 px-3 rounded text-sm font-medium transition-colors"
+            >
+              Login as Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('agent@example.com', 'test123')}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 px-3 rounded text-sm font-medium transition-colors"
+            >
+              Login as Agent
+            </button>
+          </div>
         </div>
+      </div>
+
+      {/* Demo Info - Very Compact */}
+      <div className="w-full max-w-xs mt-3 bg-white rounded-lg border border-gray-200 p-3">
+        <div className="text-center">
+          <p className="text-xs text-gray-600 font-medium mb-2">Demo Credentials</p>
+          <div className="text-xs text-gray-500 space-y-1">
+            <div className="flex justify-between">
+              <span>Admin:</span>
+              <code className="bg-gray-100 px-1 rounded">admin@example.com</code>
+            </div>
+            <div className="flex justify-between">
+              <span>Agent:</span>
+              <code className="bg-gray-100 px-1 rounded">agent@example.com</code>
+            </div>
+            <div className="text-center">
+              <span>Password: </span>
+              <code className="bg-gray-100 px-1 rounded">test123</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer - Minimal */}
+      <div className="w-full max-w-xs text-center mt-3">
+        <p className="text-xs text-gray-400">
+          &copy; {new Date().getFullYear()} Zakaria Rentals
+        </p>
       </div>
     </div>
   );

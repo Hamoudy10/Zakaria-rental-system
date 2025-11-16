@@ -1,11 +1,11 @@
-// routes/units.js
+// routes/units.js - FIXED VERSION
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-const { protect } = require('../middleware/authMiddleware');
+const { authMiddleware } = require('../middleware/authMiddleware'); // FIXED: Changed protect to authMiddleware
 
 // GET units by property
-router.get('/properties/:propertyId/units', protect, async (req, res) => {
+router.get('/properties/:propertyId/units', authMiddleware, async (req, res) => { // FIXED: Changed protect to authMiddleware
   try {
     const { propertyId } = req.params;
     
@@ -30,7 +30,7 @@ router.get('/properties/:propertyId/units', protect, async (req, res) => {
 });
 
 // ADD unit to property
-router.post('/properties/:propertyId/units', protect, async (req, res) => {
+router.post('/properties/:propertyId/units', authMiddleware, async (req, res) => { // FIXED: Changed protect to authMiddleware
   const client = await pool.connect();
   
   try {
@@ -138,7 +138,7 @@ router.post('/properties/:propertyId/units', protect, async (req, res) => {
 });
 
 // UPDATE unit
-router.put('/properties/:propertyId/units/:unitId', protect, async (req, res) => {
+router.put('/properties/:propertyId/units/:unitId', authMiddleware, async (req, res) => { // FIXED: Changed protect to authMiddleware
   try {
     const { propertyId, unitId } = req.params;
     const {
@@ -219,7 +219,7 @@ router.put('/properties/:propertyId/units/:unitId', protect, async (req, res) =>
 });
 
 // DELETE unit
-router.delete('/properties/:propertyId/units/:unitId', protect, async (req, res) => {
+router.delete('/properties/:propertyId/units/:unitId', authMiddleware, async (req, res) => { // FIXED: Changed protect to authMiddleware
   const client = await pool.connect();
   
   try {
@@ -281,7 +281,7 @@ router.delete('/properties/:propertyId/units/:unitId', protect, async (req, res)
 });
 
 // UPDATE unit occupancy
-router.patch('/properties/:propertyId/units/:unitId/occupancy', protect, async (req, res) => {
+router.patch('/properties/:propertyId/units/:unitId/occupancy', authMiddleware, async (req, res) => { // FIXED: Changed protect to authMiddleware
   const client = await pool.connect();
   
   try {

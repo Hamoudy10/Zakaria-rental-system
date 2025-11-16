@@ -1,71 +1,54 @@
-// src/services/agentService.js
+// src/services/AgentService.js
 import api from './api';
 
 const agentService = {
-  // Get agent dashboard overview stats
+  // Dashboard data
   getDashboardStats: async () => {
-    try {
-      const response = await api.get('/agent/dashboard/stats');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching agent dashboard stats:', error);
-      throw error;
-    }
+    return await api.get('/agent/dashboard/stats');
   },
 
-  // Get agent's assigned properties
-  getAssignedProperties: async () => {
-    try {
-      const response = await api.get('/agent/properties');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching assigned properties:', error);
-      throw error;
-    }
+  getRecentComplaints: async () => {
+    return await api.get('/agent/complaints/recent');
   },
 
-  // Get agent's tenants with payment status
+  getPaymentAlerts: async () => {
+    return await api.get('/agent/payments/alerts');
+  },
+
+  // Complaint management
+  getAssignedComplaints: async () => {
+    return await api.get('/agent/complaints');
+  },
+
+  createComplaint: async (complaintData) => {
+    return await api.post('/agent/complaints', complaintData);
+  },
+
+  updateComplaintStatus: async (complaintId, status, updateData) => {
+    return await api.put(`/agent/complaints/${complaintId}`, { status, ...updateData });
+  },
+
+  // Payment management
   getTenantsWithPaymentStatus: async () => {
-    try {
-      const response = await api.get('/agent/tenants/payment-status');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching tenants with payment status:', error);
-      throw error;
-    }
+    return await api.get('/agent/tenants/payments');
   },
 
-  // Get agent's recent activities
-  getRecentActivities: async () => {
-    try {
-      const response = await api.get('/agent/activities/recent');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching recent activities:', error);
-      throw error;
-    }
+  sendPaymentReminder: async (tenantId) => {
+    return await api.post('/agent/tenants/send-reminder', { tenantId });
   },
 
-  // Get agent's performance metrics
-  getPerformanceMetrics: async () => {
-    try {
-      const response = await api.get('/agent/performance/metrics');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching performance metrics:', error);
-      throw error;
-    }
+  // Notification management
+  getAssignedProperties: async () => {
+    return await api.get('/agent/properties');
   },
 
-  // Get agent's salary payments
-  getSalaryPayments: async () => {
-    try {
-      const response = await api.get('/agent/salary-payments');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching salary payments:', error);
-      throw error;
-    }
+  sendBulkSMS: async (smsData) => {
+    return await api.post('/agent/notifications/send-bulk-sms', smsData);
+  },
+
+  // Profile and account
+  updateProfile: async (profileData) => {
+    return await api.put('/agent/profile', profileData);
   }
 };
 

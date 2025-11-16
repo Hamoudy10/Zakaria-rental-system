@@ -1,4 +1,4 @@
-// src/App.jsx (Updated version)
+// src/App.jsx
 import React, { useState, Suspense, lazy } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -22,6 +22,7 @@ const NotificationPage = lazy(() => import('./components/NotificationsPage'));
 const TenantPayment = lazy(() => import('./components/TenantPayment'));
 const ProfilePage = lazy(() => import('./components/ProfilePage'));
 const SystemSettings = lazy(() => import('./components/SystemSettings'));
+const AgentManagement = lazy(() => import('./components/AgentManagement'));
 
 // Loading component for Suspense fallback
 const LoadingSpinner = () => (
@@ -440,6 +441,7 @@ function AppContent() {
                 <Route path="/notifications" element={<NotificationPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/settings" element={<SystemSettings />} />
+                <Route path="/agents" element={<AgentManagement />} />
                 <Route path="*" element={<Navigate to="/admin" replace />} />
               </Routes>
             </DashboardLayout>

@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-const { protect } = require('../middleware/authMiddleware');
+const { authMiddleware } = require('../middleware/authMiddleware');
 
 // GET ALL PROPERTIES
-router.get('/', protect, async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
     console.log('Fetching all properties...');
     const result = await pool.query(`
@@ -35,7 +35,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // GET SINGLE PROPERTY WITH UNITS
-router.get('/:id', protect, async (req, res) => {
+router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -89,7 +89,7 @@ router.get('/:id', protect, async (req, res) => {
 });
 
 // CREATE NEW PROPERTY (POST) - UPDATED WITH UNIT_TYPE
-router.post('/', protect, async (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -201,7 +201,7 @@ router.post('/', protect, async (req, res) => {
 });
 
 // UPDATE PROPERTY (PUT) - UPDATED WITH UNIT_TYPE
-router.put('/:id', protect, async (req, res) => {
+router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const { 
@@ -296,7 +296,7 @@ router.put('/:id', protect, async (req, res) => {
 });
 
 // DELETE PROPERTY (DELETE)
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', authMiddleware, async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -388,7 +388,7 @@ router.delete('/:id', protect, async (req, res) => {
 });
 
 // GET PROPERTY STATISTICS
-router.get('/:id/stats', protect, async (req, res) => {
+router.get('/:id/stats', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     

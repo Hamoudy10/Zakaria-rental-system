@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext, useCallback, useEffect } from 'react';
 import { userAPI } from '../services/api';
-import { useAuth } from './AuthContext'; // ADD THIS IMPORT
+import { useAuth } from './AuthContext';
 
 const UserContext = createContext(undefined);
 
@@ -14,21 +14,23 @@ export const useUser = () => {
 
 export const UserProvider = ({ children }) => {
   const [users, setUsers] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [tenants, setTenants] = useState([]);
   const [allocations, setAllocations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
-  const { user: authUser } = useAuth(); // ADD AUTH CHECK
+  const { user: authUser } = useAuth();
 
   // Check if user is authenticated
   const isAuthenticated = useCallback(() => {
     return !!authUser;
   }, [authUser]);
 
-  // Fetch all users - ONLY WHEN AUTHENTICATED
+  // Fetch all users - ONLY WHEN AUTHENTICATED AND ADMIN
   const fetchUsers = useCallback(async () => {
-    if (!isAuthenticated()) {
-      console.log('🚫 UserContext: User not authenticated, skipping user fetch');
+    if (!isAuthenticated() || authUser.role !== 'admin') {
+      console.log('🚫 UserContext: User not authenticated or not admin, skipping user fetch');
       setUsers([]);
       return;
     }
@@ -49,7 +51,59 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authUser]);
+
+  // Fetch agents for admin - ONLY WHEN AUTHENTICATED AND ADMIN
+  const fetchAgents = useCallback(async () => {
+    if (!isAuthenticated() || authUser.role !== 'admin') {
+      console.log('🚫 UserContext: User not authenticated or not admin, skipping agents fetch');
+      setAgents([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      console.log('🔄 Fetching agents from API...');
+      const response = await userAPI.getAgents();
+      
+      const agentsData = response.data?.data || response.data || [];
+      setAgents(Array.isArray(agentsData) ? agentsData : []);
+      console.log(`✅ Successfully fetched ${agentsData.length} agents`);
+    } catch (err) {
+      console.error('❌ Error fetching agents:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch agents';
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  }, [isAuthenticated, authUser]);
+
+  // Fetch tenants for agent - ONLY WHEN AUTHENTICATED AND AGENT
+  const fetchTenantsForAgent = useCallback(async () => {
+    if (!isAuthenticated() || authUser.role !== 'agent') {
+      console.log('🚫 UserContext: User not authenticated or not agent, skipping tenants fetch');
+      setTenants([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      console.log('🔄 Fetching tenants for agent...');
+      const response = await userAPI.getTenantsForAgent();
+      
+      const tenantsData = response.data?.data || response.data || [];
+      setTenants(Array.isArray(tenantsData) ? tenantsData : []);
+      console.log(`✅ Successfully fetched ${tenantsData.length} tenants for agent`);
+    } catch (err) {
+      console.error('❌ Error fetching tenants for agent:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch tenants';
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  }, [isAuthenticated, authUser]);
 
   // Fetch tenant allocations to check who's already allocated - ONLY WHEN AUTHENTICATED
   const fetchTenantAllocations = useCallback(async () => {
@@ -91,10 +145,10 @@ export const UserProvider = ({ children }) => {
     }
   }, [isAuthenticated]);
 
-  // Create new user - ONLY WHEN AUTHENTICATED
+  // Create new user - ONLY WHEN AUTHENTICATED AND ADMIN
   const createUser = useCallback(async (userData) => {
-    if (!isAuthenticated()) {
-      throw new Error('User not authenticated');
+    if (!isAuthenticated() || authUser.role !== 'admin') {
+      throw new Error('User not authenticated or not admin');
     }
 
     setLoading(true);
@@ -127,12 +181,12 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authUser]);
 
-  // Update user - ONLY WHEN AUTHENTICATED
+  // Update user - ONLY WHEN AUTHENTICATED AND ADMIN
   const updateUser = useCallback(async (userId, updates) => {
-    if (!isAuthenticated()) {
-      throw new Error('User not authenticated');
+    if (!isAuthenticated() || authUser.role !== 'admin') {
+      throw new Error('User not authenticated or not admin');
     }
 
     setLoading(true);
@@ -160,12 +214,12 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, selectedUser]);
+  }, [isAuthenticated, authUser, selectedUser]);
 
-  // Delete user (soft delete) - ONLY WHEN AUTHENTICATED
+  // Delete user (soft delete) - ONLY WHEN AUTHENTICATED AND ADMIN
   const deleteUser = useCallback(async (userId) => {
-    if (!isAuthenticated()) {
-      throw new Error('User not authenticated');
+    if (!isAuthenticated() || authUser.role !== 'admin') {
+      throw new Error('User not authenticated or not admin');
     }
 
     setLoading(true);
@@ -187,7 +241,35 @@ export const UserProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authUser]);
+
+  // Update agent permissions - ONLY WHEN AUTHENTICATED AND ADMIN
+  const updateAgentPermissions = useCallback(async (agentId, permissions) => {
+    if (!isAuthenticated() || authUser.role !== 'admin') {
+      throw new Error('User not authenticated or not admin');
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      console.log(`🔄 Updating agent permissions for ${agentId}:`, permissions);
+      const response = await userAPI.updateAgentPermissions(agentId, permissions);
+      
+      setAgents(prev => prev.map(agent => 
+        agent.id === agentId ? { ...agent, ...permissions } : agent
+      ));
+      
+      console.log('✅ Agent permissions updated successfully');
+      return response.data;
+    } catch (err) {
+      console.error('❌ Error updating agent permissions:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to update agent permissions';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [isAuthenticated, authUser]);
 
   // Get available tenants (users with role 'tenant' and without active allocations)
   const getAvailableTenants = useCallback(() => {
@@ -240,20 +322,29 @@ export const UserProvider = ({ children }) => {
   useEffect(() => {
     if (isAuthenticated()) {
       console.log('🔄 UserContext: User authenticated, fetching data...');
-      fetchUsers();
+      if (authUser.role === 'admin') {
+        fetchUsers();
+        fetchAgents();
+      } else if (authUser.role === 'agent') {
+        fetchTenantsForAgent();
+      }
       fetchTenantAllocations();
     } else {
       console.log('🚫 UserContext: User not authenticated, skipping data fetch');
       setUsers([]);
+      setAgents([]);
+      setTenants([]);
       setAllocations([]);
     }
-  }, [fetchUsers, fetchTenantAllocations, isAuthenticated]);
+  }, [authUser, isAuthenticated, fetchUsers, fetchAgents, fetchTenantsForAgent, fetchTenantAllocations]);
 
   // Listen for authentication changes
   useEffect(() => {
     if (!isAuthenticated()) {
       console.log('🚫 UserContext: User logged out, clearing data');
       setUsers([]);
+      setAgents([]);
+      setTenants([]);
       setAllocations([]);
       setSelectedUser(null);
     }
@@ -262,6 +353,8 @@ export const UserProvider = ({ children }) => {
   const value = React.useMemo(() => ({
     // State
     users,
+    agents,
+    tenants,
     allocations,
     loading,
     error,
@@ -273,24 +366,32 @@ export const UserProvider = ({ children }) => {
     // Actions
     setSelectedUser,
     fetchUsers,
+    fetchAgents,
+    fetchTenantsForAgent,
     createUser,
     updateUser,
     deleteUser,
+    updateAgentPermissions,
     getUserById,
     clearError,
     refreshAllocations,
     refreshUsers
   }), [
     users,
+    agents,
+    tenants,
     allocations,
     loading,
     error,
     selectedUser,
     getAvailableTenants,
     fetchUsers,
+    fetchAgents,
+    fetchTenantsForAgent,
     createUser,
     updateUser,
     deleteUser,
+    updateAgentPermissions,
     getUserById,
     clearError,
     refreshAllocations,

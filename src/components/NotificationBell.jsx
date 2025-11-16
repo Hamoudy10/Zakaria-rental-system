@@ -171,15 +171,15 @@ const NotificationBell = () => {
         )}
       </button>
 
-      {/* Dropdown - Mobile Responsive */}
+      {/* Dropdown - Fixed to stay within screen boundaries */}
       {isOpen && (
-        <div className="absolute right-0 mt-1 w-screen max-w-[95vw] xs:max-w-sm sm:w-80 md:w-96 bg-white rounded-lg shadow-xl border border-gray-200 z-50 transform transition-all duration-200 ease-in-out max-h-[80vh] flex flex-col">
+        <div className="absolute right-0 mt-1 w-[90vw] max-w-sm bg-white rounded-lg shadow-xl border border-gray-200 z-50 transform transition-all duration-200 ease-in-out max-h-[80vh] flex flex-col">
           {/* Header - Mobile Optimized */}
-          <div className="p-2 xs:p-3 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white flex-shrink-0">
+          <div className="p-3 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white flex-shrink-0">
             <div className="flex justify-between items-center gap-2">
               <div className="min-w-0 flex-1">
-                <h3 className="text-base xs:text-lg font-bold text-gray-900 truncate">Notifications</h3>
-                <p className="text-xs xs:text-sm text-gray-500 mt-0.5 truncate">
+                <h3 className="text-base font-bold text-gray-900 truncate">Notifications</h3>
+                <p className="text-sm text-gray-500 mt-0.5 truncate">
                   {unreadCount > 0 
                     ? `${unreadCount} unread notification${unreadCount !== 1 ? 's' : ''}`
                     : 'All caught up!'
@@ -187,16 +187,16 @@ const NotificationBell = () => {
                 </p>
               </div>
               
-              <div className="flex items-center gap-1 xs:gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 {/* Refresh Button */}
                 <button
                   onClick={handleRefresh}
                   disabled={loading}
-                  className="p-1.5 xs:p-1 text-gray-400 hover:text-gray-600 transition-colors duration-150 rounded-full min-h-[32px] min-w-[32px] flex items-center justify-center"
+                  className="p-1 text-gray-400 hover:text-gray-600 transition-colors duration-150 rounded-full min-h-[32px] min-w-[32px] flex items-center justify-center"
                   title="Refresh notifications"
                   aria-label="Refresh notifications"
                 >
-                  <svg className="w-4 h-4 xs:w-5 xs:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                 </button>
@@ -206,7 +206,7 @@ const NotificationBell = () => {
                   <button
                     onClick={handleMarkAllAsRead}
                     disabled={isMarkingAll || loading}
-                    className={`text-xs xs:text-sm px-2 xs:px-3 py-1 xs:py-1.5 rounded-md transition-colors duration-150 whitespace-nowrap min-h-[32px] ${
+                    className={`text-xs px-2 py-1 rounded-md transition-colors duration-150 whitespace-nowrap min-h-[32px] ${
                       isMarkingAll || loading
                         ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
@@ -223,20 +223,20 @@ const NotificationBell = () => {
           <div className="flex-1 overflow-y-auto">
             {loading && notifications.length === 0 ? (
               // Loading State
-              <div className="p-4 xs:p-8 text-center">
-                <div className="animate-spin rounded-full h-6 w-6 xs:h-8 xs:w-8 border-b-2 border-blue-500 mx-auto"></div>
-                <p className="text-xs xs:text-sm text-gray-500 mt-2">Loading notifications...</p>
+              <div className="p-6 text-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mx-auto"></div>
+                <p className="text-sm text-gray-500 mt-2">Loading notifications...</p>
               </div>
             ) : notifications.length === 0 ? (
               // Empty State
-              <div className="p-4 xs:p-8 text-center">
+              <div className="p-6 text-center">
                 <div className="text-gray-400 mb-2">
-                  <svg className="w-8 h-8 xs:w-12 xs:h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                   </svg>
                 </div>
-                <p className="text-sm xs:text-base text-gray-500 font-medium">No notifications</p>
-                <p className="text-xs xs:text-sm text-gray-400 mt-1">You're all caught up!</p>
+                <p className="text-sm text-gray-500 font-medium">No notifications</p>
+                <p className="text-xs text-gray-400 mt-1">You're all caught up!</p>
               </div>
             ) : (
               // Notifications List
@@ -244,7 +244,7 @@ const NotificationBell = () => {
                 <div
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification)}
-                  className={`p-2 xs:p-3 border-b border-gray-100 cursor-pointer transition-all duration-150 hover:bg-gray-50 active:bg-gray-100 group min-h-[60px] xs:min-h-[70px] ${
+                  className={`p-3 border-b border-gray-100 cursor-pointer transition-all duration-150 hover:bg-gray-50 active:bg-gray-100 group min-h-[70px] ${
                     !notification.is_read ? 'bg-blue-25' : ''
                   } ${getPriorityColor(notification.type)}`}
                   role="button"
@@ -255,9 +255,9 @@ const NotificationBell = () => {
                     }
                   }}
                 >
-                  <div className="flex items-start gap-2 xs:gap-3">
+                  <div className="flex items-start gap-3">
                     {/* Notification Icon */}
-                    <div className={`text-base xs:text-lg flex-shrink-0 mt-0.5 ${
+                    <div className={`text-lg flex-shrink-0 mt-0.5 ${
                       !notification.is_read ? 'text-blue-500' : 'text-gray-400'
                     }`}>
                       {getNotificationIcon(notification.type)}
@@ -266,23 +266,23 @@ const NotificationBell = () => {
                     {/* Notification Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
-                        <p className={`text-xs xs:text-sm font-medium truncate ${
+                        <p className={`text-sm font-medium truncate ${
                           !notification.is_read ? 'text-gray-900' : 'text-gray-600'
                         }`}>
                           {notification.title}
                         </p>
-                        <span className="text-[10px] xs:text-xs text-gray-400 flex-shrink-0 ml-1">
+                        <span className="text-xs text-gray-400 flex-shrink-0 ml-1">
                           {formatTimestamp(notification.created_at)}
                         </span>
                       </div>
                       
-                      <p className="text-xs xs:text-sm text-gray-600 mt-0.5 line-clamp-2 xs:line-clamp-3 leading-relaxed">
+                      <p className="text-sm text-gray-600 mt-0.5 line-clamp-2 leading-relaxed break-words">
                         {notification.message}
                       </p>
                       
                       {/* Notification Metadata */}
-                      <div className="flex items-center justify-between mt-1 xs:mt-2">
-                        <span className={`inline-flex items-center px-1.5 xs:px-2 py-0.5 xs:py-1 rounded-full text-[10px] xs:text-xs font-medium ${
+                      <div className="flex items-center justify-between mt-2">
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                           notification.type === 'payment_success' || notification.type === 'salary_paid'
                             ? 'bg-green-100 text-green-800'
                             : notification.type === 'payment_failed'
@@ -298,7 +298,7 @@ const NotificationBell = () => {
                     
                     {/* Unread Indicator */}
                     {!notification.is_read && (
-                      <div className="w-1.5 h-1.5 xs:w-2 xs:h-2 bg-blue-500 rounded-full flex-shrink-0 mt-1.5 xs:mt-2"></div>
+                      <div className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0 mt-2"></div>
                     )}
                   </div>
                 </div>
@@ -308,20 +308,20 @@ const NotificationBell = () => {
 
           {/* Footer */}
           {notifications.length > 0 && (
-            <div className="p-2 xs:p-3 border-t border-gray-200 bg-gray-50 flex-shrink-0">
+            <div className="p-3 border-t border-gray-200 bg-gray-50 flex-shrink-0">
               <div className="flex justify-between items-center gap-2">
                 <a
                   href={`/${user?.role}/notifications`}
-                  className="text-xs xs:text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors duration-150 flex items-center whitespace-nowrap min-h-[32px] items-center justify-center"
+                  className="text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors duration-150 flex items-center whitespace-nowrap min-h-[32px] items-center justify-center"
                   onClick={() => setIsOpen(false)}
                 >
                   View all
-                  <svg className="w-3 h-3 xs:w-4 xs:h-4 ml-0.5 xs:ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </a>
                 
-                <span className="text-[10px] xs:text-xs text-gray-500 whitespace-nowrap">
+                <span className="text-xs text-gray-500 whitespace-nowrap">
                   {Math.min(notifications.length, 8)} of {notifications.length}
                 </span>
               </div>

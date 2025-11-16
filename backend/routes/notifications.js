@@ -1,18 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const notificationController = require('../controllers/notificationController');
-const { protect } = require('../middleware/authMiddleware');
 
-// Admin middleware for admin-only routes
-const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied. Admin privileges required.'
-    });
-  }
-  next();
-};
+// FIXED: Import authMiddleware correctly
+const { authMiddleware, requireAdmin } = require('../middleware/authMiddleware');
 
 console.log('✅ Notifications routes loaded with real authentication');
 
@@ -25,7 +16,7 @@ console.log('✅ Notifications routes loaded with real authentication');
  * @description Get all notifications for authenticated user with filtering and pagination
  * @access Private
  */
-router.get('/', protect, async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
     await notificationController.getNotifications(req, res);
   } catch (error) {
@@ -43,7 +34,7 @@ router.get('/', protect, async (req, res) => {
  * @description Get unread notifications count for authenticated user
  * @access Private
  */
-router.get('/unread-count', protect, async (req, res) => {
+router.get('/unread-count', authMiddleware, async (req, res) => {
   try {
     await notificationController.getUnreadCount(req, res);
   } catch (error) {
@@ -61,7 +52,7 @@ router.get('/unread-count', protect, async (req, res) => {
  * @description Get notification statistics for authenticated user
  * @access Private
  */
-router.get('/stats', protect, async (req, res) => {
+router.get('/stats', authMiddleware, async (req, res) => {
   try {
     await notificationController.getNotificationStats(req, res);
   } catch (error) {
@@ -79,7 +70,7 @@ router.get('/stats', protect, async (req, res) => {
  * @description Get notifications by type for authenticated user
  * @access Private
  */
-router.get('/type/:type', protect, async (req, res) => {
+router.get('/type/:type', authMiddleware, async (req, res) => {
   try {
     await notificationController.getNotificationsByType(req, res);
   } catch (error) {
@@ -101,7 +92,7 @@ router.get('/type/:type', protect, async (req, res) => {
  * @description Create a new notification
  * @access Private (Admin can create broadcast notifications)
  */
-router.post('/', protect, async (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   try {
     await notificationController.createNotification(req, res);
   } catch (error) {
@@ -119,7 +110,7 @@ router.post('/', protect, async (req, res) => {
  * @description Create a broadcast notification for multiple users
  * @access Private (Admin only)
  */
-router.post('/broadcast', protect, requireAdmin, async (req, res) => {
+router.post('/broadcast', authMiddleware, requireAdmin, async (req, res) => {
   try {
     await notificationController.createBroadcastNotification(req, res);
   } catch (error) {
@@ -137,7 +128,7 @@ router.post('/broadcast', protect, requireAdmin, async (req, res) => {
  * @description Mark a specific notification as read
  * @access Private
  */
-router.put('/:id/read', protect, async (req, res) => {
+router.put('/:id/read', authMiddleware, async (req, res) => {
   try {
     await notificationController.markAsRead(req, res);
   } catch (error) {
@@ -155,7 +146,7 @@ router.put('/:id/read', protect, async (req, res) => {
  * @description Mark all notifications as read for authenticated user
  * @access Private
  */
-router.put('/read-all', protect, async (req, res) => {
+router.put('/read-all', authMiddleware, async (req, res) => {
   try {
     await notificationController.markAllAsRead(req, res);
   } catch (error) {
@@ -173,7 +164,7 @@ router.put('/read-all', protect, async (req, res) => {
  * @description Delete a specific notification
  * @access Private
  */
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     await notificationController.deleteNotification(req, res);
   } catch (error) {
@@ -191,7 +182,7 @@ router.delete('/:id', protect, async (req, res) => {
  * @description Clear all read notifications for authenticated user
  * @access Private
  */
-router.delete('/clear-read', protect, async (req, res) => {
+router.delete('/clear-read', authMiddleware, async (req, res) => {
   try {
     await notificationController.clearReadNotifications(req, res);
   } catch (error) {
@@ -213,7 +204,7 @@ router.delete('/clear-read', protect, async (req, res) => {
  * @description Get all notifications in the system (Admin only)
  * @access Private (Admin only)
  */
-router.get('/admin/all', protect, requireAdmin, async (req, res) => {
+router.get('/admin/all', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const { 
       page = 1, 
@@ -291,7 +282,7 @@ router.get('/admin/all', protect, requireAdmin, async (req, res) => {
     const offset = (page - 1) * limit;
     queryParams.push(parseInt(limit), offset);
 
-    const pool = req.app.get('db');
+    const pool = require('../config/database');
     const [notificationsResult, countResult] = await Promise.all([
       pool.query(query, queryParams),
       pool.query(countQuery, countParams)
@@ -331,7 +322,7 @@ router.get('/admin/all', protect, requireAdmin, async (req, res) => {
  * @description Get system-wide notification statistics (Admin only)
  * @access Private (Admin only)
  */
-router.get('/admin/stats/overview', protect, requireAdmin, async (req, res) => {
+router.get('/admin/stats/overview', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
 
@@ -345,7 +336,7 @@ router.get('/admin/stats/overview', protect, requireAdmin, async (req, res) => {
       queryParams.push(new Date(start_date), new Date(end_date));
     }
 
-    const pool = req.app.get('db');
+    const pool = require('../config/database');
 
     // Get overall stats
     const statsQuery = `
@@ -426,13 +417,13 @@ router.get('/admin/stats/overview', protect, requireAdmin, async (req, res) => {
  * @description Clear all notifications for a specific user (Admin only)
  * @access Private (Admin only)
  */
-router.delete('/admin/clear-all/:userId', protect, requireAdmin, async (req, res) => {
+router.delete('/admin/clear-all/:userId', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
 
     console.log(`🧹 Admin clearing all notifications for user: ${userId}`);
 
-    const pool = req.app.get('db');
+    const pool = require('../config/database');
 
     // Get count before deletion
     const countQuery = await pool.query(
@@ -480,7 +471,7 @@ router.delete('/admin/clear-all/:userId', protect, requireAdmin, async (req, res
  */
 router.get('/health', async (req, res) => {
   try {
-    const pool = req.app.get('db');
+    const pool = require('../config/database');
     
     // Test database connection
     const dbResult = await pool.query('SELECT NOW() as current_time');

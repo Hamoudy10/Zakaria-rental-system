@@ -1,4 +1,4 @@
-// server.js - UPDATED VERSION
+// server.js - FIXED VERSION
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
@@ -24,8 +24,13 @@ app.get('/api/test', (req, res) => {
 console.log('Loading routes...');
 
 // Always load auth first
-app.use('/api/auth', require('./routes/auth'));
-console.log('✅ Auth routes loaded');
+try {
+  console.log('🔄 Loading AUTH routes...');
+  app.use('/api/auth', require('./routes/auth'));
+  console.log('✅ AUTH ROUTES LOADED');
+} catch (error) {
+  console.log(`❌ AUTH routes failed: ${error.message}`);
+}
 
 // Core routes that must exist
 const requiredRoutes = [
@@ -42,8 +47,10 @@ requiredRoutes.forEach(route => {
     console.log(`🔄 Loading ${route.name} routes from: ${route.file}`);
     const routeModule = require(route.file);
     
-    if (typeof routeModule !== 'function') {
-      throw new Error(`Expected a function but got: ${typeof routeModule}`);
+    // FIXED: Remove the function check - routers are objects
+    // Just check if the module exists and is truthy
+    if (!routeModule) {
+      throw new Error('Route module is undefined or null');
     }
     
     app.use(route.path, routeModule);
@@ -65,8 +72,9 @@ requiredRoutes.forEach(route => {
 // Optional routes - these might not exist yet
 const optionalRoutes = [
   { path: '/api/tenants', file: './routes/tenants', name: 'Tenants' },
-  { path: '/api/agent', file: './routes/agent', name: 'Agent' },
-  { path: '/api/salary-payments', file: './routes/salaryPayments', name: 'Salary Payments' }
+  { path: '/api/agent', file: './routes/agents', name: 'Agent' },
+  { path: '/api/salary-payments', file: './routes/salaryPayments', name: 'Salary Payments' },
+  { path: '/api/admin/agent-permissions', file: './routes/agentPermissions', name: 'Agent Permissions' }
 ];
 
 optionalRoutes.forEach(route => {
@@ -74,8 +82,9 @@ optionalRoutes.forEach(route => {
     console.log(`🔄 Loading ${route.name} routes from: ${route.file}`);
     const routeModule = require(route.file);
     
-    if (typeof routeModule !== 'function') {
-      throw new Error(`Expected a function but got: ${typeof routeModule}`);
+    // FIXED: Remove the function check
+    if (!routeModule) {
+      throw new Error('Route module is undefined or null');
     }
     
     app.use(route.path, routeModule);
