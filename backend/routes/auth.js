@@ -3,8 +3,8 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const db = require('../config/database'); // Changed from pool to db for consistency
-const { authMiddleware } = require('../middleware/authMiddleware'); // Updated import
+const db = require('../config/database');
+const authMiddleware = require('../middleware/authMiddleware').authMiddleware; // Fixed import
 
 console.log('✅ AUTH ROUTES LOADED');
 
@@ -274,7 +274,7 @@ router.post('/debug-login', async (req, res) => {
 // Set up routes
 router.post('/register', register);
 router.post('/login', login);
-router.get('/profile', authMiddleware, getProfile); // Added authMiddleware protection
+router.get('/profile', authMiddleware, getProfile);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

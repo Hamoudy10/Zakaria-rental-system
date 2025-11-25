@@ -3,6 +3,7 @@ import { usePayment } from '../context/PaymentContext';
 import { useAllocation } from '../context/TenantAllocationContext';
 import { useUser } from '../context/UserContext';
 import { useProperty } from '../context/PropertyContext';
+import agentService from '../services/AgentService';
 
 const PaymentManagement = () => {
   const {
@@ -32,12 +33,29 @@ const PaymentManagement = () => {
   });
   const [filterMonth, setFilterMonth] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [assignedTenants, setAssignedTenants] = useState([]);
+  const [tenantsLoading, setTenantsLoading] = useState(true);
 
   // SAFE CHECK: Ensure data is always arrays
   const safePayments = Array.isArray(payments) ? payments : [];
   const safeAllocations = Array.isArray(allocations) ? allocations : [];
   const safeUsers = Array.isArray(users) ? users : [];
   const safeProperties = Array.isArray(properties) ? properties : [];
+
+  // NEW: Fetch assigned tenants for agents
+  const fetchAssignedTenants = async () => {
+    try {
+      setTenantsLoading(true);
+      const response = await agentService.getTenantsWithPaymentStatus();
+      const tenantsData = response.data?.data || response.data || [];
+      setAssignedTenants(Array.isArray(tenantsData) ? tenantsData : []);
+    } catch (error) {
+      console.error('Error fetching assigned tenants:', error);
+      setAssignedTenants([]);
+    } finally {
+      setTenantsLoading(false);
+    }
+  };
 
   // Get all units from all properties
   const getAllUnits = () => {
@@ -46,8 +64,9 @@ const PaymentManagement = () => {
 
   const safeUnits = getAllUnits();
 
-  // Get active allocations for payment
-  const activeAllocations = safeAllocations.filter(allocation => allocation.is_active);
+  // Use assigned tenants for agents, fallback to all allocations for admins
+  const displayTenants = assignedTenants.length > 0 ? assignedTenants : safeAllocations;
+  const activeAllocations = displayTenants.filter(allocation => allocation.is_active);
 
   // Filter payments based on selected filters
   const filteredPayments = safePayments.filter(payment => {
@@ -64,6 +83,7 @@ const PaymentManagement = () => {
     fetchPayments();
     fetchUsers();
     fetchProperties(); // This will fetch properties with their units
+    fetchAssignedTenants(); // Load assigned tenants for agents
   }, [fetchPayments, fetchUsers, fetchProperties]);
 
   // Reset form when modal opens/closes
@@ -170,6 +190,7 @@ const PaymentManagement = () => {
 
       alert('Payment recorded successfully!');
       setShowPaymentModal(false);
+      fetchPayments(); // Refresh payments list
     } catch (error) {
       console.error('Error creating payment:', error);
     }
@@ -179,6 +200,7 @@ const PaymentManagement = () => {
     try {
       await confirmPayment(paymentId);
       alert('Payment confirmed successfully!');
+      fetchPayments(); // Refresh payments list
     } catch (error) {
       console.error('Error confirming payment:', error);
     }
@@ -189,6 +211,7 @@ const PaymentManagement = () => {
       try {
         await deletePayment(paymentId);
         alert('Payment record deleted successfully!');
+        fetchPayments(); // Refresh payments list
       } catch (error) {
         console.error('Error deleting payment:', error);
       }
@@ -215,7 +238,9 @@ const PaymentManagement = () => {
     }
   };
 
-  if (loading) {
+  const isLoading = loading || tenantsLoading;
+
+  if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="text-gray-500 text-sm md:text-base">Loading payments...</div>
@@ -230,6 +255,11 @@ const PaymentManagement = () => {
         <div>
           <h2 className="text-xl md:text-2xl font-bold text-gray-900">Payment Management</h2>
           <p className="text-sm md:text-base text-gray-600">Manage tenant rent payments and records</p>
+          {assignedTenants.length > 0 && (
+            <p className="text-sm text-blue-600 mt-1">
+              Showing tenants from your assigned properties ({assignedTenants.length} total)
+            </p>
+          )}
         </div>
         <button
           onClick={() => setShowPaymentModal(true)}
@@ -615,7 +645,7 @@ const PaymentManagement = () => {
                           <button
                             onClick={() => handleDeletePayment(payment.id)}
                             className="text-red-600 hover:text-red-900 whitespace-nowrap min-h-[44px] px-3 touch-manipulation"
-                          >
+                            >
                             Delete
                           </button>
                         </td>

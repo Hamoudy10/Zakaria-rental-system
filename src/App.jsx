@@ -13,6 +13,7 @@ import Login from './components/Login'
 import { SalaryPaymentProvider } from './context/SalaryPaymentContext'
 import { ComplaintProvider } from './context/ComplaintContext';
 import { SystemSettingsProvider } from './context/SystemSettingsContext';
+import { ChatProvider } from './context/chatcontext';
 
 // Lazy load all dashboard components and major components
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
@@ -23,6 +24,7 @@ const TenantPayment = lazy(() => import('./components/TenantPayment'));
 const ProfilePage = lazy(() => import('./components/ProfilePage'));
 const SystemSettings = lazy(() => import('./components/SystemSettings'));
 const AgentManagement = lazy(() => import('./components/AgentManagement'));
+const ChatModule = lazy(() => import('./components/ChatModule'));
 
 // Loading component for Suspense fallback
 const LoadingSpinner = () => (
@@ -97,6 +99,15 @@ const Layout = ({ children }) => {
               >
                 Dashboard
               </Link>
+              {/* Show Chat link for admin and agent users */}
+              {(user?.role === 'admin' || user?.role === 'agent') && (
+                <Link 
+                  to={`${getDashboardPath()}/chat`} 
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200"
+                >
+                  Chat
+                </Link>
+              )}
               <Link 
                 to={`${getDashboardPath()}/notifications`} 
                 className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200"
@@ -203,6 +214,15 @@ const Layout = ({ children }) => {
               >
                 Dashboard
               </Link>
+              {/* Show Chat link for admin and agent users on mobile */}
+              {(user?.role === 'admin' || user?.role === 'agent') && (
+                <Link 
+                  to={`${getDashboardPath()}/chat`} 
+                  className="text-gray-600 hover:text-gray-900 px-2 py-1 rounded text-sm font-medium whitespace-nowrap flex-shrink-0"
+                >
+                  Chat
+                </Link>
+              )}
               <Link 
                 to={`${getDashboardPath()}/notifications`} 
                 className="text-gray-600 hover:text-gray-900 px-2 py-1 rounded text-sm font-medium whitespace-nowrap flex-shrink-0"
@@ -262,6 +282,20 @@ const Layout = ({ children }) => {
                   </svg>
                   <span>Dashboard</span>
                 </Link>
+
+                {/* Chat link for admin and agent users in mobile sidebar */}
+                {(user?.role === 'admin' || user?.role === 'agent') && (
+                  <Link
+                    to={`${getDashboardPath()}/chat`}
+                    className="flex items-center space-x-3 px-3 py-3 rounded-lg text-base font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors duration-200 group"
+                    onClick={() => setSidebarOpen(false)}
+                  >
+                    <svg className="w-5 h-5 text-gray-400 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                    <span>Chat</span>
+                  </Link>
+                )}
 
                 <Link
                   to={`${getDashboardPath()}/notifications`}
@@ -442,6 +476,7 @@ function AppContent() {
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/settings" element={<SystemSettings />} />
                 <Route path="/agents" element={<AgentManagement />} />
+                <Route path="/chat" element={<ChatModule />} />
                 <Route path="*" element={<Navigate to="/admin" replace />} />
               </Routes>
             </DashboardLayout>
@@ -459,6 +494,7 @@ function AppContent() {
                 <Route path="/" element={<AgentDashboard />} />
                 <Route path="/notifications" element={<NotificationPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
+                <Route path="/chat" element={<ChatModule />} />
                 <Route path="*" element={<Navigate to="/agent" replace />} />
               </Routes>
             </DashboardLayout>
@@ -558,7 +594,9 @@ function App() {
                     <ComplaintProvider>
                       <ReportProvider>
                         <SystemSettingsProvider>
-                          <AppContent />
+                          <ChatProvider>
+                            <AppContent />
+                          </ChatProvider>
                         </SystemSettingsProvider>
                       </ReportProvider>
                     </ComplaintProvider>
