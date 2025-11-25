@@ -1,7 +1,11 @@
-// server.js - FIXED VERSION
+// server.js - FIXED VERSION WITH CHAT MODULE
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
+const http = require('http');
+const socketIo = require('socket.io');
+const authMiddleware = require('./middleware/authMiddleware');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 
@@ -10,6 +14,44 @@ app.use(cors());
 app.use(express.json());
 
 console.log('=== SERVER STARTING ===');
+
+// Create HTTP server for Socket.IO
+const server = http.createServer(app);
+
+// Initialize Socket.IO with authentication
+const io = socketIo(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    methods: ["GET", "POST"]
+  }
+});
+
+// Socket.IO authentication middleware
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error('Authentication error'));
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.id;
+    socket.userName = `${decoded.first_name} ${decoded.last_name}`;
+    next();
+  } catch (error) {
+    next(new Error('Authentication error'));
+  }
+});
+
+// Initialize Chat Service
+try {
+  console.log('🔄 Initializing Chat Service...');
+  const ChatService = require('./services/chatService');
+  const chatService = new ChatService(io);
+  console.log('✅ Chat Service initialized');
+} catch (error) {
+  console.log('⚠️ Chat Service initialization failed:', error.message);
+}
 
 // Test route
 app.get('/api/test', (req, res) => {
@@ -113,6 +155,24 @@ optionalRoutes.forEach(route => {
   }
 });
 
+// NEW: Load chat routes
+console.log('🔄 Loading Chat routes...');
+try {
+  const chatRoutes = require('./routes/chat');
+  app.use('/api/chat', chatRoutes);
+  console.log('✅ Chat routes loaded');
+} catch (error) {
+  console.log(`❌ Chat routes failed: ${error.message}`);
+  // Create placeholder for chat routes
+  app.use('/api/chat', (req, res) => {
+    res.json({ 
+      success: true, 
+      message: 'Chat routes are under development',
+      data: [] 
+    });
+  });
+}
+
 // Load units routes
 console.log('🔄 Loading Units routes...');
 try {
@@ -131,6 +191,24 @@ try {
   console.log('✅ Allocations routes loaded');
 } catch (error) {
   console.log(`❌ Allocations routes failed: ${error.message}`);
+}
+
+// NEW: Load agent property routes
+console.log('🔄 Loading Agent Property routes...');
+try {
+  const agentPropertyRoutes = require('./routes/agentProperties');
+  app.use('/api/agent-properties', agentPropertyRoutes);
+  console.log('✅ Agent Property routes loaded');
+} catch (error) {
+  console.log(`❌ Agent Property routes failed: ${error.message}`);
+  // Create placeholder for agent properties
+  app.use('/api/agent-properties', (req, res) => {
+    res.json({ 
+      success: true, 
+      message: 'Agent property routes are under development',
+      data: [] 
+    });
+  });
 }
 
 console.log('=== ALL ROUTES LOADED ===');
@@ -154,8 +232,10 @@ app.use('*', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 
-app.listen(PORT, () => {
+// Use server.listen instead of app.listen for Socket.IO
+server.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`🔗 Test URL: http://localhost:${PORT}/api/test`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`💬 Chat service: Socket.IO server initialized`);
 });

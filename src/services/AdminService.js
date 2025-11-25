@@ -26,10 +26,10 @@ const adminService = {
     }
   },
 
-  // Agent allocation methods - these might not exist yet in backend
+  // Agent Allocation methods - updated to use new endpoints
   getAgentAllocations: async () => {
     try {
-      const response = await api.get('/agent-allocations');
+      const response = await api.get('/agent-properties/allocations');
       return response;
     } catch (error) {
       console.warn('Agent allocations endpoint not available, returning empty array');
@@ -39,7 +39,7 @@ const adminService = {
 
   assignPropertiesToAgent: async (agentId, propertyIds) => {
     try {
-      const response = await api.post('/agent-allocations', {
+      const response = await api.post('/agent-properties/assign', {
         agent_id: agentId,
         property_ids: propertyIds
       });
@@ -53,7 +53,7 @@ const adminService = {
 
   removeAgentAllocation: async (allocationId) => {
     try {
-      const response = await api.delete(`/agent-allocations/${allocationId}`);
+      const response = await api.delete(`/agent-properties/${allocationId}`);
       return response;
     } catch (error) {
       console.warn('Remove allocation endpoint not available, simulating success');

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useComplaint } from '../context/ComplaintContext';
 import { useAllocation } from '../context/TenantAllocationContext';
 import { useUser } from '../context/UserContext';
+import agentService from '../services/AgentService';
 
 const ComplaintManagement = () => {
   const {
@@ -39,6 +40,8 @@ const ComplaintManagement = () => {
   });
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
+  const [assignedComplaints, setAssignedComplaints] = useState([]);
+  const [assignedLoading, setAssignedLoading] = useState(true);
 
   // SAFE CHECK: Ensure data is always arrays
   const safeComplaints = Array.isArray(complaints) ? complaints : [];
@@ -51,8 +54,28 @@ const ComplaintManagement = () => {
   // Get available agents
   const availableAgents = safeUsers.filter(user => user.role === 'agent' && user.is_active);
 
+  // NEW: Fetch assigned complaints for agents
+  const fetchAssignedComplaints = async () => {
+    try {
+      setAssignedLoading(true);
+      const status = filterStatus === 'all' ? null : filterStatus;
+      const response = await agentService.getAssignedComplaints(status);
+      const complaintsData = response.data?.data || response.data || [];
+      setAssignedComplaints(Array.isArray(complaintsData) ? complaintsData : []);
+    } catch (error) {
+      console.error('Error fetching assigned complaints:', error);
+      setAssignedComplaints([]);
+    } finally {
+      setAssignedLoading(false);
+    }
+  };
+
+  // Use assigned complaints for agents, fallback to all complaints for admins
+  const displayComplaints = assignedComplaints.length > 0 ? assignedComplaints : safeComplaints;
+  const isLoading = assignedLoading || loading;
+
   // Filter complaints based on selected filters
-  const filteredComplaints = safeComplaints.filter(complaint => {
+  const filteredComplaints = displayComplaints.filter(complaint => {
     const matchesStatus = !filterStatus || complaint.status === filterStatus;
     const matchesPriority = !filterPriority || complaint.priority === filterPriority;
     return matchesStatus && matchesPriority;
@@ -61,7 +84,13 @@ const ComplaintManagement = () => {
   // Load complaints on component mount
   useEffect(() => {
     fetchComplaints();
+    fetchAssignedComplaints(); // Load assigned complaints for agents
   }, [fetchComplaints]);
+
+  // Reload assigned complaints when filter changes
+  useEffect(() => {
+    fetchAssignedComplaints();
+  }, [filterStatus]);
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -95,6 +124,7 @@ const ComplaintManagement = () => {
 
       alert('Complaint submitted successfully!');
       setShowComplaintModal(false);
+      fetchAssignedComplaints(); // Refresh the list
     } catch (error) {
       console.error('Error creating complaint:', error);
     }
@@ -106,6 +136,7 @@ const ComplaintManagement = () => {
       alert('Complaint assigned successfully!');
       setShowAssignModal(false);
       setSelectedAgent('');
+      fetchAssignedComplaints(); // Refresh the list
     } catch (error) {
       console.error('Error assigning complaint:', error);
     }
@@ -121,6 +152,7 @@ const ComplaintManagement = () => {
         tenant_feedback: '',
         tenant_satisfaction_rating: 5
       });
+      fetchAssignedComplaints(); // Refresh the list
     } catch (error) {
       console.error('Error resolving complaint:', error);
     }
@@ -153,10 +185,16 @@ const ComplaintManagement = () => {
     }
   };
 
-  // Get complaint statistics
-  const complaintStats = getComplaintStats();
+  // Get complaint statistics from assigned complaints
+  const complaintStats = {
+    total: assignedComplaints.length,
+    open: assignedComplaints.filter(c => c.status === 'open').length,
+    inProgress: assignedComplaints.filter(c => c.status === 'in_progress').length,
+    resolved: assignedComplaints.filter(c => c.status === 'resolved').length,
+    highPriority: assignedComplaints.filter(c => c.priority === 'high').length
+  };
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="text-gray-500">Loading complaints...</div>
@@ -170,6 +208,11 @@ const ComplaintManagement = () => {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Complaint Management</h2>
           <p className="text-gray-600">Manage tenant complaints and maintenance requests</p>
+          {assignedComplaints.length > 0 && (
+            <p className="text-sm text-blue-600 mt-1">
+              Showing complaints from your assigned properties ({assignedComplaints.length} total)
+            </p>
+          )}
         </div>
         <button
           onClick={() => setShowComplaintModal(true)}

@@ -2,17 +2,30 @@
 const express = require('express');
 const router = express.Router();
 const agentPropertyController = require('../controllers/agentPropertyController');
-const { protect, authorize } = require('../middleware/authMiddleware');
+const authMiddleware = require('../middleware/authMiddleware').authMiddleware;
+const requireRole = require('../middleware/authMiddleware').requireRole;
 
-// Admin routes for agent property management
-router.post('/assign', protect, authorize('admin'), agentPropertyController.assignPropertiesToAgent);
-router.delete('/:allocationId', protect, authorize('admin'), agentPropertyController.removeAgentPropertyAssignment);
-router.get('/allocations', protect, authorize('admin'), agentPropertyController.getAllAgentPropertyAssignments);
+console.log('🔄 Loading AGENT PROPERTIES routes...');
 
-// Agent routes for accessing assigned data
-router.get('/my-properties', protect, authorize('agent'), agentPropertyController.getMyAssignedProperties);
-router.get('/my-tenants', protect, authorize('agent'), agentPropertyController.getMyTenants);
-router.get('/my-complaints', protect, authorize('agent'), agentPropertyController.getMyComplaints);
-router.get('/dashboard-stats', protect, authorize('agent'), agentPropertyController.getAgentDashboardStats);
+// Apply auth middleware to all routes
+router.use(authMiddleware);
+
+// Admin routes - agent property assignments
+router.post('/assign', requireRole(['admin']), agentPropertyController.assignPropertiesToAgent);
+
+router.get('/allocations', requireRole(['admin']), agentPropertyController.getAgentAllocations);
+
+router.delete('/:id', requireRole(['admin']), agentPropertyController.removeAgentAllocation);
+
+// Agent routes - get assigned data
+router.get('/my-properties', requireRole(['agent', 'admin']), agentPropertyController.getMyProperties);
+
+router.get('/my-tenants', requireRole(['agent', 'admin']), agentPropertyController.getMyTenants);
+
+router.get('/my-complaints', requireRole(['agent', 'admin']), agentPropertyController.getMyComplaints);
+
+router.get('/dashboard-stats', requireRole(['agent', 'admin']), agentPropertyController.getAgentDashboardStats);
+
+console.log('✅ AGENT PROPERTIES ROUTES LOADED');
 
 module.exports = router;

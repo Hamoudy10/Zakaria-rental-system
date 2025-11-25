@@ -105,7 +105,8 @@ const AgentOverview = ({ setActiveTab }) => {
   const [dashboardData, setDashboardData] = useState({
     stats: {},
     recentComplaints: [],
-    paymentAlerts: []
+    paymentAlerts: [],
+    assignedProperties: []
   });
 
   useEffect(() => {
@@ -117,16 +118,24 @@ const AgentOverview = ({ setActiveTab }) => {
       setLoading(true);
       setError(null);
       
-      const [statsResponse, complaintsResponse, paymentsResponse] = await Promise.all([
+      const [statsResponse, propertiesResponse, complaintsResponse, paymentsResponse] = await Promise.all([
         agentService.getDashboardStats(),
-        agentService.getRecentComplaints(),
-        agentService.getPaymentAlerts()
+        agentService.getAssignedProperties(),
+        agentService.getAssignedComplaints('open'),
+        agentService.getTenantsWithPaymentStatus()
       ]);
+
+      // Filter payment alerts to only show tenants with pending payments
+      const paymentAlertsData = paymentsResponse.data?.data || paymentsResponse.data || [];
+      const pendingPayments = Array.isArray(paymentAlertsData) 
+        ? paymentAlertsData.filter(tenant => tenant.payment_status === 'pending' || tenant.balance_due > 0)
+        : [];
 
       setDashboardData({
         stats: statsResponse.data?.data || statsResponse.data || {},
+        assignedProperties: propertiesResponse.data?.data || propertiesResponse.data || [],
         recentComplaints: complaintsResponse.data?.data || complaintsResponse.data || [],
-        paymentAlerts: paymentsResponse.data?.data || paymentsResponse.data || []
+        paymentAlerts: pendingPayments
       });
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -188,6 +197,14 @@ const AgentOverview = ({ setActiveTab }) => {
     }
   };
 
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-KE', {
+      style: 'currency',
+      currency: 'KES',
+      minimumFractionDigits: 0
+    }).format(amount || 0);
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -216,6 +233,11 @@ const AgentOverview = ({ setActiveTab }) => {
       <div className="text-center sm:text-left">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Agent Dashboard</h1>
         <p className="text-gray-600 text-sm mt-1">Welcome back, {user?.first_name}! Manage complaints and tenant communications</p>
+        {dashboardData.assignedProperties.length > 0 && (
+          <p className="text-sm text-blue-600 mt-1">
+            You are managing {dashboardData.assignedProperties.length} properties
+          </p>
+        )}
       </div>
 
       {/* Stats Grid - Focused on core metrics */}
@@ -225,7 +247,7 @@ const AgentOverview = ({ setActiveTab }) => {
             <div>
               <p className="text-xs sm:text-sm font-medium text-gray-600">Assigned Properties</p>
               <p className="text-lg sm:text-xl font-bold text-blue-600">
-                {dashboardData.stats.assignedProperties || 0}
+                {dashboardData.assignedProperties.length || 0}
               </p>
               <p className="text-xs text-gray-500">Properties managed</p>
             </div>
@@ -238,7 +260,7 @@ const AgentOverview = ({ setActiveTab }) => {
             <div>
               <p className="text-xs sm:text-sm font-medium text-gray-600">Active Complaints</p>
               <p className="text-lg sm:text-xl font-bold text-orange-600">
-                {dashboardData.stats.activeComplaints || 0}
+                {dashboardData.recentComplaints.length || 0}
               </p>
               <p className="text-xs text-gray-500">Needing attention</p>
             </div>
@@ -251,7 +273,7 @@ const AgentOverview = ({ setActiveTab }) => {
             <div>
               <p className="text-xs sm:text-sm font-medium text-gray-600">Pending Payments</p>
               <p className="text-lg sm:text-xl font-bold text-red-600">
-                {dashboardData.stats.pendingPayments || 0}
+                {dashboardData.paymentAlerts.length || 0}
               </p>
               <p className="text-xs text-gray-500">Tenants with balance</p>
             </div>
@@ -370,18 +392,18 @@ const AgentOverview = ({ setActiveTab }) => {
               <div key={alert.tenant_id || index} className="flex items-center justify-between p-2 sm:p-3 bg-red-50 rounded-lg">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm font-medium text-gray-900">
-                    {alert.tenant_name}
+                    {alert.tenant_name || alert.first_name + ' ' + alert.last_name}
                   </p>
                   <p className="text-xs text-gray-600">
-                    {alert.property_name} • {alert.unit_number}
+                    {alert.property_name} • {alert.unit_number || alert.unit_code}
                   </p>
                 </div>
                 <div className="text-right">
                   <p className="text-xs sm:text-sm font-semibold text-red-600">
-                    KES {alert.balance_due}
+                    {formatCurrency(alert.balance_due || alert.amount_due)}
                   </p>
                   <p className="text-xs text-gray-500">
-                    Due {alert.due_date}
+                    Due {alert.due_date || 'This month'}
                   </p>
                 </div>
               </div>

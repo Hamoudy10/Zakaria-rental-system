@@ -74,6 +74,11 @@ const NotificationManagement = () => {
       <div className="text-center sm:text-left">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Send Notifications</h1>
         <p className="text-gray-600 text-sm mt-1">Send SMS announcements and notices to tenants in your assigned properties</p>
+        {properties.length > 0 && (
+          <p className="text-sm text-blue-600 mt-1">
+            You have {properties.length} assigned properties
+          </p>
+        )}
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg p-6">
