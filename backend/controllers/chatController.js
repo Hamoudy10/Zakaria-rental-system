@@ -4,9 +4,8 @@ const db = require('../config/database');
 const getUserConversations = async (req, res) => {
     try {
         const userId = req.user.id;
-        
-        const query = `
-            SELECT 
+       const query = `
+           SELECT 
                 c.*,
                 COUNT(DISTINCT cm.id) as message_count,
                 MAX(cm.created_at) as last_message_at,
@@ -29,16 +28,21 @@ const getUserConversations = async (req, res) => {
                 ARRAY_AGG(DISTINCT jsonb_build_object(
                     'id', u2.id,
                     'first_name', u2.first_name,
-                    'last_name', u2.last_name,
+                   'last_name', u2.last_name,
                     'email', u2.email,
                     'role', u2.role
                 )) as participants
             FROM chat_conversations c
-            JOIN chat_participants cp ON c.id = cp.conversation_id
+            -- Ensure the current user is a participant (cp_user),
+            -- but aggregate participants (cp/u2) for the whole conversation
+            JOIN chat_participants cp_user 
+              ON c.id = cp_user.conversation_id 
+              AND cp_user.user_id = $1 
+              AND cp_user.is_active = true
+            LEFT JOIN chat_participants cp ON c.id = cp.conversation_id AND cp.is_active = true
+            LEFT JOIN users u2 ON cp.user_id = u2.id
             LEFT JOIN chat_messages cm ON c.id = cm.conversation_id
             LEFT JOIN chat_message_reads cmr ON cm.id = cmr.message_id
-            LEFT JOIN users u2 ON cp.user_id = u2.id
-            WHERE cp.user_id = $1 AND cp.is_active = true
             GROUP BY c.id
             ORDER BY last_message_at DESC NULLS LAST
         `;
@@ -317,12 +321,17 @@ const searchMessages = async (req, res) => {
         }
 
         let searchQuery = `
-            SELECT 
+             SELECT 
                 cm.*,
                 u.first_name,
                 u.last_name,
                 u.role,
-                c.title as conversation_title
+                c.title as conversation_title,
+                -- Whether the current user has read this message
+                EXISTS(
+                    SELECT 1 FROM chat_message_reads r 
+                    WHERE r.message_id = cm.id AND r.user_id = $1
+            ) AS is_read
             FROM chat_messages cm
             JOIN users u ON cm.sender_id = u.id
             JOIN chat_conversations c ON cm.conversation_id = c.id
@@ -396,7 +405,15 @@ const getAvailableUsers = async (req, res) => {
         const userId = req.user.id;
         
         const usersQuery = `
-            SELECT id, first_name, last_name, email, role, phone_number
+            SELECT 
+                id, 
+                first_name, 
+                last_name, 
+                email, 
+                role, 
+                phone_number,
+                is_active,
+                profile_image
             FROM users 
             WHERE is_active = true 
             AND role IN ('admin', 'agent')
@@ -408,7 +425,7 @@ const getAvailableUsers = async (req, res) => {
 
         res.json({
             success: true,
-            users: result.rows
+            data: result.rows  // Changed from 'users' to 'data' to match frontend expectation
         });
     } catch (error) {
         console.error('Get available users error:', error);

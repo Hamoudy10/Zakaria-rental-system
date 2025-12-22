@@ -5,7 +5,7 @@ const ChatSearch = ({ onClose }) => {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
-    const { searchMessages } = useChat();
+    const { searchMessages, markAsRead } = useChat();
 
     const handleSearch = async (e) => {
         e.preventDefault();
@@ -71,27 +71,50 @@ const ChatSearch = ({ onClose }) => {
                         </h4>
                     </div>
                     <div className="max-h-60 overflow-y-auto">
-                        {results.map((result) => (
-                            <div
-                                key={result.id}
-                                className="p-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50 cursor-pointer"
-                            >
-                                <div className="flex justify-between items-start mb-1">
-                                    <span className="font-semibold text-sm text-gray-900">
-                                        {result.first_name} {result.last_name}
-                                    </span>
-                                    <span className="text-xs text-gray-500">
-                                        {formatTime(result.created_at)}
-                                    </span>
-                                </div>
-                                <p className="text-sm text-gray-700">{result.message_text}</p>
-                                {result.conversation_title && (
-                                    <p className="text-xs text-gray-500 mt-1">
-                                        In: {result.conversation_title}
+                        {results.map((result) => {
+                           const unread = result.is_read === false;
+                            return (
+                                <div
+                                    key={result.id}
+                                    onClick={async () => {
+                                        try {
+                                            if (unread) {
+                                                await markAsRead([result.id]);
+                                                // Optimistic UI update:
+                                                setResults(prev => prev.map(r => r.id === result.id ? { ...r, is_read: true } : r));
+                                            }
+                                            // Optionally close search or navigate to conversation
+                                            // onClose();
+                                        } catch (err) {
+                                            console.error('Failed to mark message read:', err);
+                                        }
+                                    }}
+                                    className={`p-3 border-b border-gray-100 last:border-b-0 cursor-pointer transition-colors ${
+                                        unread ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'
+                                    }`}
+                                >
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className={`font-semibold text-sm ${unread ? 'text-blue-900' : 'text-gray-900'}`}>
+                                            {result.first_name} {result.last_name}
+                                        </span>
+                                        <div className="flex items-center space-x-2">
+                                            <span className="text-xs text-gray-500">{formatTime(result.created_at)}</span>
+                                            {unread && (
+                                                <span className="bg-blue-600 text-white text-xs rounded-full px-2 py-0.5">New</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <p className={`text-sm ${unread ? 'text-blue-800 font-medium' : 'text-gray-700'}`}>
+                                        {result.message_text}
                                     </p>
-                                )}
-                            </div>
-                        ))}
+                                    {result.conversation_title && (
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            In: {result.conversation_title}
+                                        </p>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             )}

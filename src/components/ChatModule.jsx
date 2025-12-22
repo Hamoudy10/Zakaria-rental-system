@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useChat } from '../../src/context/chatcontext';
+import { useChat } from '../context/chatcontext';
 import { useAuth } from '../context/AuthContext';
 
 // Import components
@@ -67,6 +67,25 @@ const ConversationItem = ({ conversation, isActive, onSelect, unreadCount, curre
     if (!text) return 'No messages yet';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
   };
+
+  const unread = unreadCount > 0 && !isActive;
+    <div
+      onClick={() => onSelect(conversation)}
+      className={`flex items-center p-4 border-b border-gray-100 cursor-pointer transition-all duration-200 ${
+        isActive ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-l-blue-500'
+                : unread ? 'bg-blue-50 border-l-4 border-l-blue-200' : 'hover:bg-gray-50'
+      }`}
+    >
+      ...
+      <p className={`text-sm truncate ${unread ? 'text-blue-800 font-medium' : (isActive ? 'text-blue-600' : 'text-gray-600')}`}>
+        {truncateText(conversation.last_message_text)}
+      </p>
+      {unreadCount > 0 && (
+        <span className="ml-3 inline-flex items-center justify-center bg-blue-600 text-white text-xs rounded-full px-2 py-0.5">
+          {unreadCount}
+        </span>
+      )}
+    </div>
 
   return (
     <div
@@ -176,7 +195,8 @@ const ChatModule = () => {
     stopTyping,
     joinConversation,
     leaveConversation,
-    getUnreadCount
+    getUnreadCount,
+    getTotalUnreadCount
   } = useChat();
 
   const { user } = useAuth();
@@ -209,6 +229,15 @@ const ChatModule = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Auto-scroll to latest message when messages change or active conversation changes
+  useEffect(() => {
+    if (!messagesEndRef.current) return;
+    // Use next frame to ensure DOM updated
+    requestAnimationFrame(() => {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    });
+  }, [messages.length, activeConversation?.id]);
+
   useEffect(() => {
     if (activeConversation) {
       joinConversation(activeConversation.id);
@@ -219,10 +248,22 @@ const ChatModule = () => {
     }
   }, [activeConversation, joinConversation, leaveConversation, loadMessages]);
 
-  const handleSendMessage = async (messageText) => {
-    if (!activeConversation || !messageText.trim()) return;
-    await sendMessage(activeConversation.id, messageText.trim());
-  };
+ const handleSendMessage = async (arg1, arg2) => {
+  // Support both signatures:
+  // 1) onSendMessage(message)       -> arg1 = message
+  // 2) onSendMessage(conversationId, message) -> arg1 = conversationId, arg2 = message
+  let conversationId = arg1;
+  let messageText = arg2;
+
+  if (typeof arg2 === 'undefined') {
+    // called as onSendMessage(message)
+    messageText = arg1;
+    conversationId = activeConversation?.id;
+  }
+
+  if (!conversationId || !messageText?.trim()) return;
+  await sendMessage(conversationId, messageText.trim());
+};
 
   const handleTypingStart = () => {
     if (activeConversation) {
@@ -246,7 +287,13 @@ const ChatModule = () => {
         {/* Sidebar Header */}
         <div className="p-4 bg-white border-b border-gray-200">
           <div className="flex items-center justify-between mb-4">
-            <h1 className="text-xl font-bold text-gray-800">Messages</h1>
+            <h1 className="flex items-center text-x1 font-bold text-gray-800">Messages
+              {getTotalUnreadCount() > 0 && (
+                <span className="ml-3 inline-flex items-center justify-center bg-red-600 text-white text-xs font-medium rounded-full px-2 py-0.5">
+                  {getTotalUnreadCount()}
+                </span>
+              )}
+            </h1>
             <div className="flex space-x-2">
               <button 
                 onClick={() => setShowNewConversation(true)}
@@ -260,18 +307,30 @@ const ChatModule = () => {
             </div>
           </div>
           
-          {/* Search Bar */}
+          {/* Search Bar - Updated with improved styling */}
           <div className="relative">
             <input
               type="text"
               placeholder="Search conversations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all duration-200 border border-transparent focus:border-blue-300"
+              className="w-full pl-4 pr-10 py-2.5 bg-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all duration-200 border border-transparent focus:border-blue-300 text-sm"
             />
-            <svg className="w-5 h-5 absolute left-3 top-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center justify-center">
+              <svg 
+                className="w-3.5 h-3.5 text-gray-500" 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  strokeWidth={2} 
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" 
+                />
+              </svg>
+            </div>
           </div>
         </div>
 

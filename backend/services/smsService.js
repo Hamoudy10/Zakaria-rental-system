@@ -271,16 +271,23 @@ class SMSService {
   }
 
   // Send payment confirmation to tenant
-  async sendPaymentConfirmation(tenantPhone, tenantName, amount, unitCode, balance, month) {
+  async sendPaymentConfirmation(tenantPhone, tenantName, amount, unitCode, balance, month, waterAmount) {
     try {
       let message;
-      
+
+      if(waterAmount && waterAmount > 0) {
+        if (balance > 0) {
+          message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Water bill of KSh ${this.formatAmount(waterAmount)} is also due. Balance: KSh ${this.formatAmount(balance)}. Thank you!`;
+        } else {
+          message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Water bill of KSh ${this.formatAmount(waterAmount)} is also due. Payment complete! Thank you!`;
+        }
+      } else {
       if (balance > 0) {
         message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Balance: KSh ${this.formatAmount(balance)}. Thank you!`;
       } else {
         message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Payment complete! Thank you!`;
       }
-      
+    }
       console.log('💰 Sending payment confirmation SMS:', {
         tenantName,
         tenantPhone,

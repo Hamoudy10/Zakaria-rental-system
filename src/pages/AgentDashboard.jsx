@@ -2,6 +2,8 @@
 import React, { useState, Suspense, lazy, useEffect } from 'react'
 import agentService from '../services/AgentService';
 import { useAuth } from '../context/AuthContext';
+import AgentWaterBills from '../components/AgentWaterBills';
+
 
 // Lazy load agent components
 const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'));
@@ -25,6 +27,7 @@ const AgentDashboard = () => {
     { id: 'overview', name: 'Overview', shortName: 'Overview' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
     { id: 'payments', name: 'Payment Tracking', shortName: 'Payments' },
+    { id: 'water-bills', name: 'Water Bills', shortName: 'Water Bills' },
     { id: 'notifications', name: 'Send Notifications', shortName: 'Notify' },
     { id: 'profile', name: 'My Profile', shortName: 'Profile' }
   ]
@@ -41,6 +44,12 @@ const AgentDashboard = () => {
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
             <PaymentManagement />
+          </Suspense>
+        )
+      case 'water-bills':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AgentWaterBills />
           </Suspense>
         )
       case 'notifications':
@@ -320,6 +329,13 @@ const AgentOverview = ({ setActiveTab }) => {
             >
               <span className="text-sm sm:text-lg mb-1">📢</span>
               <span className="text-xs sm:text-sm text-center">Send Notices</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('water-bills')}
+              className="bg-cyan-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-cyan-700 transition-colors touch-target active:bg-cyan-800"
+            >
+              <span className="text-sm sm:text-lg mb-1">🚰</span>
+              <span className="text-xs sm:text-sm text-center">Water Bills</span>
             </button>
             <button 
               onClick={() => setActiveTab('profile')}

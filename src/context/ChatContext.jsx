@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
-import chatService from '../services/ChatService';
+import { useNotification } from './NotificationContext';
+import ChatService from '../services/ChatService';
+import { io } from 'socket.io-client';
 
 const ChatContext = createContext();
 
@@ -25,8 +27,10 @@ const chatReducer = (state, action) => {
             };
         case 'SET_LOADING':
             return { ...state, loading: action.payload };
-        case 'SET_SEARCH_RESULTS':
-            return { ...state, searchResults: action.payload };
+        case 'SET_ERROR':
+            return { ...state, error: action.payload };
+        case 'SET_AVAILABLE_USERS':
+            return { ...state, availableUsers: action.payload };
         case 'SET_TYPING_USERS':
             return {
                 ...state,
@@ -37,8 +41,6 @@ const chatReducer = (state, action) => {
             };
         case 'SET_UNREAD_COUNTS':
             return { ...state, unreadCounts: action.payload };
-        case 'SET_AVAILABLE_USERS':
-            return { ...state, availableUsers: action.payload };
         default:
             return state;
     }
@@ -49,24 +51,79 @@ const initialState = {
     activeConversation: null,
     messages: [],
     loading: false,
-    searchResults: [],
+    error: null,
+    availableUsers: [],
     typingUsers: {},
     unreadCounts: {},
-    availableUsers: [],
 };
 
 export const ChatProvider = ({ children }) => {
     const [state, dispatch] = useReducer(chatReducer, initialState);
     const { user } = useAuth();
-    const initializedRef = useRef(false);
+    const { refreshNotifications } = useNotification();
+    const socketRef = useRef(null);
+    const unreadCountsRef = useRef({});
+    const convsRef = useRef([]);
+    const activeConvRef = useRef(null);
+    const notifRefreshTimerRef = useRef(null);
+    const notifLastRef = useRef(0);
+    const NOTIF_REFRESH_WINDOW = 2000; // ms, match backend
 
-    // Memoized functions to prevent infinite re-renders
+     const scheduleNotificationRefresh = useCallback(() => {
+  const now = Date.now();
+  const elapsed = now - (notifLastRef.current || 0);
+
+  if (elapsed > NOTIF_REFRESH_WINDOW) {
+    notifLastRef.current = now;
+    try { refreshNotifications(); } catch (e) { /* ignore */ }
+  } else {
+    clearTimeout(notifRefreshTimerRef.current);
+    notifRefreshTimerRef.current = setTimeout(() => {
+      notifLastRef.current = Date.now();
+      try { refreshNotifications(); } catch (e) { /* ignore */ }
+    }, NOTIF_REFRESH_WINDOW - elapsed);
+  }
+}, [refreshNotifications]);
+
+useEffect(() => {
+  return () => clearTimeout(notifRefreshTimerRef.current);
+}, []);
+
+    // Load available users for new conversations
+    const loadAvailableUsers = useCallback(async () => {
+        try {
+            dispatch({ type: 'SET_LOADING', payload: true });
+            dispatch({ type: 'SET_ERROR', payload: null });
+            
+            const response = await ChatService.getAvailableUsers();
+            console.log('📞 Load available users response:', response);
+            
+            if (response.success) {
+                // Filter out current user from available users
+                const filteredUsers = response.data.filter(availableUser => 
+                    availableUser.id !== user?.id
+                );
+                dispatch({ type: 'SET_AVAILABLE_USERS', payload: filteredUsers });
+            } else {
+                dispatch({ type: 'SET_ERROR', payload: response.message || 'Failed to load users' });
+            }
+        } catch (error) {
+            console.error('❌ Error loading available users:', error);
+            dispatch({ type: 'SET_ERROR', payload: error.message });
+            dispatch({ type: 'SET_AVAILABLE_USERS', payload: [] });
+        } finally {
+            dispatch({ type: 'SET_LOADING', payload: false });
+        }
+    }, [user]);
+
+    // Load conversations
     const loadConversations = useCallback(async () => {
         if (!user) return;
         
         try {
             dispatch({ type: 'SET_LOADING', payload: true });
-            const response = await chatService.getConversations();
+            const response = await ChatService.getConversations();
+            
             if (response.success) {
                 dispatch({ type: 'SET_CONVERSATIONS', payload: response.conversations });
                 
@@ -78,178 +135,263 @@ export const ChatProvider = ({ children }) => {
                 dispatch({ type: 'SET_UNREAD_COUNTS', payload: unreadCounts });
             }
         } catch (error) {
-            console.error('Failed to load conversations:', error);
+            console.error('❌ Failed to load conversations:', error);
+            dispatch({ type: 'SET_ERROR', payload: error.message });
         } finally {
             dispatch({ type: 'SET_LOADING', payload: false });
         }
     }, [user]);
 
-    const loadMessages = useCallback(async (conversationId, page = 1) => {
+    // Load messages for a conversation
+    const loadMessages = useCallback(async (conversationId) => {
         try {
-            const response = await chatService.getMessages(conversationId, page);
+            const response = await ChatService.getMessages(conversationId);
             if (response.success) {
-                if (page === 1) {
-                    dispatch({ type: 'SET_MESSAGES', payload: response.messages });
-                } else {
-                    dispatch({ type: 'SET_MESSAGES', payload: [...response.messages, ...state.messages] });
-                }
-                return response.pagination;
+                dispatch({ type: 'SET_MESSAGES', payload: response.messages });
+                dispatch({
+                        type: 'SET_UNREAD_COUNTS',
+                        payload: { ...state.unreadCounts, [conversationId]: 0 }
+                        });
             }
         } catch (error) {
-            console.error('Failed to load messages:', error);
+            console.error('❌ Failed to load messages:', error);
+            dispatch({ type: 'SET_ERROR', payload: error.message });
             throw error;
         }
-    }, [state.messages]);
+    }, []);
 
-    const sendMessage = useCallback(async (conversationId, messageText, parentMessageId = null) => {
+    // Send message
+     const sendMessage = useCallback(async (conversationId, messageText) => {
         try {
-            const response = await chatService.sendMessage(conversationId, messageText, parentMessageId);
+            // If socket connected, send via socket and wait for the server 'new_message' emit
+            if (socketRef.current && socketRef.current.connected) {
+                const socket = socketRef.current;
+                return await new Promise((resolve) => {
+                    const onNewMessage = (data) => {
+                        if (data.conversationId === conversationId && data.message?.sender_id === user?.id) {
+                            socket.off('new_message', onNewMessage);
+                            resolve(data.message);
+                        }
+                    };
+                    socket.on('new_message', onNewMessage);
+
+                    // Emit send_message (server will insert and broadcast)
+                    socket.emit('send_message', { conversationId, messageText });
+
+                    // Fallback timeout (resolve null after 5s)
+                    setTimeout(() => {
+                        socket.off('new_message', onNewMessage);
+                        resolve(null);
+                    }, 5000);
+                });
+            }
+
+            // Fallback: HTTP send (server inserts but REST route doesn't broadcast; we'll still add locally)
+            const response = await ChatService.sendMessage(conversationId, messageText);
             if (response.success) {
                 dispatch({ type: 'ADD_MESSAGE', payload: response.message });
+                // Ask server notifications to be refreshed
+                try { scheduleNotificationRefresh(); } catch (e) { /* ignore */ }
                 return response.message;
             }
         } catch (error) {
-            console.error('Failed to send message:', error);
+            console.error('❌ Failed to send message:', error);
+            dispatch({ type: 'SET_ERROR', payload: error.message });
             throw error;
         }
-    }, []);
+    }, [user?.id, scheduleNotificationRefresh]);
 
-    const createConversation = useCallback(async (participantIds, title = null, conversationType = 'direct') => {
-        try {
-            const response = await chatService.createConversation(participantIds, title, conversationType);
-            if (response.conversation) {
-                dispatch({ type: 'ADD_CONVERSATION', payload: response.conversation });
-            }
-            return response.conversationId || response.conversation?.id;
-        } catch (error) {
-            console.error('Failed to create conversation:', error);
-            throw error;
-        }
-    }, []);
 
-    const searchMessages = useCallback(async (query, conversationId = null) => {
+    // Create new conversation
+    const createConversation = useCallback(async (participantIds, title = null, type = 'direct') => {
         try {
-            const response = await chatService.searchMessages(query, conversationId);
+            const response = await ChatService.createConversation(participantIds, title, type);
             if (response.success) {
-                dispatch({ type: 'SET_SEARCH_RESULTS', payload: response.results });
-                return response.results;
+                if (response.conversation) {
+                    dispatch({ type: 'ADD_CONVERSATION', payload: response.conversation });
+                }
+                // Return the conversation ID for immediate use
+                return response.conversationId || response.conversation?.id;
+            } else {
+                throw new Error(response.message || 'Failed to create conversation');
             }
         } catch (error) {
-            console.error('Failed to search messages:', error);
+            console.error('❌ Failed to create conversation:', error);
+            dispatch({ type: 'SET_ERROR', payload: error.message });
             throw error;
         }
     }, []);
 
-    const markAsRead = useCallback(async (messageIds) => {
+    // Typing indicators
+    const startTyping = useCallback(async (conversationId) => {
         try {
-            await chatService.markAsRead(messageIds);
+            await ChatService.startTyping(conversationId);
         } catch (error) {
-            console.error('Failed to mark messages as read:', error);
+            console.error('❌ Failed to start typing:', error);
         }
     }, []);
 
-    const loadAvailableUsers = useCallback(async () => {
+    const stopTyping = useCallback(async (conversationId) => {
         try {
-            const response = await chatService.getAvailableUsers();
-            if (response.success) {
-                dispatch({ type: 'SET_AVAILABLE_USERS', payload: response.users });
-            }
+            await ChatService.stopTyping(conversationId);
         } catch (error) {
-            console.error('Failed to load available users:', error);
+            console.error('❌ Failed to stop typing:', error);
         }
     }, []);
 
-    const startTyping = useCallback((conversationId) => {
-        chatService.emit('typing_start', { conversationId });
-    }, []);
-
-    const stopTyping = useCallback((conversationId) => {
-        chatService.emit('typing_stop', { conversationId });
-    }, []);
-
+    // Conversation management
     const joinConversation = useCallback((conversationId) => {
-        chatService.joinConversation(conversationId);
+        if (socketRef.current && socketRef.current.connected) {
+            socketRef.current.emit('join_conversation', conversationId);
+        } else {
+            console.warn('Socket not connected; join will occur when socket connects');
+       }
     }, []);
 
     const leaveConversation = useCallback((conversationId) => {
-        chatService.leaveConversation(conversationId);
+        if (socketRef.current && socketRef.current.connected) {
+            socketRef.current.emit('leave_conversation', conversationId);
+        }
     }, []);
 
-    // Event handlers
-    const handleNewMessage = useCallback((data) => {
-        if (data.conversationId === state.activeConversation?.id) {
-            dispatch({ type: 'ADD_MESSAGE', payload: data.message });
-            // Mark as read immediately if in active conversation
-            markAsRead([data.message.id]);
+    // Search messages
+    const searchMessages = useCallback(async (query, conversationId = null) => {
+        try {
+            const response = await ChatService.searchMessages(query, conversationId);
+            return response.results || [];
+        } catch (error) {
+            console.error('❌ Failed to search messages:', error);
+            return [];
         }
-        
-        // Update unread counts
-        const newUnreadCounts = { ...state.unreadCounts };
-        newUnreadCounts[data.conversationId] = (newUnreadCounts[data.conversationId] || 0) + 1;
-        dispatch({ type: 'SET_UNREAD_COUNTS', payload: newUnreadCounts });
-    }, [state.activeConversation, state.unreadCounts, markAsRead]);
-
-    const handleUserTyping = useCallback((data) => {
-        const currentTypers = state.typingUsers[data.conversationId] || [];
-        if (!currentTypers.find(user => user.userId === data.userId)) {
-            const updatedTypers = [...currentTypers, { userId: data.userId, userName: data.userName }];
-            dispatch({
-                type: 'SET_TYPING_USERS',
-                payload: { conversationId: data.conversationId, users: updatedTypers }
-            });
-        }
-    }, [state.typingUsers]);
-
-    const handleUserStopTyping = useCallback((data) => {
-        const currentTypers = state.typingUsers[data.conversationId] || [];
-        const updatedTypers = currentTypers.filter(user => user.userId !== data.userId);
-        dispatch({
-            type: 'SET_TYPING_USERS',
-            payload: { conversationId: data.conversationId, users: updatedTypers }
-        });
-    }, [state.typingUsers]);
-
-    const handleChatNotification = useCallback((data) => {
-        console.log('Chat notification:', data);
     }, []);
 
-    // Initialize chat service only once
-    useEffect(() => {
-        if (user && user.token) {
-            console.log('Initializing chat service with token');
-            
-            // Initialize chat service
-            chatService.init(user.token);
-            
-            // Set up event listeners
-            chatService.on('new_message', handleNewMessage);
-            chatService.on('user_typing', handleUserTyping);
-            chatService.on('user_stop_typing', handleUserStopTyping);
-            chatService.on('chat_notification', handleChatNotification);
-
-            // Load initial data
-            loadConversations();
-            loadAvailableUsers();
-
-            return () => {
-                chatService.disconnect();
-                initializedRef.current = false;
-            };
-        }else{
-             console.log('No user token available for chat service');
+    // Mark messages as read
+    const markAsRead = useCallback(async (messageIds) => {
+        try {
+            await ChatService.markAsRead(messageIds);
+        } catch (error) {
+            console.error('❌ Failed to mark messages as read:', error);
         }
-    }, [user, handleNewMessage, handleUserTyping, handleUserStopTyping, handleChatNotification, loadConversations, loadAvailableUsers]);
+    }, []);
 
+    // Get unread count for a conversation
     const getUnreadCount = useCallback((conversationId) => {
         return state.unreadCounts[conversationId] || 0;
     }, [state.unreadCounts]);
 
+    // Get total unread count
     const getTotalUnreadCount = useCallback(() => {
         return Object.values(state.unreadCounts).reduce((total, count) => total + count, 0);
     }, [state.unreadCounts]);
 
+    // Set active conversation
+    const setActiveConversation = useCallback((conversation) => {
+        dispatch({ type: 'SET_ACTIVE_CONVERSATION', payload: conversation });
+    }, []);
+
+    // Load initial data when user changes
+    useEffect(() => {
+        if (user) {
+            loadConversations();
+            loadAvailableUsers();
+        }
+    }, [user, loadConversations, loadAvailableUsers]);
+
+    // keep refs updated
+useEffect(() => {
+  unreadCountsRef.current = state.unreadCounts;
+  convsRef.current = state.conversations;
+  activeConvRef.current = state.activeConversation;
+}, [state.unreadCounts, state.conversations, state.activeConversation]);
+
+useEffect(() => {
+  if (!user) return;
+
+  const token = localStorage.getItem('token');
+  const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001', {
+    auth: { token }
+  });
+  socketRef.current = socket;
+
+  socket.on('connect', () => console.log('Socket connected'));
+  socket.on('new_message', async (data) => {
+    const { message, conversationId } = data;
+
+    // If user is viewing the conversation, add message & mark it read
+    if (activeConvRef.current?.id === conversationId) {
+      dispatch({ type: 'ADD_MESSAGE', payload: message });
+      try { await ChatService.markAsRead([message.id]); } catch (e) { /* ignore */ }
+      dispatch({
+        type: 'SET_UNREAD_COUNTS',
+        payload: { ...unreadCountsRef.current, [conversationId]: 0 }
+      });
+    } else {
+      // increment unread count
+      const prev = unreadCountsRef.current || {};
+      const updated = { ...prev, [conversationId]: (prev[conversationId] || 0) + 1 };
+      dispatch({ type: 'SET_UNREAD_COUNTS', payload: updated });
+
+      // update conversation last message and move to top
+      const convs = convsRef.current || [];
+      const updatedConv = convs.map(c => c.id === conversationId
+        ? { ...c, last_message_text: message.message_text, last_message_at: message.created_at }
+        : c);
+      const top = updatedConv.find(c => c.id === conversationId);
+      const reordered = [top, ...updatedConv.filter(c => c.id !== conversationId)];
+      dispatch({ type: 'SET_CONVERSATIONS', payload: reordered });
+    }
+  });
+
+  // Chat notifications (server emits chat_notification to each participant's personal room)
+  socket.on('chat_notification', (data) => {
+    try {
+      // data: { type: 'new_message', conversationId, message, unreadCount }
+      const conversationId = data.conversationId;
+      const prev = unreadCountsRef.current || {};
+      const updated = { ...prev, [conversationId]: (prev[conversationId] || 0) + (data.unreadCount || 1) };
+      dispatch({ type: 'SET_UNREAD_COUNTS', payload: updated });
+
+      // Move conversation to top & update last message (if present)
+      if (data.message) {
+        const convs = convsRef.current || [];
+        const updatedConv = convs.map(c => c.id === conversationId
+          ? { ...c, last_message_text: data.message.message_text, last_message_at: data.message.created_at }
+          : c);
+        const top = updatedConv.find(c => c.id === conversationId);
+        const reordered = [top, ...updatedConv.filter(c => c.id !== conversationId)];
+        dispatch({ type: 'SET_CONVERSATIONS', payload: reordered });
+      }
+
+      // Let Notification system refresh and show the message
+      try { scheduleNotificationRefresh(); } catch (e) { /* ignore */ }
+      // Also notify NotificationProvider via a window event so it can add a local notification quickly
+      window.dispatchEvent(new CustomEvent('incoming_chat_notification', { detail: data }));
+    } catch (err) {
+      console.error('❌ Error handling chat_notification:', err);
+    }
+  });
+
+  socket.on('disconnect', () => console.log('Socket disconnected'));
+
+  return () => {
+    socket.disconnect();
+    socketRef.current = null;
+  };
+}, [user, dispatch, scheduleNotificationRefresh]);
+
+   
+
     const value = {
-        ...state,
+        // State
+        conversations: state.conversations,
+        activeConversation: state.activeConversation,
+        messages: state.messages,
+        loading: state.loading,
+        error: state.error,
+        availableUsers: state.availableUsers,
+        typingUsers: state.typingUsers,
+        
+        // Actions
         loadConversations,
         loadMessages,
         sendMessage,
@@ -261,7 +403,7 @@ export const ChatProvider = ({ children }) => {
         stopTyping,
         joinConversation,
         leaveConversation,
-        setActiveConversation: (conversation) => dispatch({ type: 'SET_ACTIVE_CONVERSATION', payload: conversation }),
+        setActiveConversation,
         getUnreadCount,
         getTotalUnreadCount
     };
