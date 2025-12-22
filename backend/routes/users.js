@@ -34,6 +34,52 @@ router.get('/', requireAdmin, async (req, res) => {
   }
 });
 
+// GET USERS BY ROLE (Admin and Agent only)
+router.get('/role/:role', requireAgent, async (req, res) => {
+  try {
+    const { role } = req.params;
+    const { search } = req.query;
+
+    // Validate role
+    const validRoles = ['admin', 'agent', 'tenant'];
+    if (!validRoles.includes(role.toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid role. Must be admin, agent, or tenant'
+      });
+    }
+
+    let query = `
+      SELECT id, national_id, first_name, last_name, email, phone_number, 
+             role, is_active, created_at, updated_at
+      FROM users 
+      WHERE role = $1 AND is_active = true
+    `;
+    const params = [role];
+
+    if (search) {
+      query += ` AND (first_name ILIKE $2 OR last_name ILIKE $2 OR email ILIKE $2)`;
+      params.push(`%${search}%`);
+    }
+
+    query += ' ORDER BY first_name, last_name';
+
+    const result = await db.query(query, params);
+    
+    res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Get users by role error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch users by role' 
+    });
+  }
+});
+
 // GET USER BY ID (Admin only)
 router.get('/:id', requireAdmin, async (req, res) => {
   try {

@@ -1,197 +1,158 @@
-import { io } from 'socket.io-client';
+import api from './api';
 
-class ChatService {
-    constructor() {
-        this.socket = null;
-        this.listeners = new Map();
+const ChatService = {
+  // Get available users for new conversations
+  getAvailableUsers: async () => {
+    try {
+      const response = await api.get('/chat/available-users');
+      console.log('✅ Available users response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to get available users:', error);
+      // Fallback: try to get users from the users endpoint
+      try {
+        console.log('🔄 Trying fallback: fetching all users');
+        const fallbackResponse = await api.get('/users');
+        const filteredUsers = fallbackResponse.data.users.filter(user => 
+          user.role === 'admin' || user.role === 'agent'
+        );
+        return {
+          success: true,
+          data: filteredUsers
+        };
+      } catch (fallbackError) {
+        console.error('❌ Fallback also failed:', fallbackError);
+        return {
+          success: false,
+          data: [],
+          message: 'Failed to load users'
+        };
+      }
     }
+  },
 
-    init(token) {
-        if (!token) {
-            console.error('No token provided for chat service');
-            return;
-        }
-
-        try {
-            this.socket = io(process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001', {
-                auth: { token },
-                timeout: 10000
-            });
-
-            this.socket.on('connect', () => {
-                console.log('Connected to chat server');
-            });
-       
-            this.socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
-            });
-
-            this.socket.on('disconnect', () => {
-                console.log('Disconnected from chat server');
-            });
-
-            this.socket.on('error', (error) => {
-                console.error('Chat socket error:', error);
-            });
-        } catch (error) {
-            console.error('Failed to initialize chat service:', error);
-        }
+  // Get conversations
+  getConversations: async () => {
+    try {
+      const response = await api.get('/chat/conversations');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to get conversations:', error);
+      return {
+        success: false,
+        conversations: [],
+        message: 'Failed to load conversations'
+      };
     }
+  },
 
-    on(event, callback) {
-        if (!this.listeners.has(event)) {
-            this.listeners.set(event, []);
-        }
-        this.listeners.get(event).push(callback);
-        this.socket?.on(event, callback);
+  // Create conversation
+  createConversation: async (participantIds, title, type = 'direct') => {
+    try {
+      const response = await api.post('/chat/conversations', {
+        participantIds,
+        title,
+        conversationType: type
+      });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to create conversation:', error);
+      throw error;
     }
+  },
 
-    off(event, callback) {
-        const listeners = this.listeners.get(event);
-        if (listeners) {
-            const index = listeners.indexOf(callback);
-            if (index > -1) {
-                listeners.splice(index, 1);
-            }
-        }
-        this.socket?.off(event, callback);
+  // Get messages
+  getMessages: async (conversationId, page = 1) => {
+    try {
+      const response = await api.get(`/chat/conversations/${conversationId}/messages?page=${page}`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to get messages:', error);
+      return {
+        success: false,
+        messages: [],
+        message: 'Failed to load messages'
+      };
     }
+  },
 
-    emit(event, data) {
-        this.socket?.emit(event, data);
+  // Send message
+  sendMessage: async (conversationId, messageText, parentMessageId = null) => {
+    try {
+      const response = await api.post('/chat/messages/send', {
+        conversationId,
+        messageText,
+        parentMessageId
+      });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to send message:', error);
+      throw error;
     }
+  },
 
-    disconnect() {
-        this.socket?.disconnect();
-        this.listeners.clear();
+  // Mark messages as read
+  markAsRead: async (messageIds) => {
+    try {
+      const response = await api.post('/chat/messages/mark-read', {
+        messageIds
+      });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to mark messages as read:', error);
+      throw error;
     }
+  },
 
-    // API methods
-    async getConversations() {
-        try {
-            const response = await fetch('/api/chat/conversations', {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                }
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to get conversations:', error);
-            return { success: false, conversations: [] };
-        }
+  // Search messages
+  searchMessages: async (query, conversationId = null) => {
+    try {
+      const params = { query };
+      if (conversationId) params.conversationId = conversationId;
+      
+      const response = await api.get('/chat/search', { params });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to search messages:', error);
+      return {
+        success: false,
+        results: [],
+        message: 'Failed to search messages'
+      };
     }
+  },
 
-    async getMessages(conversationId, page = 1) {
-        try {
-            const response = await fetch(`/api/chat/conversations/${conversationId}/messages?page=${page}&limit=50`, {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                }
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to get messages:', error);
-            return { success: false, messages: [] };
-        }
+  // Typing indicators
+  startTyping: async (conversationId) => {
+    try {
+      // This would typically be a WebSocket event
+      console.log(`User started typing in conversation: ${conversationId}`);
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Failed to start typing:', error);
+      return { success: false };
     }
+  },
 
-    async sendMessage(conversationId, messageText, parentMessageId = null) {
-        try {
-            const response = await fetch('/api/chat/messages/send', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                },
-                body: JSON.stringify({
-                    conversationId,
-                    messageText,
-                    parentMessageId
-                })
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to send message:', error);
-            return { success: false, message: null };
-        }
+  stopTyping: async (conversationId) => {
+    try {
+      // This would typically be a WebSocket event
+      console.log(`User stopped typing in conversation: ${conversationId}`);
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Failed to stop typing:', error);
+      return { success: false };
     }
+  },
 
-    async createConversation(participantIds, title = null, conversationType = 'direct') {
-        try {
-            const response = await fetch('/api/chat/conversations', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                },
-                body: JSON.stringify({
-                    participantIds,
-                    title,
-                    conversationType
-                })
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to create conversation:', error);
-            return { success: false, conversation: null };
-        }
-    }
+  // Socket.io methods (placeholder)
+  joinConversation: (conversationId) => {
+    console.log(`Joining conversation: ${conversationId}`);
+  },
 
-    async searchMessages(query, conversationId = null) {
-        try {
-            const params = new URLSearchParams({ query });
-            if (conversationId) params.append('conversationId', conversationId);
-            
-            const response = await fetch(`/api/chat/search?${params}`, {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                }
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to search messages:', error);
-            return { success: false, results: [] };
-        }
-    }
+  leaveConversation: (conversationId) => {
+    console.log(`Leaving conversation: ${conversationId}`);
+  }
+};
 
-    async markAsRead(messageIds) {
-        try {
-            const response = await fetch('/api/chat/messages/mark-read', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                },
-                body: JSON.stringify({ messageIds })
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to mark messages as read:', error);
-            return { success: false };
-        }
-    }
-
-    async getAvailableUsers() {
-        try {
-            const response = await fetch('/api/chat/available-users', {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                }
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to get available users:', error);
-            return { success: false, users: [] };
-        }
-    }
-
-    joinConversation(conversationId) {
-        this.emit('join_conversation', { conversationId });
-    }
-
-    leaveConversation(conversationId) {
-        this.emit('leave_conversation', { conversationId });
-    }
-}
-
-export default new ChatService();
+export default ChatService;

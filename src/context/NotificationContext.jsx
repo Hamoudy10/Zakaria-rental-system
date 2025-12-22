@@ -56,23 +56,15 @@ export const NotificationProvider = ({ children }) => {
 
   // SIMPLIFIED fetchNotifications - FIXED VERSION
   const fetchNotifications = useCallback(async (options = {}) => {
-    if (!isAuthenticated()) {
-      console.log('❌ Not authenticated, skipping notification fetch');
-      if (isMountedRef.current) {
-        setNotifications([]);
-        setUnreadCount(0);
-        setLoading(false);
-      }
-      return;
-    }
-
-    console.log('🔄 Starting to fetch notifications...', options);
-    if (isMountedRef.current) {
-      setLoading(true);
-      setError(null);
-    }
-    
+    const { _retry = 0 } = options;
+    if (!isAuthenticated()) return;
     try {
+      console.log('🔄 Starting to fetch notifications...', options);
+      if (isMountedRef.current) {
+        setLoading(true);
+        setError(null);
+      }
+      
       const {
         page = 1,
         limit = 20,
@@ -91,7 +83,14 @@ export const NotificationProvider = ({ children }) => {
         console.log(`✅ Successfully loaded ${newNotifications?.length || 0} notifications for user ${authUser?.id}`);
         
         if (isMountedRef.current) {
-          setNotifications(newNotifications || []);
+          setNotifications(prev => {
+            // preserve local temps not duplicated by server response
+            const localTemps = prev.filter(n => n.is_local);
+            const keptLocalTemps = localTemps.filter(lt => !(newNotifications || []).some(sn => sn.id === lt.id || sn.message === lt.message));
+            // combine local temps (first) and server results
+            return [...keptLocalTemps, ...(newNotifications || [])];
+          });
+
           setPagination(paginationData || {
             currentPage: parseInt(page),
             totalPages: 1,
@@ -104,6 +103,11 @@ export const NotificationProvider = ({ children }) => {
         throw new Error(response.data?.message || 'Invalid response format from server');
       }
     } catch (err) {
+      if (err.response?.status === 429 && _retry < 3) {
+        // Retry after server window (2s) with limited attempts
+        setTimeout(() => fetchNotifications({ ...options, _retry: _retry + 1 }), 2000 * (_retry + 1));
+        return;
+      }
       console.error('❌ Error fetching notifications:', err);
       if (isMountedRef.current) {
         setError(err.response?.data?.message || err.message || 'Failed to fetch notifications');
@@ -117,7 +121,8 @@ export const NotificationProvider = ({ children }) => {
   }, [isAuthenticated, authUser?.id]);
 
   // SIMPLIFIED fetchUnreadCount - FIXED VERSION
-  const fetchUnreadCount = useCallback(async () => {
+  const fetchUnreadCount = useCallback(async (options = {}) => {
+    const { _retry = 0 } = options;
     if (!isAuthenticated()) {
       if (isMountedRef.current) {
         setUnreadCount(0);
@@ -140,6 +145,12 @@ export const NotificationProvider = ({ children }) => {
       }
       return 0;
     } catch (err) {
+    if (err.response?.status === 429 && _retry < 3) {
+      // Retry after server window (2s) with exponential backoff (limited attempts)
+      setTimeout(() => fetchUnreadCount({ ...options, _retry: _retry + 1 }), 2000 * (_retry + 1));
+      return;
+    }
+
       console.error('❌ Error fetching unread count:', err);
       if (isMountedRef.current) {
         setUnreadCount(0);
@@ -150,78 +161,67 @@ export const NotificationProvider = ({ children }) => {
 
   // SIMPLIFIED markAsRead - FIXED VERSION
   const markAsRead = useCallback(async (notificationId) => {
-    if (!isAuthenticated() || !notificationId) {
-      throw new Error('User not authenticated or missing notification ID');
+    if (!isAuthenticated() || !notificationId) throw new Error('User not authenticated or missing notification ID');
+
+    const previousNotifications = [...notifications];
+    const prevUnread = unreadCount;
+
+    const target = notifications.find(n => n.id === notificationId);
+
+    // Local-only notification -> mark locally (no API call)
+    if (target?.is_local) {
+      if (isMountedRef.current) {
+        setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, is_read: true, read_at: new Date().toISOString() } : n));
+      }
+      return { ...target, is_read: true };
     }
 
+    // Server notification: optimistic update then call API & reconcile
     try {
-      console.log(`📋 Marking notification ${notificationId} as read`);
-      
-      // Optimistic update
-      const previousNotifications = [...notifications];
-      const previousUnreadCount = unreadCount;
-      
       if (isMountedRef.current) {
-        setNotifications(prev => 
-          prev.map(notification => 
-            notification.id === notificationId 
-              ? { ...notification, is_read: true, read_at: new Date().toISOString() }
-              : notification
-          )
-        );
-        
+        setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, is_read: true, read_at: new Date().toISOString() } : n));
         setUnreadCount(prev => Math.max(0, prev - 1));
       }
 
       const response = await notificationAPI.markAsRead(notificationId);
-      
+
       if (!response.data.success) {
-        // Revert on error
+        // revert
         if (isMountedRef.current) {
           setNotifications(previousNotifications);
-          setUnreadCount(previousUnreadCount);
+          setUnreadCount(prevUnread);
         }
         throw new Error(response.data.message || 'Failed to mark notification as read');
       }
 
-      return response.data.data;
-    } catch (err) {
-      console.error('❌ Error marking notification as read:', err);
-      if (isMountedRef.current) {
-        setError(err.response?.data?.message || err.message || 'Failed to mark notification as read');
+      const updated = response.data.data;
+      if (isMountedRef.current && updated) {
+        setNotifications(prev => prev.map(n => n.id === updated.id ? updated : n));
+        await fetchUnreadCount(); // re-sync unread count
       }
+      return updated;
+    } catch (err) {
+      if (isMountedRef.current) setError(err.response?.data?.message || err.message || 'Failed to mark notification as read');
       throw err;
     }
-  }, [notifications, unreadCount, isAuthenticated]);
+  }, [notifications, unreadCount, isAuthenticated, fetchUnreadCount]);
 
   // SIMPLIFIED markAllAsRead - FIXED VERSION
   const markAllAsRead = useCallback(async () => {
-    if (!isAuthenticated()) {
-      throw new Error('User not authenticated');
-    }
+    if (!isAuthenticated()) throw new Error('User not authenticated');
+
+    const previousNotifications = [...notifications];
 
     try {
-      console.log('📋 Marking all notifications as read');
-      
-      // Optimistic update
-      const previousNotifications = [...notifications];
-      
+      // mark local temps as read immediately
       if (isMountedRef.current) {
-        setNotifications(prev => 
-          prev.map(notification => ({
-            ...notification,
-            is_read: true,
-            read_at: notification.read_at || new Date().toISOString()
-          }))
-        );
-        
-        setUnreadCount(0);
+        setNotifications(prev => prev.map(n => n.is_local ? ({ ...n, is_read: true, read_at: new Date().toISOString() }) : n));
+        setUnreadCount(0); // temporarily set to 0; will re-sync
       }
 
       const response = await notificationAPI.markAllAsRead();
-      
+
       if (!response.data.success) {
-        // Revert on error
         if (isMountedRef.current) {
           setNotifications(previousNotifications);
           setUnreadCount(previousNotifications.filter(n => !n.is_read).length);
@@ -229,15 +229,20 @@ export const NotificationProvider = ({ children }) => {
         throw new Error(response.data.message || 'Failed to mark all notifications as read');
       }
 
+      // Server returned updated notifications
+      const updatedNotifications = response.data.data?.notifications || [];
+      if (isMountedRef.current) {
+        const localTemps = previousNotifications.filter(n => n.is_local);
+        // keep local temps (now read) and server list
+        setNotifications([...localTemps.map(n => ({ ...n, is_read: true, read_at: new Date().toISOString() })), ...updatedNotifications]);
+        await fetchUnreadCount(); // re-sync authoritative unread count
+      }
       return response.data.data;
     } catch (err) {
-      console.error('❌ Error marking all notifications as read:', err);
-      if (isMountedRef.current) {
-        setError(err.response?.data?.message || err.message || 'Failed to mark all notifications as read');
-      }
+      if (isMountedRef.current) setError(err.response?.data?.message || err.message || 'Failed to mark all notifications as read');
       throw err;
     }
-  }, [notifications, isAuthenticated]);
+  }, [notifications, isAuthenticated, fetchUnreadCount]);
 
   // SIMPLIFIED deleteNotification - FIXED VERSION
   const deleteNotification = useCallback(async (notificationId) => {
@@ -296,6 +301,54 @@ export const NotificationProvider = ({ children }) => {
       console.error('❌ Error refreshing notifications:', error);
     }
   }, [fetchNotifications, fetchUnreadCount, isAuthenticated]);
+
+  
+   // Initialize data when authenticated or user changes
+   useEffect(() => {
+     const initializeData = async () => {
+       if (isAuthenticated()) {
+         console.log('🔐 User authenticated, initializing notification data...');
+         await refreshNotifications();
+       } else {
+         console.log('🔒 User not authenticated, clearing notification data');
+         if (isMountedRef.current) {
+           setNotifications([]);
+           setUnreadCount(0);
+           setLoading(false);
+         }
+       }
+     };
+ 
+     initializeData();
+   }, [isAuthenticated, refreshNotifications, authUser?.id]);
+
+  // Listen for incoming chat events (dispatched from ChatContext) to create an immediate local notification
+useEffect(() => {
+  const handler = (e) => {
+    const data = e.detail || {};
+    const message = data.message;
+    const local = {
+      id: `local-chat-${Date.now()}`,
+      type: 'chat',
+      message: `You have received a message from ${message?.first_name || 'Someone'} ${message?.last_name || ''}`.trim(),
+      data,
+      is_local: true,      // mark as local-only
+      is_read: false,
+      created_at: new Date().toISOString(),
+    };
+
+    // Replace any existing local notification for the same conversation (avoid duplicates)
+    setNotifications(prev => {
+      const withoutSameConv = prev.filter(n => !(n.is_local && n.data?.conversationId === data.conversationId));
+      return [local, ...withoutSameConv];
+    });
+
+    // DO NOT change server-based unreadCount (server is authoritative)
+  };
+
+  window.addEventListener('incoming_chat_notification', handler);
+  return () => window.removeEventListener('incoming_chat_notification', handler);
+}, [authUser?.id]);
 
   // Clear all read notifications
   const clearReadNotifications = useCallback(async () => {

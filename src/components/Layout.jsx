@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import NotificationBell from './NotificationBell';
+import { useChat } from '../context/chatcontext'; // add
+
 
 const Layout = ({ children }) => {
   const { user, logout } = useAuth();
@@ -27,6 +29,17 @@ const Layout = ({ children }) => {
       default: return '/login';
     }
   };
+
+  const ChatUnreadBadge = () => {
+  const { getTotalUnreadCount } = useChat();
+  const count = getTotalUnreadCount();
+  if (!count) return null;
+  return (
+    <span className="ml-2 inline-flex items-center justify-center bg-red-600 text-white text-xs font-medium rounded-full px-2 py-0.5">
+      {count}
+    </span>
+  );
+};
 
   // Close menus when route changes
   React.useEffect(() => {
@@ -174,6 +187,9 @@ const Layout = ({ children }) => {
                 className="text-gray-600 hover:text-gray-900 px-2 py-1 rounded text-sm font-medium whitespace-nowrap flex-shrink-0"
               >
                 Notifications
+                {/* Chat unread badge */}
+                {/* Import useChat at file top: import { useChat } from '../context/chatcontext'; */}
+                <ChatUnreadBadge />
               </Link>
               {user?.role === 'tenant' && (
                 <Link 

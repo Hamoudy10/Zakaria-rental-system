@@ -1,6 +1,6 @@
 // src/components/AgentManagement.jsx
 import React, { useState, useEffect } from 'react';
-import { useUsers } from '../context/UserContext';
+import { useUser } from '../context/UserContext';
 
 const AgentManagement = () => {
   const { agents, loading, error, updateAgentPermissions } = useUsers();

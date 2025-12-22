@@ -76,6 +76,24 @@ const agentService = {
 
   updateProfile: async (profileData) => {
     return await api.put('/agent/profile', profileData);
+  },
+
+   createWaterBill: async (billData) => {
+    // billData: { tenantId, unitId, propertyId, amount, billMonth (YYYY-MM), notes }
+    return await api.post('/agent-properties/water-bills', billData);
+  },
+
+  listWaterBills: async (params = {}) => {
+    // params: { propertyId, tenantId, month, limit, offset }
+    return await api.get('/agent-properties/water-bills', { params });
+  },
+
+  getWaterBill: async (id) => {
+    return await api.get(`/agent-properties/water-bills/${id}`);
+  },
+
+  deleteWaterBill: async (id) => {
+    return await api.delete(`/agent-properties/water-bills/${id}`);
   }
 };
 
