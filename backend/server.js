@@ -231,12 +231,10 @@ app.use('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT,'0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-});
+
 
 // Use server.listen instead of app.listen for Socket.IO
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0',() => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`🔗 Test URL: http://localhost:${PORT}/api/test`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
