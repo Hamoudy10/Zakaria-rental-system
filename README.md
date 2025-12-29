@@ -303,3 +303,82 @@ All roles can access appropriate features
 
 This documentation provides a comprehensive roadmap for transitioning from mock data to a fully functional database-driven application with proper security, error handling, and scalability.
 
+---
+
+## Project summary (current implementation) ✅
+
+**Features implemented**
+- Notifications:
+  - Local chat notifications flagged locally so they don't inflate the global unread count.
+  - Optimistic read / mark-all behavior with server reconciliation.
+- UI:
+  - Compact, responsive layouts and a consistent header:body:footer form proportion approach (3:5:2).
+  - Agent Dashboard updated to expose a **Water Bills** tab and quick-action.
+- Water Bills (Agent-facing):
+  - Frontend: `src/components/AgentWaterBills.jsx`
+    - Agents can create monthly water bills.
+    - **Tenant input is free-text** (agent types full tenant name).
+    - Defensive response parsing (handles wrapped API responses).
+    - Uses native `Intl.DateTimeFormat` (no `date-fns` dependency).
+  - Backend: `backend/controllers/waterBillController.js`
+    - Endpoints: POST `/api/agent-properties/water-bills`, GET `/api/agent-properties/water-bills`, GET `/api/agent-properties/water-bills/:id`, DELETE `/api/agent-properties/water-bills/:id`.
+    - `createWaterBill` accepts `tenantId` or `tenantName`. If `tenantName` is provided, the server resolves it to a tenant id (case-insensitive name match) and returns clear errors for not found / ambiguous matches.
+    - Upsert semantics: `ON CONFLICT (tenant_id, bill_month) DO UPDATE ...`.
+  - SMS: Payment flow now includes `waterAmount` in tenant payment SMS messages (if present).
+
+**Important files**
+- Frontend:
+  - `src/components/AgentWaterBills.jsx`
+  - `src/pages/AgentDashboard.jsx` (tab + quick-action)
+  - `src/services/AgentService.js`
+- Backend:
+  - `backend/controllers/waterBillController.js`
+  - `backend/routes/agentProperties.js`
+  - `backend/migrations/002_create_water_bills.sql` (apply before creating bills)
+  - `backend/services/smsService.js` (supports waterAmount)
+
+---
+
+## How to run & verify 🧪
+
+1. Apply DB migration:
+   - psql -h <host> -U <user> -d <db> -f ./backend/migrations/002_create_water_bills.sql
+2. Start servers:
+   - Backend: (inside `backend/`) `npm run dev` (or your usual start command)
+   - Frontend: (repo root) `npm run dev`
+3. Test E2E:
+   - Log in as an **agent** assigned to a property.
+   - Dashboard → Water Bills tab → type tenant full name, amount, bill month → Save.
+   - Confirm a new bill appears in "Recent water bills".
+   - Trigger/simulate a paybill payment and confirm the payment SMS includes "Water bill of KSh X is also due." (or check logs if SMS is simulated).
+
+---
+
+## Known issues & debug tips 🐞
+- If you hit a 500, check backend logs for `❌ createWaterBill error:` or `❌ listWaterBills error:`.
+- If `properties.map is not a function` appears, ensure the frontend is parsing the API response with `response?.data?.data || response?.data || []`.
+- To avoid tenant ambiguity, consider adding a server-side autocomplete endpoint to assist agents.
+
+---
+
+## Remaining tasks / roadmap 📋
+
+Priority (high → low):
+1. Run DB migration in staging/production and include it in deployment pipeline. ✅ (needs applying)
+2. Add unit tests for `waterBillController` (tenantName resolution, upsert behavior).
+3. Add integration/e2e tests for create bill → paybill → SMS flow.
+4. Implement server-side tenant **autocomplete** endpoint to reduce name ambiguity.
+5. Add client-side autocomplete in `AgentWaterBills` (server-assisted).
+6. Add migration & tests to CI and ensure migrations run before integration tests.
+7. Improve UI error messages & UX for ambiguous names (show candidate matches).
+8. Clean up temporary debug logs across controllers.
+9. Document SMS templates and env settings in a dedicated doc section.
+
+---
+
+## Contributing / Commit guidelines 🧾
+- Branch: `feat/agent/water-bills-tenant-input` or `docs/append-readme`.
+- Commit message example:
+  - `docs: append project summary & water-bills notes`
+- PR title suggestion:
+  - `docs: append project summary & water-bills integration notes`
