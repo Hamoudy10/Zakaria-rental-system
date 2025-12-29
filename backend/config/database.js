@@ -12,7 +12,8 @@ const pool = new Pool({
   port: process.env.DB_PORT || 5432,
   ssl: process.env.NODE_ENV === 'production'
   ? { rejectUnauthorized: false }
-  : false
+  : false,
+  options: '-c role=backend_service'
 });
 
 // Parse UUIDs properly
