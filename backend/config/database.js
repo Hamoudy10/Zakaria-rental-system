@@ -2,14 +2,7 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-(async () => {
-  try {
-    const res = await pool.query('select now()');
-    console.log('✅ Database test OK:', res.rows[0]);
-  } catch (err) {
-    console.error('❌ Database test FAILED:', err.message);
-  }
-})();
+
 
 const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
@@ -26,5 +19,14 @@ const pool = new Pool({
 pool.on('connect', (client) => {
   client.query('SET TIME ZONE UTC;');
 });
+
+(async () => {
+  try {
+    const res = await pool.query('select now()');
+    console.log('✅ Database test OK:', res.rows[0]);
+  } catch (err) {
+    console.error('❌ Database test FAILED:', err.message);
+  }
+})();
 
 module.exports = pool;
