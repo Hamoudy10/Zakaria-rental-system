@@ -23,12 +23,15 @@ pool.on('connect', (client) => {
 
 (async () => {
   try {
+    const roleCheck = await pool.query('SELECT current_role');
+    console.log('🔎 CURRENT DB ROLE:', roleCheck.rows[0].current_role);
     const res = await pool.query('select now()');
     console.log('✅ Database test OK:', res.rows[0]);
     const res2 = await pool.query('SELECT current_role');
     console.log('DB ROLE:', res.rows[0].current_role);
 
   } catch (err) {
+
     console.error('❌ Database test FAILED:', err.message);
   }
 })();
