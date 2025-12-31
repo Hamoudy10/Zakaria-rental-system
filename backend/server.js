@@ -13,6 +13,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+process.on('unhandledRejection', (reason) => {
+  console.error('🔥 UNHANDLED REJECTION STACK TRACE 🔥');
+  console.error(reason?.stack || reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('🔥 UNCAUGHT EXCEPTION STACK TRACE 🔥');
+  console.error(err.stack);
+});
+
+
 console.log('=== SERVER STARTING ===');
 
 // Create HTTP server for Socket.IO
