@@ -23,24 +23,16 @@ pool.on('connect', (client) => {
 
 (async () => {
   try {
-    const roleCheck = await pool.query('SELECT current_role');
-    console.log('🔎 CURRENT DB ROLE:', roleCheck.rows[0].current_role);
-    const counts = await pool.query(`
-      SELECT
-        (SELECT count(*) FROM tenants) AS tenants,
-        (SELECT count(*) FROM users) AS users
-    `);
-    console.log('📊 TABLE COUNTS:', counts.rows[0]);
+    const roleRes = await pool.query('SELECT current_role');
+    console.log('🔎 CURRENT DB ROLE:', roleRes.rows[0].current_role);
 
-    const res = await pool.query('select now()');
-    console.log('✅ Database test OK:', res.rows[0]);
-    const res2 = await pool.query('SELECT current_role');
-    console.log('DB ROLE:', res2.rows[0].current_role);
+    const timeRes = await pool.query('SELECT now()');
+    console.log('✅ Database connected at:', timeRes.rows[0].now);
 
   } catch (err) {
-
-    console.error('❌ Database test FAILED:', err.message);
+    console.error('❌ Database connection failed:', err.message);
   }
 })();
+
 
 module.exports = pool;
