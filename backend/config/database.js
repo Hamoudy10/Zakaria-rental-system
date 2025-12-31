@@ -25,10 +25,17 @@ pool.on('connect', (client) => {
   try {
     const roleCheck = await pool.query('SELECT current_role');
     console.log('🔎 CURRENT DB ROLE:', roleCheck.rows[0].current_role);
+    const counts = await pool.query(`
+      SELECT
+        (SELECT count(*) FROM tenants) AS tenants,
+        (SELECT count(*) FROM users) AS users
+    `);
+    console.log('📊 TABLE COUNTS:', counts.rows[0]);
+
     const res = await pool.query('select now()');
     console.log('✅ Database test OK:', res.rows[0]);
     const res2 = await pool.query('SELECT current_role');
-    console.log('DB ROLE:', res.rows[0].current_role);
+    console.log('DB ROLE:', res2.rows[0].current_role);
 
   } catch (err) {
 
