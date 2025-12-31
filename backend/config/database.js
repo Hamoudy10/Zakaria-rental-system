@@ -1,38 +1,27 @@
-// config/database.js - Add support for UUID parsing
 const { Pool } = require('pg');
 require('dotenv').config();
 
-
-
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'rental_system',
-  password: process.env.DB_PASSWORD || '',
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
   port: process.env.DB_PORT || 5432,
-  ssl: process.env.NODE_ENV === 'production'
-  ? { rejectUnauthorized: false }
-  : false,
-  options: '-c role=backend_service'
+  ssl: { rejectUnauthorized: false }
 });
 
-// Parse UUIDs properly
-pool.on('connect', (client) => {
-  client.query('SET TIME ZONE UTC;');
+pool.on('connect', () => {
+  console.log('🔗 PostgreSQL pool connected');
 });
 
+// SAFE startup check (NO role logic)
 (async () => {
   try {
-    const roleRes = await pool.query('SELECT current_role');
-    console.log('🔎 CURRENT DB ROLE:', roleRes.rows[0].current_role);
-
-    const timeRes = await pool.query('SELECT now()');
-    console.log('✅ Database connected at:', timeRes.rows[0].now);
-
+    const res = await pool.query('SELECT 1');
+    console.log('✅ Database reachable');
   } catch (err) {
-    console.error('❌ Database connection failed: this is my culprit', err.message);
+    console.error('❌ Database unreachable:', err.message);
   }
 })();
-
 
 module.exports = pool;
