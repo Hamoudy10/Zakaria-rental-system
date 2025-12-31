@@ -22,7 +22,7 @@ pool.on('connect', (client) => {
 // Simple connection test at startup
 (async () => {
   try {
-    //await pool.query('SELECT 1'); // just test connection
+    await pool.query('SELECT 1'); // just test connection
     console.log('✅ Database connection OK');
   } catch (err) {
     console.error('❌ Database connection FAILED:', err);
