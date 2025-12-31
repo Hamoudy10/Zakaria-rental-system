@@ -20,7 +20,7 @@ pool.on('connect', () => {
     const res = await pool.query('SELECT 1');
     console.log('✅ Database reachable');
   } catch (err) {
-    console.error('❌ Database unreachable:', err.message);
+    console.error('❌ Database unreachable:', err);
   }
 })();
 
