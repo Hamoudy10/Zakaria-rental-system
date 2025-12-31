@@ -1,26 +1,31 @@
+// config/database.js
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Create a new pool using Supabase credentials
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+  user: process.env.DB_USER,                  // e.g., postgres
+  host: process.env.DB_HOST,                  // e.g., db.dltbxfftevyxvadqrshl.supabase.co
+  database: process.env.DB_NAME,              // your database name in Supabase
+  password: process.env.DB_PASSWORD,          // your Supabase password
   port: process.env.DB_PORT || 5432,
-  ssl: { rejectUnauthorized: false }
+  ssl: process.env.NODE_ENV === 'production'  // enforce SSL in production
+    ? { rejectUnauthorized: false }
+    : false
 });
 
-pool.on('connect', () => {
-  console.log('🔗 PostgreSQL pool connected');
+// Optional: set up UUID parsing
+pool.on('connect', (client) => {
+  client.query('SET TIME ZONE UTC;'); // ensure all timestamps are UTC
 });
 
-// SAFE startup check (NO role logic)
+// Simple connection test at startup
 (async () => {
   try {
-    const res = await pool.query('SELECT 1');
-    console.log('✅ Database reachable');
+    await pool.query('SELECT 1'); // just test connection
+    console.log('✅ Database connection OK');
   } catch (err) {
-    console.error('❌ Database unreachable:', err);
+    console.error('❌ Database connection FAILED:', err.message);
   }
 })();
 
