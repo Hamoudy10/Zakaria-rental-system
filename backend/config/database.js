@@ -30,7 +30,7 @@ pool.on('connect', (client) => {
     console.log('✅ Database connected at:', timeRes.rows[0].now);
 
   } catch (err) {
-    console.error('❌ Database connection failed:', err.message);
+    console.error('❌ Database connection failed: this is my culprit', err.message);
   }
 })();
 
