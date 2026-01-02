@@ -1,58 +1,52 @@
 // controllers/dashboardController.js
-const pool = require('../config/database')
+const pool = require('../config/database');
 
 /**
  * Get admin dashboard statistics
  */
 const getAdminStats = async (req, res) => {
   try {
-    // Total revenue
     const revenueResult = await pool.query(`
       SELECT COALESCE(SUM(amount),0) AS total_revenue,
              COALESCE(SUM(CASE WHEN DATE_PART('month', payment_month) = DATE_PART('month', CURRENT_DATE) THEN amount END),0) AS monthly_revenue
       FROM rent_payments
       WHERE status = 'completed'
-    `)
-    const totalRevenue = parseFloat(revenueResult.rows[0].total_revenue || 0)
-    const monthlyGrowth = parseFloat(revenueResult.rows[0].monthly_revenue || 0)
+    `);
+    const totalRevenue = parseFloat(revenueResult.rows[0].total_revenue || 0);
+    const monthlyGrowth = parseFloat(revenueResult.rows[0].monthly_revenue || 0);
 
-    // Total properties
-    const propResult = await pool.query(`SELECT COUNT(*) AS total_properties FROM properties`)
-    const totalProperties = parseInt(propResult.rows[0].total_properties)
+    const propResult = await pool.query(`SELECT COUNT(*) AS total_properties FROM properties`);
+    const totalProperties = parseInt(propResult.rows[0].total_properties);
 
-    // Assigned agents
     const agentResult = await pool.query(`
       SELECT COUNT(DISTINCT agent_id) AS assigned_agents
       FROM agent_properties
-    `)
-    const assignedAgents = parseInt(agentResult.rows[0].assigned_agents)
+    `);
+    const assignedAgents = parseInt(agentResult.rows[0].assigned_agents);
 
-    // Occupancy & active tenants
     const tenantResult = await pool.query(`
       SELECT COUNT(*) AS active_tenants
       FROM tenant_allocations
       WHERE is_active = true
-    `)
-    const activeTenants = parseInt(tenantResult.rows[0].active_tenants)
+    `);
+    const activeTenants = parseInt(tenantResult.rows[0].active_tenants);
 
     const unitResult = await pool.query(`
       SELECT COUNT(*) AS total_units,
              COUNT(CASE WHEN is_occupied = true THEN 1 END) AS occupied_units
       FROM property_units
-    `)
-    const totalUnits = parseInt(unitResult.rows[0].total_units)
-    const occupiedUnits = parseInt(unitResult.rows[0].occupied_units)
-    const occupancyRate = totalUnits > 0 ? `${Math.round((occupiedUnits / totalUnits) * 100)}%` : '0%'
+    `);
+    const totalUnits = parseInt(unitResult.rows[0].total_units);
+    const occupiedUnits = parseInt(unitResult.rows[0].occupied_units);
+    const occupancyRate = totalUnits > 0 ? `${Math.round((occupiedUnits / totalUnits) * 100)}%` : '0%';
 
-    // Pending complaints
     const complaintResult = await pool.query(`
       SELECT COUNT(*) AS pending_complaints
       FROM complaints
       WHERE status = 'pending'
-    `)
-    const pendingComplaints = parseInt(complaintResult.rows[0].pending_complaints)
+    `);
+    const pendingComplaints = parseInt(complaintResult.rows[0].pending_complaints);
 
-    // Pending payments (unpaid for current month)
     const pendingPaymentResult = await pool.query(`
       SELECT COUNT(*) AS pending_payments
       FROM tenant_allocations ta
@@ -64,34 +58,40 @@ const getAdminStats = async (req, res) => {
       WHERE ta.is_active = true
       GROUP BY ta.id
       HAVING COUNT(rp.id) = 0
-    `)
-    const pendingPayments = pendingPaymentResult.rowCount
+    `);
+    const pendingPayments = pendingPaymentResult.rowCount;
 
-    // Unassigned properties (properties without an agent)
     const unassignedResult = await pool.query(`
       SELECT COUNT(*) AS unassigned_properties
       FROM properties p
       LEFT JOIN agent_properties ap ON p.id = ap.property_id
       WHERE ap.id IS NULL
-    `)
-    const unassignedProperties = parseInt(unassignedResult.rows[0].unassigned_properties)
+    `);
+    const unassignedProperties = parseInt(unassignedResult.rows[0].unassigned_properties);
 
     res.json({
-      totalRevenue,
-      monthlyGrowth,
-      totalProperties,
-      assignedAgents,
-      occupancyRate,
-      activeTenants,
-      pendingComplaints,
-      pendingPayments,
-      unassignedProperties
-    })
+      success: true,
+      data: {
+        totalRevenue,
+        monthlyGrowth,
+        totalProperties,
+        assignedAgents,
+        occupancyRate,
+        activeTenants,
+        pendingComplaints,
+        pendingPayments,
+        unassignedProperties
+      }
+    });
   } catch (error) {
-    console.error('Error fetching admin stats:', error)
-    res.status(500).json({ success: false, message: 'Failed to fetch admin stats', error: error.message })
+    console.error('Error fetching admin stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch admin stats',
+      error: error.message
+    });
   }
-}
+};
 
 /**
  * Get recent activities (last 10 actions)
@@ -106,13 +106,20 @@ const getRecentActivities = async (req, res) => {
       FROM activities
       ORDER BY created_at DESC
       LIMIT 10
-    `)
-    res.json(result.rows)
+    `);
+    res.json({
+      success: true,
+      data: result.rows
+    });
   } catch (error) {
-    console.error('Error fetching recent activities:', error)
-    res.status(500).json({ success: false, message: 'Failed to fetch recent activities', error: error.message })
+    console.error('Error fetching recent activities:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch recent activities',
+      error: error.message
+    });
   }
-}
+};
 
 /**
  * Get top performing properties (by monthly revenue)
@@ -137,7 +144,8 @@ const getTopProperties = async (req, res) => {
       GROUP BY p.id, a.first_name, a.last_name
       ORDER BY revenue DESC
       LIMIT 6
-    `)
+    `);
+
     const formatted = result.rows.map(r => ({
       id: r.id,
       name: r.name,
@@ -146,16 +154,24 @@ const getTopProperties = async (req, res) => {
       occupancy: r.occupied_units > 0 && r.units > 0 ? `${Math.round((r.occupied_units / r.units) * 100)}%` : '0%',
       agent: r.agent,
       complaints: parseInt(r.complaints)
-    }))
-    res.json(formatted)
+    }));
+
+    res.json({
+      success: true,
+      data: formatted
+    });
   } catch (error) {
-    console.error('Error fetching top properties:', error)
-    res.status(500).json({ success: false, message: 'Failed to fetch top properties', error: error.message })
+    console.error('Error fetching top properties:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch top properties',
+      error: error.message
+    });
   }
-}
+};
 
 module.exports = {
   getAdminStats,
   getRecentActivities,
   getTopProperties
-}
+};
