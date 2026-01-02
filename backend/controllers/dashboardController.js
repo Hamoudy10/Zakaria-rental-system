@@ -102,43 +102,51 @@ const getAdminStats = async (req, res) => {
 /**
  * Get recent activities (last 10 actions)
  */
-const getRecentActivities = async (req, res) => {
+ const getRecentActivities = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT
-        1 AS id,
-      u.first_name || ' ' || u.last_name AS user,
-      'User registered' AS description,
-      'registration' AS type,
-      to_char(u.created_at, 'YYYY-MM-DD HH24:MI') AS time
-      FROM users u
+      SELECT *
+      FROM (
+        -- User registrations
+        SELECT
+          u.created_at AS sort_time,
+          u.first_name || ' ' || u.last_name AS user,
+          'User registered' AS description,
+          'registration' AS type,
+          to_char(u.created_at, 'YYYY-MM-DD HH24:MI') AS time
+        FROM users u
 
-      UNION ALL
+        UNION ALL
 
-      SELECT
-      2 AS id,
-      'Tenant' AS user,
-      'Rent payment made' AS description,
-      'payment' AS type,
-      to_char(rp.created_at, 'YYYY-MM-DD HH24:MI') AS time
-      FROM rent_payments rp
-      WHERE rp.status = 'completed'
+        -- Rent payments
+        SELECT
+          rp.created_at AS sort_time,
+          'Tenant' AS user,
+          'Rent payment made' AS description,
+          'payment' AS type,
+          to_char(rp.created_at, 'YYYY-MM-DD HH24:MI') AS time
+        FROM rent_payments rp
+        WHERE rp.status = 'completed'
 
-      UNION ALL
+        UNION ALL
 
-      SELECT
-      3 AS id,
-      'Tenant' AS user,
-      'Complaint submitted' AS description,
-      'complaint' AS type,
-      to_char(c.created_at, 'YYYY-MM-DD HH24:MI') AS time
-      FROM complaints c
-
-      ORDER BY time DESC
+        -- Complaints
+        SELECT
+          c.raised_at AS sort_time,
+          'Tenant' AS user,
+          'Complaint submitted' AS description,
+          'complaint' AS type,
+          to_char(c.raised_at, 'YYYY-MM-DD HH24:MI') AS time
+        FROM complaints c
+      ) activities
+      ORDER BY sort_time DESC
       LIMIT 10
     `);
 
-    res.json({ success: true, data: result.rows });
+    res.json({
+      success: true,
+      data: result.rows
+    });
   } catch (error) {
     console.error('Error fetching recent activities:', error);
     res.status(500).json({
@@ -148,6 +156,7 @@ const getRecentActivities = async (req, res) => {
     });
   }
 };
+
 
 
 /**
