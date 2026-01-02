@@ -308,9 +308,11 @@ useEffect(() => {
   if (!user) return;
 
   const token = localStorage.getItem('token');
-  const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001', {
-    auth: { token }
-  });
+  const socket = io(import.meta.env.VITE_SOCKET_URL, {
+  auth: { token },
+  transports: ['websocket'],
+});
+
   socketRef.current = socket;
 
   socket.on('connect', () => console.log('Socket connected'));
