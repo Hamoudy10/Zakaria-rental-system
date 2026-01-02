@@ -166,6 +166,19 @@ optionalRoutes.forEach(route => {
   }
 });
 
+console.log('Admin dashboard routes loaded');
+
+
+// Load admin dashboard routes
+try {
+  const adminDashboardRoutes = require('./routes/adminRoutes');
+  app.use('/api/admin/dashboard', adminDashboardRoutes);
+  console.log('✅ Admin Dashboard routes loaded');
+} catch (err) {
+  console.log('❌ Admin Dashboard routes failed:', err.message);
+}
+
+
 // NEW: Load chat routes
 console.log('🔄 Loading Chat routes...');
 try {
@@ -240,6 +253,7 @@ app.use('*', (req, res) => {
     message: `Route not found: ${req.originalUrl}`
   });
 });
+
 
 const PORT = process.env.PORT || 3001;
 
