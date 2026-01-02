@@ -105,19 +105,40 @@ const getAdminStats = async (req, res) => {
 const getRecentActivities = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT u.first_name || ' ' || u.last_name AS user,
-             description,
-             type,
-             to_char(created_at, 'YYYY-MM-DD HH24:MI') AS time
-      FROM activities a
-      LEFT JOIN users u ON u.id = a.user_id
-      ORDER BY created_at DESC
+      SELECT
+        1 AS id,
+      u.first_name || ' ' || u.last_name AS user,
+      'User registered' AS description,
+      'registration' AS type,
+      to_char(u.created_at, 'YYYY-MM-DD HH24:MI') AS time
+      FROM users u
+
+      UNION ALL
+
+      SELECT
+      2 AS id,
+      'Tenant' AS user,
+      'Rent payment made' AS description,
+      'payment' AS type,
+      to_char(rp.created_at, 'YYYY-MM-DD HH24:MI') AS time
+      FROM rent_payments rp
+      WHERE rp.status = 'completed'
+
+      UNION ALL
+
+      SELECT
+      3 AS id,
+      'Tenant' AS user,
+      'Complaint submitted' AS description,
+      'complaint' AS type,
+      to_char(c.created_at, 'YYYY-MM-DD HH24:MI') AS time
+      FROM complaints c
+
+      ORDER BY time DESC
       LIMIT 10
     `);
-    res.json({
-      success: true,
-      data: result.rows
-    });
+
+    res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error('Error fetching recent activities:', error);
     res.status(500).json({
@@ -128,6 +149,7 @@ const getRecentActivities = async (req, res) => {
   }
 };
 
+
 /**
  * Get top performing properties (by monthly revenue)
  * Handles multiple agents per property
@@ -135,22 +157,27 @@ const getRecentActivities = async (req, res) => {
 const getTopProperties = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         p.id,
         p.name,
         COALESCE(SUM(rp.amount), 0) AS revenue,
         COUNT(DISTINCT pu.id) AS units,
         COUNT(DISTINCT CASE WHEN pu.is_occupied = true THEN pu.id END) AS occupied_units,
-        COALESCE(string_agg(DISTINCT u.first_name || ' ' || u.last_name, ', '), 'Unassigned') AS agents,
-        COUNT(DISTINCT c.id) FILTER (WHERE c.status = 'open') AS complaints
+        COALESCE(a.first_name || ' ' || a.last_name, 'Unassigned') AS agent,
+        COUNT(DISTINCT c.id) AS complaints
       FROM properties p
       LEFT JOIN property_units pu ON pu.property_id = p.id
       LEFT JOIN tenant_allocations ta ON ta.unit_id = pu.id AND ta.is_active = true
-      LEFT JOIN rent_payments rp ON rp.tenant_id = ta.tenant_id AND rp.unit_id = pu.id AND rp.status = 'completed'
-      LEFT JOIN agent_property_assignments ap ON ap.property_id = p.id AND ap.is_active = true
-      LEFT JOIN users u ON u.id = ap.agent_id
-      LEFT JOIN complaints c ON c.property_id = p.id AND c.status = 'open'
-      GROUP BY p.id
+      LEFT JOIN rent_payments rp
+        ON rp.tenant_id = ta.tenant_id
+        AND rp.unit_id = pu.id
+        AND rp.status = 'completed'
+      LEFT JOIN agent_property_assignments ap
+        ON ap.property_id = p.id AND ap.is_active = true
+      LEFT JOIN users a ON a.id = ap.agent_id
+      LEFT JOIN complaints c
+        ON c.unit_id = pu.id
+      GROUP BY p.id, a.first_name, a.last_name
       ORDER BY revenue DESC
       LIMIT 6
     `);
@@ -158,17 +185,17 @@ const getTopProperties = async (req, res) => {
     const formatted = result.rows.map(r => ({
       id: r.id,
       name: r.name,
-      revenue: parseFloat(r.revenue),
-      units: parseInt(r.units),
-      occupancy: r.occupied_units > 0 && r.units > 0 ? `${Math.round((r.occupied_units / r.units) * 100)}%` : '0%',
-      agents: r.agents,
-      complaints: parseInt(r.complaints)
+      revenue: Number(r.revenue),
+      units: Number(r.units),
+      occupancy:
+        r.units > 0
+          ? `${Math.round((r.occupied_units / r.units) * 100)}%`
+          : '0%',
+      agent: r.agent,
+      complaints: Number(r.complaints)
     }));
 
-    res.json({
-      success: true,
-      data: formatted
-    });
+    res.json({ success: true, data: formatted });
   } catch (error) {
     console.error('Error fetching top properties:', error);
     res.status(500).json({
@@ -178,6 +205,7 @@ const getTopProperties = async (req, res) => {
     });
   }
 };
+
 
 module.exports = {
   getAdminStats,
