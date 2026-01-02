@@ -130,36 +130,113 @@ const AdminDashboard = () => {
 // --------------------
 // DashboardOverview
 // --------------------
+// --------------------
+// DashboardOverview
+// --------------------
 const DashboardOverview = ({ setActiveTab, adminStats, recentActivities, topProperties }) => {
   if (!adminStats) return <TabLoadingSpinner />
 
-  const getActivityIcon = (type) => {
-    switch (type) {
-      case 'registration': return '👤'
-      case 'payment': return '💰'
-      case 'complaint': return '🛠️'
-      case 'maintenance': return '🔧'
-      default: return '📝'
-    }
-  }
-
-  const getActivityColor = (type) => {
-    switch (type) {
-      case 'registration': return 'text-blue-600'
-      case 'payment': return 'text-green-600'
-      case 'complaint': return 'text-orange-600'
-      case 'maintenance': return 'text-purple-600'
-      default: return 'text-gray-600'
-    }
-  }
-
   return (
-    <div className="space-y-4 md:space-y-6">
-      {/* Copy all your previous DashboardOverview JSX here */}
-      {/* Stats, Recent Activities, Top Properties, Pending Actions */}
+    <div className="space-y-6">
+
+      {/* =====================
+          STATISTICS OVERVIEW
+      ===================== */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white border rounded-lg p-4 shadow-sm">
+          <p className="text-xs text-gray-500">Total Properties</p>
+          <p className="text-2xl font-semibold text-gray-800">
+            {adminStats.totalProperties}
+          </p>
+        </div>
+
+        <div className="bg-white border rounded-lg p-4 shadow-sm">
+          <p className="text-xs text-gray-500">Occupancy Rate</p>
+          <p className="text-2xl font-semibold text-gray-800">
+            {adminStats.occupancyRate}
+          </p>
+        </div>
+
+        <div className="bg-white border rounded-lg p-4 shadow-sm">
+          <p className="text-xs text-gray-500">Active Tenants</p>
+          <p className="text-2xl font-semibold text-gray-800">
+            {adminStats.activeTenants}
+          </p>
+        </div>
+
+        <div className="bg-white border rounded-lg p-4 shadow-sm">
+          <p className="text-xs text-gray-500">Total Revenue</p>
+          <p className="text-2xl font-semibold text-gray-800">
+            KES {adminStats.totalRevenue}
+          </p>
+        </div>
+      </div>
+
+      {/* =====================
+          RECENT ACTIVITIES
+      ===================== */}
+      <div className="bg-white border rounded-lg p-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">
+          Recent Activities
+        </h3>
+
+        {recentActivities.length === 0 ? (
+          <p className="text-sm text-gray-500">No recent activities available.</p>
+        ) : (
+          <div className="space-y-2">
+            {recentActivities.map((activity, index) => (
+              <div
+                key={index}
+                className="flex justify-between items-center border rounded-md p-3"
+              >
+                <span className="text-sm text-gray-700">
+                  {activity.description}
+                </span>
+                <span className="text-xs text-gray-500">
+                  {activity.time}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* =====================
+          TOP PROPERTIES
+      ===================== */}
+      <div className="bg-white border rounded-lg p-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">
+          Top Performing Properties
+        </h3>
+
+        {topProperties.length === 0 ? (
+          <p className="text-sm text-gray-500">No property performance data.</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-4">
+            {topProperties.map((property, index) => (
+              <div
+                key={index}
+                className="border rounded-md p-4 hover:shadow-sm transition"
+              >
+                <p className="font-medium text-gray-800">
+                  {property.name}
+                </p>
+                <p className="text-sm text-gray-600 mt-1">
+                  Occupancy: <span className="font-medium">{property.occupancy}</span>
+                </p>
+                <p className="text-sm text-gray-600">
+                  Revenue: <span className="font-medium">KES {property.revenue}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
+
 
 // --------------------
 // PendingActionCard
