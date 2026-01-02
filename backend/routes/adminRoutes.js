@@ -11,7 +11,7 @@ const dashboardController = require('../controllers/dashboardController');
 router.get('/stats', dashboardController.getAdminStats);
 
 // GET /api/admin/dashboard/activities
-router.get('/activities', dashboardController.getRecentActivities);
+router.get('/recent-activities', dashboardController.getRecentActivities);
 
 // GET /api/admin/dashboard/top-properties
 router.get('/top-properties', dashboardController.getTopProperties);

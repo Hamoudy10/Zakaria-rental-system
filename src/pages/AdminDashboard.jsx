@@ -33,22 +33,19 @@ const AdminDashboard = () => {
     const fetchData = async () => {
       try {
         // Admin stats
-        const statsRes = await fetch('/api/admin/stats')
-        if (!statsRes.ok) throw new Error('Failed to fetch admin stats')
-        const statsData = await statsRes.json()
-        setAdminStats(statsData)
+       const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
-        // Recent activities
-        const activitiesRes = await fetch('/api/admin/recent-activities')
-        if (!activitiesRes.ok) throw new Error('Failed to fetch recent activities')
-        const activitiesData = await activitiesRes.json()
-        setRecentActivities(activitiesData)
+        const statsRes = await fetch(`${API_BASE}/api/admin/dashboard/stats`);
+        const statsJson = await statsRes.json();
+        setAdminStats(statsJson.data);
 
-        // Top properties
-        const topPropsRes = await fetch('/api/admin/top-properties')
-        if (!topPropsRes.ok) throw new Error('Failed to fetch top properties')
-        const topPropsData = await topPropsRes.json()
-        setTopProperties(topPropsData)
+        const activitiesRes = await fetch(`${API_BASE}/api/admin/dashboard/recent-activities`);
+        const activitiesJson = await activitiesRes.json();
+        setRecentActivities(activitiesJson.data);
+
+        const topPropsRes = await fetch(`${API_BASE}/api/admin/dashboard/top-properties`);
+        const topPropsJson = await topPropsRes.json();
+        setTopProperties(topPropsJson.data);
 
       } catch (error) {
         console.error('Error fetching dashboard data:', error)
