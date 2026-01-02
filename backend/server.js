@@ -89,7 +89,7 @@ const optionalRoutes = [
   { path: '/api/admin/agent-permissions', file: './routes/agentPermissions', name: 'Agent Permissions' },
   { path: '/api/chat', file: './routes/chat', name: 'Chat' },
   { path: '/api/agent-properties', file: './routes/agentProperties', name: 'Agent Properties' },
-  { path: '/api/admin/dashboard', file: './routes/adminRoutes', name: 'Admin Dashboard' },
+  { path: '/api/admin/dashboard', file: './routes/adminRoutes', name: 'Admin Dashboard' }, // ✅ Explicitly added
   { path: '/api', file: './routes/units', name: 'Units' },
   { path: '/api/allocations', file: './routes/allocations', name: 'Allocations' }
 ];

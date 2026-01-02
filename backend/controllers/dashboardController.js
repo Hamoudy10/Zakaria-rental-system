@@ -20,7 +20,8 @@ const getAdminStats = async (req, res) => {
 
     const agentResult = await pool.query(`
       SELECT COUNT(DISTINCT agent_id) AS assigned_agents
-      FROM agent_properties
+      FROM agent_property_assignments
+    WHERE is_active = true
     `);
     const assignedAgents = parseInt(agentResult.rows[0].assigned_agents);
 
