@@ -85,18 +85,17 @@ const ReportsPage = () => {
   };
 
   const handleDownload = async (id, format) => {
-    try {
-      const res = await API.reports.downloadReport(id, format);
-      const blob = new Blob([res.data]);
-      const link = document.createElement('a');
-      link.href = window.URL.createObjectURL(blob);
-      link.download = `report_${id}.${format}`;
-      link.click();
-    } catch (err) {
-      console.error(err);
-      alert('Failed to download report');
+  try {
+    const result = await API.reports.downloadReport(id, format);
+
+    if (!result?.success) {
+      throw new Error(result?.message || 'Download failed');
     }
-  };
+  } catch (err) {
+    console.error(err);
+    alert(err.message || 'Failed to download report');
+  }
+};
 
   const totalPages = Math.ceil(totalReports / limit);
 
