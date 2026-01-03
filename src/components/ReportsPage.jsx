@@ -11,56 +11,42 @@ const ReportsPage = () => {
   const [totalReports, setTotalReports] = useState(0);
   const [error, setError] = useState('');
 
-  // Generate report form state
   const [formData, setFormData] = useState({
-    type: '',
+    report_type: '',
     start_date: '',
     end_date: '',
   });
+
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
 
-  /* -----------------------------
-     Fetch report types
-  ----------------------------- */
+  /* ---------------- FETCH REPORT TYPES ---------------- */
   const fetchReportTypes = async () => {
     try {
       const res = await API.reports.getReportTypes();
-
-      // Ensure array no matter what backend sends
-      const types = Array.isArray(res?.data?.data)
-        ? res.data.data
-        : Array.isArray(res?.data)
-        ? res.data
-        : [];
-
-      setReportTypes(types);
+      setReportTypes(Array.isArray(res?.data?.data) ? res.data.data : []);
     } catch (err) {
       console.error(err);
       setReportTypes([]);
-      setError('Failed to fetch report types.');
+      setError('Failed to fetch report types');
     }
   };
 
-  /* -----------------------------
-     Fetch reports
-  ----------------------------- */
+  /* ---------------- FETCH REPORTS ---------------- */
   const fetchReports = async () => {
     setLoading(true);
     setError('');
 
     try {
       const params = { page, limit };
-      if (selectedType) params.type = selectedType;
+      if (selectedType) params.report_type = selectedType;
 
       const res = await API.reports.getReports(params);
-
       setReports(res?.data?.data || []);
-      setTotalReports(res?.data?.total || res?.data?.data?.length || 0);
+      setTotalReports(res?.data?.total || 0);
     } catch (err) {
-      console.error(err);
-      setError(handleApiError(err).message || 'Failed to fetch reports.');
+      setError(handleApiError(err).message || 'Failed to fetch reports');
     } finally {
       setLoading(false);
     }
@@ -74,32 +60,6 @@ const ReportsPage = () => {
     fetchReports();
   }, [page, selectedType]);
 
-  const handleTypeChange = (e) => {
-    setSelectedType(e.target.value);
-    setPage(1);
-  };
-
-  const handleDownload = async (reportId, format = 'pdf') => {
-    try {
-      const res = await API.reports.downloadReport(reportId, format);
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `report_${reportId}.${format}`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      console.error(err);
-      alert('Failed to download report.');
-    }
-  };
-
-  const handleFormChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
   const handleGenerateReport = async (e) => {
     e.preventDefault();
     setFormLoading(true);
@@ -107,159 +67,103 @@ const ReportsPage = () => {
     setFormSuccess('');
 
     try {
-      if (!formData.type || !formData.start_date || !formData.end_date) {
-        setFormError('Please fill all fields.');
+      if (!formData.report_type || !formData.start_date || !formData.end_date) {
+        setFormError('All fields are required');
         return;
       }
 
       await API.reports.generateReport(formData);
-      setFormSuccess('Report generated successfully!');
-      setFormData({ type: '', start_date: '', end_date: '' });
+      setFormSuccess('Report generated successfully');
+      setFormData({ report_type: '', start_date: '', end_date: '' });
       fetchReports();
     } catch (err) {
-      console.error(err);
-      setFormError(handleApiError(err).message || 'Failed to generate report.');
+      setFormError(handleApiError(err).message || 'Failed to generate report');
     } finally {
       setFormLoading(false);
     }
   };
 
-  const totalPages = Math.ceil(totalReports / limit);
+  const handleDownload = async (id, format) => {
+    const res = await API.reports.downloadReport(id, format);
+    const blob = new Blob([res.data]);
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.download = `report_${id}.${format}`;
+    link.click();
+  };
 
-  // Always safe for mapping
-  const safeReportTypes = Array.isArray(reportTypes) ? reportTypes : [];
+  const totalPages = Math.ceil(totalReports / limit);
 
   return (
     <div className="p-4">
       <h1 className="text-2xl font-bold mb-4">Reports</h1>
 
-      {/* Generate Report Form */}
-      <form
-        onSubmit={handleGenerateReport}
-        className="mb-6 p-4 border rounded bg-gray-50 space-y-3"
-      >
-        <h2 className="text-xl font-semibold">Generate Report</h2>
+      {/* GENERATE REPORT */}
+      <form onSubmit={handleGenerateReport} className="mb-6 p-4 border rounded bg-gray-50">
+        <h2 className="font-semibold mb-2">Generate Report</h2>
+
         {formError && <p className="text-red-500">{formError}</p>}
         {formSuccess && <p className="text-green-500">{formSuccess}</p>}
 
-        <div className="flex flex-wrap gap-3 items-end">
-          <div>
-            <label className="block mb-1 font-medium">Report Type</label>
-            <select
-              name="type"
-              value={formData.type}
-              onChange={handleFormChange}
-              className="border rounded px-2 py-1"
-            >
-              <option value="">Select Type</option>
-              {safeReportTypes.map((type) => {
-                const value = type.value || type;
-                const label = type.label || value;
-                return (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
-          <div>
-            <label className="block mb-1 font-medium">Start Date</label>
-            <input
-              type="date"
-              name="start_date"
-              value={formData.start_date}
-              onChange={handleFormChange}
-              className="border rounded px-2 py-1"
-            />
-          </div>
-
-          <div>
-            <label className="block mb-1 font-medium">End Date</label>
-            <input
-              type="date"
-              name="end_date"
-              value={formData.end_date}
-              onChange={handleFormChange}
-              className="border rounded px-2 py-1"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="bg-blue-500 text-white px-4 py-2 rounded"
-            disabled={formLoading}
+        <div className="flex gap-3 flex-wrap">
+          <select
+            value={formData.report_type}
+            onChange={(e) => setFormData({ ...formData, report_type: e.target.value })}
+            className="border px-2 py-1"
           >
-            {formLoading ? 'Generating...' : 'Generate Report'}
+            <option value="">Select report type</option>
+            {reportTypes.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+
+          <input type="date" value={formData.start_date}
+            onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+            className="border px-2 py-1" />
+
+          <input type="date" value={formData.end_date}
+            onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
+            className="border px-2 py-1" />
+
+          <button disabled={formLoading}
+            className="bg-blue-500 text-white px-4 py-1 rounded">
+            {formLoading ? 'Generating…' : 'Generate'}
           </button>
         </div>
       </form>
 
-      {/* Filter */}
-      <div className="mb-4">
-        <label className="mr-2 font-semibold">Filter by Type:</label>
-        <select
-          value={selectedType}
-          onChange={handleTypeChange}
-          className="border rounded p-1"
-        >
-          <option value="">All</option>
-          {safeReportTypes.map((type) => {
-            const value = type.value || type;
-            const label = type.label || value;
-            return (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            );
-          })}
-        </select>
-      </div>
+      {/* FILTER */}
+      <select value={selectedType} onChange={(e) => setSelectedType(e.target.value)}
+        className="border mb-3 px-2 py-1">
+        <option value="">All</option>
+        {reportTypes.map((t) => (
+          <option key={t.value} value={t.value}>{t.label}</option>
+        ))}
+      </select>
 
-      {error && <p className="text-red-500 mb-2">{error}</p>}
-
-      {loading ? (
-        <p>Loading reports...</p>
-      ) : reports.length === 0 ? (
-        <p>No reports found.</p>
-      ) : (
-        <table className="min-w-full border border-gray-300">
+      {loading ? <p>Loading…</p> : (
+        <table className="w-full border">
           <thead className="bg-gray-100">
             <tr>
-              <th className="border px-3 py-2">ID</th>
-              <th className="border px-3 py-2">Type</th>
-              <th className="border px-3 py-2">Generated By</th>
-              <th className="border px-3 py-2">Start Date</th>
-              <th className="border px-3 py-2">End Date</th>
-              <th className="border px-3 py-2">Created At</th>
-              <th className="border px-3 py-2">Actions</th>
+              <th>ID</th>
+              <th>Type</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Created</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {reports.map((report) => (
-              <tr key={report.id}>
-                <td className="border px-3 py-2">{report.id}</td>
-                <td className="border px-3 py-2">{report.type}</td>
-                <td className="border px-3 py-2">{report.generated_by}</td>
-                <td className="border px-3 py-2">{report.start_date}</td>
-                <td className="border px-3 py-2">{report.end_date}</td>
-                <td className="border px-3 py-2">
-                  {new Date(report.created_at).toLocaleString()}
-                </td>
-                <td className="border px-3 py-2 space-x-2">
-                  <button
-                    onClick={() => handleDownload(report.id, 'pdf')}
-                    className="bg-blue-500 text-white px-2 py-1 rounded"
-                  >
-                    PDF
-                  </button>
-                  <button
-                    onClick={() => handleDownload(report.id, 'csv')}
-                    className="bg-green-500 text-white px-2 py-1 rounded"
-                  >
-                    CSV
-                  </button>
+            {reports.map((r) => (
+              <tr key={r.id}>
+                <td>{r.id}</td>
+                <td>{r.report_type}</td>
+                <td>{r.start_date}</td>
+                <td>{r.end_date}</td>
+                <td>{new Date(r.generated_at).toLocaleString()}</td>
+                <td>
+                  <button onClick={() => handleDownload(r.id, 'pdf')}>PDF</button>
+                  <button onClick={() => handleDownload(r.id, 'csv')}>CSV</button>
                 </td>
               </tr>
             ))}
@@ -268,24 +172,10 @@ const ReportsPage = () => {
       )}
 
       {totalPages > 1 && (
-        <div className="mt-4 space-x-2">
-          <button
-            disabled={page === 1}
-            onClick={() => setPage(page - 1)}
-            className="px-3 py-1 border rounded disabled:opacity-50"
-          >
-            Previous
-          </button>
-          <span>
-            Page {page} of {totalPages}
-          </span>
-          <button
-            disabled={page === totalPages}
-            onClick={() => setPage(page + 1)}
-            className="px-3 py-1 border rounded disabled:opacity-50"
-          >
-            Next
-          </button>
+        <div className="mt-4">
+          <button disabled={page === 1} onClick={() => setPage(page - 1)}>Prev</button>
+          <span className="mx-2">{page} / {totalPages}</span>
+          <button disabled={page === totalPages} onClick={() => setPage(page + 1)}>Next</button>
         </div>
       )}
     </div>
