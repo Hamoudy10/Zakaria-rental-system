@@ -26,22 +26,51 @@ const protect = (req, res, next) => {
 
 // Authorization middleware
 const authorize = (...roles) => (req, res, next) => {
-  if (!roles.includes(req.user.role)) return res.status(403).json({ error: 'Unauthorized' });
+  if (!roles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
   next();
 };
 
 console.log('Reports routes loaded');
 
-// ROUTES
-router.get('/', protect, authorize('admin', 'agent'), getAllReports);
-router.get('/:id', protect, authorize('admin', 'agent'), getReportById);
-router.post('/', protect, authorize('admin', 'agent'), generateReport);
-router.put('/:id', protect, authorize('admin', 'agent'), updateReport);
-router.delete('/:id', protect, authorize('admin'), deleteReport);
-router.post('/quick', protect, authorize('admin', 'agent'), generateQuickReport);
-router.get('/stats/overview', protect, authorize('admin', 'agent'), getReportStats);
-router.get('/:id/export', protect, authorize('admin', 'agent'), exportReport);
+/*
+|--------------------------------------------------------------------------
+| STATIC & SPECIAL ROUTES (MUST COME FIRST)
+|--------------------------------------------------------------------------
+*/
+
+// report types (for dropdowns)
 router.get('/types', protect, authorize('admin', 'agent'), getReportTypes);
 
+// stats / overview
+router.get('/stats/overview', protect, authorize('admin', 'agent'), getReportStats);
+
+// quick report generation
+router.post('/quick', protect, authorize('admin', 'agent'), generateQuickReport);
+
+// export report
+router.get('/:id/export', protect, authorize('admin', 'agent'), exportReport);
+
+/*
+|--------------------------------------------------------------------------
+| STANDARD CRUD ROUTES
+|--------------------------------------------------------------------------
+*/
+
+// list all reports
+router.get('/', protect, authorize('admin', 'agent'), getAllReports);
+
+// generate new report
+router.post('/', protect, authorize('admin', 'agent'), generateReport);
+
+// get single report
+router.get('/:id', protect, authorize('admin', 'agent'), getReportById);
+
+// update report
+router.put('/:id', protect, authorize('admin', 'agent'), updateReport);
+
+// delete report
+router.delete('/:id', protect, authorize('admin'), deleteReport);
 
 module.exports = router;
