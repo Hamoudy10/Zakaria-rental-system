@@ -308,21 +308,19 @@ const getReportStats = async (req, res) => {
 
 // GET /api/reports/types
 // GET /api/reports/types
+// GET /api/reports/types
 const getReportTypes = (req, res) => {
-  try {
-    res.json([
-      { label: "Rent Payments Report", value: "rent_payments" },
-      { label: "Expenses Report", value: "expenses" },
-      { label: "Financial Summary", value: "financial_summary" },
-      { label: "Tenant Statement", value: "tenant_statement" },
-      { label: "Occupancy Report", value: "occupancy" },
-      { label: "Maintenance Report", value: "maintenance" }
-    ]);
-  } catch (error) {
-    console.error("Get report types error:", error);
-    res.status(500).json([]);
-  }
+  res.json({
+    success: true,
+    data: [
+      { label: 'Rent Payments', value: 'rent_payments' },
+      { label: 'Expenses', value: 'expenses' },
+      { label: 'Financial Summary', value: 'financial_summary' },
+      { label: 'Tenant Statement', value: 'tenant_statement' }
+    ]
+  });
 };
+
 
 
 // EXPORT REPORT (CSV/PDF placeholder)
