@@ -4,7 +4,7 @@ import React, { useState, useEffect, Suspense, lazy } from 'react'
 // Lazy load admin components
 const UserManagement = lazy(() => import('../components/UserManagement'))
 const PropertyManagement = lazy(() => import('../components/PropertyManagement'))
-const Reports = lazy(() => import('../components/Reports'))
+const Reports = lazy(() => import('../components/ReportsPage'))
 const SalaryPayment = lazy(() => import('../components/SalaryPayment'))
 const SystemSettings = lazy(() => import('../components/SystemSettings'))
 const TenantAllocation = lazy(() => import('../components/TenantAllocation'))
