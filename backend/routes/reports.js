@@ -64,6 +64,7 @@ router.get('/', protect, authorize('admin', 'agent'), getAllReports);
 // generate new report
 router.post('/generate', protect, authorize('admin', 'agent'), generateReport);
 
+
 // get single report
 router.get('/:id', protect, authorize('admin', 'agent'), getReportById);
 

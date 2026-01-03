@@ -317,19 +317,62 @@ export const complaintAPI = {
 };
 
 // Report API
+// Updated Report API integrated into main API export
+// Report API
 export const reportAPI = {
+  // Generate a new report
   generateReport: (reportData) => api.post('/reports/generate', reportData),
-  getReports: () => api.get('/reports'),
+
+  // Get all reports
+  getReports: (params = {}) => api.get('/reports', { params }),
+
+  // Get a single report by ID
   getReport: (id) => api.get(`/reports/${id}`),
-  downloadReport: (id) => api.get(`/reports/${id}/download`, { responseType: 'blob' }),
+
+  // Download a report file (PDF/CSV) safely
+  downloadReport: async (id, format = 'pdf') => {
+    try {
+      const response = await api.get(`/reports/${id}/export?format=${format}`, {
+        responseType: 'blob',
+      });
+
+      // If backend returns JSON instead of blob (e.g., 404), throw error
+      const contentType = response.headers['content-type'];
+      if (contentType.includes('application/json')) {
+        const errorData = await response.data.text ? await response.data.text() : null;
+        throw new Error(`Download failed: ${errorData || 'Report not found'}`);
+      }
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `report_${id}.${format}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      return { success: true };
+    } catch (error) {
+      console.error('Report download error:', error);
+      return { success: false, message: error.message || 'Failed to download report' };
+    }
+  },
+
+  // Generic export helper (alias)
+  exportReport: async (id, format = 'pdf') => {
+    return reportAPI.downloadReport(id, format);
+  },
+
+  // Get available report types
   getReportTypes: () => api.get('/reports/types'),
-  getPaymentReports: () => api.get('/reports/payments'),
-  getOccupancyReports: () => api.get('/reports/occupancy'),
+
+  // Prebuilt reports
+  getPaymentReports: (params) => api.get('/reports/payments', { params }),
+  getOccupancyReports: (params) => api.get('/reports/occupancy', { params }),
   getFinancialReports: (params) => api.get('/reports/financial', { params }),
-  getMaintenanceReports: () => api.get('/reports/maintenance'),
-  exportReport: (id, format = 'pdf') => 
-    api.get(`/reports/${id}/export?format=${format}`, { responseType: 'blob' }),
+  getMaintenanceReports: (params) => api.get('/reports/maintenance', { params }),
 };
+
 
 // Salary Payment API (legacy - now integrated into paymentAPI)
 export const salaryPaymentAPI = {
