@@ -25,7 +25,8 @@ const ReportsPage = () => {
   const fetchReportTypes = async () => {
     try {
       const res = await API.reports.getReportTypes();
-      setReportTypes(Array.isArray(res?.data?.data) ? res.data.data : []);
+      const types = Array.isArray(res?.data?.data) ? res.data.data : [];
+      setReportTypes(types);
     } catch (err) {
       console.error(err);
       setReportTypes([]);
@@ -84,12 +85,17 @@ const ReportsPage = () => {
   };
 
   const handleDownload = async (id, format) => {
-    const res = await API.reports.downloadReport(id, format);
-    const blob = new Blob([res.data]);
-    const link = document.createElement('a');
-    link.href = window.URL.createObjectURL(blob);
-    link.download = `report_${id}.${format}`;
-    link.click();
+    try {
+      const res = await API.reports.downloadReport(id, format);
+      const blob = new Blob([res.data]);
+      const link = document.createElement('a');
+      link.href = window.URL.createObjectURL(blob);
+      link.download = `report_${id}.${format}`;
+      link.click();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to download report');
+    }
   };
 
   const totalPages = Math.ceil(totalReports / limit);
@@ -101,7 +107,6 @@ const ReportsPage = () => {
       {/* GENERATE REPORT */}
       <form onSubmit={handleGenerateReport} className="mb-6 p-4 border rounded bg-gray-50">
         <h2 className="font-semibold mb-2">Generate Report</h2>
-
         {formError && <p className="text-red-500">{formError}</p>}
         {formSuccess && <p className="text-green-500">{formSuccess}</p>}
 
@@ -117,66 +122,116 @@ const ReportsPage = () => {
             ))}
           </select>
 
-          <input type="date" value={formData.start_date}
+          <input
+            type="date"
+            value={formData.start_date}
             onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-            className="border px-2 py-1" />
-
-          <input type="date" value={formData.end_date}
+            className="border px-2 py-1"
+          />
+          <input
+            type="date"
+            value={formData.end_date}
             onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
-            className="border px-2 py-1" />
+            className="border px-2 py-1"
+          />
 
-          <button disabled={formLoading}
-            className="bg-blue-500 text-white px-4 py-1 rounded">
+          <button
+            disabled={formLoading}
+            className="bg-blue-500 text-white px-4 py-1 rounded"
+          >
             {formLoading ? 'Generating…' : 'Generate'}
           </button>
         </div>
       </form>
 
       {/* FILTER */}
-      <select value={selectedType} onChange={(e) => setSelectedType(e.target.value)}
-        className="border mb-3 px-2 py-1">
+      <select
+        value={selectedType}
+        onChange={(e) => setSelectedType(e.target.value)}
+        className="border mb-3 px-2 py-1"
+      >
         <option value="">All</option>
         {reportTypes.map((t) => (
           <option key={t.value} value={t.value}>{t.label}</option>
         ))}
       </select>
 
-      {loading ? <p>Loading…</p> : (
-        <table className="w-full border">
-          <thead className="bg-gray-100">
-            <tr>
-              <th>ID</th>
-              <th>Type</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Created</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reports.map((r) => (
-              <tr key={r.id}>
-                <td>{r.id}</td>
-                <td>{r.report_type}</td>
-                <td>{r.start_date}</td>
-                <td>{r.end_date}</td>
-                <td>{new Date(r.generated_at).toLocaleString()}</td>
-                <td>
-                  <button onClick={() => handleDownload(r.id, 'pdf')}>PDF</button>
-                  <button onClick={() => handleDownload(r.id, 'csv')}>CSV</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {error && <p className="text-red-500 mb-2">{error}</p>}
+      {loading ? <p>Loading…</p> : reports.length === 0 ? <p>No reports found</p> : (
+        <>
+          {/* Responsive table wrapper */}
+          <div className="overflow-x-auto">
+            <table className="min-w-full border border-gray-300 table-auto">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="border px-3 py-2">ID</th>
+                  <th className="border px-3 py-2">Type</th>
+                  <th className="border px-3 py-2">Start</th>
+                  <th className="border px-3 py-2">End</th>
+                  <th className="border px-3 py-2">Created</th>
+                  <th className="border px-3 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map((r) => (
+                  <tr key={r.id} className="md:table-row block md:border-0 mb-4 md:mb-0">
+                    {/* Mobile stacked layout */}
+                    <td className="border px-3 py-2 md:border md:px-3 md:py-2 block">
+                      <span className="font-semibold md:hidden">ID: </span>{r.id}
+                    </td>
+                    <td className="border px-3 py-2 md:border md:px-3 md:py-2 block">
+                      <span className="font-semibold md:hidden">Type: </span>{r.report_type}
+                    </td>
+                    <td className="border px-3 py-2 md:border md:px-3 md:py-2 block">
+                      <span className="font-semibold md:hidden">Start: </span>{r.start_date}
+                    </td>
+                    <td className="border px-3 py-2 md:border md:px-3 md:py-2 block">
+                      <span className="font-semibold md:hidden">End: </span>{r.end_date}
+                    </td>
+                    <td className="border px-3 py-2 md:border md:px-3 md:py-2 block">
+                      <span className="font-semibold md:hidden">Created: </span>{new Date(r.generated_at).toLocaleString()}
+                    </td>
+                    <td className="border px-3 py-2 md:border md:px-3 md:py-2 block space-x-2">
+                      <button
+                        className="bg-blue-500 text-white px-2 py-1 rounded"
+                        onClick={() => handleDownload(r.id, 'pdf')}
+                      >
+                        PDF
+                      </button>
+                      <button
+                        className="bg-green-500 text-white px-2 py-1 rounded"
+                        onClick={() => handleDownload(r.id, 'csv')}
+                      >
+                        CSV
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-      {totalPages > 1 && (
-        <div className="mt-4">
-          <button disabled={page === 1} onClick={() => setPage(page - 1)}>Prev</button>
-          <span className="mx-2">{page} / {totalPages}</span>
-          <button disabled={page === totalPages} onClick={() => setPage(page + 1)}>Next</button>
-        </div>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                disabled={page === 1}
+                onClick={() => setPage(page - 1)}
+                className="px-3 py-1 border rounded disabled:opacity-50"
+              >
+                Prev
+              </button>
+              <span>{page} / {totalPages}</span>
+              <button
+                disabled={page === totalPages}
+                onClick={() => setPage(page + 1)}
+                className="px-3 py-1 border rounded disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
