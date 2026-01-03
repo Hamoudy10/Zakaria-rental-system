@@ -21,28 +21,43 @@ const ReportsPage = () => {
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
 
-  // Fetch report types
+  /* -----------------------------
+     Fetch report types
+  ----------------------------- */
   const fetchReportTypes = async () => {
     try {
       const res = await API.reports.getReportTypes();
-      setReportTypes(res.data || []);
+
+      // Ensure array no matter what backend sends
+      const types = Array.isArray(res?.data?.data)
+        ? res.data.data
+        : Array.isArray(res?.data)
+        ? res.data
+        : [];
+
+      setReportTypes(types);
     } catch (err) {
       console.error(err);
+      setReportTypes([]);
       setError('Failed to fetch report types.');
     }
   };
 
-  // Fetch reports with optional type filter
+  /* -----------------------------
+     Fetch reports
+  ----------------------------- */
   const fetchReports = async () => {
     setLoading(true);
     setError('');
+
     try {
       const params = { page, limit };
       if (selectedType) params.type = selectedType;
 
       const res = await API.reports.getReports(params);
-      setReports(res.data.data || []);
-      setTotalReports(res.data.total || res.data.data.length);
+
+      setReports(res?.data?.data || []);
+      setTotalReports(res?.data?.total || res?.data?.data?.length || 0);
     } catch (err) {
       console.error(err);
       setError(handleApiError(err).message || 'Failed to fetch reports.');
@@ -61,13 +76,12 @@ const ReportsPage = () => {
 
   const handleTypeChange = (e) => {
     setSelectedType(e.target.value);
-    setPage(1); // reset page when filter changes
+    setPage(1);
   };
 
   const handleDownload = async (reportId, format = 'pdf') => {
     try {
       const res = await API.reports.downloadReport(reportId, format);
-      // Convert blob to download
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -91,17 +105,17 @@ const ReportsPage = () => {
     setFormLoading(true);
     setFormError('');
     setFormSuccess('');
+
     try {
       if (!formData.type || !formData.start_date || !formData.end_date) {
         setFormError('Please fill all fields.');
-        setFormLoading(false);
         return;
       }
 
-      const res = await API.reports.generateReport(formData);
+      await API.reports.generateReport(formData);
       setFormSuccess('Report generated successfully!');
       setFormData({ type: '', start_date: '', end_date: '' });
-      fetchReports(); // Refresh report list
+      fetchReports();
     } catch (err) {
       console.error(err);
       setFormError(handleApiError(err).message || 'Failed to generate report.');
@@ -111,6 +125,9 @@ const ReportsPage = () => {
   };
 
   const totalPages = Math.ceil(totalReports / limit);
+
+  // Always safe for mapping
+  const safeReportTypes = Array.isArray(reportTypes) ? reportTypes : [];
 
   return (
     <div className="p-4">
@@ -135,11 +152,15 @@ const ReportsPage = () => {
               className="border rounded px-2 py-1"
             >
               <option value="">Select Type</option>
-              {reportTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type.charAt(0).toUpperCase() + type.slice(1)}
-                </option>
-              ))}
+              {safeReportTypes.map((type) => {
+                const value = type.value || type;
+                const label = type.label || value;
+                return (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -175,7 +196,7 @@ const ReportsPage = () => {
         </div>
       </form>
 
-      {/* Filter by report type */}
+      {/* Filter */}
       <div className="mb-4">
         <label className="mr-2 font-semibold">Filter by Type:</label>
         <select
@@ -184,91 +205,88 @@ const ReportsPage = () => {
           className="border rounded p-1"
         >
           <option value="">All</option>
-          {reportTypes.map((type) => (
-            <option key={type} value={type}>
-              {type.charAt(0).toUpperCase() + type.slice(1)}
-            </option>
-          ))}
+          {safeReportTypes.map((type) => {
+            const value = type.value || type;
+            const label = type.label || value;
+            return (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            );
+          })}
         </select>
       </div>
 
-      {/* Error */}
       {error && <p className="text-red-500 mb-2">{error}</p>}
 
-      {/* Loading */}
       {loading ? (
         <p>Loading reports...</p>
+      ) : reports.length === 0 ? (
+        <p>No reports found.</p>
       ) : (
-        <>
-          {reports.length === 0 ? (
-            <p>No reports found.</p>
-          ) : (
-            <table className="min-w-full border border-gray-300">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="border px-3 py-2">ID</th>
-                  <th className="border px-3 py-2">Type</th>
-                  <th className="border px-3 py-2">Generated By</th>
-                  <th className="border px-3 py-2">Start Date</th>
-                  <th className="border px-3 py-2">End Date</th>
-                  <th className="border px-3 py-2">Created At</th>
-                  <th className="border px-3 py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reports.map((report) => (
-                  <tr key={report.id}>
-                    <td className="border px-3 py-2">{report.id}</td>
-                    <td className="border px-3 py-2">{report.type}</td>
-                    <td className="border px-3 py-2">{report.generated_by}</td>
-                    <td className="border px-3 py-2">{report.start_date}</td>
-                    <td className="border px-3 py-2">{report.end_date}</td>
-                    <td className="border px-3 py-2">
-                      {new Date(report.created_at).toLocaleString()}
-                    </td>
-                    <td className="border px-3 py-2 space-x-2">
-                      <button
-                        onClick={() => handleDownload(report.id, 'pdf')}
-                        className="bg-blue-500 text-white px-2 py-1 rounded"
-                      >
-                        PDF
-                      </button>
-                      <button
-                        onClick={() => handleDownload(report.id, 'csv')}
-                        className="bg-green-500 text-white px-2 py-1 rounded"
-                      >
-                        CSV
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <table className="min-w-full border border-gray-300">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className="border px-3 py-2">ID</th>
+              <th className="border px-3 py-2">Type</th>
+              <th className="border px-3 py-2">Generated By</th>
+              <th className="border px-3 py-2">Start Date</th>
+              <th className="border px-3 py-2">End Date</th>
+              <th className="border px-3 py-2">Created At</th>
+              <th className="border px-3 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reports.map((report) => (
+              <tr key={report.id}>
+                <td className="border px-3 py-2">{report.id}</td>
+                <td className="border px-3 py-2">{report.type}</td>
+                <td className="border px-3 py-2">{report.generated_by}</td>
+                <td className="border px-3 py-2">{report.start_date}</td>
+                <td className="border px-3 py-2">{report.end_date}</td>
+                <td className="border px-3 py-2">
+                  {new Date(report.created_at).toLocaleString()}
+                </td>
+                <td className="border px-3 py-2 space-x-2">
+                  <button
+                    onClick={() => handleDownload(report.id, 'pdf')}
+                    className="bg-blue-500 text-white px-2 py-1 rounded"
+                  >
+                    PDF
+                  </button>
+                  <button
+                    onClick={() => handleDownload(report.id, 'csv')}
+                    className="bg-green-500 text-white px-2 py-1 rounded"
+                  >
+                    CSV
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="mt-4 space-x-2">
-              <button
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-                className="px-3 py-1 border rounded disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <button
-                disabled={page === totalPages}
-                onClick={() => setPage(page + 1)}
-                className="px-3 py-1 border rounded disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-          )}
-        </>
+      {totalPages > 1 && (
+        <div className="mt-4 space-x-2">
+          <button
+            disabled={page === 1}
+            onClick={() => setPage(page - 1)}
+            className="px-3 py-1 border rounded disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span>
+            Page {page} of {totalPages}
+          </span>
+          <button
+            disabled={page === totalPages}
+            onClick={() => setPage(page + 1)}
+            className="px-3 py-1 border rounded disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
       )}
     </div>
   );
