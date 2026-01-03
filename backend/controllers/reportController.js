@@ -1,4 +1,6 @@
 const pool = require('../config/database');
+const PDFDocument = require('pdfkit');
+const { Parser } = require('json2csv');
 
 // GET ALL REPORTS WITH FILTERS AND PAGINATION
 const getAllReports = async (req, res) => {
@@ -324,20 +326,94 @@ const getReportTypes = (req, res) => {
 
 
 // EXPORT REPORT (CSV/PDF placeholder)
+
+// EXPORT REPORT (CSV / PDF)
 const exportReport = async (req, res) => {
   try {
     const { id } = req.params;
     const { format = 'csv' } = req.query;
 
-    const reportResult = await pool.query(`SELECT * FROM payment_reports WHERE id=$1`, [id]);
-    if (reportResult.rows.length === 0) return res.status(404).json({ success: false, message: 'Report not found' });
+    const result = await pool.query(
+      'SELECT * FROM payment_reports WHERE id = $1',
+      [id]
+    );
 
-    res.json({ success: true, message: `Report exported as ${format.toUpperCase()}`, data: { report_id: id, format } });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Report not found' });
+    }
+
+    const report = result.rows[0];
+    const data = report.report_data || {};
+
+    /* ================= CSV ================= */
+    if (format === 'csv') {
+      let rows = [];
+
+      if (data.payments) rows = data.payments;
+      else if (data.expenses) rows = data.expenses;
+      else rows = [data];
+
+      const parser = new Parser();
+      const csv = parser.parse(rows);
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename=report_${id}.csv`
+      );
+
+      return res.send(csv);
+    }
+
+    /* ================= PDF ================= */
+    if (format === 'pdf') {
+      const doc = new PDFDocument({ margin: 40 });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename=report_${id}.pdf`
+      );
+
+      doc.pipe(res);
+
+      doc.fontSize(18).text('Report Export', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(12).text(`Report Type: ${report.report_type}`);
+      doc.text(`Period: ${report.start_date} → ${report.end_date}`);
+      doc.text(`Generated At: ${report.generated_at}`);
+      doc.moveDown();
+
+      const writeSection = (title, items) => {
+        doc.fontSize(14).text(title);
+        doc.moveDown(0.5);
+
+        items.forEach((row, index) => {
+          doc.fontSize(10).text(`${index + 1}. ${JSON.stringify(row)}`);
+        });
+
+        doc.moveDown();
+      };
+
+      if (data.payments) writeSection('Payments', data.payments);
+      if (data.expenses) writeSection('Expenses', data.expenses);
+      if (data.summary) writeSection('Summary', [data.summary]);
+
+      doc.end();
+      return;
+    }
+
+    return res.status(400).json({ success: false, message: 'Unsupported format' });
+
   } catch (error) {
-    console.error('Error exporting report:', error);
-    res.status(500).json({ success: false, message: 'Error exporting report', error: error.message });
+    console.error('Export error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting report',
+      error: error.message
+    });
   }
 };
+
 
 module.exports = {
   getAllReports,
