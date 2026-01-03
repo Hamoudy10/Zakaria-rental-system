@@ -328,6 +328,7 @@ const getReportTypes = (req, res) => {
 // EXPORT REPORT (CSV/PDF placeholder)
 
 // EXPORT REPORT (CSV / PDF)
+// EXPORT REPORT (CSV/PDF)
 const exportReport = async (req, res) => {
   try {
     const { id } = req.params;
@@ -356,26 +357,25 @@ const exportReport = async (req, res) => {
       const parser = new Parser();
       const csv = parser.parse(rows);
 
+      // Send CSV as raw content
       res.setHeader('Content-Type', 'text/csv');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename=report_${id}.csv`
-      );
-
+      res.setHeader('Content-Disposition', `attachment; filename=report_${id}.csv`);
       return res.send(csv);
     }
 
     /* ================= PDF ================= */
     if (format === 'pdf') {
+      const PDFDocument = require('pdfkit');
       const doc = new PDFDocument({ margin: 40 });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename=report_${id}.pdf`
-      );
 
+      // Set response headers first
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=report_${id}.pdf`);
+
+      // Pipe PDF directly to response
       doc.pipe(res);
 
+      // PDF content
       doc.fontSize(18).text('Report Export', { align: 'center' });
       doc.moveDown();
       doc.fontSize(12).text(`Report Type: ${report.report_type}`);
@@ -388,7 +388,11 @@ const exportReport = async (req, res) => {
         doc.moveDown(0.5);
 
         items.forEach((row, index) => {
-          doc.fontSize(10).text(`${index + 1}. ${JSON.stringify(row)}`);
+          // Format row nicely instead of raw JSON
+          const rowText = Object.entries(row)
+            .map(([key, val]) => `${key}: ${val}`)
+            .join(' | ');
+          doc.fontSize(10).text(`${index + 1}. ${rowText}`);
         });
 
         doc.moveDown();
@@ -398,12 +402,12 @@ const exportReport = async (req, res) => {
       if (data.expenses) writeSection('Expenses', data.expenses);
       if (data.summary) writeSection('Summary', [data.summary]);
 
+      // End the PDF stream
       doc.end();
-      return;
+      return; // Do not send JSON after this
     }
 
     return res.status(400).json({ success: false, message: 'Unsupported format' });
-
   } catch (error) {
     console.error('Export error:', error);
     res.status(500).json({
@@ -413,6 +417,7 @@ const exportReport = async (req, res) => {
     });
   }
 };
+
 
 
 module.exports = {
