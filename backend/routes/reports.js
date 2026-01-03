@@ -4,6 +4,7 @@ const {
   getAllReports,
   getReportById,
   generateReport,
+  getReportTypes,
   updateReport,
   deleteReport,
   generateQuickReport,
@@ -40,5 +41,7 @@ router.delete('/:id', protect, authorize('admin'), deleteReport);
 router.post('/quick', protect, authorize('admin', 'agent'), generateQuickReport);
 router.get('/stats/overview', protect, authorize('admin', 'agent'), getReportStats);
 router.get('/:id/export', protect, authorize('admin', 'agent'), exportReport);
+router.get('/types', protect, authorize('admin', 'agent'), getReportTypes);
+
 
 module.exports = router;

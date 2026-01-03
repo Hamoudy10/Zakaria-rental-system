@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { API, handleApiError } from '../api';
+import { API, handleApiError } from '../services/api';
 
 const ReportsPage = () => {
   const [reports, setReports] = useState([]);
