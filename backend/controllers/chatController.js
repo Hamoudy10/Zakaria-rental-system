@@ -62,6 +62,52 @@ const getUserConversations = async (req, res) => {
     }
 };
 
+// Get unread chat messages summary for NotificationBell
+const getUnreadChats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const query = `
+      SELECT 
+        c.id as "chatId",
+        c.title as conversationTitle,
+        cm.message_text as lastMessage,
+        u.first_name || ' ' || u.last_name as senderName,
+        cm.created_at as "createdAt"
+      FROM chat_conversations c
+      JOIN chat_participants cp ON c.id = cp.conversation_id
+      JOIN chat_messages cm ON c.id = cm.conversation_id
+      JOIN users u ON cm.sender_id = u.id
+      LEFT JOIN chat_message_reads cmr 
+        ON cm.id = cmr.message_id AND cmr.user_id = $1
+      WHERE cp.user_id = $1 
+        AND cp.is_active = true
+        AND cm.sender_id != $1
+        AND cm.is_deleted = false
+        AND cmr.read_at IS NULL
+      GROUP BY c.id, cm.id, u.first_name, u.last_name
+      HAVING COUNT(cmr.message_id) >= 1
+      ORDER BY cm.created_at DESC
+    `;
+
+    const result = await db.query(query, [userId]);
+
+    res.json({
+      success: true,
+      data: {
+        unreadChats: result.rows
+      }
+    });
+  } catch (error) {
+    console.error('Get unread chats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch unread chat messages'
+    });
+  }
+};
+
+
 // Get messages for a conversation
 const getConversationMessages = async (req, res) => {
     try {
@@ -443,5 +489,6 @@ module.exports = {
     createConversation,
     searchMessages,
     markAsRead,
-    getAvailableUsers
+    getAvailableUsers,
+    getUnreadChats 
 };

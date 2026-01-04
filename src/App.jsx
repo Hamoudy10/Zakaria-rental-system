@@ -75,7 +75,7 @@ const Layout = ({ children }) => {
               {/* Mobile menu button */}
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 touch-target"
+                className=" p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 touch-target"
                 aria-label="Open sidebar"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -85,7 +85,7 @@ const Layout = ({ children }) => {
 
               {/* Logo/Brand */}
               <div className="flex-shrink-0">
-                <h1 className="text-lg font-bold text-blue-800 whitespace-nowrap truncate max-w-[150px] xs:max-w-none">
+                <h1 className="text-lg font-bold text-blue-800 whitespace-nowrap truncate  max-w-full sm:max-w-[250px] md:max-w-[300px]">
                   Zakaria Rental System
                 </h1>
               </div>
@@ -236,11 +236,11 @@ const Layout = ({ children }) => {
 
       {/* Enhanced Mobile Sidebar Overlay */}
       {sidebarOpen && (
-        <div className="lg:hidden fixed inset-0 z-50">
+        <div className=" fixed inset-0 z-50">
           {/* Backdrop with blur effect */}
           <div 
             className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm transition-opacity duration-300" 
-            onClick={() => setSidebarOpen(false)}
+            onClick={() => setSidebarOpen(true)}
           />
           
           {/* Sidebar Panel */}
@@ -582,32 +582,35 @@ function AppContent() {
 }
 
 function App() {
-  return (
-    <Router>
-      <AuthProvider>
-        <UserProvider>
-          <PropertyProvider>
-            <NotificationProvider>
-              <PaymentProvider>
-                <AllocationProvider>
-                  <SalaryPaymentProvider>
-                    <ComplaintProvider>
-                      <ReportProvider>
-                        <SystemSettingsProvider>
-                          <ChatProvider>
-                            <AppContent />
-                          </ChatProvider>
-                        </SystemSettingsProvider>
-                      </ReportProvider>
-                    </ComplaintProvider>
-                  </SalaryPaymentProvider>
-                </AllocationProvider>
-              </PaymentProvider>
-            </NotificationProvider>
-          </PropertyProvider>
-        </UserProvider>
-      </AuthProvider>
-    </Router>
+   return (
+   <Router>
+  <AuthProvider>
+    <AuthProvider>
+      <UserProvider>
+        <PropertyProvider>
+          <PaymentProvider>
+            <AllocationProvider>
+              <SalaryPaymentProvider>
+                <ComplaintProvider>
+                  <ReportProvider>
+                    <SystemSettingsProvider>
+                      <NotificationProvider>
+                        <ChatProvider>
+                          <AppContent />
+                        </ChatProvider>
+                      </NotificationProvider>
+                    </SystemSettingsProvider>
+                  </ReportProvider>
+                </ComplaintProvider>
+              </SalaryPaymentProvider>
+            </AllocationProvider>
+          </PaymentProvider>
+        </PropertyProvider>
+      </UserProvider>
+    </AuthProvider>
+  </AuthProvider>
+</Router>
+
   )
 }
 

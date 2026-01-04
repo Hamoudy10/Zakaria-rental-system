@@ -623,6 +623,33 @@ export const notificationUtils = {
   }
 };
 
+// Chat API for unread messages and notifications
+export const chatAPI = {
+  // Get unread chat messages count (for notification badge)
+  getUnreadCount: () => api.get('/chats/unread-count'),
+
+  // Get recent chat messages (optional for dropdown)
+  getRecentChats: (limit = 10, offset = 0) => {
+    const params = new URLSearchParams();
+    params.append('limit', limit.toString());
+    params.append('offset', offset.toString());
+    return api.get(`/chats/recent?${params.toString()}`);
+  },
+
+  // Mark a chat message or conversation as read
+  markAsRead: (chatId) => api.put(`/chats/${chatId}/read`),
+
+  // Mark all chats as read
+  markAllAsRead: () => api.put('/chats/read-all'),
+
+  // Send a chat message
+  sendMessage: (chatData) => api.post('/chats/send', chatData),
+
+  // Optional: Get chat conversation by chat ID
+  getChatById: (chatId) => api.get(`/chats/${chatId}`),
+};
+
+
 // Export all APIs in a single object for easy importing
 export const API = {
   auth: authAPI,
@@ -641,7 +668,8 @@ export const API = {
   paymentUtils: paymentUtils,
   notificationUtils: notificationUtils,
   mockMpesa: mockMpesaAPI,
-  paybill: paybillAPI, // NEW: Added paybill API
+  paybill: paybillAPI, 
+   chatAPI,// NEW: Added paybill API
 };
 
 // Health check function

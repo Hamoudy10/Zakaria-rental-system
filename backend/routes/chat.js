@@ -19,4 +19,7 @@ router.post('/messages/mark-read', chatController.markAsRead);
 router.get('/search', chatController.searchMessages);
 router.get('/available-users', chatController.getAvailableUsers);
 
+router.get('/unread-count', chatController.getUnreadChats);
+
+
 module.exports = router;
