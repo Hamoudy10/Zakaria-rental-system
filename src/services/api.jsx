@@ -289,15 +289,15 @@ export const allocationAPI = {
 
 // Settings API
 export const settingsAPI = {
-  getSettings: () => api.get('/admin/settings'),
-  getSetting: (key) => api.get(`/admin/settings/${key}`),
-  updateSetting: (key, value) => api.put(`/admin/settings/${key}`, { value }),
-  updateMultipleSettings: (settingsData) => api.put('/admin/settings', settingsData),
-  getSystemSettings: () => api.get('/admin/settings/system'),
-  updateSystemSettings: (settings) => api.put('/admin/settings/system', settings),
-  getMpesaSettings: () => api.get('/admin/settings/mpesa'),
-  updateMpesaSettings: (settings) => api.put('/admin/settings/mpesa', settings),
+  getSettings: () => api.get('/admin-settings'),
+
+  updateSetting: (key, value) =>
+    api.put(`/admin-settings/${key}`, { value }),
+
+  updateMultipleSettings: (settings) =>
+    api.put('/admin-settings', settings)
 };
+
 
 // Complaint API
 export const complaintAPI = {
