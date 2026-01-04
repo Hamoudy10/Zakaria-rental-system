@@ -11,15 +11,17 @@ const getAllSettings = async (req, res) => {
       ORDER BY setting_key
     `);
 
-    // Transform rows → object
-    const settings = {};
-    result.rows.forEach(row => {
-      settings[row.setting_key] = parseValue(row.setting_value);
-    });
+    // Transform rows → array for frontend
+    const settingsArray = result.rows.map(row => ({
+      key: row.setting_key,
+      value: parseValue(row.setting_value),
+      description: row.description,
+      updated_at: row.updated_at
+    }));
 
     res.json({
       success: true,
-      settings
+      settings: settingsArray
     });
   } catch (err) {
     console.error('Get settings error:', err);
@@ -29,14 +31,13 @@ const getAllSettings = async (req, res) => {
 
 /* ============================
    GET SETTINGS BY CATEGORY
-   (optional, safe fallback)
 ============================ */
 const getSettingsByCategory = async (req, res) => {
   const { category } = req.query;
 
   try {
     let query = `
-      SELECT setting_key, setting_value, description
+      SELECT setting_key, setting_value, description, updated_at
       FROM admin_settings
     `;
     const params = [];
@@ -48,12 +49,14 @@ const getSettingsByCategory = async (req, res) => {
 
     const result = await pool.query(query, params);
 
-    const settings = {};
-    result.rows.forEach(row => {
-      settings[row.setting_key] = parseValue(row.setting_value);
-    });
+    const settingsArray = result.rows.map(row => ({
+      key: row.setting_key,
+      value: parseValue(row.setting_value),
+      description: row.description,
+      updated_at: row.updated_at
+    }));
 
-    res.json({ success: true, settings });
+    res.json({ success: true, settings: settingsArray });
   } catch (err) {
     console.error('Category settings error:', err);
     res.status(500).json({ success: false });
@@ -68,7 +71,7 @@ const getSettingByKey = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT setting_value FROM admin_settings WHERE setting_key = $1`,
+      `SELECT setting_value, description, updated_at FROM admin_settings WHERE setting_key = $1`,
       [key]
     );
 
@@ -76,9 +79,15 @@ const getSettingByKey = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Setting not found' });
     }
 
+    const row = result.rows[0];
     res.json({
       success: true,
-      value: parseValue(result.rows[0].setting_value)
+      setting: {
+        key,
+        value: parseValue(row.setting_value),
+        description: row.description,
+        updated_at: row.updated_at
+      }
     });
   } catch (err) {
     console.error('Get setting error:', err);
