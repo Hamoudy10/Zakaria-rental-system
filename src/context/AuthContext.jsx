@@ -1,163 +1,146 @@
-import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
-import { authAPI } from '../services/api';
+import React, {
+  createContext,
+  useState,
+  useContext,
+  useEffect,
+  useCallback,
+  useMemo
+} from 'react';
+import api, { authAPI } from '../services/api';
 
-const AuthContext = createContext();
+const AuthContext = createContext(undefined);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [token, setToken] = useState(() => localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
-  const initializedRef = useRef(false);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    // Only run once on mount
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-    
-    const initializeAuth = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const storedUser = localStorage.getItem('user');
-        
-        console.log('🔐 Initial auth check');
-        
-        if (token && storedUser) {
-          try {
-            const userData = JSON.parse(storedUser);
-            console.log('🔄 Setting user from localStorage');
-            setUser(userData);
-            
-            if (authAPI?.defaults?.headers) {
-              authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-            }
-          } catch (parseError) {
-            console.error('❌ Error parsing stored user:', parseError);
-            clearAuthData();
-          }
-        } else {
-          console.log('🚫 No stored credentials found');
-          setUser(null);
-        }
-      } catch (error) {
-        console.error('❌ Auth initialization failed:', error);
-        clearAuthData();
-      } finally {
-        console.log('✅ Auth initialization complete');
-        setLoading(false);
-      }
-    };
+  const isAuthenticated = useCallback(
+    () => !!user && !!token,
+    [user, token]
+  );
 
-    initializeAuth();
-  }, []); // Empty dependency array - runs only once on mount
+  /* -------------------- TOKEN SYNC HELPERS -------------------- */
 
-  const clearAuthData = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setUser(null);
-    
-    if (authAPI?.defaults?.headers) {
-      delete authAPI.defaults.headers.common['Authorization'];
+  const applyToken = useCallback((authToken) => {
+    if (authToken) {
+      api.defaults.headers.common.Authorization = `Bearer ${authToken}`;
+      localStorage.setItem('token', authToken);
+      setToken(authToken);
     }
-  };
+  }, []);
 
-  const login = async (email, password) => {
+  const clearToken = useCallback(() => {
+    delete api.defaults.headers.common.Authorization;
+    localStorage.removeItem('token');
+    setToken(null);
+  }, []);
+
+  /* -------------------- LOGIN -------------------- */
+
+  const login = useCallback(async (credentials) => {
+    setLoading(true);
+    setError(null);
+
     try {
-      console.log('🔐 Attempting login');
-      
-      // Clear any existing auth data first
-      clearAuthData();
-
-      const credentials = { 
-        email: email.trim(), 
-        password: password 
-      };
+      // IMPORTANT: clear any previous session first
+      clearToken();
+      setUser(null);
 
       const response = await authAPI.login(credentials);
-      console.log('✅ Login response received');
-      
-      const { user, token } = response.data;
+      const { user: userData, token: authToken } = response.data;
 
-      if (!user || !token) {
-        throw new Error('Invalid response from server - missing user or token');
-      }
-      
-      // Store in localStorage
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      
-      // Set auth header for future requests
-      if (authAPI?.defaults?.headers) {
-        authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      }
-      
-      setUser(user);
-      
-      console.log('✅ Login successful');
-      
-      return { success: true, user };
-    } catch (error) {
-      console.error('❌ Login failed:', error);
-      clearAuthData();
-      
-      let errorMessage = 'Login failed';
-      if (error.code === 'ERR_NETWORK') {
-        errorMessage = 'Cannot connect to server. Please make sure the backend is running.';
-      } else if (error.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      return { 
-        success: false, 
-        message: errorMessage 
-      };
+      applyToken(authToken);
+      setUser(userData);
+
+      console.log('✅ Login successful:', userData);
+      return userData;
+    } catch (err) {
+      console.error('❌ Login error:', err);
+      const message =
+        err.response?.data?.message || err.message || 'Login failed';
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [applyToken, clearToken]);
 
-  const register = async (userData) => {
+  /* -------------------- LOGOUT -------------------- */
+
+  const logout = useCallback(() => {
+    setUser(null);
+    clearToken();
+    console.log('🚪 Logged out');
+  }, [clearToken]);
+
+  /* -------------------- RESTORE SESSION -------------------- */
+
+  const fetchCurrentUser = useCallback(async () => {
+    const storedToken = localStorage.getItem('token');
+
+    if (!storedToken) {
+      setUser(null);
+      setToken(null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      const response = await authAPI.register(userData);
-      const { user, token } = response;
-      
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      
-      if (authAPI?.defaults?.headers) {
-        authAPI.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      }
-      
-      setUser(user);
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Registration failed:', error);
-      return { 
-        success: false, 
-        message: error.response?.data?.message || 'Registration failed' 
-      };
+      // Force axios to use stored token BEFORE any API call
+      applyToken(storedToken);
+
+      const response = await authAPI.getProfile();
+      const currentUser = response.data?.user || response.data;
+
+      setUser(currentUser);
+      console.log('✅ Session restored:', currentUser);
+    } catch (err) {
+      console.error('❌ Failed to restore session:', err);
+      setUser(null);
+      clearToken();
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [applyToken, clearToken]);
 
-  const logout = () => {
-    console.log('🚪 Logging out');
-    clearAuthData();
-  };
+  /* -------------------- INIT -------------------- */
 
-  const value = {
+  useEffect(() => {
+    fetchCurrentUser();
+  }, [fetchCurrentUser]);
+
+  /* -------------------- CONTEXT VALUE -------------------- */
+
+  const value = useMemo(() => ({
     user,
+    token,
+    loading,
+    error,
+    isAuthenticated,
     login,
-    register,
     logout,
-    loading
-  };
+    setUser,
+    setToken,
+    clearError: () => setError(null),
+  }), [
+    user,
+    token,
+    loading,
+    error,
+    isAuthenticated,
+    login,
+    logout
+  ]);
 
   return (
     <AuthContext.Provider value={value}>

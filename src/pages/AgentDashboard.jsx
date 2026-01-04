@@ -1,9 +1,7 @@
-// src/pages/AgentDashboard.jsx
 import React, { useState, Suspense, lazy, useEffect } from 'react'
 import agentService from '../services/AgentService';
 import { useAuth } from '../context/AuthContext';
 import AgentWaterBills from '../components/AgentWaterBills';
-
 
 // Lazy load agent components
 const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'));
@@ -20,7 +18,9 @@ const TabLoadingSpinner = () => (
 
 const AgentDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
-  const { user } = useAuth();
+  const { user } = useAuth(); // main user context
+
+  if (!user) return null; // avoid rendering if auth not ready
 
   // Simplified tabs focusing on core agent functions
   const tabs = [
@@ -66,14 +66,14 @@ const AgentDashboard = () => {
         )
       case 'overview':
       default:
-        return <AgentOverview setActiveTab={setActiveTab} />
+        return <AgentOverview setActiveTab={setActiveTab} user={user} />
     }
   }
 
   return (
     <div className="min-h-screen bg-gray-50 mobile-optimized no-horizontal-scroll">
       <div className="responsive-container py-4">
-        {/* Tab Navigation - Simplified for core functions */}
+        {/* Tab Navigation */}
         <div className="border-b border-gray-200 mb-4">
           <nav className="-mb-px flex space-x-1 xs:space-x-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
             {tabs.map((tab) => (
@@ -87,7 +87,6 @@ const AgentDashboard = () => {
                 }`}
                 title={tab.name}
               >
-                {/* Show short name on mobile, full name on larger screens */}
                 <span className="hidden sm:block">{tab.name}</span>
                 <span className="sm:hidden">{tab.shortName}</span>
               </button>
@@ -106,9 +105,8 @@ const AgentDashboard = () => {
   )
 }
 
-// Agent Overview Component (Simplified for core functions)
-const AgentOverview = ({ setActiveTab }) => {
-  const { user } = useAuth();
+// Agent Overview Component (Simplified)
+const AgentOverview = ({ setActiveTab, user }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dashboardData, setDashboardData] = useState({
@@ -134,7 +132,6 @@ const AgentOverview = ({ setActiveTab }) => {
         agentService.getTenantsWithPaymentStatus()
       ]);
 
-      // Filter payment alerts to only show tenants with pending payments
       const paymentAlertsData = paymentsResponse.data?.data || paymentsResponse.data || [];
       const pendingPayments = Array.isArray(paymentAlertsData) 
         ? paymentAlertsData.filter(tenant => tenant.payment_status === 'pending' || tenant.balance_due > 0)
@@ -160,7 +157,6 @@ const AgentOverview = ({ setActiveTab }) => {
       medium: { color: 'bg-orange-100 text-orange-800', label: 'Medium' },
       low: { color: 'bg-green-100 text-green-800', label: 'Low' }
     };
-    
     const config = priorityConfig[priority] || priorityConfig.medium;
     return (
       <span className={`px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
@@ -175,7 +171,6 @@ const AgentOverview = ({ setActiveTab }) => {
       'in-progress': { color: 'bg-yellow-100 text-yellow-800', label: 'In Progress' },
       resolved: { color: 'bg-green-100 text-green-800', label: 'Resolved' }
     };
-    
     const config = statusConfig[status] || statusConfig.open;
     return (
       <span className={`px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
@@ -186,7 +181,6 @@ const AgentOverview = ({ setActiveTab }) => {
 
   const formatTimeAgo = (timestamp) => {
     if (!timestamp) return 'Unknown time';
-    
     try {
       const date = new Date(timestamp);
       const now = new Date();
@@ -194,12 +188,10 @@ const AgentOverview = ({ setActiveTab }) => {
       const diffMins = Math.floor(diffMs / 60000);
       const diffHours = Math.floor(diffMs / 3600000);
       const diffDays = Math.floor(diffMs / 86400000);
-
       if (diffMins < 1) return 'Just now';
       if (diffMins < 60) return `${diffMins}m ago`;
       if (diffHours < 24) return `${diffHours}h ago`;
       if (diffDays < 7) return `${diffDays}d ago`;
-      
       return date.toLocaleDateString();
     } catch {
       return 'Unknown time';
@@ -214,27 +206,23 @@ const AgentOverview = ({ setActiveTab }) => {
     }).format(amount || 0);
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
+  if (loading) return (
+    <div className="flex justify-center items-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+    </div>
+  );
 
-  if (error) {
-    return (
-      <div className="text-center py-8">
-        <div className="text-red-600 mb-4">{error}</div>
-        <button
-          onClick={fetchDashboardData}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
+  if (error) return (
+    <div className="text-center py-8">
+      <div className="text-red-600 mb-4">{error}</div>
+      <button
+        onClick={fetchDashboardData}
+        className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+      >
+        Retry
+      </button>
+    </div>
+  );
 
   return (
     <div className="space-y-4 md:space-y-6">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNotification } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -37,14 +37,32 @@ const NotificationsPage = () => {
     end_date: ''
   });
 
+  const pendingFilterRef = useRef(null);
+
   // Load notifications on component mount
   useEffect(() => {
     fetchNotifications({ page: 1 });
   }, [fetchNotifications]);
 
-  // Apply filters when they change
+  // Apply filters with debounce to avoid 429
   useEffect(() => {
-    fetchNotifications({ page: 1, ...filters });
+    if (pendingFilterRef.current) {
+      clearTimeout(pendingFilterRef.current);
+    }
+
+    // Only fetch if filters are set (skip empty default)
+    const hasFilters = filters.type || filters.start_date || filters.end_date;
+    if (!hasFilters) return;
+
+    pendingFilterRef.current = setTimeout(() => {
+      fetchNotifications({ page: 1, ...filters }).finally(() => {
+        pendingFilterRef.current = null;
+      });
+    }, 800); // increased debounce to 800ms
+
+    return () => {
+      if (pendingFilterRef.current) clearTimeout(pendingFilterRef.current);
+    };
   }, [filters, fetchNotifications]);
 
   const handleFilterChange = (key, value) => {
@@ -408,20 +426,34 @@ const NotificationsPage = () => {
         {pagination && pagination.totalPages > 1 && (
           <div className="flex flex-col xs:flex-row justify-center items-center gap-2 xs:gap-3 mt-3 xs:mt-4 sm:mt-6">
             <button
-              onClick={() => fetchNotifications({ page: pagination.currentPage - 1, ...filters })}
-              disabled={!pagination.hasPrev}
+              onClick={async () => {
+                if (!pagination.hasPrev) return;
+                try {
+                  await fetchNotifications({ page: pagination.currentPage - 1, ...filters });
+                } catch (err) {
+                  console.warn('Pagination fetch failed:', err.message);
+                }
+              }}
+              disabled={loading || !pagination.hasPrev}
               className="px-2 xs:px-3 sm:px-4 py-2 border rounded-md disabled:opacity-50 text-xs xs:text-sm sm:text-base min-h-[44px] touch-manipulation transition-colors w-full xs:w-auto active:bg-gray-100"
             >
               Previous
             </button>
-            
+
             <span className="px-2 xs:px-3 sm:px-4 py-2 text-xs xs:text-sm sm:text-base text-center">
               Page {pagination.currentPage} of {pagination.totalPages}
             </span>
-            
+
             <button
-              onClick={() => fetchNotifications({ page: pagination.currentPage + 1, ...filters })}
-              disabled={!pagination.hasNext}
+              onClick={async () => {
+                if (!pagination.hasNext) return;
+                try {
+                  await fetchNotifications({ page: pagination.currentPage + 1, ...filters });
+                } catch (err) {
+                  console.warn('Pagination fetch failed:', err.message);
+                }
+              }}
+              disabled={loading || !pagination.hasNext}
               className="px-2 xs:px-3 sm:px-4 py-2 border rounded-md disabled:opacity-50 text-xs xs:text-sm sm:text-base min-h-[44px] touch-manipulation transition-colors w-full xs:w-auto active:bg-gray-100"
             >
               Next

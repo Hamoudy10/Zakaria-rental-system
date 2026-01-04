@@ -19,7 +19,7 @@ const Login = () => {
 
     try {
       console.log('🔐 Starting login process...');
-      const result = await login(email, password);
+      const result = await login({email, password});
       console.log('✅ Login result:', result);
 
       if (!result?.success) {
