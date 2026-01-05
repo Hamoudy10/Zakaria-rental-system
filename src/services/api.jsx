@@ -624,31 +624,100 @@ export const notificationUtils = {
 };
 
 // Chat API for unread messages and notifications
+// Chat API for unread messages and notifications
 export const chatAPI = {
   // Get unread chat messages count (for notification badge)
-  getUnreadCount: () => api.get('/chats/unread-count'),
+  getUnreadCount: async () => {
+    try {
+      const res = await api.get('/chat/unread-count'); // Matches your chat.js route
+      return res.data?.unreadCount ?? 0;
+    } catch (error) {
+      console.error('Failed to fetch chat unread count:', error);
+      return 0;
+    }
+  },
 
-  // Get recent chat messages (optional for dropdown)
-  getRecentChats: (limit = 10, offset = 0) => {
-    const params = new URLSearchParams();
-    params.append('limit', limit.toString());
-    params.append('offset', offset.toString());
-    return api.get(`/chats/recent?${params.toString()}`);
+  // Get recent chat conversations
+  getRecentChats: async (limit = 50, offset = 0) => {
+    try {
+      const params = new URLSearchParams();
+      params.append('limit', limit.toString());
+      params.append('offset', offset.toString());
+
+      const res = await api.get(`/chat/conversations?${params.toString()}`);
+      return Array.isArray(res.data) ? res.data : [];
+    } catch (error) {
+      console.error('Failed to fetch recent chats:', error);
+      return [];
+    }
   },
 
   // Mark a chat message or conversation as read
-  markAsRead: (chatId) => api.put(`/chats/${chatId}/read`),
-
-  // Mark all chats as read
-  markAllAsRead: () => api.put('/chats/read-all'),
+  markAsRead: async (messageIds) => {
+    try {
+      const res = await api.post('/chat/messages/mark-read', { messageIds });
+      return res.data;
+    } catch (error) {
+      console.error('Failed to mark chat as read:', error);
+      return null;
+    }
+  },
 
   // Send a chat message
-  sendMessage: (chatData) => api.post('/chats/send', chatData),
+  sendMessage: async ({ conversationId, messageText }) => {
+    try {
+      const res = await api.post('/chat/messages/send', { conversationId, messageText });
+      return res.data;
+    } catch (error) {
+      console.error('Failed to send chat message:', error);
+      return null;
+    }
+  },
 
-  // Optional: Get chat conversation by chat ID
-  getChatById: (chatId) => api.get(`/chats/${chatId}`),
+  // Get chat messages in a conversation
+  getMessages: async (conversationId) => {
+    try {
+      const res = await api.get(`/chat/conversations/${conversationId}/messages`);
+      return Array.isArray(res.data) ? res.data : [];
+    } catch (error) {
+      console.error('Failed to fetch chat messages:', error);
+      return [];
+    }
+  },
+
+  // Get available users for starting a chat
+  getAvailableUsers: async () => {
+    try {
+      const res = await api.get('/chat/available-users');
+      return Array.isArray(res.data) ? res.data : [];
+    } catch (error) {
+      console.error('Failed to fetch available users:', error);
+      return [];
+    }
+  },
+
+  // Optional: Get chat conversation by conversation ID
+  getChatById: async (conversationId) => {
+    try {
+      const res = await api.get(`/chat/conversations/${conversationId}`);
+      return res.data ?? null;
+    } catch (error) {
+      console.error('Failed to fetch chat by ID:', error);
+      return null;
+    }
+  },
+
+  // Create a new conversation
+  createConversation: async ({ participantIds, title, type }) => {
+    try {
+      const res = await api.post('/chat/conversations', { participantIds, title, type });
+      return res.data ?? null;
+    } catch (error) {
+      console.error('Failed to create conversation:', error);
+      return null;
+    }
+  },
 };
-
 
 // Export all APIs in a single object for easy importing
 export const API = {
