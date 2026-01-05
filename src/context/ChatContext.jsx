@@ -95,7 +95,7 @@ export const ChatProvider = ({ children }) => {
 
             let users = [];
             let attempts = 0;
-            while (attempts < 3) {
+            while (attempts < 3) { // retry on 429
                 attempts++;
                 const response = await ChatService.getAvailableUsers();
                 users = Array.isArray(response) ? response : response?.data || [];
@@ -103,7 +103,6 @@ export const ChatProvider = ({ children }) => {
                 await new Promise(r => setTimeout(r, 1500));
             }
 
-            // ✅ Fix: filter out the current user safely
             const filteredUsers = users.filter(u => u.id !== user?.id);
             dispatch({ type: 'SET_AVAILABLE_USERS', payload: filteredUsers });
         } catch (error) {
@@ -130,6 +129,7 @@ export const ChatProvider = ({ children }) => {
                 await new Promise(r => setTimeout(r, 1500));
             }
 
+            // Merge with existing conversations (avoid overwriting on partial failure)
             const mergedConvs = [...convsRef.current];
             convs.forEach(conv => {
                 if (!mergedConvs.some(c => c.id === conv.id)) mergedConvs.push(conv);
