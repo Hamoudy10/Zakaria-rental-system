@@ -13,7 +13,7 @@ import Login from './components/Login'
 import { SalaryPaymentProvider } from './context/SalaryPaymentContext'
 import { ComplaintProvider } from './context/ComplaintContext';
 import { SystemSettingsProvider } from './context/SystemSettingsContext';
-import { ChatProvider } from './context/chatcontext';
+import { ChatProvider } from './context/ChatContext';
 
 // Lazy load all dashboard components and major components
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
@@ -584,7 +584,6 @@ function AppContent() {
 function App() {
    return (
    <Router>
-  <AuthProvider>
     <AuthProvider>
       <UserProvider>
         <PropertyProvider>
@@ -608,7 +607,6 @@ function App() {
         </PropertyProvider>
       </UserProvider>
     </AuthProvider>
-  </AuthProvider>
 </Router>
 
   )

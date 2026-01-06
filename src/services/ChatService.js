@@ -1,158 +1,69 @@
 import api from './api';
 
 const ChatService = {
-  // Get available users for new conversations
+  // ---------- USERS ----------
   getAvailableUsers: async () => {
-    try {
-      const response = await api.get('/chat/available-users');
-      console.log('✅ Available users response:', response.data);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Failed to get available users:', error);
-      // Fallback: try to get users from the users endpoint
-      try {
-        console.log('🔄 Trying fallback: fetching all users');
-        const fallbackResponse = await api.get('/users');
-        const filteredUsers = fallbackResponse.data.users.filter(user => 
-          user.role === 'admin' || user.role === 'agent'
-        );
-        return {
-          success: true,
-          data: filteredUsers
-        };
-      } catch (fallbackError) {
-        console.error('❌ Fallback also failed:', fallbackError);
-        return {
-          success: false,
-          data: [],
-          message: 'Failed to load users'
-        };
-      }
-    }
+    const res = await api.get('/chat/available-users');
+    return res.data?.data || [];
   },
 
-  // Get conversations
+  // ---------- CONVERSATIONS ----------
   getConversations: async () => {
-    try {
-      const response = await api.get('/chat/conversations');
-      return response.data;
-    } catch (error) {
-      console.error('❌ Failed to get conversations:', error);
-      return {
-        success: false,
-        conversations: [],
-        message: 'Failed to load conversations'
-      };
-    }
+    const res = await api.get('/chat/conversations');
+    return res.data?.data || [];
   },
 
-  // Create conversation
-  createConversation: async (participantIds, title, type = 'direct') => {
-    try {
-      const response = await api.post('/chat/conversations', {
-        participantIds,
-        title,
-        conversationType: type
-      });
-      return response.data;
-    } catch (error) {
-      console.error('❌ Failed to create conversation:', error);
-      throw error;
-    }
+  getRecentChats: async (limit = 50, offset = 0) => {
+    const res = await api.get('/chat/conversations', {
+      params: { limit, offset },
+    });
+    return res.data?.data || [];
   },
 
-  // Get messages
+  createConversation: async (participantIds, title = null, type = 'direct') => {
+    const res = await api.post('/chat/conversations', {
+      participantIds,
+      title,
+      conversationType: type,
+    });
+    return res.data?.data;
+  },
+
+  // ---------- MESSAGES ----------
   getMessages: async (conversationId, page = 1) => {
-    try {
-      const response = await api.get(`/chat/conversations/${conversationId}/messages?page=${page}`);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Failed to get messages:', error);
-      return {
-        success: false,
-        messages: [],
-        message: 'Failed to load messages'
-      };
-    }
+    const res = await api.get(`/chat/conversations/${conversationId}/messages`, {
+      params: { page },
+    });
+    return res.data?.data || [];
   },
 
-  // Send message
-  sendMessage: async (conversationId, messageText, parentMessageId = null) => {
-    try {
-      const response = await api.post('/chat/messages/send', {
-        conversationId,
-        messageText,
-        parentMessageId
-      });
-      return response.data;
-    } catch (error) {
-      console.error('❌ Failed to send message:', error);
-      throw error;
-    }
+  sendMessage: async (conversationId, messageText) => {
+    const res = await api.post('/chat/messages/send', {
+      conversationId,
+      messageText,
+    });
+    return res.data?.data;
   },
 
-  // Mark messages as read
-  markAsRead: async (messageIds) => {
-    try {
-      const response = await api.post('/chat/messages/mark-read', {
-        messageIds
-      });
-      return response.data;
-    } catch (error) {
-      console.error('❌ Failed to mark messages as read:', error);
-      throw error;
-    }
-  },
-
-  // Search messages
+  // ---------- OPTIONAL FEATURES ----------
   searchMessages: async (query, conversationId = null) => {
-    try {
-      const params = { query };
-      if (conversationId) params.conversationId = conversationId;
-      
-      const response = await api.get('/chat/search', { params });
-      return response.data;
-    } catch (error) {
-      console.error('❌ Failed to search messages:', error);
-      return {
-        success: false,
-        results: [],
-        message: 'Failed to search messages'
-      };
-    }
+    const res = await api.get('/chat/messages/search', {
+      params: { query, conversationId },
+    });
+    return res.data?.data || [];
   },
 
-  // Typing indicators
+  markAsRead: async (messageIds) => {
+    await api.post('/chat/messages/mark-read', { messageIds });
+  },
+
   startTyping: async (conversationId) => {
-    try {
-      // This would typically be a WebSocket event
-      console.log(`User started typing in conversation: ${conversationId}`);
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Failed to start typing:', error);
-      return { success: false };
-    }
+    await api.post(`/chat/conversations/${conversationId}/typing/start`);
   },
 
   stopTyping: async (conversationId) => {
-    try {
-      // This would typically be a WebSocket event
-      console.log(`User stopped typing in conversation: ${conversationId}`);
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Failed to stop typing:', error);
-      return { success: false };
-    }
+    await api.post(`/chat/conversations/${conversationId}/typing/stop`);
   },
-
-  // Socket.io methods (placeholder)
-  joinConversation: (conversationId) => {
-    console.log(`Joining conversation: ${conversationId}`);
-  },
-
-  leaveConversation: (conversationId) => {
-    console.log(`Leaving conversation: ${conversationId}`);
-  }
 };
 
 export default ChatService;

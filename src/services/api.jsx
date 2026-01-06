@@ -645,7 +645,7 @@ export const chatAPI = {
       params.append('offset', offset.toString());
 
       const res = await api.get(`/chat/conversations?${params.toString()}`);
-      return Array.isArray(res.data) ? res.data : [];
+      return Array.isArray(res.data) ?  res.data : Array.isArray(res.data.data) ? res.data.data : [];
     } catch (error) {
       console.error('Failed to fetch recent chats:', error);
       return [];
@@ -687,14 +687,14 @@ export const chatAPI = {
 
   // Get available users for starting a chat
   getAvailableUsers: async () => {
-    try {
-      const res = await api.get('/chat/available-users');
-      return Array.isArray(res.data) ? res.data : [];
-    } catch (error) {
-      console.error('Failed to fetch available users:', error);
-      return [];
-    }
-  },
+  try {
+    const res = await api.get('/chat/available-users');
+    return Array.isArray(res.data?.data) ? res.data.data : [];
+  } catch (error) {
+    console.error('Failed to fetch available users:', error);
+    return [];
+  }
+},
 
   // Optional: Get chat conversation by conversation ID
   getChatById: async (conversationId) => {
