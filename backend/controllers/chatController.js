@@ -128,42 +128,44 @@ exports.getRecentChats = async (req, res) => {
 
     const result = await db.query(
       `
-      SELECT
+            SELECT
         c.id,
         c.conversation_type,
-        CASE
-          WHEN c.conversation_type = 'group' THEN c.title
-          ELSE CONCAT(u.first_name, ' ', u.last_name)
-        END AS display_name,
+        c.title,
         c.created_at,
         (
-          SELECT cm.message_text
-          FROM chat_messages cm
-          WHERE cm.conversation_id = c.id
+            SELECT cm.message_text
+            FROM chat_messages cm
+            WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
-          ORDER BY cm.created_at DESC
-          LIMIT 1
+            ORDER BY cm.created_at DESC
+            LIMIT 1
         ) AS last_message,
         (
-          SELECT cm.created_at
-          FROM chat_messages cm
-          WHERE cm.conversation_id = c.id
+            SELECT cm.created_at
+            FROM chat_messages cm
+            WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
-          ORDER BY cm.created_at DESC
-          LIMIT 1
-        ) AS last_message_at
-      FROM chat_conversations c
-      JOIN chat_participants cp_self
-        ON c.id = cp_self.conversation_id
-       AND cp_self.user_id = $1
-       AND cp_self.is_active = true
-      LEFT JOIN chat_participants cp_other
-        ON c.id = cp_other.conversation_id
-       AND cp_other.user_id != $1
-      LEFT JOIN users u
-        ON u.id = cp_other.user_id
-      ORDER BY last_message_at DESC NULLS LAST
-      LIMIT $2 OFFSET $3
+            ORDER BY cm.created_at DESC
+            LIMIT 1
+        ) AS last_message_at,
+        -- Add participants
+        json_agg(
+            json_build_object(
+            'id', u.id,
+            'first_name', u.first_name,
+            'last_name', u.last_name
+            )
+        ) FILTER (WHERE u.id != $1) AS participants
+        FROM chat_conversations c
+        JOIN chat_participants cp ON c.id = cp.conversation_id
+        JOIN users u ON u.id = cp.user_id
+        WHERE cp.user_id = $1
+        AND cp.is_active = true
+        GROUP BY c.id
+        ORDER BY last_message_at DESC NULLS LAST
+        LIMIT $2 OFFSET $3;
+
       `,
       [userId, limit, offset]
     );

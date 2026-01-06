@@ -40,15 +40,15 @@ const EmptyChatState = ({ onNewChat }) => (
 // Conversation Item
 const ConversationItem = ({ conversation, isActive, onSelect, unreadCount, users }) => {
   const getDisplayName = (conv) => {
-    if (conv.title) return conv.title;
-    if (conv.conversation_type === 'direct') {
-      // Try to find the user whose id is in this conversation
-      const otherUser = users.find(u => u.id === conv.other_user_id);
-      if (otherUser) return `${otherUser.first_name} ${otherUser.last_name}`;
-      return `Conversation ${conv.id.slice(0, 6)}`;
-    }
-    return `Conversation ${conv.id.slice(0, 6)}`;
-  };
+  if (conv.title && conv.conversation_type === 'group') return conv.title;
+
+  // Direct chat
+  if (conv.conversation_type === 'direct' && conv.participants?.length) {
+    const otherUser = conv.participants[0];
+    return `${otherUser.first_name} ${otherUser.last_name}`;
+  }
+};
+
 
   const getLastMessageTime = (timestamp) => {
     if (!timestamp) return '';
@@ -97,15 +97,14 @@ const ConversationItem = ({ conversation, isActive, onSelect, unreadCount, users
 
 // Chat Header
 const ChatHeader = ({ conversation, onBack, users }) => {
-  const getDisplayName = (conv) => {
-    if (conv.title) return conv.title;
-    if (conv.conversation_type === 'direct') {
-      const otherUser = users.find(u => u.id === conv.other_user_id);
-      if (otherUser) return `${otherUser.first_name} ${otherUser.last_name}`;
-      return `Conversation ${conv.id.slice(0, 6)}`;
-    }
-    return `Conversation ${conv.id.slice(0, 6)}`;
+ if (conv.title && conv.conversation_type === 'group') return conv.title;
+
+  // Direct chat
+  if (conv.conversation_type === 'direct' && conv.participants?.length) {
+    const otherUser = conv.participants[0];
+    return `${otherUser.first_name} ${otherUser.last_name}`;
   };
+
 
   return (
     <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
@@ -238,15 +237,15 @@ const ChatModule = () => {
             <div className="text-center py-8 text-gray-500">No conversations found</div>
           ) : (
             filteredConversations.map(conv => (
-              <ConversationItem
-                key={conv.id}
-                conversation={{ ...conv, other_user_id: conv.id }} // map conversation id to user id
-                isActive={activeConversation?.id === conv.id}
-                onSelect={setActiveConversation}
-                unreadCount={getUnreadCount(conv.id)}
-                users={availableUsers}
-              />
-            ))
+             <ConversationItem
+                  key={conv.id}
+                  conversation={conv}
+                  isActive={activeConversation?.id === conv.id}
+                  onSelect={setActiveConversation}
+                  unreadCount={getUnreadCount(conv.id)}
+                  users={availableUsers}
+                />
+              ))
           )}
         </div>
       </div>

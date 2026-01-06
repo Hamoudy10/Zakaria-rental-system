@@ -6,8 +6,12 @@ const MessageInput = ({ onSendMessage, onTypingStart, onTypingStop, conversation
 
   const handleSubmit = (e) => {
     e.preventDefault();
+     console.log('📤 Sending message', {
+    conversationId,
+    message
+  });
     if (message.trim()) {
-      onSendMessage(conversationId, message.trim());
+      onSendMessage(message.trim());
       setMessage('');
     }
   };
