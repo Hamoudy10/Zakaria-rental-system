@@ -11,6 +11,11 @@ router.get('/conversations', chatController.getUserConversations);
 router.post('/conversations', chatController.createConversation);
 router.get('/conversations/:conversationId/messages', chatController.getConversationMessages);
 
+
+// Recent chats (new route)
+router.get('/recent-chats', chatController.getRecentChats);
+
+
 // Message routes
 router.post('/messages/send', chatController.sendMessage);
 router.post('/messages/mark-read', chatController.markAsRead);
@@ -20,6 +25,7 @@ router.get('/search', chatController.searchMessages);
 router.get('/available-users', chatController.getAvailableUsers);
 
 router.get('/unread-count', chatController.getUnreadChats);
+
 
 
 module.exports = router;

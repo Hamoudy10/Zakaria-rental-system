@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import NotificationBell from './NotificationBell';
-import { useChat } from '../context/chatcontext'; // add
+import { useChat } from '../context/ChatContext'; // add
 
 
 const Layout = ({ children }) => {

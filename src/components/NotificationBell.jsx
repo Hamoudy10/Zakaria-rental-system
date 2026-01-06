@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { API } from '../services/api';
 import { Bell, CheckCircle, Loader } from 'lucide-react'; // Added Loader for spinner
 import clsx from 'clsx';
-import { useChat } from '../context/chatcontext';
+import { useChat } from '../context/ChatContext';
 
 const NotificationBell = () => {
   const [notifications, setNotifications] = useState([]);

@@ -117,19 +117,24 @@ exports.createConversation = async (req, res) => {
 };
 
 /**
- * GET /chat/conversations
- * Returns all conversations for the user
+ * GET /chat/recent-chats?limit=50&offset=0
+ * Returns recent conversations for the user with last message info
  */
-exports.getUserConversations = async (req, res) => {
+exports.getRecentChats = async (req, res) => {
   try {
     const userId = req.user.id;
+    const limit = parseInt(req.query.limit, 10) || 50;
+    const offset = parseInt(req.query.offset, 10) || 0;
 
     const result = await db.query(
       `
       SELECT
         c.id,
         c.conversation_type,
-        c.title,
+        CASE
+          WHEN c.conversation_type = 'group' THEN c.title
+          ELSE CONCAT(u.first_name, ' ', u.last_name)
+        END AS display_name,
         c.created_at,
         (
           SELECT cm.message_text
@@ -148,18 +153,79 @@ exports.getUserConversations = async (req, res) => {
           LIMIT 1
         ) AS last_message_at
       FROM chat_conversations c
-      JOIN chat_participants cp ON c.id = cp.conversation_id
-      WHERE cp.user_id = $1
-        AND cp.is_active = true
+      JOIN chat_participants cp_self
+        ON c.id = cp_self.conversation_id
+       AND cp_self.user_id = $1
+       AND cp_self.is_active = true
+      LEFT JOIN chat_participants cp_other
+        ON c.id = cp_other.conversation_id
+       AND cp_other.user_id != $1
+      LEFT JOIN users u
+        ON u.id = cp_other.user_id
+      ORDER BY last_message_at DESC NULLS LAST
+      LIMIT $2 OFFSET $3
+      `,
+      [userId, limit, offset]
+    );
+
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('getRecentChats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load recent chats' });
+  }
+};
+
+
+/**
+ * GET /chat/conversations
+ * Returns all conversations for the user
+ */
+exports.getUserConversations = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await db.query(
+      `
+      SELECT
+        c.id,
+        c.conversation_type,
+        CASE
+          WHEN c.conversation_type = 'group' THEN c.title
+          ELSE CONCAT(u.first_name, ' ', u.last_name)
+        END AS display_name,
+        c.created_at,
+        (
+          SELECT cm.message_text
+          FROM chat_messages cm
+          WHERE cm.conversation_id = c.id
+            AND cm.is_deleted = false
+          ORDER BY cm.created_at DESC
+          LIMIT 1
+        ) AS last_message,
+        (
+          SELECT cm.created_at
+          FROM chat_messages cm
+          WHERE cm.conversation_id = c.id
+            AND cm.is_deleted = false
+          ORDER BY cm.created_at DESC
+          LIMIT 1
+        ) AS last_message_at
+      FROM chat_conversations c
+      JOIN chat_participants cp_self
+        ON c.id = cp_self.conversation_id
+       AND cp_self.user_id = $1
+       AND cp_self.is_active = true
+      LEFT JOIN chat_participants cp_other
+        ON c.id = cp_other.conversation_id
+       AND cp_other.user_id != $1
+      LEFT JOIN users u
+        ON u.id = cp_other.user_id
       ORDER BY last_message_at DESC NULLS LAST
       `,
       [userId]
     );
 
-    res.json({
-      success: true,
-      data: result.rows
-    });
+    res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error('getUserConversations error:', error);
     res.status(500).json({ success: false, message: 'Failed to load conversations' });
