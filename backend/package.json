@@ -10,6 +10,7 @@
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
+    "express": "^4.22.1",
     "helmet": "^7.1.0",
     "json2csv": "^6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.3",
@@ -21,7 +22,6 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "express": "^4.22.1",
     "nodemon": "^3.1.11"
   }
 }
