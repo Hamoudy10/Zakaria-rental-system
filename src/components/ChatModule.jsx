@@ -1,6 +1,26 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
+import { CornerDownLeft } from 'lucide-react';
+
+/**
+ * =====================================================
+ * Shared Helpers (MUST be top-level)
+ * =====================================================
+ */
+const getDisplayName = (conv) => {
+  if (!conv) return 'Conversation';
+
+  if (typeof conv.display_name === 'string' && conv.display_name.trim()) {
+    return conv.display_name;
+  }
+
+  if (typeof conv.title === 'string' && conv.title.trim()) {
+    return conv.title;
+  }
+
+  return 'Conversation';
+};
 
 // Lazy-loaded components
 const MessageList = React.lazy(() => import('./chat/MessageList'));
@@ -38,18 +58,7 @@ const EmptyChatState = ({ onNewChat }) => (
 );
 
 // Conversation Item
-const ConversationItem = ({ conversation, isActive, onSelect, unreadCount, users }) => {
-  const getDisplayName = (conv) => {
-  if (conv.title && conv.conversation_type === 'group') return conv.title;
-
-  // Direct chat
-  if (conv.conversation_type === 'direct' && conv.participants?.length) {
-    const otherUser = conv.participants[0];
-    return `${otherUser.first_name} ${otherUser.last_name}`;
-  }
-};
-
-
+const ConversationItem = ({ conversation, isActive, onSelect, unreadCount }) => {
   const getLastMessageTime = (timestamp) => {
     if (!timestamp) return '';
     const date = new Date(timestamp);
@@ -59,24 +68,31 @@ const ConversationItem = ({ conversation, isActive, onSelect, unreadCount, users
     if (diffHours < 168) return date.toLocaleDateString([], { weekday: 'short' });
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
-  const truncateText = (text, max = 40) => text ? (text.length > max ? text.slice(0, max) + '...' : text) : 'No messages yet';
 
-  console.log('Rendering conversation:', conversation, 'Display Name:', getDisplayName(conversation));
+  const truncateText = (text, max = 40) =>
+    text ? (text.length > max ? text.slice(0, max) + '...' : text) : 'No messages yet';
+
+  const displayName = getDisplayName(conversation);
+
+  console.log('Rendering conversation:', conversation, 'Display Name:', displayName);
 
   return (
     <div
       onClick={() => onSelect(conversation)}
       className={`flex items-center p-4 border-b border-gray-100 cursor-pointer transition-all duration-200 ${
-        isActive ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-l-blue-500' : 'hover:bg-gray-50'
+        isActive
+          ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-l-blue-500'
+          : 'hover:bg-gray-50'
       }`}
     >
       <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg shadow-md">
-        {getDisplayName(conversation).charAt(0).toUpperCase()}
+        {(displayName?.[0] || 'C').toUpperCase()}
       </div>
+
       <div className="flex-1 min-w-0 ml-4">
         <div className="flex justify-between items-baseline mb-1">
           <h3 className={`font-semibold truncate text-sm ${isActive ? 'text-blue-700' : 'text-gray-900'}`}>
-            {getDisplayName(conversation)}
+            {displayName}
           </h3>
           <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
             {getLastMessageTime(conversation.last_message_at)}
@@ -86,6 +102,7 @@ const ConversationItem = ({ conversation, isActive, onSelect, unreadCount, users
           {truncateText(conversation.last_message)}
         </p>
       </div>
+
       {unreadCount > 0 && (
         <span className="flex-shrink-0 w-6 h-6 bg-green-500 text-white text-xs rounded-full flex items-center justify-center ml-3 shadow-sm">
           {unreadCount}
@@ -96,15 +113,15 @@ const ConversationItem = ({ conversation, isActive, onSelect, unreadCount, users
 };
 
 // Chat Header
-const ChatHeader = ({ conversation, onBack, users }) => {
- if (conv.title && conv.conversation_type === 'group') return conv.title;
+const ChatHeader = ({ conversation, onBack }) => {
+  if (!conversation) {
+    console.warn('🟡 ChatHeader: conversation is undefined');
+    return null;
+  }
 
-  // Direct chat
-  if (conv.conversation_type === 'direct' && conv.participants?.length) {
-    const otherUser = conv.participants[0];
-    return `${otherUser.first_name} ${otherUser.last_name}`;
-  };
+  const displayName = getDisplayName(conversation);
 
+  console.log('🟢 ChatHeader rendering:', displayName);
 
   return (
     <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
@@ -117,11 +134,13 @@ const ChatHeader = ({ conversation, onBack, users }) => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
+
         <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold shadow-md">
-          {getDisplayName(conversation).charAt(0).toUpperCase()}
+          {(displayName?.[0] || 'C').toUpperCase()}
         </div>
+
         <div className="ml-3 flex-1">
-          <h2 className="font-semibold text-gray-900 text-lg">{getDisplayName(conversation)}</h2>
+          <h2 className="font-semibold text-gray-900 text-lg">{displayName}</h2>
           <p className="text-sm text-green-600 font-medium">Active</p>
         </div>
       </div>
@@ -150,7 +169,6 @@ const ChatModule = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef(null);
 
-  // Auto-scroll
   useEffect(() => {
     if (messagesEndRef.current) {
       requestAnimationFrame(() => {
@@ -159,10 +177,8 @@ const ChatModule = () => {
     }
   }, [messages.length, activeConversation?.id]);
 
-  // Load messages when active conversation changes
   useEffect(() => {
     if (activeConversation) {
-      console.log('Loading messages for conversation:', activeConversation.id);
       loadMessages(activeConversation.id);
     }
   }, [activeConversation, loadMessages]);
@@ -173,14 +189,9 @@ const ChatModule = () => {
   };
 
   const openNewConversationModal = async () => {
-    try {
-      await loadAvailableUsers?.();
-      console.log('Available users loaded:', availableUsers);
-      setUsersLoaded(true);
-      setShowNewConversation(true);
-    } catch (err) {
-      console.error('Failed to load users:', err);
-    }
+    await loadAvailableUsers?.();
+    setUsersLoaded(true);
+    setShowNewConversation(true);
   };
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -190,78 +201,67 @@ const ChatModule = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Filter conversations
   const filteredConversations = conversations.filter(conv => {
     if (!searchQuery) return true;
-    const title = conv.title?.toLowerCase() || '';
-    return title.includes(searchQuery.toLowerCase());
+    return getDisplayName(conv).toLowerCase().includes(searchQuery.toLowerCase());
   });
 
   return (
     <div className="flex h-screen bg-white">
       {/* Sidebar */}
       <div className={`${isMobile && activeConversation ? 'hidden' : 'flex'} w-full md:w-1/3 lg:w-1/4 flex-col border-r border-gray-200 bg-white`}>
-        <div className="p-4 bg-white border-b border-gray-200">
+        <div className="p-4 border-b border-gray-200">
           <div className="flex items-center justify-between mb-4">
-            <h1 className="flex items-center text-x1 font-bold text-gray-800">Messages
+            <h1 className="text-xl font-bold text-gray-800">
+              Messages
               {getTotalUnreadCount() > 0 && (
-                <span className="ml-3 inline-flex items-center justify-center bg-red-600 text-white text-xs font-medium rounded-full px-2 py-0.5">
+                <span className="ml-3 bg-red-600 text-white text-xs rounded-full px-2 py-0.5">
                   {getTotalUnreadCount()}
                 </span>
               )}
             </h1>
-            <button 
+            <button
               onClick={openNewConversationModal}
-              className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-full hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-md"
-              title="New Conversation"
+              className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-full shadow-md"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
+              +
             </button>
           </div>
 
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search conversations..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-4 pr-10 py-2.5 bg-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all duration-200 border border-transparent focus:border-blue-300 text-sm"
-            />
-          </div>
+          <input
+            type="text"
+            placeholder="Search conversations..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full p-2 bg-gray-100 rounded-lg"
+          />
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {filteredConversations.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No conversations found</div>
-          ) : (
-            filteredConversations.map(conv => (
-             <ConversationItem
-                  key={conv.id}
-                  conversation={conv}
-                  isActive={activeConversation?.id === conv.id}
-                  onSelect={setActiveConversation}
-                  unreadCount={getUnreadCount(conv.id)}
-                  users={availableUsers}
-                />
-              ))
-          )}
+          {filteredConversations.map(conv => (
+            <ConversationItem
+              key={conv.id}
+              conversation={conv}
+              isActive={activeConversation?.id === conv.id}
+              onSelect={setActiveConversation}
+              unreadCount={getUnreadCount(conv.id)}
+            />
+          ))}
         </div>
       </div>
 
       {/* Chat Area */}
-      <div className={`${isMobile && !activeConversation ? 'hidden' : 'flex'} flex-1 flex-col bg-gray-50`}>
+      <div className={`${isMobile && !activeConversation ? 'hidden' : 'flex'} flex-1 flex-col`}>
         {activeConversation ? (
           <>
-            <ChatHeader conversation={activeConversation} onBack={() => isMobile && setActiveConversation(null)} users={availableUsers} />
-            <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
+            <ChatHeader conversation={activeConversation} onBack={() => isMobile && setActiveConversation(null)} />
+            <div className="flex-1 overflow-y-auto p-4">
               <React.Suspense fallback={<LoadingFallback />}>
                 <MessageList messages={messages} />
               </React.Suspense>
               <div ref={messagesEndRef} />
             </div>
-            <React.Suspense fallback={<div className="p-4 border-t bg-white">Loading...</div>}>
+            <React.Suspense fallback={null}>
               <MessageInput onSendMessage={handleSendMessage} />
             </React.Suspense>
           </>
@@ -270,13 +270,9 @@ const ChatModule = () => {
         )}
       </div>
 
-      {/* New Conversation Modal */}
       {showNewConversation && usersLoaded && (
         <React.Suspense fallback={null}>
-          <NewConversationModal onClose={() => {
-            setShowNewConversation(false);
-            setUsersLoaded(false);
-          }} />
+          <NewConversationModal onClose={() => setShowNewConversation(false)} />
         </React.Suspense>
       )}
     </div>

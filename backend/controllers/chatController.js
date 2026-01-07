@@ -1,5 +1,5 @@
 const db = require('../config/database');
-
+const ioInstance = require('../server').io; 
 /**
  * GET /chat/available-users
  * Returns all users except the authenticated user
@@ -292,10 +292,40 @@ exports.sendMessage = async (req, res) => {
       `
       INSERT INTO chat_messages (conversation_id, sender_id, message_text)
       VALUES ($1, $2, $3)
-      RETURNING *
+      RETURNING *,
+      (SELECT first_name FROM users WHERE id = $2) as first_name,
+      (SELECT last_name FROM users WHERE id = $2) as last_name,
+      (SELECT role FROM users WHERE id = $2) as role
       `,
       [conversationId, senderId, messageText]
     );
+
+     const message = result.rows[0];
+
+    // Emit via Socket.IO to conversation room
+    if (ioInstance) {
+      ioInstance.to(`conversation_${conversationId}`).emit('new_message', {
+        message: message,
+        conversationId: conversationId
+      });
+
+      // Notify individual participants
+      const participantsResult = await db.query(
+        'SELECT user_id FROM chat_participants WHERE conversation_id = $1 AND is_active = true',
+        [conversationId]
+      );
+
+      participantsResult.rows.forEach(participant => {
+        if (participant.user_id !== senderId) {
+          ioInstance.to(`user_${participant.user_id}`).emit('chat_notification', {
+            type: 'new_message',
+            conversationId: conversationId,
+            message: message,
+            unreadCount: 1
+          });
+        }
+      });
+    }
 
     res.json({
       success: true,
