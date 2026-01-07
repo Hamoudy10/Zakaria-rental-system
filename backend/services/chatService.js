@@ -7,15 +7,31 @@ class ChatService {
     }
 
     setupSocketHandlers() {
-        this.io.on('connection', (socket) => {
+        this.io.on('connection', async (socket) => {
             console.log('User connected to chat:', socket.userId);
 
-            // Join user to their personal room
             if (socket.userId) {
+                // Join personal room
                 socket.join(`user_${socket.userId}`);
+
+                // Automatically join all active conversation rooms
+                try {
+                    const convs = await db.query(
+                        'SELECT conversation_id FROM chat_participants WHERE user_id = $1 AND is_active = true',
+                        [socket.userId]
+                    );
+
+                    convs.rows.forEach(row => {
+                        socket.join(`conversation_${row.conversation_id}`);
+                    });
+
+                    console.log(`User ${socket.userId} auto-joined ${convs.rows.length} conversation rooms`);
+                } catch (err) {
+                    console.error('Failed to auto-join conversations:', err);
+                }
             }
 
-            // Join conversation room
+            // Join conversation room manually
             socket.on('join_conversation', (conversationId) => {
                 socket.join(`conversation_${conversationId}`);
                 console.log(`User ${socket.userId} joined conversation ${conversationId}`);
@@ -30,7 +46,7 @@ class ChatService {
             socket.on('send_message', async (data) => {
                 try {
                     const { conversationId, messageText, parentMessageId } = data;
-                    
+
                     // Verify user is participant
                     const participantCheck = await db.query(
                         'SELECT 1 FROM chat_participants WHERE conversation_id = $1 AND user_id = $2 AND is_active = true',
@@ -59,7 +75,7 @@ class ChatService {
                         parentMessageId || null
                     ]);
 
-                    // Update conversation
+                    // Update conversation timestamp
                     await db.query(
                         'UPDATE chat_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = $1',
                         [conversationId]
@@ -73,13 +89,13 @@ class ChatService {
                         [conversationId]
                     );
 
-                    // Emit to conversation room
+                    // Emit new message to conversation room
                     this.io.to(`conversation_${conversationId}`).emit('new_message', {
                         message: message,
                         conversationId: conversationId
                     });
 
-                    // Send notifications to participants
+                    // Notify participants individually
                     participantsResult.rows.forEach(participant => {
                         if (participant.user_id !== socket.userId) {
                             this.io.to(`user_${participant.user_id}`).emit('chat_notification', {
@@ -115,13 +131,14 @@ class ChatService {
                 });
             });
 
+            // Disconnect
             socket.on('disconnect', () => {
                 console.log('User disconnected from chat:', socket.userId);
             });
         });
     }
 
-    // Method to notify users about new chat features
+    // Optional: notify user about new chat features
     async notifyNewChatFeature(userId, feature) {
         this.io.to(`user_${userId}`).emit('chat_feature_notification', {
             type: 'feature_update',
