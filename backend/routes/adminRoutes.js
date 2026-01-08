@@ -48,12 +48,12 @@ router.get('/settings/billing/config', protect, adminOnly, adminSettingsControll
 
 // These will be added when we create billing management controller
 // GET billing history
-// router.get('/billing/history', protect, adminOnly, billingController.getBillingHistory);
+router.get('/billing/history', protect, adminOnly, billingController.getBillingHistory);
 
 // GET failed SMS for retry
-// router.get('/billing/failed-sms', protect, adminOnly, billingController.getFailedSMS);
+router.get('/billing/failed-sms', protect, adminOnly, billingController.getFailedSMS);
 
 // TRIGGER manual billing
-// router.post('/billing/trigger', protect, adminOnly, billingController.triggerManualBilling);
+ router.post('/billing/trigger', protect, adminOnly, billingController.triggerManualBilling);
 
 module.exports = router;
