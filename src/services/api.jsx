@@ -287,16 +287,48 @@ export const allocationAPI = {
     api.post(`/allocations/${id}/terminate`, terminationData),
 };
 
-// Settings API
+//Replace the existing settingsAPI section with this:
 export const settingsAPI = {
-  getSettings: () => api.get('/admin-settings'),
-
-  updateSetting: (key, value) =>
-    api.put(`/admin-settings/${key}`, { value }),
-
-  updateMultipleSettings: (settings) =>
-    api.put('/admin-settings', settings)
+  // Get all settings (returns both array and grouped)
+  getSettings: () => api.get('/admin/settings'),
+  
+  // Get settings by category
+  getSettingsByCategory: (category) => api.get(`/admin/settings/category?category=${category}`),
+  
+  // Get single setting
+  getSettingByKey: (key) => api.get(`/admin/settings/${key}`),
+  
+  // Update single setting
+  updateSetting: (key, value) => api.put(`/admin/settings/${key}`, { value }),
+  
+  // Update multiple settings
+  updateMultipleSettings: (settings) => api.put('/admin/settings', settings),
+  
+  // Reset to defaults
+  resetToDefaults: () => api.post('/admin/settings/reset-defaults'),
+  
+  // Get billing configuration
+  getBillingConfig: () => api.get('/admin/settings/billing/config')
 };
+
+// Add this NEW billingAPI section (add it after settingsAPI):
+export const billingAPI = {
+  // Trigger manual billing run
+  triggerBilling: () => api.post('/cron/trigger-billing'),
+  
+  // Get billing run history
+  getBillingHistory: (params = {}) => api.get('/cron/history', { params }),
+  
+  // Get failed SMS for retry
+  getFailedSMS: (params = {}) => api.get('/cron/failed-sms', { params }),
+  
+  // Retry failed SMS
+  retryFailedSMS: (smsIds) => api.post('/cron/retry-sms', { smsIds }),
+  
+  // Test SMS service
+  testSMSService: (testData) => api.post('/cron/test-sms', testData)
+};
+
 
 
 // Complaint API
@@ -738,6 +770,7 @@ export const API = {
   notificationUtils: notificationUtils,
   mockMpesa: mockMpesaAPI,
   paybill: paybillAPI, 
+   billing: billingAPI, 
    chatAPI,// NEW: Added paybill API
 };
 

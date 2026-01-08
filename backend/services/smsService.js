@@ -311,6 +311,105 @@ class SMSService {
     }
   }
 
+  // Add these methods to the SMSService class:
+
+// Send bill notification to tenant
+async sendBillNotification(tenantPhone, tenantName, unitCode, month, rentDue, waterDue, arrearsDue, totalDue, paybillNumber) {
+  try {
+    const message = `Hello ${tenantName}, your ${month} bill for ${unitCode}:\n` +
+                   `🏠 Rent: KSh ${this.formatAmount(rentDue)}\n` +
+                   `🚰 Water: KSh ${this.formatAmount(waterDue)}\n` +
+                   `📝 Arrears: KSh ${this.formatAmount(arrearsDue)}\n` +
+                   `💰 Total Due: KSh ${this.formatAmount(totalDue)}\n` +
+                   `📱 Pay via paybill ${paybillNumber}, Account: ${unitCode}\n` +
+                   `Due by end of month. Thank you!`;
+    
+    console.log('📋 Sending bill notification:', {
+      tenantName,
+      tenantPhone,
+      unitCode,
+      month,
+      totalDue
+    });
+    
+    const result = await this.sendSMS(tenantPhone, message);
+    
+    await this.logSMSNotification(tenantPhone, 'bill_notification', message, result.success);
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error sending bill notification:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Send enhanced payment confirmation with breakdown
+async sendEnhancedPaymentConfirmation(tenantPhone, tenantName, amount, unitCode, breakdown, balance, month) {
+  try {
+    const { rentPaid, waterPaid, arrearsPaid } = breakdown;
+    
+    let message = `Hello ${tenantName}, payment of KSh ${this.formatAmount(amount)} received for ${unitCode} (${month}):\n`;
+    
+    if (rentPaid > 0) message += `🏠 Rent: KSh ${this.formatAmount(rentPaid)}\n`;
+    if (waterPaid > 0) message += `🚰 Water: KSh ${this.formatAmount(waterPaid)}\n`;
+    if (arrearsPaid > 0) message += `📝 Arrears: KSh ${this.formatAmount(arrearsPaid)}\n`;
+    
+    if (balance > 0) {
+      message += `📊 Remaining Balance: KSh ${this.formatAmount(balance)}`;
+    } else {
+      message += `✅ Payment complete! Thank you!`;
+    }
+    
+    console.log('💰 Sending enhanced payment confirmation:', {
+      tenantName,
+      tenantPhone,
+      amount,
+      breakdown
+    });
+    
+    const result = await this.sendSMS(tenantPhone, message);
+    await this.logSMSNotification(tenantPhone, 'payment_confirmation', message, result.success);
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error sending enhanced payment confirmation:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Send admin payment alert with breakdown
+async sendAdminPaymentAlert(adminPhone, tenantName, amount, unitCode, breakdown, balance, month) {
+  try {
+    const { rentPaid, waterPaid, arrearsPaid } = breakdown;
+    
+    let message = `💸 PAYMENT RECEIVED:\n` +
+                  `Tenant: ${tenantName}\n` +
+                  `Unit: ${unitCode} (${month})\n` +
+                  `Amount: KSh ${this.formatAmount(amount)}\n`;
+    
+    if (rentPaid > 0) message += `Rent: KSh ${this.formatAmount(rentPaid)}\n`;
+    if (waterPaid > 0) message += `Water: KSh ${this.formatAmount(waterPaid)}\n`;
+    if (arrearsPaid > 0) message += `Arrears: KSh ${this.formatAmount(arrearsPaid)}\n`;
+    
+    if (balance > 0) {
+      message += `Remaining: KSh ${this.formatAmount(balance)}`;
+    } else {
+      message += `✅ Fully paid`;
+    }
+    
+    const result = await this.sendSMS(adminPhone, message);
+    await this.logSMSNotification(adminPhone, 'admin_payment_alert', message, result.success);
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error sending admin payment alert:', error);
+    return { success: false, error: error.message };
+  }
+}
+
   // Send payment alert to admin
   async sendAdminAlert(adminPhone, tenantName, amount, unitCode, balance, month) {
     try {
