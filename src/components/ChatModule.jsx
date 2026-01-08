@@ -1,24 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
-import { CornerDownLeft } from 'lucide-react';
 
 /**
  * =====================================================
- * Shared Helpers (MUST be top-level)
+ * Shared Helpers
  * =====================================================
  */
 const getDisplayName = (conv) => {
   if (!conv) return 'Conversation';
-
-  if (typeof conv.display_name === 'string' && conv.display_name.trim()) {
-    return conv.display_name;
-  }
-
-  if (typeof conv.title === 'string' && conv.title.trim()) {
-    return conv.title;
-  }
-
+  if (typeof conv.display_name === 'string' && conv.display_name.trim()) return conv.display_name;
+  if (typeof conv.title === 'string' && conv.title.trim()) return conv.title;
   return 'Conversation';
 };
 
@@ -38,18 +30,13 @@ const LoadingFallback = () => (
 const EmptyChatState = ({ onNewChat }) => (
   <div className="flex-1 flex items-center justify-center bg-gray-50">
     <div className="text-center max-w-md p-8">
-      <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-        <svg className="w-12 h-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-      </div>
       <h2 className="text-2xl font-bold text-gray-800 mb-2">No conversation selected</h2>
       <p className="text-gray-600 mb-6">
         Choose a conversation from the sidebar or start a new chat.
       </p>
       <button
         onClick={onNewChat}
-        className="bg-gradient-to-br from-blue-500 to-purple-600 text-white px-6 py-3 rounded-lg font-semibold hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl"
+        className="bg-gradient-to-br from-blue-500 to-purple-600 text-white px-6 py-3 rounded-lg font-semibold"
       >
         Start New Conversation
       </button>
@@ -57,54 +44,26 @@ const EmptyChatState = ({ onNewChat }) => (
   </div>
 );
 
-// Conversation Item
+// Conversation Item (unchanged)
 const ConversationItem = ({ conversation, isActive, onSelect, unreadCount }) => {
-  const getLastMessageTime = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffHours = (now - date) / (1000 * 60 * 60);
-    if (diffHours < 24) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (diffHours < 168) return date.toLocaleDateString([], { weekday: 'short' });
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  };
-
-  const truncateText = (text, max = 40) =>
-    text ? (text.length > max ? text.slice(0, max) + '...' : text) : 'No messages yet';
-
   const displayName = getDisplayName(conversation);
-
-  console.log('Rendering conversation:', conversation, 'Display Name:', displayName);
 
   return (
     <div
       onClick={() => onSelect(conversation)}
-      className={`flex items-center p-4 border-b border-gray-100 cursor-pointer transition-all duration-200 ${
-        isActive
-          ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-l-blue-500'
-          : 'hover:bg-gray-50'
+      className={`flex items-center p-4 border-b border-gray-100 cursor-pointer ${
+        isActive ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'hover:bg-gray-50'
       }`}
     >
-      <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg shadow-md">
-        {(displayName?.[0] || 'C').toUpperCase()}
-      </div>
-
-      <div className="flex-1 min-w-0 ml-4">
-        <div className="flex justify-between items-baseline mb-1">
-          <h3 className={`font-semibold truncate text-sm ${isActive ? 'text-blue-700' : 'text-gray-900'}`}>
-            {displayName}
-          </h3>
-          <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
-            {getLastMessageTime(conversation.last_message_at)}
-          </span>
-        </div>
-        <p className={`text-sm truncate ${isActive ? 'text-blue-600' : 'text-gray-600'}`}>
-          {truncateText(conversation.last_message)}
+      <div className="flex-1 min-w-0 ml-2">
+        <h3 className="font-semibold truncate text-sm">{displayName}</h3>
+        <p className="text-xs text-gray-500 truncate">
+          {conversation.last_message || 'No messages yet'}
         </p>
       </div>
 
       {unreadCount > 0 && (
-        <span className="flex-shrink-0 w-6 h-6 bg-green-500 text-white text-xs rounded-full flex items-center justify-center ml-3 shadow-sm">
+        <span className="ml-2 bg-green-500 text-white text-xs rounded-full px-2">
           {unreadCount}
         </span>
       )}
@@ -114,41 +73,30 @@ const ConversationItem = ({ conversation, isActive, onSelect, unreadCount }) => 
 
 // Chat Header
 const ChatHeader = ({ conversation, onBack }) => {
-  if (!conversation) {
-    console.warn('🟡 ChatHeader: conversation is undefined');
-    return null;
-  }
+  if (!conversation) return null;
 
   const displayName = getDisplayName(conversation);
 
-  console.log('🟢 ChatHeader rendering:', displayName);
-
   return (
-    <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
+    <div className="shrink-0 bg-white border-b border-gray-200 p-4">
       <div className="flex items-center">
         <button
           onClick={onBack}
-          className="md:hidden mr-3 p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+          className="md:hidden mr-3 p-2 rounded hover:bg-gray-100"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
+          ←
         </button>
-
-        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold shadow-md">
-          {(displayName?.[0] || 'C').toUpperCase()}
-        </div>
-
-        <div className="ml-3 flex-1">
-          <h2 className="font-semibold text-gray-900 text-lg">{displayName}</h2>
-          <p className="text-sm text-green-600 font-medium">Active</p>
-        </div>
+        <h2 className="font-semibold text-gray-900 text-lg truncate">
+          {displayName}
+        </h2>
       </div>
     </div>
   );
 };
 
-// Main Chat Module
+// =====================================================
+// MAIN CHAT MODULE
+// =====================================================
 const ChatModule = () => {
   const {
     conversations,
@@ -159,24 +107,22 @@ const ChatModule = () => {
     setActiveConversation,
     getUnreadCount,
     getTotalUnreadCount,
-    loadAvailableUsers,
-    availableUsers
+    loadAvailableUsers
   } = useChat();
 
   const { user } = useAuth();
   const [showNewConversation, setShowNewConversation] = useState(false);
-  const [usersLoaded, setUsersLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
 
+  // Auto-scroll messages ONLY
   useEffect(() => {
-    if (messagesEndRef.current) {
-      requestAnimationFrame(() => {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      });
-    }
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [messages.length, activeConversation?.id]);
 
+  // Load messages on conversation change
   useEffect(() => {
     if (activeConversation) {
       loadMessages(activeConversation.id);
@@ -190,39 +136,37 @@ const ChatModule = () => {
 
   const openNewConversationModal = async () => {
     await loadAvailableUsers?.();
-    setUsersLoaded(true);
     setShowNewConversation(true);
   };
 
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const filteredConversations = conversations.filter(conv => {
-    if (!searchQuery) return true;
-    return getDisplayName(conv).toLowerCase().includes(searchQuery.toLowerCase());
-  });
+  const filteredConversations = conversations.filter(conv =>
+    getDisplayName(conv).toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
-    <div className="flex h-screen bg-white">
+    <div
+      className="
+        fixed inset-x-0 bottom-0
+        top-[3.5rem]
+        bg-white
+        flex
+      "
+    >
       {/* Sidebar */}
-      <div className={`${isMobile && activeConversation ? 'hidden' : 'flex'} w-full md:w-1/3 lg:w-1/4 flex-col border-r border-gray-200 bg-white`}>
-        <div className="p-4 border-b border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-xl font-bold text-gray-800">
+      <div className="hidden md:flex w-1/3 lg:w-1/4 flex-col border-r bg-white">
+        <div className="p-4 border-b">
+          <div className="flex justify-between items-center mb-3">
+            <h1 className="font-bold text-lg">
               Messages
               {getTotalUnreadCount() > 0 && (
-                <span className="ml-3 bg-red-600 text-white text-xs rounded-full px-2 py-0.5">
+                <span className="ml-2 text-xs bg-red-600 text-white px-2 rounded-full">
                   {getTotalUnreadCount()}
                 </span>
               )}
             </h1>
             <button
               onClick={openNewConversationModal}
-              className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-full shadow-md"
+              className="bg-blue-600 text-white rounded-full w-8 h-8"
             >
               +
             </button>
@@ -230,10 +174,10 @@ const ChatModule = () => {
 
           <input
             type="text"
-            placeholder="Search conversations..."
+            placeholder="Search..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full p-2 bg-gray-100 rounded-lg"
+            className="w-full p-2 bg-gray-100 rounded"
           />
         </div>
 
@@ -251,26 +195,37 @@ const ChatModule = () => {
       </div>
 
       {/* Chat Area */}
-      <div className={`${isMobile && !activeConversation ? 'hidden' : 'flex'} flex-1 flex-col`}>
+      <div className="flex-1 flex flex-col">
         {activeConversation ? (
           <>
-            <ChatHeader conversation={activeConversation} onBack={() => isMobile && setActiveConversation(null)} />
-            <div className="flex-1 overflow-y-auto p-4">
+            <ChatHeader
+              conversation={activeConversation}
+              onBack={() => setActiveConversation(null)}
+            />
+
+            {/* Messages (ONLY scrollable area) */}
+            <div
+              ref={messagesContainerRef}
+              className="flex-1 overflow-y-auto p-4 overscroll-contain"
+            >
               <React.Suspense fallback={<LoadingFallback />}>
                 <MessageList messages={messages} />
               </React.Suspense>
-              <div ref={messagesEndRef} />
             </div>
-            <React.Suspense fallback={null}>
-              <MessageInput onSendMessage={handleSendMessage} />
-            </React.Suspense>
+
+            {/* Input (fixed in layout, not scrolling) */}
+            <div className="shrink-0 border-t bg-white">
+              <React.Suspense fallback={null}>
+                <MessageInput onSendMessage={handleSendMessage} />
+              </React.Suspense>
+            </div>
           </>
         ) : (
           <EmptyChatState onNewChat={openNewConversationModal} />
         )}
       </div>
 
-      {showNewConversation && usersLoaded && (
+      {showNewConversation && (
         <React.Suspense fallback={null}>
           <NewConversationModal onClose={() => setShowNewConversation(false)} />
         </React.Suspense>

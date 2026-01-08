@@ -58,18 +58,11 @@ export const ChatProvider = ({ children }) => {
 
   /* -------------------- LOAD CONVERSATIONS -------------------- */
   const loadConversations = useCallback(async () => {
-    console.log('🚀 loadConversations CALLED');
-
-    if (!user) {
-      console.log('⏭️ Skipping conversations load (no user)');
-      return;
-    }
+    if (!user) return;
 
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
       const convs = await ChatService.getRecentChats(50);
-
-      console.log('✅ Conversations fetched:', convs);
 
       dispatch({ type: 'SET_CONVERSATIONS', payload: convs });
       convsRef.current = convs;
@@ -79,22 +72,16 @@ export const ChatProvider = ({ children }) => {
       dispatch({ type: 'SET_UNREAD_COUNTS', payload: unread });
       unreadCountsRef.current = unread;
     } catch (err) {
-      console.error('❌ Failed to load conversations:', err);
       dispatch({ type: 'SET_ERROR', payload: err.message });
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
   }, [user]);
 
-  /* -------------------- BOOTSTRAP AFTER AUTH -------------------- */
+  /* -------------------- INIT AFTER AUTH -------------------- */
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) return;
-    if (initializedRef.current) return;
-
-    console.log('🔑 Auth ready, initializing chat');
+    if (authLoading || !user || initializedRef.current) return;
     initializedRef.current = true;
-
     loadConversations();
   }, [authLoading, user, loadConversations]);
 
@@ -114,13 +101,27 @@ export const ChatProvider = ({ children }) => {
     }
   }, []);
 
-  /* -------------------- SEND MESSAGE -------------------- */
+  /* -------------------- SEND MESSAGE (REST + SOCKET) -------------------- */
   const sendMessage = useCallback(async (conversationId, messageText) => {
     if (!conversationId || !messageText?.trim()) return;
 
-    const message = await ChatService.sendMessage(conversationId, messageText.trim());
+    // Save via REST
+    const message = await ChatService.sendMessage(
+      conversationId,
+      messageText.trim()
+    );
+
+    // Optimistic UI update
     dispatch({ type: 'ADD_MESSAGE', payload: message });
 
+    // Emit socket event for instant delivery
+    socketRef.current?.emit('send_message', {
+      conversationId,
+      messageText: message.message_text,
+      parentMessageId: message.parent_message_id || null,
+    });
+
+    // Update conversation list
     const updatedConvs = convsRef.current.map(c =>
       c.id === conversationId
         ? { ...c, last_message: message.message_text, last_message_at: message.created_at }
@@ -137,6 +138,9 @@ export const ChatProvider = ({ children }) => {
   const setActiveConversation = useCallback((conv) => {
     dispatch({ type: 'SET_ACTIVE_CONVERSATION', payload: conv });
     activeConvRef.current = conv;
+
+    // Join socket room for this conversation
+    socketRef.current?.emit('join_conversation', conv.id);
   }, []);
 
   /* -------------------- AVAILABLE USERS -------------------- */
@@ -147,14 +151,12 @@ export const ChatProvider = ({ children }) => {
     return users;
   }, [user]);
 
-  /* -------------------- SOCKET -------------------- */
+  /* -------------------- SOCKET SETUP -------------------- */
   useEffect(() => {
     if (!user) return;
 
     const token = localStorage.getItem('token');
     if (!token) return;
-
-    console.log('🔌 Connecting socket');
 
     const socket = io(import.meta.env.VITE_SOCKET_URL, {
       auth: { token },
@@ -167,6 +169,9 @@ export const ChatProvider = ({ children }) => {
     socket.on('disconnect', () => console.log('🔴 Socket disconnected'));
 
     socket.on('new_message', ({ message, conversationId }) => {
+      // Prevent duplicate messages (sender already added optimistically)
+      if (message.sender_id === user.id) return;
+
       if (activeConvRef.current?.id === conversationId) {
         dispatch({ type: 'ADD_MESSAGE', payload: message });
       } else {
