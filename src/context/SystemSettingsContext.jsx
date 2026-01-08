@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useCallback } from 'react';
-import { settingsAPI } from '../services/api';
+import { API } from '../services/api';
 
 const SystemSettingsContext = createContext(undefined);
 
@@ -21,11 +21,13 @@ export const SystemSettingsProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await settingsAPI.getSettings();
-      setSettings(response.data.settings || []);
+      const response = await API.settings.getSettings();
+      // The backend returns settings in response.data.settings
+      const settingsData = response.data.settings || [];
+      setSettings(settingsData);
     } catch (err) {
       console.error('Error fetching settings:', err);
-      setError('Failed to fetch settings');
+      setError('Failed to fetch settings. Please check your connection.');
       setSettings([]);
     } finally {
       setLoading(false);
@@ -37,19 +39,21 @@ export const SystemSettingsProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      // Simulate API call until backend is implemented
+      await API.settings.updateSetting(settingKey, newValue);
+      
+      // Update local state
       setSettings(prev => prev.map(setting => 
-        setting.setting_key === settingKey 
-          ? { ...setting, setting_value: newValue, updated_at: new Date().toISOString() }
+        setting.key === settingKey 
+          ? { ...setting, value: newValue, updated_at: new Date().toISOString() }
           : setting
       ));
       
-      // In real app: await settingsAPI.updateSetting(settingKey, newValue);
       return { success: true, message: 'Setting updated successfully' };
     } catch (err) {
       console.error('Error updating setting:', err);
-      setError('Failed to update setting');
-      throw err;
+      const errorMsg = err.response?.data?.message || 'Failed to update setting';
+      setError(errorMsg);
+      throw new Error(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -60,19 +64,26 @@ export const SystemSettingsProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      Object.entries(settingsUpdates).forEach(([key, value]) => {
-        setSettings(prev => prev.map(setting => 
-          setting.setting_key === key 
-            ? { ...setting, setting_value: value, updated_at: new Date().toISOString() }
-            : setting
-        ));
-      });
+      await API.settings.updateMultipleSettings(settingsUpdates);
+      
+      // Update local state
+      setSettings(prev => prev.map(setting => {
+        if (settingsUpdates[setting.key] !== undefined) {
+          return { 
+            ...setting, 
+            value: settingsUpdates[setting.key], 
+            updated_at: new Date().toISOString() 
+          };
+        }
+        return setting;
+      }));
       
       return { success: true, message: 'Settings updated successfully' };
     } catch (err) {
       console.error('Error updating settings:', err);
-      setError('Failed to update settings');
-      throw err;
+      const errorMsg = err.response?.data?.message || 'Failed to update settings';
+      setError(errorMsg);
+      throw new Error(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -83,59 +94,74 @@ export const SystemSettingsProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const defaultSettings = [
-        { setting_key: 'primary_color', setting_value: '#3B82F6', description: 'Primary brand color' },
-        { setting_key: 'secondary_color', setting_value: '#1E40AF', description: 'Secondary brand color' },
-        { setting_key: 'company_name', setting_value: 'Zakaria Rental System', description: 'Company name' },
-        { setting_key: 'default_rent_due_day', setting_value: '5', description: 'Default rent due day' },
-        { setting_key: 'default_grace_period', setting_value: '7', description: 'Default grace period in days' },
-        { setting_key: 'mpesa_paybill_number', setting_value: '123456', description: 'M-Pesa paybill number' },
-        { setting_key: 'sms_enabled', setting_value: 'true', description: 'Enable SMS notifications' },
-        { setting_key: 'auto_confirm_payments', setting_value: 'true', description: 'Auto-confirm M-Pesa payments' },
-        { setting_key: 'maintenance_email', setting_value: 'maintenance@zakariarentals.com', description: 'Maintenance email' },
-        { setting_key: 'support_phone', setting_value: '+254700000000', description: 'Support phone number' }
-      ];
-      
-      setSettings(defaultSettings);
+      await API.settings.resetToDefaults();
+      // Refresh settings after reset
+      await fetchSettings();
       return { success: true, message: 'Settings reset to defaults' };
     } catch (err) {
       console.error('Error resetting settings:', err);
-      setError('Failed to reset settings');
-      throw err;
+      const errorMsg = err.response?.data?.message || 'Failed to reset settings';
+      setError(errorMsg);
+      throw new Error(errorMsg);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchSettings]);
 
   // Get setting value by key
   const getSetting = useCallback((key) => {
-    const setting = settings.find(s => s.setting_key === key);
-    return setting ? setting.setting_value : null;
+    const setting = settings.find(s => s.key === key);
+    return setting ? setting.value : null;
   }, [settings]);
 
   // Get settings by category
   const getSettingsByCategory = useCallback(() => {
+    // First, ensure settings is an array
+    if (!Array.isArray(settings)) return {};
+    
     const categories = {
-      appearance: settings.filter(s => 
-        s.setting_key.includes('color') || 
-        s.setting_key.includes('company')
+      // Billing settings
+      billing: settings.filter(s => 
+        s.key === 'billing_day' || 
+        s.key === 'paybill_number' || 
+        s.key === 'company_name' ||
+        s.key === 'late_fee_percentage' ||
+        s.key === 'grace_period_days' ||
+        s.key === 'auto_billing_enabled' ||
+        s.key === 'sms_billing_template'
       ),
-      payments: settings.filter(s => 
-        s.setting_key.includes('rent') || 
-        s.setting_key.includes('mpesa') || 
-        s.setting_key.includes('payment')
+      
+      // SMS settings
+      sms: settings.filter(s => 
+        s.key.includes('sms_') && 
+        s.key !== 'sms_billing_template'
       ),
-      notifications: settings.filter(s => 
-        s.setting_key.includes('sms') || 
-        s.setting_key.includes('email') || 
-        s.setting_key.includes('auto')
+      
+      // M-Pesa settings
+      mpesa: settings.filter(s => s.key.includes('mpesa_')),
+      
+      // Fees settings
+      fees: settings.filter(s => 
+        s.key === 'late_fee_percentage' || 
+        s.key === 'grace_period_days'
       ),
-      contact: settings.filter(s => 
-        s.setting_key.includes('email') || 
-        s.setting_key.includes('phone') || 
-        s.setting_key.includes('support')
+      
+      // General settings
+      general: settings.filter(s => 
+        !s.key.includes('sms_') && 
+        !s.key.includes('mpesa_') && 
+        s.key !== 'billing_day' && 
+        s.key !== 'paybill_number' &&
+        s.key !== 'company_name' && 
+        s.key !== 'late_fee_percentage' && 
+        s.key !== 'grace_period_days' &&
+        s.key !== 'auto_billing_enabled' &&
+        s.key !== 'sms_billing_template'
       )
     };
+    
+    // Merge fees into billing for display
+    categories.billing = [...categories.billing, ...categories.fees];
     
     return categories;
   }, [settings]);
