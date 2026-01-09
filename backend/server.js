@@ -95,6 +95,7 @@ app.get('/api/health', (req, res) => res.json({
 }));
 
 // Helper function for optional routes
+// Helper function for optional routes
 const loadRoute = (path, file, name, placeholderData = []) => {
   try {
     const route = require(file);
@@ -110,10 +111,10 @@ const loadRoute = (path, file, name, placeholderData = []) => {
         data: placeholderData 
       }));
     } else {
-      console.error("❌ Failed to load ${name} routes:", err.message);
+      console.error(`❌ Failed to load ${name} routes:`, err.message); // FIXED LINE
       app.use(path, (req, res) => res.status(500).json({ 
         success: false, 
-        message: "${name} temporarily unavailable"
+        message: `${name} temporarily unavailable`  // FIXED LINE
       }));
     }
   }
