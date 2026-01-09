@@ -429,6 +429,8 @@ router.get('/:id/stats', authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/agent/assigned', protect, agentOnly, getAgentProperties);
+
 // In your property routes file (backend/routes/propertyRoutes.js or similar)
 router.get('/:id/units', protect, async (req, res) => {
   try {

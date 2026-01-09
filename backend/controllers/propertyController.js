@@ -596,6 +596,46 @@ const createUnit = async (req, res) => {
   }
 };
 
+// Get properties assigned to current agent
+const getAgentProperties = async (req, res) => {
+  try {
+    const { search = '', status = '' } = req.query;
+    
+    let query = `
+      SELECT DISTINCT p.*, 
+             (SELECT COUNT(*) FROM property_units pu WHERE pu.property_id = p.id AND pu.is_occupied = false) as available_units_count
+      FROM properties p
+      INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+      WHERE apa.agent_id = $1 AND apa.is_active = true AND p.is_active = true
+    `;
+    
+    const params = [req.user.id];
+    let paramCount = 2;
+
+    if (search) {
+      query += ` AND (p.name ILIKE $${paramCount} OR p.property_code ILIKE $${paramCount} OR p.address ILIKE $${paramCount})`;
+      params.push(`%${search}%`);
+      paramCount++;
+    }
+
+    query += ` ORDER BY p.name`;
+
+    const result = await pool.query(query, params);
+    
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Get agent properties error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching properties',
+      error: error.message
+    });
+  }
+};
+
 // NEW: Update unit
 const updateUnit = async (req, res) => {
   try {
@@ -719,5 +759,6 @@ module.exports = {
   deleteProperty,
   getUnitByCode,
   createUnit,
+  getAgentProperties,
   updateUnit
 };
