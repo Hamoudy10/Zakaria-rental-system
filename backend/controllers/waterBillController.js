@@ -78,6 +78,109 @@ const createWaterBill = async (req, res) => {
   }
 };
 
+// Add this function to waterBillController.js (after existing functions)
+
+/**
+ * Check which tenants are missing water bills for a specific month
+ * Query params: month (YYYY-MM), propertyId (optional)
+ */
+const checkMissingWaterBills = async (req, res) => {
+  try {
+    const agentId = req.user.id;
+    const { month, propertyId } = req.query;
+
+    if (!month) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Month parameter required (YYYY-MM)' 
+      });
+    }
+
+    const targetDate = `${month}-01`;
+
+    // Base query for active tenants
+    let query = `
+      SELECT 
+        ta.tenant_id,
+        t.first_name,
+        t.last_name,
+        t.phone_number,
+        pu.unit_code,
+        p.name as property_name,
+        EXISTS(
+          SELECT 1 FROM water_bills wb 
+          WHERE wb.tenant_id = ta.tenant_id 
+          AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
+        ) as has_water_bill
+      FROM tenant_allocations ta
+      JOIN tenants t ON ta.tenant_id = t.id
+      JOIN property_units pu ON ta.unit_id = pu.id
+      JOIN properties p ON pu.property_id = p.id
+      WHERE ta.is_active = true
+    `;
+
+    const params = [targetDate];
+    let paramCount = 1;
+
+    // Add agent property filtering for non-admin users
+    if (req.user.role !== 'admin') {
+      paramCount++;
+      query += ` AND p.id IN (
+        SELECT property_id FROM agent_property_assignments 
+        WHERE agent_id = $${paramCount} AND is_active = true
+      )`;
+      params.push(agentId);
+    }
+
+    // Add property filter if specified
+    if (propertyId) {
+      paramCount++;
+      query += ` AND p.id = $${paramCount}`;
+      params.push(propertyId);
+    }
+
+    query += ` ORDER BY p.name, pu.unit_code`;
+
+    const result = await pool.query(query, params);
+    
+    const tenants = result.rows;
+    const tenantsWithBills = tenants.filter(t => t.has_water_bill);
+    const tenantsWithoutBills = tenants.filter(t => !t.has_water_bill);
+
+    res.json({
+      success: true,
+      data: {
+        month,
+        totalTenants: tenants.length,
+        tenantsWithWaterBills: tenantsWithBills.length,
+        tenantsWithoutWaterBills: tenantsWithoutBills.length,
+        tenantsWithoutBills: tenantsWithoutBills.map(t => ({
+          tenantId: t.tenant_id,
+          name: `${t.first_name} ${t.last_name}`,
+          phone: t.phone_number,
+          unitCode: t.unit_code,
+          propertyName: t.property_name
+        })),
+        summary: {
+          total: tenants.length,
+          withBills: tenantsWithBills.length,
+          withoutBills: tenantsWithoutBills.length,
+          percentageWithBills: tenants.length > 0 ? 
+            Math.round((tenantsWithBills.length / tenants.length) * 100) : 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error checking missing water bills:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check missing water bills',
+      error: error.message
+    });
+  }
+};
+
 /**
  * List water bills for agent (scoped to properties they manage).
  * Query params: propertyId, tenantId, month (YYYY-MM), limit, offset
@@ -195,5 +298,6 @@ module.exports = {
   createWaterBill,
   listWaterBills,
   getWaterBill,
-  deleteWaterBill
+  deleteWaterBill,
+  checkMissingWaterBills
 };
