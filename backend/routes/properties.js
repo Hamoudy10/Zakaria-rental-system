@@ -429,4 +429,29 @@ router.get('/:id/stats', authMiddleware, async (req, res) => {
   }
 });
 
+// In your property routes file (backend/routes/propertyRoutes.js or similar)
+router.get('/:id/units', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await pool.query(`
+      SELECT * FROM property_units 
+      WHERE property_id = $1 AND is_active = true
+      ORDER BY unit_number
+    `, [id]);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error fetching property units:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch property units'
+    });
+  }
+});
+
 module.exports = router;
