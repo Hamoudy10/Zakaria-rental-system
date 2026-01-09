@@ -1,6 +1,6 @@
 const pool = require('../config/database');
 
-// Get all tenants
+// Get all tenants with agent data isolation
 const getTenants = async (req, res) => {
   try {
     const { page = 1, limit = 10, search = '' } = req.query;
@@ -27,14 +27,40 @@ const getTenants = async (req, res) => {
     const queryParams = [];
     const countParams = [];
 
-    if (search) {
-      const searchCondition = `
-        WHERE (t.first_name ILIKE $1 OR t.last_name ILIKE $1 OR t.phone_number ILIKE $1 OR t.national_id ILIKE $1)
+    // Add agent property assignment filter only for agents
+    if (req.user.role === 'agent') {
+      query += ` 
+        INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+        WHERE apa.agent_id = $${queryParams.length + 1} 
+        AND apa.is_active = true
       `;
-      query += searchCondition;
-      countQuery += searchCondition;
-      queryParams.push(`%${search}%`);
-      countParams.push(`%${search}%`);
+      countQuery += ` 
+        LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+        LEFT JOIN property_units pu ON ta.unit_id = pu.id
+        LEFT JOIN properties p ON pu.property_id = p.id
+        INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+        WHERE apa.agent_id = $1 
+        AND apa.is_active = true
+      `;
+      queryParams.push(req.user.id);
+      countParams.push(req.user.id);
+
+      if (search) {
+        const searchCondition = ` AND (t.first_name ILIKE $${queryParams.length + 1} OR t.last_name ILIKE $${queryParams.length + 1} OR t.phone_number ILIKE $${queryParams.length + 1} OR t.national_id ILIKE $${queryParams.length + 1})`;
+        query += searchCondition;
+        countQuery += ` AND (t.first_name ILIKE $2 OR t.last_name ILIKE $2 OR t.phone_number ILIKE $2 OR t.national_id ILIKE $2)`;
+        queryParams.push(`%${search}%`);
+        countParams.push(`%${search}%`);
+      }
+    } else {
+      // Admin sees all tenants (original logic)
+      if (search) {
+        const searchCondition = ` WHERE (t.first_name ILIKE $${queryParams.length + 1} OR t.last_name ILIKE $${queryParams.length + 1} OR t.phone_number ILIKE $${queryParams.length + 1} OR t.national_id ILIKE $${queryParams.length + 1})`;
+        query += searchCondition;
+        countQuery += searchCondition;
+        queryParams.push(`%${search}%`);
+        countParams.push(`%${search}%`);
+      }
     }
 
     query += ` ORDER BY t.created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
@@ -69,12 +95,12 @@ const getTenants = async (req, res) => {
   }
 };
 
-// Get tenant by ID
+// Get tenant by ID with agent data isolation
 const getTenant = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const query = `
+    let query = `
       SELECT 
         t.*,
         ta.unit_id,
@@ -95,16 +121,31 @@ const getTenant = async (req, res) => {
       WHERE t.id = $1
     `;
 
-    const { rows } = await pool.query(query, [id]);
+    const queryParams = [id];
+
+    // Add agent property assignment filter only for agents
+    if (req.user.role === 'agent') {
+      query += ` 
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa 
+          WHERE apa.property_id = p.id 
+          AND apa.agent_id = $2 
+          AND apa.is_active = true
+        )
+      `;
+      queryParams.push(req.user.id);
+    }
+
+    const { rows } = await pool.query(query, queryParams);
 
     if (rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Tenant not found'
+        message: 'Tenant not found or not accessible'
       });
     }
 
-    // Get payment history
+    // Get payment history (only accessible if tenant is accessible)
     const paymentsQuery = `
       SELECT * FROM rent_payments 
       WHERE tenant_id = $1 
@@ -130,7 +171,7 @@ const getTenant = async (req, res) => {
   }
 };
 
-// Create new tenant
+// Create new tenant with agent property validation
 const createTenant = async (req, res) => {
   const client = await pool.connect();
   
@@ -214,16 +255,36 @@ const createTenant = async (req, res) => {
         });
       }
 
-      // Check if unit is available
-      const unitCheck = await client.query(
-        `SELECT id, is_occupied FROM property_units WHERE id = $1`,
-        [unit_id]
-      );
+      // Check if unit is available with agent property assignment validation
+      let unitCheckQuery = `
+        SELECT pu.id, pu.is_occupied, pu.property_id
+        FROM property_units pu
+        WHERE pu.id = $1
+      `;
+      
+      const unitCheckParams = [unit_id];
+
+      // If user is agent, check if they're assigned to this property
+      if (req.user.role === 'agent') {
+        unitCheckQuery += `
+          AND EXISTS (
+            SELECT 1 FROM agent_property_assignments apa 
+            WHERE apa.property_id = pu.property_id 
+            AND apa.agent_id = $2 
+            AND apa.is_active = true
+          )
+        `;
+        unitCheckParams.push(req.user.id);
+      }
+
+      const unitCheck = await client.query(unitCheckQuery, unitCheckParams);
 
       if (unitCheck.rows.length === 0) {
-        return res.status(404).json({
+        return res.status(req.user.role === 'agent' ? 403 : 404).json({
           success: false,
-          message: 'Unit not found'
+          message: req.user.role === 'agent' 
+            ? 'Unit not found or you are not assigned to this property' 
+            : 'Unit not found'
         });
       }
 
@@ -295,9 +356,13 @@ const createTenant = async (req, res) => {
   }
 };
 
-// Update tenant
+// Update tenant with agent property validation
 const updateTenant = async (req, res) => {
+  const client = await pool.connect();
+  
   try {
+    await client.query('BEGIN');
+
     const { id } = req.params;
     const {
       national_id,
@@ -310,22 +375,45 @@ const updateTenant = async (req, res) => {
       is_active
     } = req.body;
 
-    // Check if tenant exists
-    const tenantCheck = await pool.query(
-      'SELECT id FROM tenants WHERE id = $1',
-      [id]
-    );
+    // Check if tenant exists with agent property validation
+    let tenantCheckQuery = `
+      SELECT t.id, t.first_name, t.last_name, p.id as property_id
+      FROM tenants t
+      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE t.id = $1
+    `;
+    
+    const tenantCheckParams = [id];
+
+    // If user is agent, check if they're assigned to this tenant's property
+    if (req.user.role === 'agent') {
+      tenantCheckQuery += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa 
+          WHERE apa.property_id = p.id 
+          AND apa.agent_id = $2 
+          AND apa.is_active = true
+        )
+      `;
+      tenantCheckParams.push(req.user.id);
+    }
+
+    const tenantCheck = await client.query(tenantCheckQuery, tenantCheckParams);
 
     if (tenantCheck.rows.length === 0) {
-      return res.status(404).json({
+      return res.status(req.user.role === 'agent' ? 403 : 404).json({
         success: false,
-        message: 'Tenant not found'
+        message: req.user.role === 'agent' 
+          ? 'Tenant not found or you are not assigned to this property' 
+          : 'Tenant not found'
       });
     }
 
     // Check for duplicate national ID
     if (national_id) {
-      const existingNationalId = await pool.query(
+      const existingNationalId = await client.query(
         'SELECT id FROM tenants WHERE national_id = $1 AND id != $2',
         [national_id, id]
       );
@@ -340,7 +428,7 @@ const updateTenant = async (req, res) => {
 
     // Check for duplicate phone number
     if (phone_number) {
-      const existingPhone = await pool.query(
+      const existingPhone = await client.query(
         'SELECT id FROM tenants WHERE phone_number = $1 AND id != $2',
         [phone_number, id]
       );
@@ -353,7 +441,7 @@ const updateTenant = async (req, res) => {
       }
     }
 
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE tenants 
        SET national_id = COALESCE($1, national_id),
            first_name = COALESCE($2, first_name),
@@ -379,6 +467,8 @@ const updateTenant = async (req, res) => {
       ]
     );
 
+    await client.query('COMMIT');
+
     res.json({
       success: true,
       message: 'Tenant updated successfully',
@@ -386,6 +476,7 @@ const updateTenant = async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Update tenant error:', error);
     
     // Handle unique constraint violations
@@ -401,10 +492,12 @@ const updateTenant = async (req, res) => {
       message: 'Server error updating tenant',
       error: error.message
     });
+  } finally {
+    client.release();
   }
 };
 
-// Delete tenant
+// Delete tenant with agent property validation
 const deleteTenant = async (req, res) => {
   const client = await pool.connect();
   
@@ -413,16 +506,39 @@ const deleteTenant = async (req, res) => {
 
     const { id } = req.params;
 
-    // Check if tenant exists
-    const tenantCheck = await client.query(
-      'SELECT id, first_name, last_name FROM tenants WHERE id = $1',
-      [id]
-    );
+    // Check if tenant exists with agent property validation
+    let tenantCheckQuery = `
+      SELECT t.id, t.first_name, t.last_name, p.id as property_id
+      FROM tenants t
+      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE t.id = $1
+    `;
+    
+    const tenantCheckParams = [id];
+
+    // If user is agent, check if they're assigned to this tenant's property
+    if (req.user.role === 'agent') {
+      tenantCheckQuery += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa 
+          WHERE apa.property_id = p.id 
+          AND apa.agent_id = $2 
+          AND apa.is_active = true
+        )
+      `;
+      tenantCheckParams.push(req.user.id);
+    }
+
+    const tenantCheck = await client.query(tenantCheckQuery, tenantCheckParams);
 
     if (tenantCheck.rows.length === 0) {
-      return res.status(404).json({
+      return res.status(req.user.role === 'agent' ? 403 : 404).json({
         success: false,
-        message: 'Tenant not found'
+        message: req.user.role === 'agent' 
+          ? 'Tenant not found or you are not assigned to this property' 
+          : 'Tenant not found'
       });
     }
 
@@ -463,10 +579,10 @@ const deleteTenant = async (req, res) => {
   }
 };
 
-// Get available units for tenant allocation
+// Get available units for tenant allocation with agent property validation
 const getAvailableUnits = async (req, res) => {
   try {
-    const query = `
+    let query = `
       SELECT 
         pu.*,
         p.name as property_name,
@@ -475,10 +591,26 @@ const getAvailableUnits = async (req, res) => {
       FROM property_units pu
       LEFT JOIN properties p ON pu.property_id = p.id
       WHERE pu.is_occupied = false AND pu.is_active = true
-      ORDER BY p.name, pu.unit_number
     `;
 
-    const { rows } = await pool.query(query);
+    const queryParams = [];
+
+    // If user is agent, filter by their assigned properties
+    if (req.user.role === 'agent') {
+      query += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa 
+          WHERE apa.property_id = p.id 
+          AND apa.agent_id = $${queryParams.length + 1}
+          AND apa.is_active = true
+        )
+      `;
+      queryParams.push(req.user.id);
+    }
+
+    query += ` ORDER BY p.name, pu.unit_number`;
+
+    const { rows } = await pool.query(query, queryParams);
 
     res.json({
       success: true,
