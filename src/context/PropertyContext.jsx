@@ -17,12 +17,12 @@ export const PropertyProvider = ({ children }) => {
   const [selectedProperty, setSelectedProperty] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const { user: authUser } = useAuth()
+  const { user: authUser, token: authToken } = useAuth() // Added authToken
 
   // Check authentication status using AuthContext
   const isAuthenticated = useCallback(() => {
-    return !!authUser;
-  }, [authUser])
+    return !!authUser && !!authToken; // Added check for authToken
+  }, [authUser, authToken]) // Added authToken dependency
 
   // Clear error function
   const clearError = useCallback(() => setError(null), [])
@@ -61,64 +61,70 @@ export const PropertyProvider = ({ children }) => {
     setError(null)
     try {
       console.log('🔄 Fetching properties from API...')
+      console.log('👤 User role:', authUser?.role)
+      console.log('🔑 Token present:', !!authToken)
+      
+      // Note: The backend now automatically handles agent vs admin in the same endpoint
+      // So we don't need different endpoints anymore
       const response = await propertyAPI.getProperties()
+      
+      // Log response for debugging
+      console.log('📦 API Response:', response)
       
       // Handle different response formats
       const propertiesData = response.data?.data || response.data?.properties || response.data || []
       
       if (Array.isArray(propertiesData)) {
-        // Fetch units for each property to get accurate counts
-        console.log('🔄 Fetching units for each property...')
-        const propertiesWithUnits = await Promise.all(
-          propertiesData.map(async (property) => {
-            try {
-              // Fetch units for this specific property
-              const unitsResponse = await propertyAPI.getPropertyUnits(property.id)
-              const units = unitsResponse.data?.data || unitsResponse.data?.units || []
-              
-              console.log(`✅ Fetched ${units.length} units for property: ${property.name}`)
-              
-              // Calculate accurate stats based on actual units
-              const stats = calculatePropertyStats(property, units)
-              
-              return {
-                ...property,
-                units: Array.isArray(units) ? units : [],
-                total_units: stats.total_units,
-                available_units: stats.available_units,
-                occupied_units: stats.occupied_units,
-                occupancy_rate: stats.occupancy_rate
-              }
-            } catch (unitError) {
-              console.error(`❌ Error fetching units for property ${property.id}:`, unitError)
-              // Return property with empty units array if units fetch fails
-              return {
-                ...property,
-                units: [],
-                total_units: property.total_units || 0,
-                available_units: property.available_units || 0,
-                occupied_units: 0,
-                occupancy_rate: 0
-              }
-            }
-          })
-        )
+        console.log(`✅ Received ${propertiesData.length} properties from API`)
         
-        setProperties(propertiesWithUnits)
-        console.log(`✅ Successfully fetched ${propertiesWithUnits.length} properties with accurate unit counts`)
+        // IMPORTANT: We're NOT fetching units for each property individually anymore
+        // This was causing too many API calls and potential errors
+        // Instead, rely on the data returned by the API
+        
+        const processedProperties = propertiesData.map(property => {
+          // Use the counts provided by the API (they come from the query)
+          const total_units = property.unit_count || property.total_units || 0
+          const occupied_units = property.occupied_units || 0
+          const available_units = property.available_units_count || property.available_units || 0
+          const occupancy_rate = total_units > 0 ? (occupied_units / total_units) * 100 : 0
+          
+          return {
+            ...property,
+            units: [], // Empty array for now, will fetch units only when needed
+            total_units: parseInt(total_units),
+            available_units: parseInt(available_units),
+            occupied_units: parseInt(occupied_units),
+            occupancy_rate: Math.round(occupancy_rate * 100) / 100
+          }
+        })
+        
+        setProperties(processedProperties)
+        console.log(`✅ Successfully processed ${processedProperties.length} properties`)
       } else {
         console.warn('⚠️ Properties data is not an array:', propertiesData)
         setProperties([])
       }
     } catch (err) {
-      console.error('❌ Error fetching properties:', err)
-      const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch properties'
-      setError(errorMessage)
+      console.error('❌ Error fetching properties:', {
+        message: err.message,
+        status: err.response?.status,
+        data: err.response?.data,
+        config: err.config
+      })
+      
+      // Check if it's a 404 error
+      if (err.response?.status === 404) {
+        setError('Properties endpoint not found. Please check backend configuration.')
+      } else {
+        const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch properties'
+        setError(errorMessage)
+      }
+      
       setProperties([])
     } finally {
       setLoading(false)
     }
-  }, [isAuthenticated, properties.length, calculatePropertyStats])
+  }, [isAuthenticated, properties.length, authUser?.role, authToken]) // Added dependencies
 
   // Fetch units for a specific property - ONLY WHEN AUTHENTICATED
   const fetchPropertyUnits = useCallback(async (propertyId) => {
@@ -168,7 +174,15 @@ export const PropertyProvider = ({ children }) => {
       return units
     } catch (err) {
       console.error('❌ Error fetching property units:', err)
-      const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch property units'
+      
+      // If it's a 403 error, agent doesn't have access to this property
+      if (err.response?.status === 403) {
+        const errorMessage = 'You do not have access to this property. It may not be assigned to you.'
+        setError(errorMessage)
+        throw new Error(errorMessage)
+      }
+      
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch property units'
       setError(errorMessage)
       throw err
     }
@@ -213,8 +227,16 @@ export const PropertyProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('❌ Error fetching property:', err)
-      const errorMessage = err.message || err.response?.data?.message || 'Failed to fetch property details'
-      setError(errorMessage)
+      
+      // If it's a 403 error, agent doesn't have access to this property
+      if (err.response?.status === 403) {
+        const errorMessage = 'You do not have access to this property. It may not be assigned to you.'
+        setError(errorMessage)
+      } else {
+        const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch property details'
+        setError(errorMessage)
+      }
+      
       return null
     } finally {
       setLoading(false)
@@ -225,6 +247,11 @@ export const PropertyProvider = ({ children }) => {
   const addProperty = useCallback(async (propertyData) => {
     if (!isAuthenticated()) {
       throw new Error('User not authenticated')
+    }
+
+    // Only admin can add properties
+    if (authUser?.role !== 'admin') {
+      throw new Error('Only admin users can add properties')
     }
 
     setLoading(true)
@@ -258,7 +285,7 @@ export const PropertyProvider = ({ children }) => {
     } finally {
       setLoading(false)
     }
-  }, [isAuthenticated, calculatePropertyStats])
+  }, [isAuthenticated, authUser?.role, calculatePropertyStats])
 
   // Update property via API - ONLY WHEN AUTHENTICATED
   const updateProperty = useCallback(async (propertyId, updates) => {
@@ -586,7 +613,7 @@ export const PropertyProvider = ({ children }) => {
       setProperties([])
       setSelectedProperty(null)
     }
-  }, [authUser, isAuthenticated])
+  }, [authUser, authToken, isAuthenticated]) // Added authToken dependency
 
   const value = React.useMemo(() => ({
     // State
@@ -595,6 +622,7 @@ export const PropertyProvider = ({ children }) => {
     loading,
     error,
     isAuthenticated: isAuthenticated(),
+    authUser, // Expose authUser for role checking in components
     
     // Setters
     setSelectedProperty,
@@ -627,6 +655,7 @@ export const PropertyProvider = ({ children }) => {
     selectedProperty,
     loading,
     error,
+    authUser,
     isAuthenticated,
     fetchProperties,
     fetchProperty,
