@@ -115,56 +115,36 @@ export const SystemSettingsProvider = ({ children }) => {
   }, [settings]);
 
   // Get settings by category
-  const getSettingsByCategory = useCallback(() => {
-    // First, ensure settings is an array
-    if (!Array.isArray(settings)) return {};
+ // Get settings by category
+const getSettingsByCategory = useCallback(() => {
+  // First, ensure settings is an array
+  if (!Array.isArray(settings)) return {};
+  
+  const categories = {
+    // Billing & Payments (includes SMS for billing notifications)
+    billing: settings.filter(s => 
+      s.key === 'billing_day' || 
+      s.key === 'paybill_number' || 
+      s.key === 'company_name' ||
+      s.key === 'late_fee_percentage' ||
+      s.key === 'grace_period_days' ||
+      s.key === 'auto_billing_enabled' ||
+      s.key === 'sms_enabled' ||
+      s.key === 'sms_billing_template'
+    ),
     
-    const categories = {
-      // Billing settings
-      billing: settings.filter(s => 
-        s.key === 'billing_day' || 
-        s.key === 'paybill_number' || 
-        s.key === 'company_name' ||
-        s.key === 'late_fee_percentage' ||
-        s.key === 'grace_period_days' ||
-        s.key === 'auto_billing_enabled' ||
-        s.key === 'sms_billing_template'
-      ),
-      
-      // SMS settings
-      sms: settings.filter(s => 
-        s.key.includes('sms_') && 
-        s.key !== 'sms_billing_template'
-      ),
-      
-      // M-Pesa settings
-      mpesa: settings.filter(s => s.key.includes('mpesa_')),
-      
-      // Fees settings
-      fees: settings.filter(s => 
-        s.key === 'late_fee_percentage' || 
-        s.key === 'grace_period_days'
-      ),
-      
-      // General settings
-      general: settings.filter(s => 
-        !s.key.includes('sms_') && 
-        !s.key.includes('mpesa_') && 
-        s.key !== 'billing_day' && 
-        s.key !== 'paybill_number' &&
-        s.key !== 'company_name' && 
-        s.key !== 'late_fee_percentage' && 
-        s.key !== 'grace_period_days' &&
-        s.key !== 'auto_billing_enabled' &&
-        s.key !== 'sms_billing_template'
-      )
-    };
+    // M-Pesa Integration
+    mpesa: settings.filter(s => s.key.includes('mpesa_')),
     
-    // Merge fees into billing for display
-    categories.billing = [...categories.billing, ...categories.fees];
+    // Profile settings (empty - handled separately in component)
+    profile: [],
     
-    return categories;
-  }, [settings]);
+    // Appearance settings (empty - coming soon)
+    appearance: []
+  };
+  
+  return categories;
+}, [settings]);
 
   const value = React.useMemo(() => ({
     settings,

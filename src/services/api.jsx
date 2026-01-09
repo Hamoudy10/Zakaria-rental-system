@@ -655,6 +655,40 @@ export const notificationUtils = {
   }
 };
 
+// Tenant Management API
+export const tenantAPI = {
+  // Get all tenants with pagination
+  getTenants: (params = {}) => api.get('/tenants', { params }),
+  
+  // Get single tenant by ID
+  getTenant: (id) => api.get(`/tenants/${id}`),
+  
+  // Create new tenant
+  createTenant: (tenantData) => api.post('/tenants', tenantData),
+  
+  // Update tenant
+  updateTenant: (id, tenantData) => api.put(`/tenants/${id}`, tenantData),
+  
+  // Delete tenant
+  deleteTenant: (id) => api.delete(`/tenants/${id}`),
+  
+  // Get available units for tenant allocation
+  getAvailableUnits: () => api.get('/tenants/available-units'),
+  
+  // Upload ID images
+  uploadIDImages: (id, formData) => api.post(`/tenants/${id}/upload-id`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  
+  // Search tenants
+  searchTenants: (searchTerm) => api.get(`/tenants/search?q=${encodeURIComponent(searchTerm)}`),
+  
+  // Get tenant statistics
+  getTenantStats: () => api.get('/tenants/stats'),
+};
+
+// Then add to API object:
+
 // Chat API for unread messages and notifications
 // Chat API for unread messages and notifications
 export const chatAPI = {
@@ -771,6 +805,7 @@ export const API = {
   mockMpesa: mockMpesaAPI,
   paybill: paybillAPI, 
    billing: billingAPI, 
+   tenants: tenantAPI,
    chatAPI,// NEW: Added paybill API
 };
 

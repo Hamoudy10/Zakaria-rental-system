@@ -8,6 +8,7 @@ const ComplaintManagement = lazy(() => import('../components/ComplaintManagement
 const PaymentManagement = lazy(() => import('../components/PaymentManagement'));
 const NotificationManagement = lazy(() => import('../components/NotificationManagement'));
 const ProfilePage = lazy(() => import('../components/ProfilePage'));
+const TenantManagement = lazy(() => import('../components/TenantManagement'));
 
 // Loading component for Suspense fallback
 const TabLoadingSpinner = () => (
@@ -25,6 +26,7 @@ const AgentDashboard = () => {
   // Simplified tabs focusing on core agent functions
   const tabs = [
     { id: 'overview', name: 'Overview', shortName: 'Overview' },
+    { id: 'tenant-management', name: 'Tenant Management', shortName: 'Tenants' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
     { id: 'payments', name: 'Payment Tracking', shortName: 'Payments' },
     { id: 'water-bills', name: 'Water Bills', shortName: 'Water Bills' },
@@ -34,6 +36,12 @@ const AgentDashboard = () => {
 
   const renderContent = () => {
     switch (activeTab) {
+      case 'tenant-management':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <TenantManagement />
+          </Suspense>
+        );
       case 'complaints':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
