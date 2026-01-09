@@ -533,3 +533,125 @@ Optimization Checklist:
 - Frontend debouncing on filter changes
 - Backend rate limiting tuned for expected load
 - Caching layer for frequent requests
+==============================================================================
+CURRENT UPDATES
+===============================================================================
+
+## 🎯 NEW COMPONENT IMPLEMENTATION
+
+### TenantManagement Component (/src/components/TenantManagement.jsx)
+**Status**: ✅ Partially implemented
+**Features:**
+- Searchable, paginated tenant list
+- Modal-based create/edit forms
+- Unit allocation during tenant creation
+- ID image upload (front/back) - TODO
+- Emergency contact management
+
+**Dependencies:**
+- tenantAPI from services/api.jsx
+- PropertyContext for agent property filtering
+- AuthContext for user role detection
+
+**API Endpoints Used:**
+- GET    /api/tenants           - List tenants (search/pagination)
+- GET    /api/tenants/:id       - Get single tenant
+- POST   /api/tenants           - Create tenant + optional allocation
+- PUT    /api/tenants/:id       - Update tenant
+- DELETE /api/tenants/:id       - Delete tenant
+- GET    /api/tenants/available-units - Get units for allocation
+
+## 🔧 FRONTEND UPDATES NEEDED
+
+### PropertyContext.jsx Update:
+```javascript
+// In fetchProperties function:
+const endpoint = user?.role === 'agent' 
+  ? '/properties/agent/assigned' 
+  : '/properties';
+
+  =================================================================
+  UPDATE
+  ==================================================================
+  ## 🎯 NEW CORE MODULES IMPLEMENTED
+
+### 5. Water Bill Integration (/backend/controllers/waterBillController.js)
+Purpose: Enhanced water bill management with SMS integration
+Key Methods:
+- checkMissingWaterBills(): Identifies tenants without water bills for specific month
+- createWaterBill(): Creates water bills with tenant name resolution
+- listWaterBills(): Lists water bills with tenant and property information
+- Enhanced agent property filtering for all operations
+
+Water Bill SMS Integration:
+- Pre-flight checking: Warns agents about tenants missing water bills
+- Graceful handling: Tenants without water bills get KSh 0 in SMS
+- Flexible timing: SMS can be sent anytime, even with incomplete data
+- Agent warnings: Clear indication of which tenants lack water bills
+
+### 6. Water Bills Routes (/backend/routes/waterBills.js)
+New API Endpoints:
+- GET /api/water-bills/missing-tenants - Check which tenants lack water bills
+- POST /api/water-bills - Create water bill (existing)
+- GET /api/water-bills - List water bills (existing)
+- GET /api/water-bills/:id - Get specific water bill (existing)
+- DELETE /api/water-bills/:id - Delete water bill (existing)
+
+Security Implementation:
+- All endpoints protected by agentOrAdmin middleware
+- Agent property filtering via agent_property_assignments table
+- Proper error handling with meaningful messages
+
+## 🔄 UPDATED CONTROLLER PATTERNS
+Enhanced Controller Structure:
+- Added checkMissingWaterBills function with comprehensive tenant analysis
+- Improved error handling with specific error messages
+- Added tenant name resolution for free-text input
+- Enhanced agent property filtering for data isolation
+
+Example Enhanced Controller Pattern:
+const checkMissingWaterBills = async (req, res) => {
+  try {
+    const { month, propertyId } = req.query;
+    
+    // Validate required parameters
+    if (!month) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Month parameter required (YYYY-MM)' 
+      });
+    }
+
+    // Build dynamic query with agent filtering
+    let query = `SELECT tenant data with EXISTS check for water bills`;
+    const params = [targetDate];
+    
+    // Add agent property filtering for non-admin users
+    if (req.user.role !== 'admin') {
+      query += ` AND property filtering for agent assignments`;
+    }
+
+    // Execute query and format response
+    const result = await pool.query(query, params);
+    
+    res.json({
+      success: true,
+      data: {
+        month,
+        totalTenants: tenants.length,
+        tenantsWithWaterBills: tenantsWithBills.length,
+        tenantsWithoutWaterBills: tenantsWithoutBills.length,
+        tenantsWithoutBills: formatted_missing_list,
+        summary: percentage_statistics
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error checking missing water bills:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check missing water bills',
+      error: error.message
+    });
+  }
+};

@@ -180,7 +180,6 @@ const checkMissingWaterBills = async (req, res) => {
     });
   }
 };
-
 /**
  * List water bills for agent (scoped to properties they manage).
  * Query params: propertyId, tenantId, month (YYYY-MM), limit, offset

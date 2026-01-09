@@ -419,7 +419,38 @@ UPDATE 3.0
 ```sql
 WHERE apa.agent_id = $1 
   AND apa.is_active = true 
-  AND p.is_active = true  // ERROR: column doesn't exist
+  AND p.is_active = true  // ERROR: column doesnt exist
+=====================================================================================
+  UPDATE 4.0
+  ==================================================================================
+  ## 🚀 NEW FEATURES ADDED
+
+### Tenant Management for Agent Dashboard
+- **Component**: /src/components/TenantManagement.jsx
+- **Features**: CRUD operations, unit allocation, ID image upload, search & pagination
+- **Backend**: Updated routes/tenants.js to use tenantController.js with dedicated tenants table
+- **API**: Added tenantAPI in /src/services/api.jsx
+- **Database**: Uses dedicated tenants table with ID image support
+
+## 🔧 RESOLVED ISSUES
+1. Fixed 404 error on /api/properties/:id/units - Removed unnecessary property unit fetching
+2. Fixed React TypeError with proper error boundaries
+3. Unified backend to use tenantController.js (dedicated tenants table)
 ---
 Last Updated: $(date)
 Project Status: Backend deployed, Frontend in development
+====================================================================
+UPDATE 5.0
+======================================================================
+## 📋 FILES CREATED/UPDATED SO FAR
+Created Files:
+- Database Migration: /backend/migrations/001_add_arrears_and_billing_fields.sql
+- Billing Service: /backend/services/billingService.js
+- Enhanced SMS Service: Added to /backend/services/smsService.js
+- Water Bills Route: /backend/routes/waterBills.js
+
+Updated Files:
+- Backend Server: /backend/server.js (added water bills route registration)
+- Water Bill Controller: /backend/controllers/waterBillController.js (added checkMissingWaterBills function)
+- Agent Water Bills Component: /src/components/AgentWaterBills.jsx (enhanced with SMS functionality)
+- API Service: /src/services/api.jsx (added missing water bills endpoint)
