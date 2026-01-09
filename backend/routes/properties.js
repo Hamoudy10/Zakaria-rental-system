@@ -3,10 +3,41 @@ const router = express.Router();
 const pool = require('../config/database');
 const { authMiddleware } = require('../middleware/authMiddleware');
 
-// GET ALL PROPERTIES
+// Add this import at the top - IMPORTANT!
+const { protect, adminOnly, agentOnly } = require('../middleware/authMiddleware');
+
+// GET ALL PROPERTIES (For admins) OR AGENT ASSIGNED PROPERTIES
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    console.log('Fetching all properties...');
+    console.log('Fetching properties for user role:', req.user.role);
+    
+    // If user is agent, get only assigned properties
+    if (req.user.role === 'agent') {
+      const agentProperties = await pool.query(`
+        SELECT DISTINCT p.*, 
+               COUNT(pu.id) as unit_count,
+               COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+               COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+        FROM properties p
+        LEFT JOIN property_units pu ON p.id = pu.property_id
+        INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+        WHERE apa.agent_id = $1 
+          AND apa.is_active = true 
+          AND p.is_active = true
+        GROUP BY p.id
+        ORDER BY p.created_at DESC
+      `, [req.user.id]);
+      
+      console.log(`Found ${agentProperties.rows.length} assigned properties for agent ${req.user.id}`);
+      return res.json({ 
+        success: true, 
+        count: agentProperties.rows.length,
+        data: agentProperties.rows 
+      });
+    }
+    
+    // For admins, get all properties (original logic)
+    console.log('Fetching all properties for admin...');
     const result = await pool.query(`
       SELECT p.*, 
              COUNT(pu.id) as unit_count,
@@ -34,25 +65,87 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
+// GET AGENT ASSIGNED PROPERTIES (Explicit endpoint - alternative to above)
+router.get('/agent/assigned', authMiddleware, async (req, res) => {
+  try {
+    // Ensure user is an agent
+    if (req.user.role !== 'agent') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Only agents can access assigned properties.'
+      });
+    }
+    
+    const { search = '' } = req.query;
+    
+    const query = `
+      SELECT DISTINCT p.*, 
+             COUNT(pu.id) as unit_count,
+             COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+             COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+      FROM properties p
+      LEFT JOIN property_units pu ON p.id = pu.property_id
+      INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+      WHERE apa.agent_id = $1 
+        AND apa.is_active = true 
+        AND p.is_active = true
+      GROUP BY p.id
+      ORDER BY p.name
+    `;
+    
+    const result = await pool.query(query, [req.user.id]);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error fetching agent properties:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching agent properties',
+      error: error.message
+    });
+  }
+});
+
 // GET SINGLE PROPERTY WITH UNITS
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get property details
-    const propertyResult = await pool.query(`
+    // Build base query
+    let query = `
       SELECT p.*, 
              u.first_name as created_by_name,
              u.email as created_by_email
       FROM properties p
       LEFT JOIN users u ON p.created_by = u.id
       WHERE p.id = $1
-    `, [id]);
+    `;
+    
+    const params = [id];
+    
+    // If user is agent, check if they're assigned to this property
+    if (req.user.role === 'agent') {
+      query += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa 
+          WHERE apa.property_id = p.id 
+          AND apa.agent_id = $2 
+          AND apa.is_active = true
+        )
+      `;
+      params.push(req.user.id);
+    }
+    
+    const propertyResult = await pool.query(query, params);
     
     if (propertyResult.rows.length === 0) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Property not found' 
+        message: 'Property not found or not accessible' 
       });
     }
 
@@ -89,7 +182,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
 });
 
 // CREATE NEW PROPERTY (POST) - UPDATED WITH UNIT_TYPE
-router.post('/', authMiddleware, async (req, res) => {
+router.post('/', authMiddleware, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -201,7 +294,7 @@ router.post('/', authMiddleware, async (req, res) => {
 });
 
 // UPDATE PROPERTY (PUT) - UPDATED WITH UNIT_TYPE
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const { 
@@ -296,7 +389,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
 });
 
 // DELETE PROPERTY (DELETE)
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -392,7 +485,8 @@ router.get('/:id/stats', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const statsResult = await pool.query(`
+    // Build base query
+    let query = `
       SELECT 
         p.total_units,
         p.available_units,
@@ -405,13 +499,31 @@ router.get('/:id/stats', authMiddleware, async (req, res) => {
       LEFT JOIN property_units pu ON p.id = pu.property_id
       LEFT JOIN rent_payments rp ON pu.id = rp.unit_id
       WHERE p.id = $1
-      GROUP BY p.id, p.total_units, p.available_units
-    `, [id]);
+    `;
+    
+    const params = [id];
+    
+    // If user is agent, check if they're assigned to this property
+    if (req.user.role === 'agent') {
+      query += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa 
+          WHERE apa.property_id = p.id 
+          AND apa.agent_id = $2 
+          AND apa.is_active = true
+        )
+      `;
+      params.push(req.user.id);
+    }
+    
+    query += ` GROUP BY p.id, p.total_units, p.available_units`;
+    
+    const statsResult = await pool.query(query, params);
 
     if (statsResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Property not found'
+        message: 'Property not found or not accessible'
       });
     }
 
@@ -429,18 +541,44 @@ router.get('/:id/stats', authMiddleware, async (req, res) => {
   }
 });
 
-router.get('/agent/assigned', protect, agentOnly, getAgentProperties);
-
-// In your property routes file (backend/routes/propertyRoutes.js or similar)
-router.get('/:id/units', protect, async (req, res) => {
+// GET PROPERTY UNITS
+router.get('/:id/units', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const result = await pool.query(`
+    // Build base query
+    let query = `
       SELECT * FROM property_units 
       WHERE property_id = $1 AND is_active = true
-      ORDER BY unit_number
-    `, [id]);
+    `;
+    
+    const params = [id];
+    
+    // If user is agent, check if they're assigned to this property
+    if (req.user.role === 'agent') {
+      query += `
+        AND EXISTS (
+          SELECT 1 FROM properties p
+          INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+          WHERE p.id = $1
+          AND apa.agent_id = $2
+          AND apa.is_active = true
+        )
+      `;
+      params.push(req.user.id);
+    }
+    
+    query += ` ORDER BY unit_number`;
+    
+    const result = await pool.query(query, params);
+    
+    // If no rows and user is agent, they might not have access
+    if (result.rows.length === 0 && req.user.role === 'agent') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied or property not found'
+      });
+    }
     
     res.json({
       success: true,
