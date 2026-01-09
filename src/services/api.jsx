@@ -21,7 +21,7 @@ api.interceptors.request.use(
       tokenExists: !!token,
       tokenPreview: token ? `${token.substring(0, 20)}...` : 'none'
     });
-    if (token) {a
+    if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
