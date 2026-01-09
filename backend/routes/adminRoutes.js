@@ -33,6 +33,12 @@ try {
 try {
   adminSettingsController = require('../controllers/adminSettingsController');
   console.log('✅ Admin settings controller loaded successfully');
+
+   // ADD THESE LINES:
+  console.log('Controller object:', adminSettingsController);
+  console.log('Type of getAllSettings:', typeof adminSettingsController.getAllSettings);
+  console.log('All keys in controller:', Object.keys(adminSettingsController));
+
 } catch (err) {
   console.error('❌ Failed to load adminSettingsController:', err.message);
   // This is critical - we need this controller for billing settings
