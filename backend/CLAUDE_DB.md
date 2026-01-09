@@ -403,3 +403,44 @@ Future Considerations:
 Supabase PostgreSQL Database
 Auto-backups configured via Supabase
 Migration files in /backend/migrations/
+
+========================================================
+UPDATE
+==========================================================
+## 🗄️ DATABASE INTEGRATION UPDATES
+
+### Water Bill Integration Tables:
+tables referenced:
+- water_bills: Main water bill storage with tenant/property relationships
+- tenants: Tenant information for name resolution
+- property_units: Unit information for billing context
+- properties: Property information for grouping
+- agent_property_assignments: Agent data isolation
+- tenant_allocations: Active tenant verification
+
+### Key Queries Implemented:
+1. Missing Water Bills Check:
+```sql
+SELECT 
+  ta.tenant_id,
+  t.first_name,
+  t.last_name,
+  t.phone_number,
+  pu.unit_code,
+  p.name as property_name,
+  EXISTS(
+    SELECT 1 FROM water_bills wb 
+    WHERE wb.tenant_id = ta.tenant_id 
+    AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
+  ) as has_water_bill
+FROM tenant_allocations ta
+JOIN tenants t ON ta.tenant_id = t.id
+JOIN property_units pu ON ta.unit_id = pu.id
+JOIN properties p ON pu.property_id = p.id
+WHERE ta.is_active = true
+
+Agent Property Filtering:
+AND p.id IN (
+  SELECT property_id FROM agent_property_assignments 
+  WHERE agent_id = $2 AND is_active = true
+)
