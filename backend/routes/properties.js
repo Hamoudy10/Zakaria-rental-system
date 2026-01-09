@@ -14,19 +14,18 @@ router.get('/', authMiddleware, async (req, res) => {
     // If user is agent, get only assigned properties
     if (req.user.role === 'agent') {
       const agentProperties = await pool.query(`
-        SELECT DISTINCT p.*, 
-               COUNT(pu.id) as unit_count,
-               COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-               COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
-        FROM properties p
-        LEFT JOIN property_units pu ON p.id = pu.property_id
-        INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
-        WHERE apa.agent_id = $1 
-          AND apa.is_active = true 
-          AND p.is_active = true
-        GROUP BY p.id
-        ORDER BY p.created_at DESC
-      `, [req.user.id]);
+         SELECT DISTINCT p.*, 
+         COUNT(pu.id) as unit_count,
+         COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+         COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+          FROM properties p
+          LEFT JOIN property_units pu ON p.id = pu.property_id
+          INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+          WHERE apa.agent_id = $1 
+          AND apa.is_active = true
+          GROUP BY p.id
+          ORDER BY p.created_at DESC
+        `, [req.user.id]);
       
       console.log(`Found ${agentProperties.rows.length} assigned properties for agent ${req.user.id}`);
       return res.json({ 
@@ -79,19 +78,18 @@ router.get('/agent/assigned', authMiddleware, async (req, res) => {
     const { search = '' } = req.query;
     
     const query = `
-      SELECT DISTINCT p.*, 
-             COUNT(pu.id) as unit_count,
-             COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-             COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
-      FROM properties p
-      LEFT JOIN property_units pu ON p.id = pu.property_id
-      INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
-      WHERE apa.agent_id = $1 
-        AND apa.is_active = true 
-        AND p.is_active = true
-      GROUP BY p.id
-      ORDER BY p.name
-    `;
+     SELECT DISTINCT p.*, 
+         COUNT(pu.id) as unit_count,
+         COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+         COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+          FROM properties p
+          LEFT JOIN property_units pu ON p.id = pu.property_id
+          INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+          WHERE apa.agent_id = $1 
+          AND apa.is_active = true
+          GROUP BY p.id
+          ORDER BY p.name
+        `;
     
     const result = await pool.query(query, [req.user.id]);
     
