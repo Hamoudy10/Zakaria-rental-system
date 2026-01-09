@@ -1,5 +1,6 @@
 // src/pages/AdminDashboard.jsx
 import React, { useState, useEffect, Suspense, lazy } from 'react'
+import api from '../services/api'; // Add this import
 
 // Lazy load admin components
 const UserManagement = lazy(() => import('../components/UserManagement'))
@@ -30,30 +31,25 @@ const AdminDashboard = () => {
   // Fetch dashboard data
   // --------------------
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Admin stats
-       const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+  const fetchData = async () => {
+    try {
+      // Use axios instance instead of fetch - it has auth token interceptor
+      const statsRes = await api.get('/admin/dashboard/stats');
+      setAdminStats(statsRes.data.data);
 
-        const statsRes = await fetch(`${API_BASE}/api/admin/dashboard/stats`);
-        const statsJson = await statsRes.json();
-        setAdminStats(statsJson.data);
+      const activitiesRes = await api.get('/admin/dashboard/recent-activities');
+      setRecentActivities(activitiesRes.data.data);
 
-        const activitiesRes = await fetch(`${API_BASE}/api/admin/dashboard/recent-activities`);
-        const activitiesJson = await activitiesRes.json();
-        setRecentActivities(activitiesJson.data);
+      const topPropsRes = await api.get('/admin/dashboard/top-properties');
+      setTopProperties(topPropsRes.data.data);
 
-        const topPropsRes = await fetch(`${API_BASE}/api/admin/dashboard/top-properties`);
-        const topPropsJson = await topPropsRes.json();
-        setTopProperties(topPropsJson.data);
-
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error)
-      }
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
     }
+  };
 
-    fetchData()
-  }, [])
+  fetchData();
+}, []);
 
   const tabs = [
     { id: 'overview', name: 'Overview', shortName: 'Overview' },

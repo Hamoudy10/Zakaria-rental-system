@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSystemSettings } from '../context/SystemSettingsContext';
+import { useAuth } from '../context/AuthContext';
+import { API } from '../services/api';
 
 const SystemSettings = () => {
   const {
@@ -13,16 +15,43 @@ const SystemSettings = () => {
     clearError
   } = useSystemSettings();
 
-  const [activeTab, setActiveTab] = useState('billing'); // Default to billing tab
+  const { user } = useAuth();
+
+  const [activeTab, setActiveTab] = useState('billing');
   const [settingsUpdates, setSettingsUpdates] = useState({});
   const [saveStatus, setSaveStatus] = useState('');
 
+  // Profile form state
+  const [profileData, setProfileData] = useState({
+    first_name: '',
+    last_name: '',
+    email: '',
+    phone_number: ''
+  });
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [profileSaveStatus, setProfileSaveStatus] = useState('');
+
   const safeSettings = Array.isArray(settings) ? settings : [];
 
-  /* ---------------- Load settings ---------------- */
+  /* ---------------- Load settings and profile ---------------- */
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
+
+  useEffect(() => {
+    if (user) {
+      setProfileData({
+        first_name: user.first_name || '',
+        last_name: user.last_name || '',
+        email: user.email || '',
+        phone_number: user.phone_number || ''
+      });
+    }
+  }, [user]);
 
   /* ---------------- Dirty state ---------------- */
   const isDirty = useMemo(
@@ -30,12 +59,11 @@ const SystemSettings = () => {
     [settingsUpdates]
   );
 
-  /* ---------------- Handlers ---------------- */
+  /* ---------------- Settings Handlers ---------------- */
   const handleSettingChange = (key, value) => {
     const original = safeSettings.find(s => s.key === key)?.value;
 
     setSettingsUpdates(prev => {
-      // If value matches original, remove from updates
       if (value === original) {
         const { [key]: _, ...rest } = prev;
         return rest;
@@ -76,34 +104,79 @@ const SystemSettings = () => {
     setSettingsUpdates({});
   };
 
+  /* ---------------- Profile Handlers ---------------- */
+  const handleProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handlePasswordChange = (e) => {
+    const { name, value } = e.target;
+    setPasswordData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSaveProfile = async () => {
+    setProfileSaveStatus('saving');
+
+    try {
+      await API.users.updateProfile({
+        first_name: profileData.first_name,
+        last_name: profileData.last_name,
+        email: profileData.email,
+        phone_number: profileData.phone_number
+      });
+
+      setProfileSaveStatus('saved');
+      setTimeout(() => setProfileSaveStatus(''), 2500);
+    } catch (err) {
+      console.error('Profile update error:', err);
+      setProfileSaveStatus('error');
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      alert('New passwords do not match!');
+      return;
+    }
+
+    if (passwordData.newPassword.length < 6) {
+      alert('Password must be at least 6 characters!');
+      return;
+    }
+
+    setProfileSaveStatus('saving');
+
+    try {
+      await API.users.changePassword({
+        currentPassword: passwordData.currentPassword,
+        newPassword: passwordData.newPassword
+      });
+
+      setPasswordData({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+      });
+
+      setProfileSaveStatus('saved');
+      setTimeout(() => setProfileSaveStatus(''), 2500);
+    } catch (err) {
+      console.error('Password change error:', err);
+      setProfileSaveStatus('error');
+      alert(err.response?.data?.message || 'Failed to change password');
+    }
+  };
+
   const settingsByCategory = getSettingsByCategory();
 
   /* ---------------- Field renderer ---------------- */
   const renderSettingField = (setting) => {
-    const currentValue =
-      settingsUpdates[setting.key] ?? setting.value;
+    const currentValue = settingsUpdates[setting.key] ?? setting.value;
 
     switch (setting.key) {
-      // Color settings
-      case 'primary_color':
-      case 'secondary_color':
-        return (
-          <div className="flex items-center gap-3">
-            <input
-              type="color"
-              value={currentValue || '#3B82F6'}
-              onChange={(e) =>
-                handleSettingChange(setting.key, e.target.value)
-              }
-              className="w-12 h-12 border rounded cursor-pointer"
-            />
-            <span className="text-sm text-gray-600">{currentValue || '#3B82F6'}</span>
-          </div>
-        );
-
       // Boolean settings
       case 'sms_enabled':
-      case 'auto_confirm_payments':
       case 'auto_billing_enabled':
         return (
           <label className="inline-flex items-center gap-3">
@@ -111,10 +184,7 @@ const SystemSettings = () => {
               type="checkbox"
               checked={currentValue === true || currentValue === 'true'}
               onChange={(e) =>
-                handleSettingChange(
-                  setting.key,
-                  e.target.checked.toString()
-                )
+                handleSettingChange(setting.key, e.target.checked.toString())
               }
               className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
             />
@@ -124,7 +194,7 @@ const SystemSettings = () => {
           </label>
         );
 
-      // Number settings with validation
+      // Billing day dropdown
       case 'billing_day':
         return (
           <div className="space-y-2">
@@ -143,6 +213,7 @@ const SystemSettings = () => {
           </div>
         );
 
+      // Late fee percentage
       case 'late_fee_percentage':
         return (
           <div className="space-y-2">
@@ -164,6 +235,7 @@ const SystemSettings = () => {
           </div>
         );
 
+      // Grace period days
       case 'grace_period_days':
         return (
           <div className="space-y-2">
@@ -181,7 +253,7 @@ const SystemSettings = () => {
           </div>
         );
 
-      // Paybill number with validation
+      // Paybill numbers
       case 'paybill_number':
       case 'mpesa_paybill_number':
         return (
@@ -190,7 +262,6 @@ const SystemSettings = () => {
               type="text"
               value={currentValue || ''}
               onChange={(e) => {
-                // Only allow digits
                 const value = e.target.value.replace(/\D/g, '');
                 if (value.length <= 10) {
                   handleSettingChange(setting.key, value);
@@ -202,12 +273,12 @@ const SystemSettings = () => {
             <p className="text-xs text-gray-500">
               {setting.key === 'paybill_number' 
                 ? 'Business paybill number (5-10 digits)' 
-                : 'M-Pesa paybill number'}
+                : 'M-Pesa paybill number (5-10 digits)'}
             </p>
           </div>
         );
 
-      // Textarea for SMS template
+      // SMS template
       case 'sms_billing_template':
         return (
           <div className="space-y-2">
@@ -235,7 +306,7 @@ const SystemSettings = () => {
           </div>
         );
 
-      // M-Pesa secret fields (masked)
+      // M-Pesa secret fields
       case 'mpesa_passkey':
       case 'mpesa_consumer_secret':
         return (
@@ -284,6 +355,184 @@ const SystemSettings = () => {
     }
   };
 
+  /* ---------------- Render Tab Content ---------------- */
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'billing':
+      case 'mpesa':
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {settingsByCategory[activeTab]?.length > 0 ? (
+              settingsByCategory[activeTab].map(setting => (
+                <div 
+                  key={setting.key} 
+                  className="space-y-2 p-4 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  <label className="block text-sm font-medium text-gray-900">
+                    {setting.description || setting.key.replace(/_/g, ' ')}
+                  </label>
+                  {renderSettingField(setting)}
+                  {setting.updated_at && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Last updated: {new Date(setting.updated_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="col-span-2 text-center py-12">
+                <p className="text-gray-500">No settings found for this category.</p>
+              </div>
+            )}
+          </div>
+        );
+
+      case 'profile':
+        return (
+          <div className="max-w-2xl space-y-8">
+            {/* Profile Information */}
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900">Profile Information</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    First Name
+                  </label>
+                  <input
+                    type="text"
+                    name="first_name"
+                    value={profileData.first_name}
+                    onChange={handleProfileChange}
+                    className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Last Name
+                  </label>
+                  <input
+                    type="text"
+                    name="last_name"
+                    value={profileData.last_name}
+                    onChange={handleProfileChange}
+                    className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={profileData.email}
+                    onChange={handleProfileChange}
+                    className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Phone Number
+                  </label>
+                  <input
+                    type="tel"
+                    name="phone_number"
+                    value={profileData.phone_number}
+                    onChange={handleProfileChange}
+                    className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleSaveProfile}
+                disabled={profileSaveStatus === 'saving'}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors"
+              >
+                {profileSaveStatus === 'saving' ? 'Saving...' : 'Save Profile'}
+              </button>
+            </div>
+
+            {/* Change Password */}
+            <div className="space-y-6 pt-6 border-t">
+              <h3 className="text-lg font-semibold text-gray-900">Change Password</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Current Password
+                  </label>
+                  <input
+                    type="password"
+                    name="currentPassword"
+                    value={passwordData.currentPassword}
+                    onChange={handlePasswordChange}
+                    className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    New Password
+                  </label>
+                  <input
+                    type="password"
+                    name="newPassword"
+                    value={passwordData.newPassword}
+                    onChange={handlePasswordChange}
+                    className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    name="confirmPassword"
+                    value={passwordData.confirmPassword}
+                    onChange={handlePasswordChange}
+                    className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleChangePassword}
+                disabled={profileSaveStatus === 'saving' || !passwordData.currentPassword || !passwordData.newPassword}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors"
+              >
+                {profileSaveStatus === 'saving' ? 'Changing...' : 'Change Password'}
+              </button>
+            </div>
+          </div>
+        );
+
+      case 'appearance':
+        return (
+          <div className="text-center py-16">
+            <div className="inline-block p-8 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border-2 border-dashed border-blue-300">
+              <div className="text-6xl mb-4">🎨</div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">Appearance Settings</h3>
+              <p className="text-gray-600 mb-4">Coming Soon</p>
+              <p className="text-sm text-gray-500 max-w-md mx-auto">
+                Customize your system's look and feel with themes, colors, and branding options.
+                This feature is currently under development.
+              </p>
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -292,22 +541,24 @@ const SystemSettings = () => {
     );
   }
 
-  /* ---------------- UI ---------------- */
+  /* ---------------- Main UI ---------------- */
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">System Settings</h2>
-          <p className="text-gray-600">Manage application configuration and billing system</p>
+          <p className="text-gray-600">Manage application configuration and preferences</p>
         </div>
 
-        <button
-          onClick={handleResetDefaults}
-          className="px-4 py-2 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
-        >
-          Reset to defaults
-        </button>
+        {activeTab !== 'profile' && activeTab !== 'appearance' && (
+          <button
+            onClick={handleResetDefaults}
+            className="px-4 py-2 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
+          >
+            Reset to defaults
+          </button>
+        )}
       </div>
 
       {error && (
@@ -328,52 +579,34 @@ const SystemSettings = () => {
       <div className="bg-white rounded-lg shadow-sm border border-gray-200">
         <div className="border-b px-6">
           <div className="flex gap-6 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300">
-            {['billing', 'sms', 'mpesa', 'appearance', 'general'].map(tab => (
+            {[
+              { id: 'billing', name: 'Billing & Payments' },
+              { id: 'mpesa', name: 'M-Pesa Integration' },
+              { id: 'profile', name: 'Admin Profile' },
+              { id: 'appearance', name: 'Appearance' }
+            ].map(tab => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
                 className={`py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
-                  activeTab === tab
+                  activeTab === tab.id
                     ? 'border-blue-600 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab.name}
               </button>
             ))}
           </div>
         </div>
 
         <div className="p-6">
-          {settingsByCategory[activeTab]?.length > 0 ? (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {settingsByCategory[activeTab].map(setting => (
-                <div 
-                  key={setting.key} 
-                  className="space-y-2 p-4 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <label className="block text-sm font-medium text-gray-900">
-                    {setting.description || setting.key.replace(/_/g, ' ')}
-                  </label>
-                  {renderSettingField(setting)}
-                  {setting.updated_at && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      Last updated: {new Date(setting.updated_at).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <p className="text-gray-500">No settings found for this category.</p>
-            </div>
-          )}
+          {renderTabContent()}
         </div>
       </div>
 
-      {/* Sticky save bar */}
-      {isDirty && (
+      {/* Sticky save bar for settings tabs only */}
+      {isDirty && (activeTab === 'billing' || activeTab === 'mpesa') && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg px-6 py-4 flex flex-col sm:flex-row justify-between items-center gap-4 z-50">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-yellow-500 rounded-full animate-pulse"></div>
@@ -403,15 +636,29 @@ const SystemSettings = () => {
         </div>
       )}
 
+      {/* Success notifications */}
       {saveStatus === 'saved' && (
         <div className="fixed bottom-4 right-4 bg-green-100 border border-green-300 text-green-700 px-4 py-2 rounded-lg shadow-lg animate-fade-in-out">
           ✓ Settings saved successfully
         </div>
       )}
 
+      {profileSaveStatus === 'saved' && (
+        <div className="fixed bottom-4 right-4 bg-green-100 border border-green-300 text-green-700 px-4 py-2 rounded-lg shadow-lg animate-fade-in-out">
+          ✓ Profile updated successfully
+        </div>
+      )}
+
+      {/* Error notifications */}
       {saveStatus === 'error' && (
         <div className="fixed bottom-4 right-4 bg-red-100 border border-red-300 text-red-700 px-4 py-2 rounded-lg shadow-lg">
           ✗ Failed to save settings
+        </div>
+      )}
+
+      {profileSaveStatus === 'error' && (
+        <div className="fixed bottom-4 right-4 bg-red-100 border border-red-300 text-red-700 px-4 py-2 rounded-lg shadow-lg">
+          ✗ Failed to update profile
         </div>
       )}
     </div>
