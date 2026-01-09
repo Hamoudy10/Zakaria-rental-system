@@ -395,3 +395,24 @@ GET /api/payments/breakdown/{paymentId}
 
 Frontend runs on localhost:5173 during development
 Build with: npm run build
+=================================================================================
+UPDATE
+==================================================================================
+## 📦 NEW COMPONENT: TenantManagement
+**Location**: src/components/TenantManagement.jsx
+**Purpose**: Agent-facing tenant management with full CRUD, allocation, and ID verification
+**Key Features**:
+- Create/Edit tenants with unit allocation
+- Upload ID images (front/back)
+- Search tenants by name, phone, national ID
+- Paginated listing with status indicators
+- Emergency contact management
+
+**API Integration**:
+- Uses tenantAPI from services/api.jsx
+- File upload via fileAPI for ID images
+- Handles both tenant creation and unit allocation in single form
+
+## 🔄 UPDATED FILES
+1. api.jsx - Added tenantAPI with all CRUD endpoints
+2. AgentDashboard.jsx - Added new "Tenant Management" tab

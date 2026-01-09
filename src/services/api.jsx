@@ -21,7 +21,7 @@ api.interceptors.request.use(
       tokenExists: !!token,
       tokenPreview: token ? `${token.substring(0, 20)}...` : 'none'
     });
-    if (token) {
+    if (token) {a
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
@@ -676,6 +676,14 @@ export const tenantAPI = {
   
   // Delete tenant
   deleteTenant: (id) => api.delete(`/tenants/${id}`),
+
+    checkMissingWaterBills: (month, propertyId = null) => {
+    const params = new URLSearchParams();
+    params.append('month', month);
+    if (propertyId) params.append('propertyId', propertyId);
+    
+    return api.get(`/water-bills/missing-tenants?${params.toString()}`);
+  },
   
   // Get available units for tenant allocation
   getAvailableUnits: () => api.get('/tenants/available-units'),

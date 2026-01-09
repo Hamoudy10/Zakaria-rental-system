@@ -1,0 +1,88 @@
+🎯 Implementation Plan for Agent Dashboard:
+Phase 1: Create Tenant Management Interface
+New component: TenantManagement.jsx
+
+Features:
+
+List tenants with search/filter
+
+Add tenant form with validation
+
+Edit tenant details
+
+Deactivate tenants (soft delete)
+
+API endpoints needed: /api/tenants/*
+
+Phase 2: Enhanced SMS Management
+Extend existing SendNotifications.jsx or create SMSManagement.jsx
+
+Features:
+
+View failed SMS queue
+
+Retry individual/bulk SMS
+
+Manual trigger for billing SMS
+
+Send custom notifications
+
+API endpoints: /api/cron/failed-sms, /api/cron/retry-sms/*, /api/cron/trigger-billing
+
+Phase 3: Water Bill SMS Integration
+Update AgentWaterBills.jsx
+
+Features:
+
+Add "Send SMS" button after saving water bills
+
+Option to trigger billing SMS for all tenants
+
+Preview SMS before sending
+
+🔧 Recommended Implementation Order:
+Week 1: Tenant Management
+
+Create CRUD interface for tenants
+
+Add to AgentDashboard tabs
+
+Week 2: SMS Management
+
+Create SMS queue viewer
+
+Add retry functionality
+
+Add manual billing trigger
+
+Week 3: Water Bill Integration
+
+Add SMS trigger to water bills
+
+Test complete workflow
+
+📊 Database Updates Needed:
+Based on the conversation, the database already has:
+
+✅ sms_queue table for failed SMS
+
+✅ billing_runs table for audit logs
+
+✅ tenants table with all required fields
+
+✅ water_bills table for water bill tracking
+
+🚀 Immediate Next Steps:
+Let me know which part you want to implement first. I recommend starting with Tenant Management since it's a standalone feature that doesn't depend on other components.
+
+Would you like me to:
+
+Create the TenantManagement.jsx component with CRUD operations?
+
+Create the SMSManagement.jsx component for manual SMS handling?
+
+Update AgentWaterBills.jsx to add SMS trigger?
+
+Recommendation: Start with Tenant Management as it's foundational and will be used by other features.
+
+Shall I proceed with creating the Tenant Management component first?

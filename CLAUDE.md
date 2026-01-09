@@ -163,6 +163,58 @@ Important: Backend implementation for payment controller, cron services, and new
 
 Check other CLAUDE.md files for clarification on specific requirements.
 
+CURRENT ISSUES AND RESOLUTIONS SECTION:
+===================================================================================
+Issues Fixed:
+Fixed Route Loading Error: Resolved Route.get() requires a callback function but got [object Undefined] error in adminRoutes.js
+
+Fixed Authentication Issues:
+
+Added adminOnly alias in auth middleware
+
+Fixed axios token interceptor in api.jsx
+
+Updated AdminDashboard.jsx to use configured axios instance instead of fetch()
+
+Fixed SystemSettings UI/UX:
+
+Consolidated 5 tabs to 4 logical tabs
+
+Eliminated duplicate settings display
+
+Added Admin Profile management
+
+Added placeholder Appearance tab
+
+Changes Made:
+Updated SystemSettingsContext.jsx:
+
+Fixed getSettingsByCategory() to properly categorize settings
+
+Removed duplicate entries
+
+Grouped settings logically
+
+Updated SystemSettings.jsx:
+
+Changed from 5 tabs to 4: Billing & Payments, M-Pesa Integration, Admin Profile, Appearance
+
+Added profile editing functionality
+
+Fixed field duplication issues
+
+Updated api.jsx:
+
+Added proper axios request interceptor to attach tokens from localStorage
+
+Fixed token handling for dashboard API calls
+
+Updated AdminDashboard.jsx:
+
+Switched from fetch() to configured api instance for API calls
+
+Fixed authentication token attachment issue
+
 =============================================================================
 UPDATES.1.0
 ✅ MILESTONE 1 COMPLETED: Billing Settings Integration
@@ -269,6 +321,105 @@ M-Pesa Configuration: Configure paybill and API credentials
 
 Status: ✅ MILESTONE 1 COMPLETED - Admin can now configure billing settings via UI
 Next: Ready to proceed with MILESTONE 2: Agent Billing Management interface
+
+=======================================================================================
+UPDATE.2.0
+=======================================================================================
+# UPDATES TO CLAUDE.MD - TENANT MANAGEMENT & AGENT DATA ISOLATION
+
+## 🔄 BACKEND UPDATES - tenantController.js
+
+### IMPLEMENTED AGENT DATA ISOLATION
+All tenant management operations now respect agent property assignments:
+
+**Data Access Rules:**
+- Agents can ONLY see/manage tenants from properties they're assigned to
+- Agents can see ALL tenants in their assigned properties (even if created by others)
+- Agents can create tenants in their assigned properties only
+- Agents can update/delete ANY tenant in their assigned properties
+- Admin users maintain full system access (no changes to admin functionality)
+
+**Updated Functions:**
+
+1. `getTenants()`
+   - **Agent**: Filters by `agent_property_assignments` table join
+   - **Admin**: No change - sees all tenants
+   - **Query Logic**: 
+     ```sql
+     -- For agents only:
+     INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+     WHERE apa.agent_id = $1 AND apa.is_active = true
+     ```
+
+2. `getTenant()`
+   - **Agent**: Checks if tenant belongs to agent-assigned property via EXISTS subquery
+   - **Admin**: No change
+   - **Error Message**: "Tenant not found or not accessible" for agents
+
+3. `createTenant()`
+   - **Agent**: Validates unit assignment belongs to their assigned property
+   - **Admin**: No change
+   - **Validation**: Unit must be in agent's assigned properties via `agent_property_assignments`
+
+4. `updateTenant()`
+   - **Agent**: Checks property assignment before allowing update
+   - **Admin**: No change
+   - **Transaction**: Uses BEGIN/COMMIT/ROLLBACK for data integrity
+
+5. `deleteTenant()`
+   - **Agent**: Validates property assignment before deletion
+   - **Admin**: No change
+   - **Error Handling**: Proper 403 vs 404 status codes based on role
+
+6. `getAvailableUnits()`
+   - **Agent**: Only shows units from assigned properties
+   - **Admin**: Shows all available units
+   - **Query**: Uses EXISTS clause with `agent_property_assignments`
+
+**Security Implementation:**
+- All agent checks use `req.user.role === 'agent'` conditionals
+- Agent property validation via `agent_property_assignments.is_active = true`
+- Proper 403 Forbidden responses when agents access unauthorized data
+- Maintains all existing validation (duplicate national_id, phone_number, etc.)
+
+**Database Integration:**
+- Relies on existing `agent_property_assignments` table structure
+- Uses `agent_id`, `property_id`, `is_active` columns
+- Maintains referential integrity with existing foreign keys
+
+## 🐛 ISSUES RESOLVED
+
+### FROM PREVIOUS LOGS:
+1. **404 API Error**: `/api/properties` - Agents need separate endpoint for assigned properties
+2. **Auth Token Issue**: `Auth token present: false` - Fixed axios interceptors in api.jsx
+3. **React TypeError**: `can't convert item to string` - Fixed React key usage in components
+4. **Data Isolation**: Agents were seeing all tenants instead of only assigned properties
+
+### NEW BACKEND ENDPOINTS NEEDED:
+(To be implemented in propertyController.js)
+
+=========================================================================
+UPDATE 3.0
+=========================================================================
+# CLAUDE.MD UPDATES - AGENT PROPERTY ACCESS & ERROR RESOLUTIONS
+
+## 🔄 BACKEND UPDATES - Property Routes & Controller Fixes
+
+### FIXED SQL COLUMN ERROR IN PROPERTY ROUTES
+**Issue**: `column p.is_active does not exist` causing 500 Internal Server Error
+**Root Cause**: The `properties` table doesn't have an `is_active` column (unlike other tables)
+**Files Modified**: `/backend/routes/propertyRoutes.js`
+
+**Changes Made:**
+1. **Removed all references to `p.is_active`** from SQL queries
+2. **Kept only `apa.is_active`** (agent_property_assignments table)
+3. **Updated all agent property queries** to only filter by agent assignments
+
+**Before (Error):**
+```sql
+WHERE apa.agent_id = $1 
+  AND apa.is_active = true 
+  AND p.is_active = true  // ERROR: column doesn't exist
 ---
 Last Updated: $(date)
 Project Status: Backend deployed, Frontend in development

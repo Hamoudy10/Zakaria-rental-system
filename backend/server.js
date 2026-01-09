@@ -110,10 +110,10 @@ const loadRoute = (path, file, name, placeholderData = []) => {
         data: placeholderData 
       }));
     } else {
-      console.error(`❌ Failed to load ${name} routes:`, err.message);
+      console.error("❌ Failed to load ${name} routes:", err.message);
       app.use(path, (req, res) => res.status(500).json({ 
         success: false, 
-        message: `${name} temporarily unavailable` 
+        message: "${name} temporarily unavailable"
       }));
     }
   }
@@ -185,6 +185,15 @@ try {
   console.error('❌ Failed to load Cron routes:', err.message);
 }
 
+// ==================== WATER BILLS ROUTES ====================
+try {
+  const waterBillRoutes = require('./routes/waterBills');
+  app.use('/api/water-bills', waterBillRoutes);
+  console.log('✅ Loaded Water Bills routes');
+} catch (err) {
+  console.error('❌ Failed to load Water Bills routes:', err.message);
+}
+
 // ==================== OPTIONAL ROUTES (Using helper) ====================
 const optionalRoutes = [
   { path: '/api/tenants', file: './routes/tenants', name: 'Tenants' },
@@ -215,7 +224,8 @@ app.use('*', (req, res) => {
       '/api/payments/*',
       '/api/complaints/*',
       '/api/admin/*',
-      '/api/cron/*'
+      '/api/cron/*',
+      '/api/water-bills/*'
     ]
   });
 });
@@ -229,6 +239,7 @@ app.use((err, req, res, next) => {
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 });
+
 
 // ==================== START SERVER ====================
 const PORT = process.env.PORT || 3001;
