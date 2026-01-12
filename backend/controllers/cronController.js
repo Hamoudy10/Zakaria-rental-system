@@ -519,6 +519,90 @@ const triggerAgentBillingSMS = async (req, res) => {
   }
 };
 
+// Add to cronController.js
+const getSMSHistory = async (req, res) => {
+  try {
+    const { status, start_date, end_date, property_id } = req.query;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    
+    let query = `
+      SELECT sq.*, 
+             t.first_name, 
+             t.last_name,
+             pu.unit_code,
+             p.name as property_name
+      FROM sms_queue sq
+      LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
+      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    
+    // Add agent property filtering for non-admin users
+    if (userRole !== 'admin') {
+      query += ` AND p.id IN (
+        SELECT property_id FROM agent_property_assignments 
+        WHERE agent_id = $${params.length + 1} AND is_active = true
+      )`;
+      params.push(userId);
+    }
+    
+    // Add filters
+    if (status) {
+      query += ` AND sq.status = $${params.length + 1}`;
+      params.push(status);
+    }
+    
+    if (property_id) {
+      // Verify agent has access to this property
+      if (userRole !== 'admin') {
+        const hasAccess = await agentManagesProperty(userId, property_id);
+        if (!hasAccess) {
+          return res.status(403).json({
+            success: false,
+            message: 'You do not have access to this property'
+          });
+        }
+      }
+      query += ` AND p.id = $${params.length + 1}`;
+      params.push(property_id);
+    }
+    
+    if (start_date) {
+      query += ` AND sq.created_at >= $${params.length + 1}`;
+      params.push(start_date);
+    }
+    
+    if (end_date) {
+      query += ` AND sq.created_at <= $${params.length + 1}`;
+      params.push(end_date);
+    }
+    
+    query += ` ORDER BY sq.created_at DESC LIMIT 100`;
+    
+    const result = await pool.query(query, params);
+    
+    res.json({
+      success: true,
+      data: result.rows
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting SMS history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get SMS history',
+      error: error.message
+    });
+  }
+};
+
+
+
 module.exports = {
   startCronService,
   stopCronService,
@@ -527,5 +611,6 @@ module.exports = {
   getBillingHistory,
   getFailedSMS,
   retryFailedSMS,
+  getSMSHistory,
   triggerAgentBillingSMS
 };

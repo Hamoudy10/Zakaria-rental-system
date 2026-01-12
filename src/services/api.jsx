@@ -354,19 +354,21 @@ export const settingsAPI = {
 // Add this NEW billingAPI section (add it after settingsAPI):
 export const billingAPI = {
   // Trigger manual billing run
-  triggerBilling: () => api.post('/cron/trigger-billing'),
+  triggerAgentBilling: () => api.post('/cron/agent/trigger-billing'),
   
   // Get billing run history
-  getBillingHistory: (params = {}) => api.get('/cron/history', { params }),
+  getBillingHistory: (params = {}) => api.get('/cron/agent/history', { params }),
   
   // Get failed SMS for retry
-  getFailedSMS: (params = {}) => api.get('/cron/failed-sms', { params }),
+  getAgentFailedSMS: (params = {}) => api.get('/cron/agent/failed-sms', { params }),
   
   // Retry failed SMS
-  retryFailedSMS: (smsIds) => api.post('/cron/retry-sms', { smsIds }),
+  retryAgentFailedSMS: (smsIds) => api.post('/cron/agent/retry-sms', { smsIds }),
   
   // Test SMS service
-  testSMSService: (testData) => api.post('/cron/test-sms', testData)
+  testSMSService: (testData) => api.post('/cron/agent/test-sms', testData),
+
+  getSMSHistory: (params) => api.get('/cron/sms-history', { params }), // Adjust if needed
 };
 
 
