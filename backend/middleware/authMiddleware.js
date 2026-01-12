@@ -69,6 +69,7 @@ const requireAdmin = requireRole(['admin']);
 const requireAgent = requireRole(['agent', 'admin']);
 const requireTenant = requireRole(['tenant', 'agent', 'admin']);
 const adminOnly = requireAdmin; 
+const agentOnly = requireRole(['agent']); 
 // Alias for authMiddleware (for compatibility)
 const protect = authMiddleware;
 
@@ -79,6 +80,7 @@ module.exports = {
   authorize, // Add this alias for compatibility
   requireAdmin,
   adminOnly,
+  agentOnly,
   requireAgent,
   requireTenant
 };
