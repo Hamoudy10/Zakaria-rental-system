@@ -244,8 +244,9 @@ export const userAPI = {
 };
 
 // Property API
+// Property API - Updated with agent endpoints
 export const propertyAPI = {
-  // Property operations
+  // Basic property operations
   getProperties: (params = {}) => api.get('/properties', { params }),
   getProperty: (id) => api.get(`/properties/${id}`),
   createProperty: (propertyData) => api.post('/properties', propertyData),
@@ -269,7 +270,14 @@ export const propertyAPI = {
   getUnit: (propertyId, unitId) => api.get(`/properties/${propertyId}/units/${unitId}`),
   getUnitsByType: (unitType) => api.get(`/properties/units/type/${unitType}`),
   getUnitAllocations: (unitId) => api.get(`/properties/units/${unitId}/allocations`),
+
+  // NEW: Agent-specific property endpoints
+  getAgentProperties: () => api.get('/agent-properties/my-properties'),
+  getAgentDashboardStats: () => api.get('/agent-properties/dashboard-stats'),
+  getAgentAssignedTenants: () => api.get('/agent-properties/my-tenants'),
+  getAgentAssignedComplaints: () => api.get('/agent-properties/my-complaints')
 };
+
 
 // Allocation API
 export const allocationAPI = {
