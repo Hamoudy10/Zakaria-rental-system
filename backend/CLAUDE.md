@@ -655,3 +655,45 @@ const checkMissingWaterBills = async (req, res) => {
     });
   }
 };
+
+## 🎯 NEW CORE MODULES IMPLEMENTED
+
+### 7. Agent SMS Management System
+Purpose: Agent-scoped SMS management with property filtering
+Key Features:
+- Agent-triggered billing SMS with water bill verification
+- Agent-scoped failed SMS viewing and retry
+- Property filtering via agent_property_assignments table
+- Missing water bill warning system
+
+Endpoints Created:
+- POST /api/cron/agent/trigger-billing - Trigger billing SMS for agent's properties
+- GET  /api/cron/agent/failed-sms - View failed SMS (agent property filtered)
+- POST /api/cron/agent/retry-sms - Retry failed SMS (agent property filtered)
+
+Agent Workflow:
+1. Agent inputs water bills one-by-one via /api/water-bills
+2. Agent triggers billing SMS via /api/cron/agent/trigger-billing
+3. System checks for missing water bills and warns agent
+4. Agent confirms to proceed (water=0 for missing bills)
+5. System queues SMS for all tenants in agents properties
+6. Agent monitors failed SMS via filtered endpoints
+7. Agent retries failed SMS for their properties only
+
+Security Implementation:
+- All agent endpoints filter by agent_property_assignments table
+- Agents can only access SMS for their assigned properties
+- Property validation before SMS queuing
+- Role-based access control (agentOnly middleware)
+
+## 🐛 DEBUGGING & TROUBLESHOOTING
+Current Issues & Solutions:
+
+1. **404 Route Not Found: /api/cron/agent/trigger-billing**
+   Cause: Route not properly registered in server.js
+   Solution: Verify cronRoutes.js is loaded in server.js
+   Debug Steps:
+   
+   // Check server.js line:
+   const cronRoutes = require('./routes/cronRoutes');
+   app.use('/api/cron', cronRoutes);

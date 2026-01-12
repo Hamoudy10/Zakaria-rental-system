@@ -444,3 +444,53 @@ AND p.id IN (
   SELECT property_id FROM agent_property_assignments 
   WHERE agent_id = $2 AND is_active = true
 )
+
+
+## 📁 **4. UPDATE CLAUDE_DB.MD**
+
+### **Add to 🗄️ DATABASE INTEGRATION UPDATES section:**
+```markdown
+## 🗄️ DATABASE INTEGRATION UPDATES
+
+### SMS Queue Management Tables:
+
+#### sms_queue table (for failed SMS retry):
+- id (uuid): Primary key
+- recipient_phone (varchar): Formatted phone number (254XXXXXXXXX)
+- message (text): SMS message content
+- message_type (varchar): 'bill_notification', 'payment_confirmation', etc.
+- status (varchar): 'pending', 'sent', 'failed'
+- billing_month (varchar): Month in YYYY-MM format
+- attempts (integer): Number of retry attempts (max 3)
+- error_message (text): Last error message
+- created_at (timestamp): When SMS was queued
+- sent_at (timestamp): When SMS was sent
+- last_attempt_at (timestamp): Last retry attempt
+- agent_id (uuid): Reference to users.id (who triggered)
+
+#### sms_notifications table (for SMS history):
+- id (uuid): Primary key
+- phone_number (varchar): Recipient phone
+- message_type (varchar): Type of SMS sent
+- message_content (text): Full message content
+- status (varchar): 'sent', 'failed'
+- sent_at (timestamp): When SMS was sent
+- created_at (timestamp): Record creation time
+
+#### Key Queries for Agent SMS Management:
+
+1. Agent's Failed SMS Query:
+```sql
+SELECT sq.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name
+FROM sms_queue sq
+LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
+LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+LEFT JOIN property_units pu ON ta.unit_id = pu.id
+LEFT JOIN properties p ON pu.property_id = p.id
+WHERE sq.status = 'failed' 
+  AND sq.message_type = 'bill_notification'
+  AND p.id IN (
+    SELECT property_id FROM agent_property_assignments 
+    WHERE agent_id = $1 AND is_active = true
+  )
+ORDER BY sq.created_at DESC;
