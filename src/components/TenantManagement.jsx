@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useProperty } from '../context/PropertyContext';
 
 const TenantManagement = () => {
   const { user } = useAuth();
   const [tenants, setTenants] = useState([]);
+  const { properties: assignedProperties, loading: propertiesLoading } = useProperty();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -276,11 +278,12 @@ const TenantManagement = () => {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Tenant Management</h2>
           <p className="text-gray-600">Manage tenant information, allocations, and ID verification</p>
-          {user.role === 'agent' && availableUnits.length === 0 && !loading && (
+          {user.role === 'agent' && assignedProperties.length === 0 && !propertiesLoading && !loading && (
             <p className="text-sm text-amber-600 mt-2">
-              ⚠️ You have no properties assigned. Contact admin to assign properties.
+            ⚠️ You have no properties assigned. Contact admin to assign properties.
             </p>
-          )}
+           )}
+
         </div>
         <button
           onClick={() => setShowForm(true)}
@@ -618,14 +621,13 @@ const TenantManagement = () => {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {tenants.length === 0 ? (
-                  <tr>
+                <tr>
                     <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
-                      {user.role === 'agent' && availableUnits.length === 0 
-                        ? 'No tenants found. You need property assignments to manage tenants.'
-                        : 'No tenants found. Click "Add New Tenant" to create one.'
-                      }
+                        {user.role === 'agent' && assignedProperties.length === 0
+                        ? 'No properties assigned. Contact admin to assign properties.'
+                        : 'No tenants found. Click "Add New Tenant" to create one.'}
                     </td>
-                  </tr>
+                </tr>
                 ) : (
                   tenants.map((tenant, index) => (
                     <tr key={tenant?.id || `tenant-${index}`} className="hover:bg-gray-50">
