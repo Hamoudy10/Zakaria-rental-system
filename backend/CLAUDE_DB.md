@@ -1,17 +1,17 @@
-# Database Schema & Business Logic
+DATABASE SCHEMA & BUSINESS LOGIC
 
-## 🗃️ DATABASE OVERVIEW
+DATABASE OVERVIEW
 Technology: PostgreSQL 15+ on Supabase
 UUIDs: All primary keys use uuid_generate_v4()
 Timestamps: created_at, updated_at patterns throughout
 Soft Deletes: is_active flags instead of hard deletes
 
-## 👥 CORE USER TABLES
+CORE USER TABLES
 
-### users - System Users (Admins, Agents)
+users - System Users (Admins, Agents)
 Key Columns:
 - id (uuid): Primary key
-- national_id: Kenyan national ID (required)
+- national_id: Kenyan national ID (required, unique)
 - email, phone_number: Contact info
 - password_hash: bcrypt hashed password
 - role: ENUM('admin', 'agent', 'tenant') - defines permissions
@@ -23,7 +23,7 @@ Business Rules:
 2. Phone numbers stored in Kenyan format (254XXXXXXXXX)
 3. Profile images stored as URLs (Supabase Storage)
 
-### tenants - Rental Tenants
+tenants - Rental Tenants
 Key Columns:
 - id (uuid): Primary key
 - national_id: Kenyan national ID (required, unique)
@@ -35,9 +35,9 @@ Relationship:
 - Tenants → tenant_allocations → property_units
 - One tenant can have multiple allocations over time
 
-## 🏢 PROPERTY MANAGEMENT TABLES
+PROPERTY MANAGEMENT TABLES
 
-### properties - Rental Properties
+properties - Rental Properties
 Key Columns:
 - id (uuid): Primary key
 - property_code: Unique identifier (e.g., "PROP001")
@@ -51,7 +51,7 @@ Business Rules:
 2. available_units auto-calculated from property_units.is_occupied
 3. County/Town follow Kenyan administrative divisions
 
-### property_units - Individual Rental Units
+property_units - Individual Rental Units
 Key Columns:
 - id (uuid): Primary key
 - property_id: References properties.id
@@ -67,17 +67,9 @@ Business Rules:
 2. unit_number format varies by unit_type for readability
 3. Rent amount required, deposit defaults to 0
 
-### property_images - Property/Unit Images
-Key Columns:
-- id (uuid): Primary key
-- property_id, unit_id: Optional foreign keys
-- image_url: Supabase Storage URL
-- image_type: ENUM('exterior', 'interior', 'floor_plan', 'amenity')
-- caption: Optional description
+TENANT ALLOCATION TABLES
 
-## 📝 TENANT ALLOCATION TABLES
-
-### tenant_allocations - Unit Assignments
+tenant_allocations - Unit Assignments
 Key Columns:
 - id (uuid): Primary key
 - tenant_id: References tenants.id
@@ -101,9 +93,9 @@ Business Rules:
 6. Negative balance indicates advance payment credit
 7. Billing dates auto-calculated based on system settings
 
-## 💰 PAYMENT TABLES
+PAYMENT TABLES
 
-### rent_payments - Rent Payment Records
+rent_payments - Rent Payment Records
 Key Columns:
 - id (uuid): Primary key
 - tenant_id, unit_id: Payment context
@@ -128,23 +120,9 @@ Business Rules:
 5. Remaining balance triggers advance payment if positive
 6. Negative remaining balance indicates partial payment
 
-### mpesa_transactions - M-Pesa Transaction Log
-Key Columns:
-- id (uuid): Primary key
-- transaction_type: Payment context
-- mpesa_code: Safaricom transaction code
-- phone_number, amount: Transaction details
-- account_number: Unit code or identifier
-- is_confirmed: Boolean callback confirmation
-- raw_response: JSONB full Safaricom response
+ENHANCED PAYMENT & BILLING SYSTEM
 
-Relationship:
-- rent_payments.mpesa_transaction_id references this table
-- One M-Pesa transaction can cover multiple rent payments
-
-## 💰 ENHANCED PAYMENT & BILLING SYSTEM
-
-### New Table: billing_runs
+New Table: billing_runs
 Purpose: Audit log for automated monthly billing
 Columns:
 - id (uuid): Primary key
@@ -162,9 +140,9 @@ Indexes:
 CREATE INDEX idx_billing_runs_month ON billing_runs(month DESC);
 CREATE INDEX idx_billing_runs_date ON billing_runs(run_date DESC);
 
-## 🛠️ COMPLAINT MANAGEMENT TABLES
+COMPLAINT MANAGEMENT TABLES
 
-### complaints - Tenant Complaints
+complaints - Tenant Complaints
 Key Columns:
 - id (uuid): Primary key
 - tenant_id, unit_id: Complaint context
@@ -175,40 +153,9 @@ Key Columns:
 - raised_at, acknowledged_at, resolved_at: Timeline
 - tenant_feedback, tenant_satisfaction_rating: Resolution feedback
 
-### complaint_updates - Complaint Progress Tracking
-Key Columns:
-- id (uuid): Primary key
-- complaint_id: References complaints.id
-- updated_by: References users.id
-- update_text: Progress description
-- update_type: ENUM('assignment', 'progress', 'resolution', 'note')
+CHAT TABLES
 
-## 💬 COMMUNICATION TABLES
-
-### notifications - In-App Notifications
-Key Columns:
-- id (uuid): Primary key
-- user_id: Recipient
-- title, message, type: Notification content
-- related_entity_type, related_entity_id: Context links
-- is_read: Read status flag
-- read_at TIMESTAMP
-- created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-
-Indexes for performance:
-INDEX idx_user_id (user_id)
-INDEX idx_user_read (user_id, is_read)
-INDEX idx_created_at (created_at DESC)
-INDEX idx_type (type)
-
-Notification Types:
-- payment_success, payment_failed
-- complaint_updated, complaint_resolved
-- announcement, system_alert
-
-## 💬 CHAT TABLES
-
-### chat_conversations
+chat_conversations
 Key Columns:
 - id (uuid): Primary key
 - conversation_type: ENUM('direct', 'group')
@@ -217,7 +164,7 @@ Key Columns:
 - is_active: Boolean active flag
 - created_at, updated_at: Timestamps
 
-### chat_messages
+chat_messages
 Key Columns:
 - id (uuid): Primary key
 - conversation_id: References chat_conversations.id
@@ -228,7 +175,7 @@ Key Columns:
 - deleted_at: When message was deleted
 - created_at: Timestamp
 
-### chat_participants
+chat_participants
 Key Columns:
 - id (uuid): Primary key
 - conversation_id: References chat_conversations.id
@@ -237,44 +184,9 @@ Key Columns:
 - is_active: Boolean active flag (for leaving groups)
 - role: ENUM('member', 'admin') for group conversations
 
-### chat_message_reads
-Key Columns:
-- id (uuid): Primary key
-- message_id: References chat_messages.id
-- user_id: References users.id
-- read_at: When message was read
+ADMINISTRATION TABLES
 
-Chat Tables Relationships:
-chat_conversations
-    ↑ (1)
-chat_participants (many-to-many join)
-    ↑ (many)
-users
-    ↓
-chat_messages
-    ↓
-chat_message_reads (read receipts)
-
-Key Business Rules:
-- Direct Conversations: Auto-created, no duplicates between same users
-- Group Conversations: Require title, can have multiple participants
-- Message Flow: All messages stored, soft-deleted via is_deleted flag
-- Read Receipts: Tracked per user per message via chat_message_reads
-- Active Participation: is_active flag in chat_participants for leaving groups
-
-## 📊 REPORTING & ANALYTICS TABLES
-
-### payment_reports - Generated Reports
-Key Columns:
-- id (uuid): Primary key
-- tenant_id: Optional filter
-- report_type: Report category
-- start_date, end_date: Report period
-- report_data: JSONB structured report content
-
-## 🔐 ADMINISTRATION TABLES
-
-### admin_settings - System Configuration
+admin_settings - System Configuration
 Key Columns:
 - id (uuid): Primary key
 - setting_key: Unique setting identifier
@@ -288,16 +200,15 @@ Key Settings:
 - company_name, contact_phone
 - billing_day: Day of month for auto-billing (e.g., "28")
 - paybill_number: Business paybill for SMS instructions
-- company_name: For SMS signature
 - sms_billing_template: Customizable billing message
 
-## 🔗 KEY FOREIGN KEY RELATIONSHIPS
+KEY FOREIGN KEY RELATIONSHIPS
 1. User Creation Chain: users → properties → property_units
 2. Tenant Lifecycle: tenants → tenant_allocations → property_units
 3. Payment Flow: rent_payments → mpesa_transactions + tenant_allocations
 4. Complaint Resolution: complaints → complaint_updates + users (agents)
 
-## ⚠️ DATA INTEGRITY RULES
+DATA INTEGRITY RULES
 1. Cascade Deletes: Limited use, prefer soft deletes
 2. Unique Constraints:
    - users.national_id UNIQUE
@@ -309,7 +220,7 @@ Key Settings:
    - phone_number format validation
    - payment_month first day of month
 
-## 📈 PERFORMANCE OPTIMIZATIONS
+PERFORMANCE OPTIMIZATIONS
 Indexes Applied:
 - All foreign key columns
 - property_units.is_occupied + property_id
@@ -320,11 +231,7 @@ Indexes Applied:
 - tenant_allocations.arrears_balance WHERE arrears_balance > 0
 - water_bills.tenant_id + bill_month
 
-Partitioning Consideration:
-- rent_payments by payment_month (if volume grows)
-- chat_messages by created_at (if volume grows)
-
-## 📊 ENHANCED ARREARS TRACKING
+ENHANCED ARREARS TRACKING
 Updated tenant_allocations Table:
 - arrears_balance: Total outstanding arrears
 - last_billing_date: Last bill generation date
@@ -336,80 +243,9 @@ Updated rent_payments Table:
 - allocated_to_arrears: Amount applied to arrears
 - remaining_balance: Balance after payment
 
-## 🔌 INTEGRATION PATTERNS
-1. Authentication Integration:
-// Frontend: Socket connection with JWT
-const socket = io(SOCKET_URL, {
-  auth: { token: localStorage.getItem('token') }
-});
+DATABASE INTEGRATION UPDATES
 
-// Backend: Socket middleware
-io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (!token) return next(new Error('Authentication error'));
-  
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return next(new Error('Authentication error'));
-    socket.userId = decoded.id;
-    socket.userName = `${decoded.first_name} ${decoded.last_name}`;
-    next();
-  });
-});
-
-2. Notification Integration:
-// Chat notifications trigger app notifications
-socket.on('chat_notification', (data) => {
-  notificationContext.incrementUnreadCount();
-  toast.success(`New message from ${data.senderName}`);
-});
-
-## 🐛 DEBUGGING & TROUBLESHOOTING
-Common Issues & Solutions:
-1. Socket Connection Failing:
-// Check: Frontend connection
-socket.on('connect_error', (error) => {
-  console.error('Connection error:', error);
-});
-
-2. Messages Not Updating in Real-time:
-- Verify user is in correct Socket.io rooms
-- Check conversation_${id} room membership
-- Verify event names match
-
-3. Unread Counts Incorrect:
--- Debug query
-SELECT 
-  cm.id,
-  cm.message_text,
-  EXISTS (
-    SELECT 1 FROM chat_message_reads r 
-    WHERE r.message_id = cm.id AND r.user_id = 'user-uuid'
-  ) as is_read
-FROM chat_messages cm
-WHERE cm.conversation_id = 'conversation-uuid';
-
-## 📈 PERFORMANCE OPTIMIZATIONS
-Implemented:
-- Lazy Loading: Chat components loaded on demand
-- Message Pagination: limit and offset for conversation lists
-- Socket Room Management: Users only in active conversation rooms
-- Database Indexes: On conversation_id, sender_id, created_at
-
-Future Considerations:
-- Virtualized Message List: For conversations with 1000+ messages
-- Message Compression: For large file sharing
-- Read Receipt Batching: Batch updates instead of per-message
-
-Supabase PostgreSQL Database
-Auto-backups configured via Supabase
-Migration files in /backend/migrations/
-
-========================================================
-UPDATE
-==========================================================
-## 🗄️ DATABASE INTEGRATION UPDATES
-
-### Water Bill Integration Tables:
+Water Bill Integration Tables:
 tables referenced:
 - water_bills: Main water bill storage with tenant/property relationships
 - tenants: Tenant information for name resolution
@@ -418,21 +254,10 @@ tables referenced:
 - agent_property_assignments: Agent data isolation
 - tenant_allocations: Active tenant verification
 
-### Key Queries Implemented:
-1. Missing Water Bills Check:
-```sql
-SELECT 
-  ta.tenant_id,
-  t.first_name,
-  t.last_name,
-  t.phone_number,
-  pu.unit_code,
-  p.name as property_name,
-  EXISTS(
-    SELECT 1 FROM water_bills wb 
-    WHERE wb.tenant_id = ta.tenant_id 
-    AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
-  ) as has_water_bill
+Key Queries Implemented:
+
+Missing Water Bills Check:
+SELECT ta.tenant_id, t.first_name, t.last_name, t.phone_number, pu.unit_code, p.name as property_name, EXISTS(SELECT 1 FROM water_bills wb WHERE wb.tenant_id = ta.tenant_id AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)) as has_water_bill
 FROM tenant_allocations ta
 JOIN tenants t ON ta.tenant_id = t.id
 JOIN property_units pu ON ta.unit_id = pu.id
@@ -440,21 +265,11 @@ JOIN properties p ON pu.property_id = p.id
 WHERE ta.is_active = true
 
 Agent Property Filtering:
-AND p.id IN (
-  SELECT property_id FROM agent_property_assignments 
-  WHERE agent_id = $2 AND is_active = true
-)
+AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $2 AND is_active = true)
 
+SMS QUEUE MANAGEMENT TABLES
 
-## 📁 **4. UPDATE CLAUDE_DB.MD**
-
-### **Add to 🗄️ DATABASE INTEGRATION UPDATES section:**
-```markdown
-## 🗄️ DATABASE INTEGRATION UPDATES
-
-### SMS Queue Management Tables:
-
-#### sms_queue table (for failed SMS retry):
+sms_queue table (for failed SMS retry):
 - id (uuid): Primary key
 - recipient_phone (varchar): Formatted phone number (254XXXXXXXXX)
 - message (text): SMS message content
@@ -468,7 +283,7 @@ AND p.id IN (
 - last_attempt_at (timestamp): Last retry attempt
 - agent_id (uuid): Reference to users.id (who triggered)
 
-#### sms_notifications table (for SMS history):
+sms_notifications table (for SMS history):
 - id (uuid): Primary key
 - phone_number (varchar): Recipient phone
 - message_type (varchar): Type of SMS sent
@@ -477,20 +292,60 @@ AND p.id IN (
 - sent_at (timestamp): When SMS was sent
 - created_at (timestamp): Record creation time
 
-#### Key Queries for Agent SMS Management:
+Key Queries for Agent SMS Management:
 
-1. Agent's Failed SMS Query:
-```sql
+Agent's Failed SMS Query:
 SELECT sq.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name
 FROM sms_queue sq
 LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
 LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
 LEFT JOIN property_units pu ON ta.unit_id = pu.id
 LEFT JOIN properties p ON pu.property_id = p.id
-WHERE sq.status = 'failed' 
-  AND sq.message_type = 'bill_notification'
-  AND p.id IN (
-    SELECT property_id FROM agent_property_assignments 
-    WHERE agent_id = $1 AND is_active = true
-  )
+WHERE sq.status = 'failed' AND sq.message_type = 'bill_notification' AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
 ORDER BY sq.created_at DESC;
+
+AGENT REPORTS DATABASE QUERIES
+
+REQUIRED QUERIES FOR REPORTS:
+
+1. Agent Tenants Report:
+SELECT t.id, t.national_id, t.first_name, t.last_name, t.phone_number, t.email, t.created_at, pu.unit_code, p.name as property_name, ta.monthly_rent, ta.arrears_balance, ta.lease_start_date, ta.lease_end_date
+FROM tenants t
+LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+LEFT JOIN property_units pu ON ta.unit_id = pu.id
+LEFT JOIN properties p ON pu.property_id = p.id
+WHERE p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
+ORDER BY p.name, pu.unit_code;
+
+2. Agent Payments Report:
+SELECT rp.id, rp.amount, rp.payment_month, rp.status, rp.created_at, rp.mpesa_receipt_number, t.first_name, t.last_name, t.phone_number, pu.unit_code, p.name as property_name
+FROM rent_payments rp
+JOIN tenants t ON rp.tenant_id = t.id
+JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+JOIN property_units pu ON ta.unit_id = pu.id
+JOIN properties p ON pu.property_id = p.id
+WHERE p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
+ORDER BY rp.created_at DESC;
+
+3. Agent Revenue Report:
+SELECT p.name as property_name, COUNT(DISTINCT rp.id) as payment_count, SUM(rp.amount) as total_revenue, AVG(rp.amount) as average_payment, MIN(rp.created_at) as first_payment, MAX(rp.created_at) as last_payment
+FROM rent_payments rp
+JOIN tenants t ON rp.tenant_id = t.id
+JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+JOIN property_units pu ON ta.unit_id = pu.id
+JOIN properties p ON pu.property_id = p.id
+WHERE p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
+GROUP BY p.id, p.name
+ORDER BY total_revenue DESC;
+
+PERFORMANCE INDEXES FOR REPORTS:
+-- For fast agent property filtering
+CREATE INDEX idx_agent_property_assignments_agent ON agent_property_assignments(agent_id, is_active, property_id);
+
+-- For payment reports
+CREATE INDEX idx_rent_payments_tenant_date ON rent_payments(tenant_id, created_at DESC);
+
+-- For tenant allocation lookups
+CREATE INDEX idx_tenant_allocations_active ON tenant_allocations(tenant_id, is_active);
+
+END OF DATABASE SCHEMA SUMMARY

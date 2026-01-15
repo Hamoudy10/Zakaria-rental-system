@@ -7,7 +7,7 @@ const { authMiddleware } = require('../middleware/authMiddleware');
 const { protect, adminOnly, agentOnly } = require('../middleware/authMiddleware');
 
 // GET ALL PROPERTIES (For admins) OR AGENT ASSIGNED PROPERTIES
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', protect, async (req, res) => {
   try {
     console.log('Fetching properties for user role:', req.user.role);
     
@@ -65,7 +65,7 @@ router.get('/', authMiddleware, async (req, res) => {
 });
 
 // GET AGENT ASSIGNED PROPERTIES (Explicit endpoint - alternative to above)
-router.get('/agent/assigned', authMiddleware, async (req, res) => {
+router.get('/agent/assigned', protect, async (req, res) => {
   try {
     // Ensure user is an agent
     if (req.user.role !== 'agent') {
@@ -109,7 +109,7 @@ router.get('/agent/assigned', authMiddleware, async (req, res) => {
 });
 
 // GET SINGLE PROPERTY WITH UNITS
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', protect, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -180,7 +180,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
 });
 
 // CREATE NEW PROPERTY (POST) - UPDATED WITH UNIT_TYPE
-router.post('/', authMiddleware, adminOnly, async (req, res) => {
+router.post('/', protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -292,7 +292,7 @@ router.post('/', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // UPDATE PROPERTY (PUT) - UPDATED WITH UNIT_TYPE
-router.put('/:id', authMiddleware, adminOnly, async (req, res) => {
+router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const { 
@@ -387,7 +387,7 @@ router.put('/:id', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // DELETE PROPERTY (DELETE)
-router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -479,7 +479,7 @@ router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // GET PROPERTY STATISTICS
-router.get('/:id/stats', authMiddleware, async (req, res) => {
+router.get('/:id/stats', protect, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -540,7 +540,7 @@ router.get('/:id/stats', authMiddleware, async (req, res) => {
 });
 
 // GET PROPERTY UNITS
-router.get('/:id/units', authMiddleware, async (req, res) => {
+router.get('/:id/units', protect, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -589,6 +589,530 @@ router.get('/:id/units', authMiddleware, async (req, res) => {
       success: false,
       message: 'Failed to fetch property units'
     });
+  }
+});
+
+// ==================== NEW UNIT MANAGEMENT ROUTES ====================
+
+// CREATE NEW UNIT FOR A PROPERTY (POST) - THIS WAS MISSING!
+router.post('/:id/units', protect, adminOnly, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const {
+      unit_code,
+      unit_type = 'bedsitter',
+      unit_number,
+      rent_amount = 0,
+      deposit_amount = 0,
+      description = '',
+      features = {}
+    } = req.body;
+    
+    console.log(`🔄 Creating unit for property ${id} with data:`, req.body);
+    
+    // 1. Validate property exists and user has access
+    const propertyCheck = await client.query(
+      `SELECT p.* FROM properties p
+       WHERE p.id = $1`,
+      [id]
+    );
+    
+    if (propertyCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Property not found'
+      });
+    }
+    
+    const property = propertyCheck.rows[0];
+    
+    // 2. Validate required fields
+    if (!unit_number) {
+      return res.status(400).json({
+        success: false,
+        message: 'unit_number is required'
+      });
+    }
+    
+    // 3. Validate unit_type
+    const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+    if (!validUnitTypes.includes(unit_type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
+      });
+    }
+    
+    // 4. Generate unit_code if not provided
+    const finalUnitCode = unit_code || `${property.property_code}-${unit_number || 'UNIT'}`;
+    
+    // 5. Check if unit_code already exists
+    const existingUnit = await client.query(
+      'SELECT id FROM property_units WHERE unit_code = $1',
+      [finalUnitCode]
+    );
+    
+    if (existingUnit.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Unit code already exists'
+      });
+    }
+    
+    // 6. Insert the new unit
+    const unitResult = await client.query(
+      `INSERT INTO property_units 
+       (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, features, is_occupied, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [
+        id,
+        finalUnitCode,
+        unit_type,
+        unit_number || '001',
+        rent_amount,
+        deposit_amount,
+        description,
+        features,
+        false, // is_occupied
+        req.user.id
+      ]
+    );
+    
+    // 7. Update property unit counts
+    await client.query(
+      `UPDATE properties 
+       SET total_units = COALESCE(total_units, 0) + 1,
+           available_units = COALESCE(available_units, 0) + 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [id]
+    );
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Unit created successfully: ${finalUnitCode}`);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Unit created successfully',
+      data: unitResult.rows[0]
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error creating unit:', error);
+    
+    // Handle specific errors
+    if (error.code === '22P02') { // Invalid enum value
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid unit_type value'
+      });
+    }
+    
+    if (error.code === '23505') { // Unique violation
+      return res.status(400).json({
+        success: false,
+        message: 'Unit code already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error creating unit',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// UPDATE UNIT (PUT)
+router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id, unitId } = req.params;
+    const updates = req.body;
+    
+    console.log(`🔄 Updating unit ${unitId} in property ${id} with:`, updates);
+    
+    // 1. Validate property exists
+    const propertyCheck = await client.query(
+      'SELECT id FROM properties WHERE id = $1',
+      [id]
+    );
+    
+    if (propertyCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Property not found'
+      });
+    }
+    
+    // 2. Validate unit exists and belongs to this property
+    const unitCheck = await client.query(
+      'SELECT * FROM property_units WHERE id = $1 AND property_id = $2',
+      [unitId, id]
+    );
+    
+    if (unitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found or does not belong to this property'
+      });
+    }
+    
+    // 3. Validate unit_type if provided
+    if (updates.unit_type) {
+      const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+      if (!validUnitTypes.includes(updates.unit_type)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
+        });
+      }
+    }
+    
+    // 4. Check if new unit_code already exists (if changing)
+    if (updates.unit_code && updates.unit_code !== unitCheck.rows[0].unit_code) {
+      const existingUnit = await client.query(
+        'SELECT id FROM property_units WHERE unit_code = $1 AND id != $2',
+        [updates.unit_code, unitId]
+      );
+      
+      if (existingUnit.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Unit code already exists'
+        });
+      }
+    }
+    
+    // 5. Build dynamic update query
+    const updateFields = [];
+    const updateValues = [];
+    let paramCount = 1;
+    
+    const allowedFields = ['unit_code', 'unit_type', 'unit_number', 'rent_amount', 'deposit_amount', 'description', 'features'];
+    
+    allowedFields.forEach(field => {
+      if (updates[field] !== undefined) {
+        updateFields.push(`${field} = $${paramCount}`);
+        updateValues.push(updates[field]);
+        paramCount++;
+      }
+    });
+    
+    if (updateFields.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields to update'
+      });
+    }
+    
+    // Add updated_at and WHERE clause params
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateValues.push(unitId, id);
+    
+    const query = `
+      UPDATE property_units 
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramCount} AND property_id = $${paramCount + 1}
+      RETURNING *
+    `;
+    
+    const result = await client.query(query, updateValues);
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'Unit updated successfully',
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error updating unit:', error);
+    
+    if (error.code === '22P02') { // Invalid enum value
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid unit_type value'
+      });
+    }
+    
+    if (error.code === '23505') { // Unique violation
+      return res.status(400).json({
+        success: false,
+        message: 'Unit code already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error updating unit',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE UNIT (DELETE)
+router.delete('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id, unitId } = req.params;
+    
+    console.log(`🗑️ Deleting unit ${unitId} from property ${id}`);
+    
+    // 1. Check if unit exists and belongs to this property
+    const unitCheck = await client.query(
+      `SELECT * FROM property_units 
+       WHERE id = $1 AND property_id = $2`,
+      [unitId, id]
+    );
+    
+    if (unitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found or does not belong to this property'
+      });
+    }
+    
+    const unit = unitCheck.rows[0];
+    
+    // 2. Check if unit is occupied
+    if (unit.is_occupied) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete an occupied unit'
+      });
+    }
+    
+    // 3. Check if unit has any related data
+    const hasTenants = await client.query(
+      'SELECT 1 FROM tenant_allocations WHERE unit_id = $1',
+      [unitId]
+    );
+    
+    if (hasTenants.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete unit with tenant allocation history'
+      });
+    }
+    
+    const hasPayments = await client.query(
+      'SELECT 1 FROM rent_payments WHERE unit_id = $1',
+      [unitId]
+    );
+    
+    if (hasPayments.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete unit with payment history'
+      });
+    }
+    
+    // 4. Delete the unit
+    await client.query(
+      'DELETE FROM property_units WHERE id = $1',
+      [unitId]
+    );
+    
+    // 5. Update property unit counts
+    await client.query(
+      `UPDATE properties 
+       SET total_units = GREATEST(0, total_units - 1),
+           available_units = GREATEST(0, available_units - 1),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [id]
+    );
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: `Unit ${unit.unit_code} deleted successfully`
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting unit:', error);
+    
+    if (error.code === '23503') { // Foreign key constraint
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete unit due to existing references in other tables'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting unit',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// GET SINGLE UNIT DETAILS
+router.get('/:id/units/:unitId', protect, async (req, res) => {
+  try {
+    const { id, unitId } = req.params;
+    
+    let query = `
+      SELECT pu.*, p.name as property_name, p.property_code
+      FROM property_units pu
+      JOIN properties p ON pu.property_id = p.id
+      WHERE pu.id = $1 AND pu.property_id = $2
+    `;
+    
+    const params = [unitId, id];
+    
+    // If user is agent, check if they're assigned to this property
+    if (req.user.role === 'agent') {
+      query += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa 
+          WHERE apa.property_id = p.id 
+          AND apa.agent_id = $3 
+          AND apa.is_active = true
+        )
+      `;
+      params.push(req.user.id);
+    }
+    
+    const result = await pool.query(query, params);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found or not accessible'
+      });
+    }
+    
+    // Get tenant allocation if unit is occupied
+    let tenantInfo = null;
+    if (result.rows[0].is_occupied) {
+      const tenantResult = await pool.query(`
+        SELECT t.*, ta.lease_start_date, ta.lease_end_date, ta.monthly_rent
+        FROM tenants t
+        JOIN tenant_allocations ta ON t.id = ta.tenant_id
+        WHERE ta.unit_id = $1 AND ta.is_active = true
+      `, [unitId]);
+      
+      if (tenantResult.rows.length > 0) {
+        tenantInfo = tenantResult.rows[0];
+      }
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        ...result.rows[0],
+        current_tenant: tenantInfo
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching unit details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching unit details',
+      error: error.message
+    });
+  }
+});
+
+// UPDATE UNIT OCCUPANCY STATUS
+router.patch('/:id/units/:unitId/occupancy', protect, adminOnly, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id, unitId } = req.params;
+    const { is_occupied } = req.body;
+    
+    if (typeof is_occupied !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'is_occupied must be a boolean value'
+      });
+    }
+    
+    // Check if unit exists and belongs to this property
+    const unitCheck = await client.query(
+      'SELECT * FROM property_units WHERE id = $1 AND property_id = $2',
+      [unitId, id]
+    );
+    
+    if (unitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found or does not belong to this property'
+      });
+    }
+    
+    const currentStatus = unitCheck.rows[0].is_occupied;
+    
+    // If status is not changing, return success
+    if (currentStatus === is_occupied) {
+      return res.json({
+        success: true,
+        message: `Unit is already ${is_occupied ? 'occupied' : 'vacant'}`
+      });
+    }
+    
+    // Update unit occupancy
+    await client.query(
+      'UPDATE property_units SET is_occupied = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [is_occupied, unitId]
+    );
+    
+    // Update property available units count
+    const increment = is_occupied ? -1 : 1;
+    await client.query(
+      `UPDATE properties 
+       SET available_units = GREATEST(0, available_units + $1),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [increment, id]
+    );
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: `Unit marked as ${is_occupied ? 'occupied' : 'vacant'} successfully`
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error updating unit occupancy:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating unit occupancy',
+      error: error.message
+    });
+  } finally {
+    client.release();
   }
 });
 

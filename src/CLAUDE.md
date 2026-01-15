@@ -1,6 +1,6 @@
-# React Frontend Architecture & Patterns
+REACT FRONTEND ARCHITECTURE & PATTERNS
 
-## 🎨 UI/UX FOUNDATION
+UI/UX FOUNDATION
 Tech Stack:
 - React 18.2: Functional components with hooks
 - Vite 4.5: Fast build tool with hot reload
@@ -13,16 +13,15 @@ Styling Conventions:
 - Consistent spacing scale (4px multiples)
 - Color palette defined in tailwind.config.js
 - Component-level styling with Tailwind classes
-- Dark mode not implemented (future consideration)
 
-## 🏗️ COMPONENT ARCHITECTURE
+COMPONENT ARCHITECTURE
 Component Types:
 1. Pages: Route components (src/pages/*) - dashboards, main views
 2. Components: Reusable UI (src/components/*) - forms, cards, tables
 3. Context Providers: State management (src/context/*) - auth, payments, etc.
 4. Services: API integration (src/services/*) - axios configuration
 
-Component Structure Pattern:
+Standard Component Pattern:
 import React, { useState, useEffect } from 'react';
 import { API } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -32,9 +31,7 @@ const ExampleComponent = () => {
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
   
   const fetchData = async () => {
     try {
@@ -62,7 +59,7 @@ const ExampleComponent = () => {
 
 export default ExampleComponent;
 
-## 🔌 API INTEGRATION PATTERNS
+API INTEGRATION PATTERNS
 Axios Configuration (src/services/api.jsx):
 - Base URL from VITE_API_URL or Render deployment
 - Automatic JWT token attachment via interceptors
@@ -93,13 +90,13 @@ Available API Modules:
 - API.chatAPI: Real-time messaging
 - API.dashboard: Dashboard statistics
 
-## 🧠 STATE MANAGEMENT
+STATE MANAGEMENT
 Context API Pattern:
 Each domain has its own context (Auth, Payments, Notifications)
 Contexts provide: state, setters, and domain-specific functions
 Consume via custom hooks: useAuth(), usePayments(), etc.
 
-AuthContext Pattern:
+AuthContext Pattern Example:
 // 1. Create context with undefined default
 const AuthContext = createContext(undefined);
 
@@ -122,14 +119,14 @@ export const useAuth = () => {
   return context;
 };
 
-## 🚦 ROUTING STRUCTURE
+ROUTING STRUCTURE
 Role-Based Routing:
 - /login → Authentication page
 - /admin → Admin dashboard & management
 - /agent → Agent dashboard & operations
 Route protection via AuthContext
 
-Dashboard Pattern:
+Dashboard Pattern with Lazy Loading:
 // Lazy loading for performance
 const UserManagement = lazy(() => import('../components/UserManagement'));
 
@@ -141,7 +138,7 @@ const [activeTab, setActiveTab] = useState('overview');
   {activeTab === 'users' && <UserManagement />}
 </Suspense>
 
-## 📱 RESPONSIVE DESIGN PATTERNS
+RESPONSIVE DESIGN PATTERNS
 Tailwind Responsive Classes:
 <div className="
   p-2          // Mobile: 0.5rem (8px)
@@ -154,7 +151,7 @@ Mobile Optimization:
 - No horizontal scroll: overflow-x-hidden on containers
 - Simplified navigation on mobile (icons vs text)
 
-## 💾 FORM HANDLING PATTERNS
+FORM HANDLING PATTERNS
 Controlled Component Pattern:
 const [formData, setFormData] = useState({
   name: '',
@@ -169,29 +166,20 @@ const handleChange = (e) => {
   });
 };
 
-// For M-Pesa phone validation
-const handlePhoneChange = (e) => {
-  const value = e.target.value;
-  if (API.mpesa.validatePhoneNumber(value)) {
-    setFormData({ ...formData, phone: value });
-  }
-};
-
-## 🎯 PERFORMANCE OPTIMIZATIONS
+PERFORMANCE OPTIMIZATIONS
 Implemented:
 - Lazy loading for route components
 - useCallback/useMemo for expensive computations
 - React.memo for pure components (where needed)
-- Virtualized lists for large datasets (consideration)
 
-Loading States:
+Loading States Pattern:
 {loading ? (
   <div className="animate-pulse bg-gray-200 h-20 rounded"></div>
 ) : (
   <DataComponent data={data} />
 )}
 
-## 🧪 ERROR BOUNDARIES & ERROR HANDLING
+ERROR HANDLING
 Global Error Handling:
 - Axios interceptors handle API errors
 - 401 responses trigger automatic logout
@@ -209,7 +197,7 @@ const fetchData = async () => {
   }
 };
 
-## 🔄 REAL-TIME FEATURES
+REAL-TIME FEATURES
 Socket.io Integration:
 import { io } from 'socket.io-client';
 
@@ -221,9 +209,8 @@ socket.on('new_notification', (data) => {
   // Update notifications context
 });
 
-## 💬 CHAT MODULE ARCHITECTURE
+CHAT MODULE ARCHITECTURE
 Real-time chat module for internal communication between Admins, Agents, and Tenants.
-Features include direct/group messaging, typing indicators, read receipts, and real-time notifications via Socket.io.
 
 Chat Module Structure:
 src/
@@ -237,190 +224,30 @@ src/
 │   └── NewConversationModal.jsx     # New chat modal
 
 Key Chat Patterns:
-1. Context-Based State Management:
-const [state, dispatch] = useReducer(chatReducer, initialState);
-const socketRef = useRef(null); // Socket.io instance
-const convsRef = useRef([]);    // Conversations cache
+1. Context-Based State Management with useReducer
+2. Socket.io integration with JWT authentication
+3. Optimistic UI Updates for message sending
 
-2. Real-time Integration Pattern:
-const socket = io(import.meta.env.VITE_SOCKET_URL, {
-  auth: { token }, // JWT from localStorage
-  transports: ['websocket']
-});
-
-socket.on('new_message', ({ message, conversationId }) => {
-  if (activeConvRef.current?.id === conversationId) {
-    dispatch({ type: 'ADD_MESSAGE', payload: message });
-  } else {
-    updateUnreadCount(conversationId);
-  }
-});
-
-3. Optimistic UI Updates:
-const sendMessage = async (conversationId, messageText) => {
-  const tempMessage = createTempMessage(messageText);
-  dispatch({ type: 'ADD_MESSAGE', payload: tempMessage });
-  
-  const realMessage = await ChatService.sendMessage(conversationId, messageText);
-  
-  dispatch({ type: 'REPLACE_MESSAGE', payload: { tempId, realMessage } });
-  
-  socketRef.current?.emit('send_message', { conversationId, messageText });
-};
-
-## 🔔 NOTIFICATIONS SYSTEM ARCHITECTURE
+NOTIFICATIONS SYSTEM ARCHITECTURE
 Frontend Architecture:
 src/
 ├── context/NotificationContext.jsx     # State management with smart polling
 ├── components/
 │   ├── NotificationBell.jsx            # Real-time dropdown (bell icon)
 │   ├── NotificationsPage.jsx           # Full management interface
-│   └── NotificationManagement.jsx      # (Optional) Admin management
-└── services/api.jsx                    # notificationAPI + notificationUtils
 
 Key Notification Patterns:
-1. Smart Polling with Backoff:
-const backoffRef = useRef(30000); // Start with 30s
-const MAX_BACKOFF = 5 * 60 * 1000; // Max 5 minutes
+1. Smart Polling with Backoff: Starts at 30s, max 5 minutes
+2. Combined Unread Counts: Notifications + Chat messages
+3. Real-time updates via Socket.io
 
-const refreshNotifications = async () => {
-  try {
-    await Promise.all([fetchNotifications(), fetchUnreadCount()]);
-    backoffRef.current = 30000; // Reset on success
-  } catch (err) {
-    backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF);
-  }
-};
+BILLING UI/UX PATTERNS
+1. Bill Breakdown Display: Rent + Water + Arrears + Total
+2. Billing Status Indicators: pending, sent, failed, skipped
+3. Settings Form with Validation: Billing day (1-28), paybill number validation
+4. Mobile-First Billing Design: Scrollable tables, touch-friendly buttons
 
-2. Combined Unread Counts:
-const { getTotalUnreadCount: getChatUnreadCount } = useChat();
-const chatUnreadCount = getChatUnreadCount();
-const totalUnread = unreadCount + chatUnreadCount;
-
-{totalUnread > 0 && (
-  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full">
-    {totalUnread}
-  </span>
-)}
-
-## 💰 BILLING UI/UX PATTERNS
-UI/UX Patterns for Billing:
-
-1. Bill Breakdown Display:
-<BillBreakdown 
-  rent={15000}
-  water={500}
-  arrears={2000}
-  total={17500}
-  paid={5000}
-  remaining={12500}
-/>
-
-2. Billing Status Indicators:
-<BillingStatus 
-  status="pending"  // pending, sent, failed, skipped
-  date="2024-03-28"
-  retryCount={2}
-  onRetry={() => retrySMS()}
-/>
-
-3. Settings Form with Validation:
-<BillingSettingsForm
-  billingDay={28}
-  paybillNumber="123456"
-  companyName="Rental Management"
-  onSave={(data) => saveSettings(data)}
-  validationRules={{
-    billingDay: { min: 1, max: 28 },
-    paybillNumber: { pattern: /^\d{5,10}$/ }
-  }}
-/>
-
-Mobile-First Billing Design:
-- Responsive Tables: Scrollable billing history on mobile
-- Touch-Friendly: Larger buttons for SMS retry actions
-- Progressive Disclosure: Details hidden behind expandable sections
-- Quick Actions: One-tap retry for failed SMS
-
-## 📋 IMPLEMENTATION STATUS CHECKLIST
-✅ COMPLETED:
-1. Database Schema: Arrears tracking and billing tables
-2. Backend Services: CronService, BillingService, enhanced SMS
-3. Admin Settings: Configurable billing with validation
-4. Payment Allocation: Rent/water/arrears split logic
-5. SMS Templates: Professional bill breakdown messages
-6. Error Handling: Failed SMS tracking and retry system
-
-⏳ READY FOR TESTING:
-1. Cron Automation: Monthly billing scheduler
-2. Billing Calculation: Rent + water + arrears engine
-3. Admin Interface: Settings and monitoring endpoints
-4. Agent Fallback: Manual SMS retry functionality
-
-## 🔧 TESTING INSTRUCTIONS
-Phase 1: Configuration Test:
-# 1. Set paybill number (use test number)
-PUT /api/admin/settings/paybill_number
-Body: { "value": "TEST123" }
-
-# 2. Set billing day to today (for immediate testing)
-PUT /api/admin/settings/billing_day
-Body: { "value": "15" }  # Today's date
-
-# 3. Verify settings
-GET /api/admin/settings
-
-Phase 2: Manual Billing Test:
-# 1. Trigger manual billing (admin only)
-POST /api/cron/trigger-billing
-
-# 2. Check billing run status
-GET /api/cron/history
-
-# 3. Check SMS queue
-GET /api/cron/failed-sms
-
-Phase 3: Payment Allocation Test:
-# 1. Make test payment
-POST /api/payments/paybill
-Body: {
-  "unit_code": "PROP001-001",
-  "amount": 10000,
-  "mpesa_receipt_number": "TEST123",
-  "phone_number": "254712345678"
-}
-
-# 2. Check payment allocation
-GET /api/payments/breakdown/{paymentId}
-
-Frontend runs on localhost:5173 during development
-Build with: npm run build
-=================================================================================
-UPDATE
-==================================================================================
-## 📦 NEW COMPONENT: TenantManagement
-**Location**: src/components/TenantManagement.jsx
-**Purpose**: Agent-facing tenant management with full CRUD, allocation, and ID verification
-**Key Features**:
-- Create/Edit tenants with unit allocation
-- Upload ID images (front/back)
-- Search tenants by name, phone, national ID
-- Paginated listing with status indicators
-- Emergency contact management
-
-**API Integration**:
-- Uses tenantAPI from services/api.jsx
-- File upload via fileAPI for ID images
-- Handles both tenant creation and unit allocation in single form
-
-## 🔄 UPDATED FILES
-1. api.jsx - Added tenantAPI with all CRUD endpoints
-2. AgentDashboard.jsx - Added new "Tenant Management" tab
-
-==============================================================
-UPDATE
-==============================================================
-## 📋 IMPLEMENTATION STATUS CHECKLIST
+IMPLEMENTATION STATUS CHECKLIST (LATEST)
 ✅ COMPLETED:
 1. Database Schema: Arrears tracking and billing tables
 2. Backend Services: CronService, BillingService, enhanced SMS
@@ -429,33 +256,126 @@ UPDATE
 5. SMS Templates: Professional bill breakdown messages
 6. Error Handling: Failed SMS tracking and retry system
 7. Water Bill Integration: Enhanced AgentWaterBills.jsx with SMS functionality
+8. Agent SMS Management: Complete 3-tab interface with all features
 
-⏳ READY FOR TESTING:
-1. Cron Automation: Monthly billing scheduler
-2. Billing Calculation: Rent + water + arrears engine
-3. Admin Interface: Settings and monitoring endpoints
-4. Agent Fallback: Manual SMS retry functionality
-5. Water Bill SMS Integration: Pre-flight warnings and enhanced UX
+✅ READY FOR TESTING:
+1. Agent SMS triggering with missing water bill warnings
+2. Failed SMS management and retry system
+3. SMS history with filtering capabilities
+4. Real-time SMS queue monitoring
 
-## 🔧 TESTING INSTRUCTIONS
+NEW COMPONENT: TenantManagement.jsx
+Location: src/components/TenantManagement.jsx
+Purpose: Agent-facing tenant management with full CRUD, allocation, and ID verification
+Key Features:
+- Create/Edit tenants with unit allocation
+- Upload ID images (front/back)
+- Search tenants by name, phone, national ID
+- Paginated listing with status indicators
+- Emergency contact management
+
+NEW COMPONENT ARCHITECTURE: AgentSMSManagement.jsx
+Three-tab architecture with shared state:
+1. Tab 1: Trigger Billing SMS - Month selection, property filtering, missing bills confirmation
+2. Tab 2: Failed SMS Management - List with details, bulk selection, individual retry
+3. Tab 3: SMS History - Filter by status, date range, property, message preview
+
+Component Pattern:
+const AgentSMSManagement = () => {
+  const [activeTab, setActiveTab] = useState('trigger');
+  const [month, setMonth] = useState('');
+  const [failedSMS, setFailedSMS] = useState([]);
+  const [smsHistory, setSmsHistory] = useState([]);
+  
+  // Tab-based rendering
+  return (
+    <div>
+      {activeTab === 'trigger' && <TriggerTab />}
+      {activeTab === 'failed' && <FailedSMSTab />}
+      {activeTab === 'history' && <HistoryTab />}
+    </div>
+  );
+};
+
+UPDATED API INTEGRATION PATTERNS:
+New API Endpoints in api.jsx:
+const billingAPI = {
+  // Agent SMS Management
+  triggerAgentBilling: (data) => api.post('/cron/agent/trigger-billing', data),
+  getAgentFailedSMS: (params) => api.get('/cron/agent/failed-sms', { params }),
+  retryAgentFailedSMS: (data) => api.post('/cron/agent/retry-sms', data),
+  getSMSHistory: (params) => api.get('/cron/sms-history', { params }),
+};
+
+NEW COMPONENT: AgentReports.jsx
+Location: /src/components/AgentReports.jsx
+Status: Created (needs API integration fixes)
+Purpose: Agent-facing reports system with 7 report types and PDF/Excel export
+
+Features Implemented:
+1. 7 Report Types:
+   - Tenants Report (API: /api/agent-properties/my-tenants)
+   - Payments Report (agent-specific payments endpoint)
+   - Revenue Report (requires backend endpoint)
+   - Properties Report (API: /api/properties/agent/assigned)
+   - Complaints Report (API: /api/agent-properties/my-complaints)
+   - Water Bills Report (API: /api/water-bills)
+   - SMS Report (API: /api/cron/sms-history)
+
+2. Export Functionality:
+   - PDF export with jsPDF + jspdf-autotable
+   - Excel export with ExcelJS
+   - Company branding with logo placeholder
+   - Filtered data export
+
+3. UI/UX Features:
+   - Tab-based navigation for report types
+   - Date range filtering
+   - Search functionality
+   - Statistics summary
+   - Responsive design
+
+ISSUES IDENTIFIED:
+1. API Structure Mismatch: Current API object doesn't have expected modules (API.tenantAPI, API.agentAPI, etc. are undefined)
+2. Export Dependencies: jspdf-autotable not properly initialized (doc.autoTable is not a function)
+3. Missing Endpoints: Some reports need backend implementation
+
+UPDATED FILES:
+1. AgentDashboard.jsx - Added "Reports" tab to navigation
+2. Export Utilities:
+   - /src/utils/pdfExport.js with company branding
+   - /src/utils/excelExport.js with Excel formatting
+
+TESTING INSTRUCTIONS
 Phase 1: Water Bill Creation Test:
-# 1. Navigate to Agent Dashboard → Water Bills
-# 2. Create several water bills for different tenants
-# 3. Verify bills are saved correctly in database
+1. Navigate to Agent Dashboard → Water Bills
+2. Create several water bills for different tenants
+3. Verify bills are saved correctly
 
 Phase 2: Missing Water Bills Check:
-# 1. Create water bills for only some tenants
-# 2. Click "Send Billing SMS" button
-# 3. Verify warning modal shows missing tenants
-# 4. Confirm SMS sending proceeds anyway
+1. Create water bills for only some tenants
+2. Click "Send Billing SMS" button
+3. Verify warning modal shows missing tenants
+4. Confirm SMS sending proceeds anyway
 
 Phase 3: SMS Trigger Test:
-# 1. Click "Send Billing SMS" after creating water bills
-# 2. Confirm pre-flight check works correctly
-# 3. Verify billing SMS sent to all tenants
-# 4. Check that tenants without water bills get KSh 0 for water amount
+1. Click "Send Billing SMS" after creating water bills
+2. Confirm pre-flight check works correctly
+3. Verify billing SMS sent to all tenants
+4. Check tenants without water bills get KSh 0 for water
 
-Phase 4: Edge Cases:
-# 1. Test with no water bills created (all should show as missing)
-# 2. Test with all water bills created (no warnings)
-# 3. Test error handling for network issues
+Phase 4: Agent SMS Management Test:
+1. Navigate to SMS Management tab
+2. Test all 3 tabs (Trigger, Failed SMS, History)
+3. Verify agent property filtering works
+4. Test bulk retry functionality for failed SMS
+5. Check SMS history filtering by date and status
+
+EXPORT FUNCTIONALITY TESTING:
+1. Navigate to Agent Dashboard → Reports
+2. Select each report type
+3. Test date range filtering
+4. Attempt PDF and Excel export
+5. Verify company branding appears in exports
+
+END OF FRONTEND ARCHITECTURE SUMMARY
