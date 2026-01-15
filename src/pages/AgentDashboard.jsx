@@ -10,6 +10,7 @@ const NotificationManagement = lazy(() => import('../components/NotificationMana
 const ProfilePage = lazy(() => import('../components/ProfilePage'));
 const TenantManagement = lazy(() => import('../components/TenantManagement'));
 const AgentSMSManagement = lazy(() => import('../components/AgentSMSManagement'));
+const AgentReports = lazy(() => import('../components/AgentReports'));
 
 // Loading component for Suspense fallback
 const TabLoadingSpinner = () => (
@@ -28,11 +29,12 @@ const AgentDashboard = () => {
   const tabs = [
     { id: 'overview', name: 'Overview', shortName: 'Overview' },
     { id: 'tenant-management', name: 'Tenant Management', shortName: 'Tenants' },
-    { id: 'smsManagement', label: 'SMS Management' },
+    { id: 'smsManagement', name: 'SMS Management', shortName: 'SMS Mngmnt' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
     { id: 'payments', name: 'Payment Tracking', shortName: 'Payments' },
     { id: 'water-bills', name: 'Water Bills', shortName: 'Water Bills' },
     { id: 'notifications', name: 'Send Notifications', shortName: 'Notify' },
+    { id: 'reports', name: 'Reports', shortName: 'Reports' }, 
     { id: 'profile', name: 'My Profile', shortName: 'Profile' }
   ]
 
@@ -72,6 +74,12 @@ const AgentDashboard = () => {
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
             <NotificationManagement />
+          </Suspense>
+        )
+        case 'reports':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AgentReports />
           </Suspense>
         )
       case 'profile':

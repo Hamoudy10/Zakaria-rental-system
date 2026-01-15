@@ -368,7 +368,7 @@ export const billingAPI = {
   // Test SMS service
   testSMSService: (testData) => api.post('/cron/agent/test-sms', testData),
 
-  getSMSHistory: (params) => api.get('/cron/sms-history', { params }), // Adjust if needed
+   getSMSHistory: (params) => api.get('/cron/sms-history', { params }), // Adjust if needed
 };
 
 

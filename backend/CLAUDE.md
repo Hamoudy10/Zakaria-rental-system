@@ -1,12 +1,12 @@
-# Backend Architecture & Conventions
+BACKEND ARCHITECTURE & CONVENTIONS
 
-## 🏗️ EXPRESS APPLICATION STRUCTURE
+EXPRESS APPLICATION STRUCTURE
 Standard MVC Pattern with Services Layer:
 - Controllers: Handle HTTP requests/responses
 - Services: Contain business logic, database operations
 - Models: Database schema (implicit via SQL)
 
-## 📦 DEPENDENCIES & CONFIGURATION
+DEPENDENCIES & CONFIGURATION
 Key Packages:
 - express: Web framework with router
 - pg + pool: PostgreSQL connection pooling
@@ -17,9 +17,9 @@ Key Packages:
 - dotenv: Environment configuration
 - helmet + cors: Security middleware
 
-## 🎯 NEW CORE MODULES IMPLEMENTED
+NEW CORE MODULES IMPLEMENTED
 
-### 1. Cron Service (/backend/services/cronService.js)
+1. Cron Service (/backend/services/cronService.js)
 Purpose: Automated monthly billing and SMS notifications
 Features:
 - Runs on configurable day (default: 28th) at 9:00 AM
@@ -36,7 +36,7 @@ const cronSchedule = `0 9 ${billingDay} * *`;
 // SMS queue processing: every 5 minutes
 '*/5 * * * *' // Processes pending SMS
 
-### 2. Billing Service (/backend/services/billingService.js)
+2. Billing Service (/backend/services/billingService.js)
 Purpose: Calculate bills and allocate payments
 Key Methods:
 - calculateTenantBill(): Computes rent + water + arrears
@@ -50,7 +50,7 @@ Rent Due = Monthly Rent - Rent Paid (current month)
 Water Due = Water Bill Amount - Water Paid (current month)
 Arrears Due = Previous Arrears - Arrears Paid
 
-### 3. Enhanced Payment Controller
+3. Enhanced Payment Controller
 Payment Allocation Logic:
 - First Priority: Pay off arrears (oldest debts first)
 - Second Priority: Pay current water bill
@@ -62,7 +62,7 @@ Updated SMS Notifications:
 - Payment Confirmation: Allocation details and remaining balance
 - Admin Alerts: Real-time payment notifications with breakdown
 
-### 4. Admin Settings Controller (/backend/controllers/adminSettingsController.js)
+4. Admin Settings Controller (/backend/controllers/adminSettingsController.js)
 Enhanced Features:
 - Validation: Billing day (1-28), paybill number (5-10 digits), etc.
 - Automatic Cron Restart: When billing day changes
@@ -77,7 +77,7 @@ Key Settings:
 - late_fee_percentage: Default late penalty (0-50%)
 - grace_period_days: Grace period before late fee (0-30 days)
 
-## ⏰ AUTOMATED BILLING SYSTEM
+AUTOMATED BILLING SYSTEM
 End-of-Month Automation:
 - Cron Service: Separate service for scheduled tasks
 - Run Date: 28th of each month (configurable)
@@ -85,18 +85,7 @@ End-of-Month Automation:
 - Skip Logic: Tenants with advance payments get no SMS
 - Failure Handling: Failed SMS logged, agents notified
 
-Admin Settings for Billing:
-- Paybill Number: Configured in admin_settings
-- Billing Date: Day of month for automation
-- SMS Templates: Customizable message formats
-- Retry Logic: Configurable retry attempts
-
-Agent Fallback Interface:
-- Manual SMS: Send to tenants who didn't receive
-- Bulk Retry: Retry all failed SMS with one click
-- Notification: Agents get alerts for failed automation
-
-## 🎯 CONTROLLER PATTERNS
+CONTROLLER PATTERNS
 Standard Controller Structure:
 - Async/Await with try-catch blocks
 - Transaction management for multi-step operations
@@ -107,52 +96,27 @@ Standard Controller Structure:
 Example Controller Pattern (from propertyController.js):
 const createProperty = async (req, res) => {
   const client = await pool.connect();
-  
   try {
     await client.query('BEGIN');
-    
     if (!req.body.property_code) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Property code required' 
-      });
+      return res.status(400).json({ success: false, message: 'Property code required' });
     }
-    
-    const result = await client.query(
-      `INSERT INTO properties (...) VALUES (...) RETURNING *`,
-      [values]
-    );
-    
+    const result = await client.query(`INSERT INTO properties (...) VALUES (...) RETURNING *`, [values]);
     await client.query('COMMIT');
-    
-    res.status(201).json({
-      success: true,
-      message: 'Property created',
-      data: result.rows[0]
-    });
-    
+    res.status(201).json({ success: true, message: 'Property created', data: result.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
-    
     if (error.code === '23505') {
-      return res.status(400).json({
-        success: false,
-        message: 'Property code already exists'
-      });
+      return res.status(400).json({ success: false, message: 'Property code already exists' });
     }
-    
     console.error('Create property error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error creating property',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    res.status(500).json({ success: false, message: 'Server error creating property' });
   } finally {
     client.release();
   }
 };
 
-## 🔐 AUTHENTICATION MIDDLEWARE
+AUTHENTICATION MIDDLEWARE
 JWT Verification Flow (middleware/authMiddleware.js):
 - Extract token from Authorization: Bearer <token> header
 - Verify with jsonwebtoken.verify()
@@ -164,7 +128,7 @@ const { protect, adminOnly } = require('../middleware/authMiddleware');
 router.post('/', protect, adminOnly, createProperty);
 router.get('/:id', protect, getProperty);
 
-## 💾 DATABASE OPERATIONS
+DATABASE OPERATIONS
 Connection Pooling (config/database.js):
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -177,7 +141,7 @@ Query Patterns:
 - Use joins for related data (properties + units + images)
 - Implement soft deletes where appropriate (is_active flag)
 
-## 💰 MPESA INTEGRATION PATTERNS
+MPESA INTEGRATION PATTERNS
 Payment Processing Flow:
 1. Initiate: Client → POST /api/payments/mpesa with phone/amount
 2. Callback: Safaricom → POST /api/payments/mpesa/callback
@@ -189,24 +153,7 @@ pending → processing → completed/failed
 Store mpesa_code, checkout_request_id, merchant_request_id
 Validate amount matches expected rent
 
-## 🔧 SERVICE LAYER PATTERNS
-Separation of Concerns:
-- Controllers: Handle HTTP requests/responses
-- Services: Contain business logic, database operations
-- Models: Database schema (implicit via SQL)
-
-Example Service Pattern:
-// services/notificationService.js
-class NotificationService {
-  async sendPaymentNotification(paymentData) {
-    // 1. Create notification record
-    // 2. Queue SMS/email
-    // 3. Update payment status
-    // 4. Return result
-  }
-}
-
-## 🧾 BILLING & ARREARS SYSTEM
+BILLING & ARREARS SYSTEM
 New Components:
 1. BillingService (/backend/services/billingService.js):
    - Calculates total due: rent + water + arrears
@@ -214,85 +161,37 @@ New Components:
    - Generates monthly bills for all tenants
    - Updates arrears balances automatically
 
-2. Enhanced Payment Tracking:
-   - tenant_allocations.arrears_balance: Track outstanding amounts
-   - rent_payments.allocated_to_*: Split payments between rent/water/arrears
-   - Smart allocation prioritizes arrears first
-
-Billing Calculation Flow:
-1. Rent: From tenant_allocations.monthly_rent
-2. Water: From water_bills.amount for the month
-3. Arrears: From tenant_allocations.arrears_balance
-4. Advance: From rent_payments.is_advance_payment (skip SMS if covered)
-
 Payment Allocation Logic:
 1. First: Pay off arrears (oldest debts)
 2. Second: Pay current water bill
 3. Third: Pay current month's rent
 4. Remainder: Mark as advance payment for future months
 
-SMS Templates Enhanced:
-- Bill notifications include rent/water/arrears breakdown
-- Payment confirmations show allocation details
-- Admin alerts include payment breakdown
-
-## 🔄 UPDATED PAYMENT FLOW
-End-to-Month Billing Process:
-1. Cron Job Triggered (28th of month, 9:00 AM)
-2. Bill Generation: Calculate rent + water + arrears for each tenant
-3. SMS Queue: Create SMS messages in sms_queue table
-4. SMS Processing: Send SMS with rate limiting (200ms between messages)
-5. Result Logging: Record success/failure in billing_runs table
-6. Admin Notification: Send in-app notifications to all admins
-
-Payment Processing Flow:
-1. Tenant Payment: Via paybill using unit code as account number
-2. Payment Allocation: Automatic split between rent/water/arrears
-3. SMS Confirmation: Sent to tenant and admin with breakdown
-4. Arrears Update: Update tenant_allocations.arrears_balance
-5. Advance Handling: Mark remainder as advance payment
-
-Total Due Calculation:
-Total Due = Rent Due + Water Due + Arrears Due
-Rent Due = Monthly Rent - Rent Paid (current month)
-Water Due = Water Bill Amount - Water Paid (current month)
-Arrears Due = Previous Arrears Balance - Arrears Paid
-
 Payment Allocation Algorithm:
-// Priority-based allocation
 const allocatePayment = (amount, rentDue, waterDue, arrearsDue) => {
   let remaining = amount;
   const allocation = { rent: 0, water: 0, arrears: 0, advance: 0 };
-  
-  // 1. Pay arrears first
   allocation.arrears = Math.min(remaining, arrearsDue);
   remaining -= allocation.arrears;
-  
-  // 2. Pay water bill
   allocation.water = Math.min(remaining, waterDue);
   remaining -= allocation.water;
-  
-  // 3. Pay rent
   allocation.rent = Math.min(remaining, rentDue);
   remaining -= allocation.rent;
-  
-  // 4. Remainder is advance
   allocation.advance = remaining;
-  
   return allocation;
 };
 
-## 📊 ADMIN SETTINGS FOR BILLING
+ADMIN SETTINGS FOR BILLING
 Required Settings in admin_settings table:
-Key               Default                   Description                    Validation
-billing_day       28                        Day of month for auto-billing  1-28
-paybill_number    ''                        Business paybill for SMS       5-10 digits
-company_name      'Rental Management'       SMS signature                  Text
-sms_billing_template Template               SMS message template           Text with variables
-late_fee_percentage 5                       Late fee percentage           0-50
-grace_period_days   5                       Grace period before late fee  0-30
-sms_enabled        true                     Enable SMS notifications       boolean
-auto_billing_enabled true                   Enable automatic billing      boolean
+Key               Default                   Validation
+billing_day       28                        1-28
+paybill_number    ''                        5-10 digits
+company_name      'Rental Management'       Text
+sms_billing_template Template               Text with variables
+late_fee_percentage 5                       0-50
+grace_period_days   5                       0-30
+sms_enabled        true                     boolean
+auto_billing_enabled true                   boolean
 
 SMS Template Variables:
 {
@@ -306,276 +205,52 @@ SMS Template Variables:
   paybill: "123456"
 }
 
-## ⚠️ DATA INTEGRITY RULES (NEW)
-Billing Integrity:
-- No duplicate billing: One bill per tenant per month
-- Water bill validation: Must exist before billing can proceed
-- Advance payment detection: Skip SMS if advance covers total due
-- Arrears calculation: Auto-updates after each payment
-
-Payment Allocation Rules:
-- Sum validation: allocated_to_rent + allocated_to_water + allocated_to_arrears = amount
-- Negative prevention: Allocation amounts cannot be negative
-- Consistency: Allocation must match payment type (rent/water/arrears)
-
-## 📈 PERFORMANCE OPTIMIZATIONS (ADDED)
-New Indexes for Billing:
--- Fast arrears queries
-CREATE INDEX idx_tenant_allocations_arrears 
-ON tenant_allocations(arrears_balance) 
-WHERE arrears_balance > 0;
-
--- Fast water bill lookup by tenant and month
-CREATE INDEX idx_water_bills_tenant_month 
-ON water_bills(tenant_id, bill_month);
-
--- Fast billing history queries
-CREATE INDEX idx_billing_runs_month_date 
-ON billing_runs(month DESC, run_date DESC);
-
-Query Optimization for Monthly Billing:
-- Use CTEs for complex billing calculations
-- Batch updates for arrears adjustments
-- Pagination for large tenant lists (>1000)
-
-## 📊 ERROR HANDLING STRATEGY
-HTTP Status Codes:
-- 200: Success
-- 201: Created
-- 400: Bad request (validation errors)
-- 401: Unauthorized (invalid/missing token)
-- 403: Forbidden (insufficient permissions)
-- 404: Not found
-- 409: Conflict (duplicate data)
-- 500: Server error
-
-Error Response Format:
-{
-  "success": false,
-  "message": "Human-readable error message",
-  "error": "Technical details in development only"
-}
-
-## 🧪 TESTING & DEVELOPMENT
-Local Development:
-npm run dev  # Uses nodemon for auto-restart
-
-Database Migrations:
-- Migration files in /migrations/
-- Run manually or via deployment script
-- Always backup before migration
-
-API Testing:
-- Use Postman/Insomnia collections
-- Test all user roles (admin, agent, tenant)
-- Test error scenarios (invalid tokens, missing data)
-
-Backend running on Render: https://zakaria-rental-system.onrender.com
-API Documentation available at /api-docs (if implemented)
-
-## 💬 CHAT MODULE BACKEND PATTERNS
+CHAT MODULE BACKEND PATTERNS
 Controller-Service Pattern for chat:
 HTTP Request → chatController.js (REST API) → chatService.js (Socket.io + Business Logic) → Database
 
-Key Backend Patterns:
-1. Transaction Management:
-const client = await db.connect();
-try {
-  await client.query('BEGIN');
-  // 1. Create conversation
-  const conversationResult = await client.query(`INSERT INTO chat_conversations... RETURNING *`);
-  // 2. Add participants
-  await client.query(`INSERT INTO chat_participants...`);
-  await client.query('COMMIT');
-  return conversationResult.rows[0];
-} catch (error) {
-  await client.query('ROLLBACK');
-  throw error;
-} finally {
-  client.release();
-}
-
-2. Socket.io Room Architecture:
+Socket.io Room Architecture:
 socket.on('connection', async (socket) => {
-  // Personal room for user-specific notifications
   socket.join(`user_${socket.userId}`);
-  
-  // Auto-join conversation rooms
   const convs = await db.query('SELECT conversation_id FROM chat_participants...');
   convs.rows.forEach(row => {
     socket.join(`conversation_${row.conversation_id}`);
   });
 });
 
-3. Real-time Message Broadcasting:
+Real-time Message Broadcasting:
 // Dual broadcast pattern
-// 1. To conversation room (all participants)
-io.to(`conversation_${conversationId}`).emit('new_message', {
-  message: message,
-  conversationId: conversationId
-});
+io.to(`conversation_${conversationId}`).emit('new_message', { message, conversationId });
+io.to(`user_${participant.user_id}`).emit('chat_notification', { type: 'new_message', conversationId, message, unreadCount: 1 });
 
-// 2. To individual users (for notifications)
-io.to(`user_${participant.user_id}`).emit('chat_notification', {
-  type: 'new_message',
-  conversationId: conversationId,
-  message: message,
-  unreadCount: 1
-});
-
-## 🔔 NOTIFICATIONS SYSTEM BACKEND PATTERNS
+NOTIFICATIONS SYSTEM BACKEND PATTERNS
 Controller-Service Pattern:
 HTTP Request → notificationController.js (Rate Limiting + Validation) → NotificationService.js (Business Logic) → Database
 
-Key Backend Patterns:
-1. Rate Limiting Implementation:
+Rate Limiting Implementation:
 const userRequestTimestamps = new Map();
 const RATE_LIMIT_WINDOW = 2000;
 
 const checkRateLimit = (userId, endpoint) => {
   const key = `${userId}-${endpoint}`;
   const lastRequest = userRequestTimestamps.get(key);
-  
-  if (lastRequest && (Date.now() - lastRequest) < RATE_LIMIT_WINDOW) {
-    return false;
-  }
-  
+  if (lastRequest && (Date.now() - lastRequest) < RATE_LIMIT_WINDOW) { return false; }
   userRequestTimestamps.set(key, Date.now());
   return true;
 };
 
-2. Pagination & Filtering:
-let query = `SELECT * FROM notifications WHERE user_id = $1`;
-const queryParams = [userId];
-
-if (type) {
-  query += ` AND type = $${queryParams.length + 1}`;
-  queryParams.push(type);
-}
-
-query += ` ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
-queryParams.push(limit, offset);
-
-3. Broadcast Notifications (Admin Only):
-// Role-based broadcasting
-if (req.user.role !== 'admin') {
-  return res.status(403).json({ success: false, message: 'Admin only' });
-}
-
-// Role filtering
-let userQuery = 'SELECT id FROM users WHERE is_active = true';
-if (target_roles && target_roles.length > 0) {
-  userQuery += ` AND role = ANY($1)`;
-}
-
-Notification Service Layer (notificationService.js):
-1. Specialized Notification Creators:
-static async createPaymentNotification(paymentData) {
-  const { tenantId, amount, paymentMonth, allocatedAmount, carryForwardAmount } = paymentData;
-  
-  // Tenant notification
-  let tenantMessage = `Your rent payment of KSh ${amount} has been processed. `;
-  if (carryForwardAmount > 0) {
-    tenantMessage += `KSh ${allocatedAmount} applied to ${paymentMonth}, KSh ${carryForwardAmount} carried forward.`;
-  }
-}
-
-2. Notification Types & Purposes:
+Notification Types:
 - payment_success: Tenant payment successful
 - payment_received: Admin received payment
 - payment_failed: Payment failure
 - payment_carry_forward: Amount carried forward
 - salary_paid: Agent salary paid
-- salary_processed: Admin processed salary
 - complaint_created: New complaint
 - complaint_resolved: Complaint resolved
 - announcement: Broadcast message
 - system_alert: System-wide alert
-- maintenance: Maintenance notice
-- reminder: Payment reminder
 
-## ⚡ PERFORMANCE OPTIMIZATIONS
-Implemented:
-- Smart Polling: 30s → 5min exponential backoff on 429
-- Debounced Filtering: 800ms delay on filter changes
-- Database Indexing: User ID, read status, creation date
-- Pagination: 20 notifications per page
-- Conditional Rendering: Only fetches when dropdown opens
-
-## 🐛 DEBUGGING & TROUBLESHOOTING
-Common Issues:
-1. Notifications Not Updating:
-console.log('Backoff interval:', backoffRef.current);
-console.log('Auth status:', isAuthenticated());
-console.log('Last fetch:', lastFetchTime);
-
-2. 429 Rate Limit Errors:
-Cause: More than 1 request every 2 seconds per endpoint
-Solution: Frontend automatically retries with backoff
-Debug: Check userRequestTimestamps Map in controller
-
-3. Missing Chat Notifications:
-// Verify chat context is available
-const { getTotalUnreadCount } = useChat();
-console.log('Chat unread count:', getTotalUnreadCount());
-
-## 📊 PERFORMANCE METRICS
-Key Metrics to Monitor:
-- Polling Frequency: Average time between requests
-- 429 Rate: Percentage of rate-limited requests
-- Response Time: P95 for notification endpoints
-- Unread Count Accuracy: Frontend vs backend consistency
-- Broadcast Performance: Time to notify 1000+ users
-
-Optimization Checklist:
-- Database indexes on user_id, is_read, created_at
-- Query optimization for getNotifications
-- Frontend debouncing on filter changes
-- Backend rate limiting tuned for expected load
-- Caching layer for frequent requests
-==============================================================================
-CURRENT UPDATES
-===============================================================================
-
-## 🎯 NEW COMPONENT IMPLEMENTATION
-
-### TenantManagement Component (/src/components/TenantManagement.jsx)
-**Status**: ✅ Partially implemented
-**Features:**
-- Searchable, paginated tenant list
-- Modal-based create/edit forms
-- Unit allocation during tenant creation
-- ID image upload (front/back) - TODO
-- Emergency contact management
-
-**Dependencies:**
-- tenantAPI from services/api.jsx
-- PropertyContext for agent property filtering
-- AuthContext for user role detection
-
-**API Endpoints Used:**
-- GET    /api/tenants           - List tenants (search/pagination)
-- GET    /api/tenants/:id       - Get single tenant
-- POST   /api/tenants           - Create tenant + optional allocation
-- PUT    /api/tenants/:id       - Update tenant
-- DELETE /api/tenants/:id       - Delete tenant
-- GET    /api/tenants/available-units - Get units for allocation
-
-## 🔧 FRONTEND UPDATES NEEDED
-
-### PropertyContext.jsx Update:
-```javascript
-// In fetchProperties function:
-const endpoint = user?.role === 'agent' 
-  ? '/properties/agent/assigned' 
-  : '/properties';
-
-  =================================================================
-  UPDATE
-  ==================================================================
-  ## 🎯 NEW CORE MODULES IMPLEMENTED
-
-### 5. Water Bill Integration (/backend/controllers/waterBillController.js)
+WATER BILL INTEGRATION (/backend/controllers/waterBillController.js)
 Purpose: Enhanced water bill management with SMS integration
 Key Methods:
 - checkMissingWaterBills(): Identifies tenants without water bills for specific month
@@ -589,76 +264,20 @@ Water Bill SMS Integration:
 - Flexible timing: SMS can be sent anytime, even with incomplete data
 - Agent warnings: Clear indication of which tenants lack water bills
 
-### 6. Water Bills Routes (/backend/routes/waterBills.js)
+Water Bills Routes (/backend/routes/waterBills.js)
 New API Endpoints:
 - GET /api/water-bills/missing-tenants - Check which tenants lack water bills
-- POST /api/water-bills - Create water bill (existing)
-- GET /api/water-bills - List water bills (existing)
-- GET /api/water-bills/:id - Get specific water bill (existing)
-- DELETE /api/water-bills/:id - Delete water bill (existing)
+- POST /api/water-bills - Create water bill
+- GET /api/water-bills - List water bills
+- GET /api/water-bills/:id - Get specific water bill
+- DELETE /api/water-bills/:id - Delete water bill
 
 Security Implementation:
 - All endpoints protected by agentOrAdmin middleware
 - Agent property filtering via agent_property_assignments table
 - Proper error handling with meaningful messages
 
-## 🔄 UPDATED CONTROLLER PATTERNS
-Enhanced Controller Structure:
-- Added checkMissingWaterBills function with comprehensive tenant analysis
-- Improved error handling with specific error messages
-- Added tenant name resolution for free-text input
-- Enhanced agent property filtering for data isolation
-
-Example Enhanced Controller Pattern:
-const checkMissingWaterBills = async (req, res) => {
-  try {
-    const { month, propertyId } = req.query;
-    
-    // Validate required parameters
-    if (!month) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Month parameter required (YYYY-MM)' 
-      });
-    }
-
-    // Build dynamic query with agent filtering
-    let query = `SELECT tenant data with EXISTS check for water bills`;
-    const params = [targetDate];
-    
-    // Add agent property filtering for non-admin users
-    if (req.user.role !== 'admin') {
-      query += ` AND property filtering for agent assignments`;
-    }
-
-    // Execute query and format response
-    const result = await pool.query(query, params);
-    
-    res.json({
-      success: true,
-      data: {
-        month,
-        totalTenants: tenants.length,
-        tenantsWithWaterBills: tenantsWithBills.length,
-        tenantsWithoutWaterBills: tenantsWithoutBills.length,
-        tenantsWithoutBills: formatted_missing_list,
-        summary: percentage_statistics
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error checking missing water bills:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to check missing water bills',
-      error: error.message
-    });
-  }
-};
-
-## 🎯 NEW CORE MODULES IMPLEMENTED
-
-### 7. Agent SMS Management System
+AGENT SMS MANAGEMENT SYSTEM
 Purpose: Agent-scoped SMS management with property filtering
 Key Features:
 - Agent-triggered billing SMS with water bill verification
@@ -686,14 +305,167 @@ Security Implementation:
 - Property validation before SMS queuing
 - Role-based access control (agentOnly middleware)
 
-## 🐛 DEBUGGING & TROUBLESHOOTING
-Current Issues & Solutions:
+DATABASE INTEGRATION:
+New SMS Queue Table Schema:
+id (uuid): Primary key
+recipient_phone (varchar): Formatted phone number (254XXXXXXXXX)
+message (text): SMS message content
+message_type (varchar): 'bill_notification', 'payment_confirmation'
+status (varchar): 'pending', 'sent', 'failed'
+billing_month (varchar): Month in YYYY-MM format
+attempts (integer): Number of retry attempts (max 3)
+error_message (text): Last error message
+created_at (timestamp): When SMS was queued
+agent_id (uuid): Reference to users.id (who triggered)
 
-1. **404 Route Not Found: /api/cron/agent/trigger-billing**
+Key Queries for Agent SMS Management:
+-- Agent's Failed SMS Query
+SELECT sq.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name
+FROM sms_queue sq
+LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
+LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+LEFT JOIN property_units pu ON ta.unit_id = pu.id
+LEFT JOIN properties p ON pu.property_id = p.id
+WHERE sq.status = 'failed' AND sq.message_type = 'bill_notification' AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true);
+
+AGENT REPORTS SYSTEM - ENDPOINT VERIFICATION
+
+✅ WORKING ENDPOINTS:
+
+1. Properties:
+   - GET /api/properties/agent/assigned - Returns agent's assigned properties
+   - Response format: { success, data: [properties], count }
+
+2. Agent Properties Redirects:
+   - GET /api/agents/tenants/payments → Redirects to /api/agent-properties/my-tenants
+   - GET /api/agents/complaints → Redirects to /api/agent-properties/my-complaints
+
+❓ ENDPOINTS TO VERIFY/CREATE:
+
+1. Agent Tenants Endpoint:
+   - Expected: GET /api/agent-properties/my-tenants
+   - Purpose: List all tenants in agent's assigned properties
+   - Should include tenant details, unit info, property info
+
+2. Agent Payments Endpoint:
+   - Current: None specifically for agent reports
+   - Need: GET /api/agent-properties/my-payments or similar
+   - Should return payments filtered by agent's properties
+
+3. Revenue Report Endpoint:
+   - Need: GET /api/agent-properties/revenue-summary
+   - Should return aggregated revenue data by property/period
+
+4. Water Bills with Agent Filtering:
+   - Existing: GET /api/water-bills (needs agent filtering)
+   - Should return water bills for agent's properties only
+
+5. SMS History with Agent Filtering:
+   - Existing: GET /api/cron/sms-history (needs agent filtering)
+   - Should return SMS sent to tenants in agent's properties
+
+REQUIRED BACKEND UPDATES:
+
+1. Create Agent Reports Controller:
+   - Create agentReportsController.js with 7 report functions
+   - Each function must filter by agent_property_assignments table
+
+2. Add Agent Reports Routes:
+   - Create agentReports.js routes file
+   - Register routes in server.js
+   - Test endpoints with Postman
+
+3. Update Existing Endpoints:
+   - Add agent filtering to water bills endpoint
+   - Add agent filtering to SMS history endpoint
+
+AGENT FILTERING PATTERN:
+All agent report endpoints should follow this pattern:
+
+const query = `
+SELECT ...
+FROM ...
+WHERE property_id IN (
+ SELECT property_id FROM agent_property_assignments 
+ WHERE agent_id = $1 AND is_active = true
+)
+`;
+
+ERROR HANDLING STRATEGY
+HTTP Status Codes:
+- 200: Success
+- 201: Created
+- 400: Bad request (validation errors)
+- 401: Unauthorized (invalid/missing token)
+- 403: Forbidden (insufficient permissions)
+- 404: Not found
+- 409: Conflict (duplicate data)
+- 500: Server error
+
+Error Response Format:
+{
+  "success": false,
+  "message": "Human-readable error message",
+  "error": "Technical details in development only"
+}
+
+DATA INTEGRITY RULES (NEW)
+Billing Integrity:
+- No duplicate billing: One bill per tenant per month
+- Water bill validation: Must exist before billing can proceed
+- Advance payment detection: Skip SMS if advance covers total due
+- Arrears calculation: Auto-updates after each payment
+
+Payment Allocation Rules:
+- Sum validation: allocated_to_rent + allocated_to_water + allocated_to_arrears = amount
+- Negative prevention: Allocation amounts cannot be negative
+- Consistency: Allocation must match payment type (rent/water/arrears)
+
+PERFORMANCE OPTIMIZATIONS (ADDED)
+New Indexes for Billing:
+-- Fast arrears queries
+CREATE INDEX idx_tenant_allocations_arrears ON tenant_allocations(arrears_balance) WHERE arrears_balance > 0;
+
+-- Fast water bill lookup by tenant and month
+CREATE INDEX idx_water_bills_tenant_month ON water_bills(tenant_id, bill_month);
+
+-- Fast billing history queries
+CREATE INDEX idx_billing_runs_month_date ON billing_runs(month DESC, run_date DESC);
+
+Query Optimization for Monthly Billing:
+- Use CTEs for complex billing calculations
+- Batch updates for arrears adjustments
+- Pagination for large tenant lists (>1000)
+
+DEBUGGING & TROUBLESHOOTING
+Common Issues:
+
+1. 404 Route Not Found: /api/cron/agent/trigger-billing
    Cause: Route not properly registered in server.js
    Solution: Verify cronRoutes.js is loaded in server.js
-   Debug Steps:
-   
-   // Check server.js line:
-   const cronRoutes = require('./routes/cronRoutes');
-   app.use('/api/cron', cronRoutes);
+
+2. SQL Column Error: column p.is_active does not exist
+   Root Cause: properties table doesn't have is_active column
+   Solution: Removed all references to p.is_active, kept only apa.is_active (agent_property_assignments)
+
+3. Agent Data Isolation Issues
+   Cause: Missing agent_property_assignments joins in queries
+   Solution: All agent queries must include property filtering via agent_property_assignments table
+
+TESTING & DEVELOPMENT
+Local Development:
+npm run dev  # Uses nodemon for auto-restart
+
+Database Migrations:
+- Migration files in /migrations/
+- Run manually or via deployment script
+- Always backup before migration
+
+API Testing:
+- Use Postman/Insomnia collections
+- Test all user roles (admin, agent, tenant)
+- Test error scenarios (invalid tokens, missing data)
+
+Backend running on Render: https://zakaria-rental-system.onrender.com
+
+END OF BACKEND ARCHITECTURE SUMMARY
