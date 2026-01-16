@@ -126,3 +126,48 @@ abdallah-rental-system/
 4. Error Handling: Controllers use try-catch with specific messages
 
 LAST UPDATED: After Update 8.0 - All critical issues resolved, system stable and ready for production use.
+
+UPDATE 9.0 - ID IMAGE UPLOAD FIXES (TENANT MANAGEMENT):
+
+PROBLEM RESOLVED: Fixed 400 error "At least one ID image (front or back) is required" when creating/updating tenants
+
+ROOT CAUSE: Frontend/Backend API mismatch
+- Frontend: Sending FormData with file uploads (multipart/form-data)
+- Backend: Expecting base64 strings in JSON body
+- Result: Backend validation failed because req.body was empty
+
+SOLUTION: Standardized on FormData/multipart uploads using Multer middleware
+
+BACKEND CHANGES:
+1. Created Multer middleware (/backend/middleware/uploadMiddleware.js)
+2. Fixed duplicate route in tenants.js (removed base64 handler, kept FormData route)
+3. Updated tenantController.js to handle req.files (file paths) instead of req.body (base64)
+4. Added static file serving in server.js for uploads directory
+
+FRONTEND STATUS: No changes needed - already using correct FormData approach
+
+KEY FIXES:
+✅ Fixed duplicate route conflict in tenants.js
+✅ Added proper file upload validation (5MB limit, image types only)
+✅ Implemented file cleanup on errors
+✅ Images now accessible via: https://zakaria-rental-system.onrender.com/uploads/id_images/filename
+
+PRODUCTION CONSIDERATIONS:
+- Current: Local file storage (uploads/id_images/)
+- Recommended future: Cloud storage (AWS S3, Google Cloud Storage) for scalability
+- Database stores relative file paths, not base64 strings
+
+FILES MODIFIED/ADDED:
+➕ /backend/middleware/uploadMiddleware.js (New)
+✏️ /backend/routes/tenants.js (Fixed duplicate route)
+✏️ /backend/controllers/tenantController.js (Updated uploadIDImages function)
+✏️ /backend/server.js (Added static file serving)
+📁 /backend/uploads/id_images/ (New directory)
+
+TESTING CONFIRMED:
+✅ Tenant creation with ID images now works
+✅ FormData correctly processed by Multer middleware
+✅ Images saved to server filesystem
+✅ Image URLs stored in database
+
+CURRENT SYSTEM STATUS: All tenant management functions fully operational with proper ID image uploads.

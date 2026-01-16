@@ -355,3 +355,55 @@ SUMMARY OF FIXES (UPDATE 6.0):
 Current System Status: Database schema is production-ready with all billing, arrears tracking, and agent isolation features implemented.
 
 LAST UPDATED: After Update 8.0 - Production deployment dependencies addressed, schema optimized for performance.
+UPDATE 9.0 - ID IMAGE STORAGE STRATEGY:
+
+DATABASE SCHEMA CLARIFICATION:
+- tenants.id_front_image: VARCHAR (stores file path, not base64)
+- tenants.id_back_image: VARCHAR (stores file path, not base64)
+- Example: '/uploads/id_images/42357843-48d9-4bbc-b524-09b1b80eb4e4-1737117789321-123456789.jpg'
+
+STORAGE ARCHITECTURE:
+Local Filesystem:
+- Path: backend/uploads/id_images/
+- Naming: {tenantId}-{timestamp}-{random}.{extension}
+- Access: Static serving via Express
+- URL: https://backend-url/uploads/id_images/filename
+
+Cloud Storage (Future):
+- Path: Store cloud storage URLs instead of local paths
+- Example: https://s3.amazonaws.com/bucket-name/id_images/filename
+- Database: Same VARCHAR columns, different URL format
+
+MIGRATION CONSIDERATIONS:
+From base64 to file paths:
+- Old: base64 strings in id_front_image/id_back_image
+- New: File paths/URLs in same columns
+- Migration script needed for existing tenants
+
+INDEXING RECOMMENDATION:
+-- For faster tenant image lookups
+CREATE INDEX idx_tenants_image_paths ON tenants(id_front_image, id_back_image) 
+WHERE id_front_image IS NOT NULL OR id_back_image IS NOT NULL;
+
+SECURITY IMPLICATIONS:
+- File paths stored, not file content
+- No database bloat from base64 strings
+- Easier backup/restore (files separate from database)
+- Can implement CDN for image delivery
+
+PERFORMANCE BENEFITS:
+- Smaller database size
+- Faster queries (text vs. large base64 strings)
+- Native browser image caching
+- Scalable file storage (can move to CDN)
+
+BACKUP STRATEGY:
+1. Database: Standard PostgreSQL backup
+2. Uploads directory: Separate backup procedure
+3. Sync: Ensure file paths in database match actual files
+
+PRODUCTION RECOMMENDATIONS:
+1. Implement cloud storage (AWS S3, Google Cloud Storage)
+2. Use CDN for image delivery
+3. Set up lifecycle policies for old images
+4. Implement image compression on upload

@@ -410,3 +410,54 @@ For production file uploads without multer dependency issues:
 4. Avoid server-side file handling for scalability
 
 LAST UPDATED: After Update 8.0 - All route loading issues resolved, production-ready backend.
+UPDATE 9.0 - MULTER FILE UPLOAD IMPLEMENTATION:
+
+MULTER MIDDLEWARE CREATED (/backend/middleware/uploadMiddleware.js):
+- File storage: Local filesystem in 'uploads/id_images/' directory
+- File naming: tenantId-timestamp-random.extension (prevents collisions)
+- File validation: Only accepts .jpeg, .jpg, .png images
+- Size limit: 5MB per file
+- Middleware: uploadIDImages handles two fields (id_front_image, id_back_image)
+
+ROUTES FIXED (/backend/routes/tenants.js):
+- Removed duplicate POST /:id/upload-id route (was causing 400 errors)
+- Single route now: router.post('/:id/upload-id', uploadIDImages, tenantController.uploadIDImages)
+- Eliminated base64 handling route that conflicted with FormData route
+
+TENANT CONTROLLER UPDATED (/backend/controllers/tenantController.js):
+- uploadIDImages function now processes req.files (from Multer) instead of req.body
+- Stores relative file paths in database: '/uploads/id_images/filename'
+- Added error handling with file cleanup on failure
+- Returns image URLs in API response
+
+STATIC FILE SERVING (server.js):
+- Added: app.use('/uploads', express.static('uploads'));
+- Images accessible at: https://zakaria-rental-system.onrender.com/uploads/id_images/filename
+
+FILE UPLOAD FLOW:
+1. Frontend → POST /api/tenants/:id/upload-id with FormData
+2. Multer middleware → Validates & saves files to uploads/id_images/
+3. Controller → Updates database with file paths
+4. Response → Returns image URLs for frontend display
+
+ERROR HANDLING ENHANCEMENTS:
+- File type validation at middleware level
+- Size limit enforcement (5MB)
+- Database transaction safety
+- File cleanup on tenant not found or server errors
+
+PRODUCTION DEPLOYMENT NOTES:
+⚠️ CURRENT: Local file storage works for development/testing
+⚠️ RECOMMENDED: Cloud storage (AWS S3) for production scalability
+⚠️ FILE SYSTEM: Render/Heroku have ephemeral filesystems - files lost on redeploy
+
+DATABASE STORAGE FORMAT:
+- id_front_image: VARCHAR storing path like '/uploads/id_images/tenant-uuid-1234567890.jpg'
+- id_back_image: VARCHAR storing similar path format
+- NOT storing base64 strings anymore
+
+SECURITY MEASURES:
+- File extension validation
+- MIME type checking
+- Size limiting
+- Unique filenames to prevent overwrites

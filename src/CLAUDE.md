@@ -321,3 +321,59 @@ src/
     └── Login.jsx                 # Authentication page
 
 LAST UPDATED: Frontend architecture complete with all critical fixes applied.
+UPDATE 9.0 - FILE UPLOAD INTEGRATION CONFIRMED:
+
+FRONTEND STATUS: No changes required - implementation was already correct
+
+CONFIRMED WORKING PATTERN (TenantManagement.jsx):
+const handleImageUpload = async (tenantId) => {
+  const formData = new FormData();
+  if (idFrontImage) formData.append('id_front_image', idFrontImage);
+  if (idBackImage) formData.append('id_back_image', idBackImage);
+  await API.tenants.uploadIDImages(tenantId, formData);
+};
+
+API INTEGRATION:
+- Endpoint: POST /api/tenants/:id/upload-id
+- Content-Type: multipart/form-data (automatically set by FormData)
+- Headers: Authorization token included via axios interceptors
+- Response: { success: true, data: { id_front_image: '/uploads/...', ... } }
+
+IMAGE DISPLAY PATTERN:
+// For displaying uploaded images
+<img 
+  src={`https://zakaria-rental-system.onrender.com${tenant.id_front_image}`}
+  alt="ID Front"
+  className="max-w-full h-auto"
+/>
+
+FILE INPUT COMPONENT (Recommended pattern):
+<input
+  type="file"
+  accept=".jpg,.jpeg,.png"
+  onChange={(e) => setIdFrontImage(e.target.files[0])}
+  className="border rounded p-2"
+/>
+
+VALIDATION ALIGNMENT:
+- Frontend: Accepts .jpg, .jpeg, .png (via accept attribute)
+- Backend: Same validation via Multer middleware
+- Size: Both enforce 5MB limit
+
+ERROR HANDLING FLOW:
+1. File selection → Client-side validation (type, size)
+2. Form submission → Backend validation (Multer middleware)
+3. Upload process → Progress indication with setUploading(true)
+4. Success/Error → Appropriate user feedback
+
+PERFORMANCE NOTES:
+- FormData uses native browser multipart encoding
+- No base64 conversion overhead
+- Direct file upload to backend
+- Images stored as files, not in database BLOBs
+
+TESTING CONFIRMED:
+✅ Tenant creation with ID images works
+✅ File type validation aligned frontend/backend
+✅ Error messages properly displayed
+✅ Image preview/display functional

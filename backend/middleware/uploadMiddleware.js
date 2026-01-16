@@ -1,40 +1,32 @@
+// backend/middleware/uploadMiddleware.js
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
-const path = require('path');
 
-// Configure storage location and filename
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    // Files will be saved in 'uploads/id_images/'
-    cb(null, 'uploads/id_images/');
+// 1. Configure Cloudinary SDK with your credentials
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// 2. Configure Multer to use Cloudinary Storage
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    // This function determines the upload parameters for each file
+    return {
+      folder: 'zakaria_rental/id_images', // Organize files in this folder
+      public_id: `${req.params.id}-${Date.now()}-${file.fieldname}`, // Unique filename
+      resource_type: 'auto', // Let Cloudinary detect image/video
+    };
   },
-  filename: function (req, file, cb) {
-    // Create unique filename: tenantId-timestamp-originalname
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, req.params.id + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
 });
 
-// File filter to allow only images
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
+// 3. Create the Multer upload instance
+const upload = multer({ storage: storage });
 
-  if (mimetype && extname) {
-    return cb(null, true);
-  } else {
-    cb(new Error('Only .jpeg, .jpg, and .png images are allowed'));
-  }
-};
-
-// Create the multer upload instance
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // Limit file size to 5MB
-  fileFilter: fileFilter
-});
-
-// Middleware to handle the specific fields for ID upload
+// 4. Middleware for handling the two specific image fields
 const uploadIDImages = upload.fields([
   { name: 'id_front_image', maxCount: 1 },
   { name: 'id_back_image', maxCount: 1 }

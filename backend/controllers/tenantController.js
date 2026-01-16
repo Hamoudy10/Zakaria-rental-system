@@ -670,7 +670,7 @@ const uploadIDImages = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // Check if files were uploaded via multer
+    // Validate files were uploaded (via the middleware)
     if (!req.files || (!req.files.id_front_image && !req.files.id_back_image)) {
       return res.status(400).json({
         success: false,
@@ -678,30 +678,30 @@ const uploadIDImages = async (req, res) => {
       });
     }
 
-    // Prepare the update object for the database
     const updateFields = {};
     const values = [];
     let querySetPart = '';
     let paramCount = 1;
 
-    // Process front ID image if uploaded
+    // Process front ID image (now a Cloudinary object)
     if (req.files.id_front_image) {
       const frontFile = req.files.id_front_image[0];
-      // Store the file path (or a URL if you later use cloud storage)
-      updateFields.id_front_image = `/uploads/id_images/${frontFile.filename}`;
+      // Store the secure URL from Cloudinary
+      updateFields.id_front_image = frontFile.path; // This is the Cloudinary URL
       querySetPart += `id_front_image = $${paramCount}, `;
       values.push(updateFields.id_front_image);
       paramCount++;
     }
 
-    // Process back ID image if uploaded
+    // Process back ID image
     if (req.files.id_back_image) {
       const backFile = req.files.id_back_image[0];
-      updateFields.id_back_image = `/uploads/id_images/${backFile.filename}`;
+      updateFields.id_back_image = backFile.path; // Cloudinary URL
       querySetPart += `id_back_image = $${paramCount}, `;
       values.push(updateFields.id_back_image);
       paramCount++;
     }
+  
 
     // Remove trailing comma and space from the SET clause
     querySetPart = querySetPart.slice(0, -2);
@@ -733,42 +733,12 @@ const uploadIDImages = async (req, res) => {
       });
     }
 
-    res.json({
-      success: true,
-      message: "ID images uploaded successfully",
-      data: {
-        tenantId: result.rows[0].id,
-        id_front_image: result.rows[0].id_front_image,
-        id_back_image: result.rows[0].id_back_image
-      }
-    });
-
   } catch (error) {
-    console.error('Error uploading ID images:', error);
-
-    // On error, try to clean up any uploaded files
-    if (req.files) {
-      if (req.files.id_front_image) {
-        fs.unlinkSync(req.files.id_front_image[0].path).catch(e => console.error(e));
-      }
-      if (req.files.id_back_image) {
-        fs.unlinkSync(req.files.id_back_image[0].path).catch(e => console.error(e));
-      }
-    }
-
-    // Send specific error messages
-    if (error.message.includes('Only .jpeg')) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ success: false, message: 'File size must be less than 5MB' });
-    }
-
+    console.error('Error uploading ID images to Cloudinary:', error);
+    // Error handling (no file cleanup needed)
     res.status(500).json({
       success: false,
       message: "Server error uploading ID images",
-      // Avoid exposing internal errors in production
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
