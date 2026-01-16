@@ -461,3 +461,31 @@ SECURITY MEASURES:
 - MIME type checking
 - Size limiting
 - Unique filenames to prevent overwrites
+UPDATE 10.0 - CLOUDINARY FILE UPLOAD IMPLEMENTATION
+
+MIDDLEWARE REDESIGN (/backend/middleware/uploadMiddleware.js):
+-   REPLACED: Local `multer.diskStorage` with `CloudinaryStorage` from `multer-storage-cloudinary`.
+-   CONFIGURATION: Cloudinary SDK configured using environment variables.
+-   UPLOAD FLOW: Files are held in memory and streamed directly to Cloudinary, avoiding Render's ephemeral disk.
+-   PARAMETERS: Files are organized in the `zakaria_rental/id_images/` folder with unique public IDs.
+-   RESULT: The middleware attaches file objects to `req.files` containing Cloudinary's response data (including `.path` which is the image URL).
+
+CONTROLLER UPDATE (/backend/controllers/tenantController.js):
+-   The `uploadIDImages` function now processes `req.files[fieldname][0].path` (the Cloudinary secure URL) instead of a local file path.
+-   Database update query stores the full Cloudinary URL (e.g., `https://res.cloudinary.com/...`).
+-   Removed all filesystem cleanup logic (e.g., `fs.unlinkSync`) as Cloudinary manages storage.
+-   API response returns the Cloudinary URLs for frontend use.
+
+ENVIRONMENT VARIABLES (Render Dashboard):
+-   `CLOUDINARY_CLOUD_NAME`
+-   `CLOUDINARY_API_KEY`
+-   `CLOUDINARY_API_SECRET`
+
+DEPENDENCIES (package.json):
+-   ADDED: `"cloudinary": "^2.5.1"`
+-   ADDED: `"multer-storage-cloudinary": "^5.0.0"`
+
+PRODUCTION NOTES:
+-   The free tier includes 25 credits/month. Monitor usage in the Cloudinary console.
+-   Credentials are securely managed via environment variables.
+-   The system is now decoupled from the host server's filesystem, enabling true scalability.

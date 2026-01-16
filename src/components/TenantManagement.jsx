@@ -77,23 +77,19 @@ const TenantManagement = () => {
     }
   }, [pagination.limit]);
 
-  // Fetch available units from agent's assigned properties
-  const fetchAvailableUnits = useCallback(async () => {
+  //fetch available units
+const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     try {
-      console.log('🔍 Fetching available units...');
-      
-      if (user?.role === 'agent' && assignedProperties.length === 0) {
-        console.log('⚠️ Agent has no assigned properties');
-        setAvailableUnits([]);
-        return;
-      }
+      console.log('🔍 Fetching available units...', tenantId ? `for tenant ${tenantId}` : '');
       
       // For agents, we need to fetch units from their assigned properties
       let allUnits = [];
       
       if (user?.role === 'admin') {
-        // Admin can see all available units
-        const response = await API.properties.getAvailableUnits();
+        // Admin can see all available units + current tenant's unit if editing
+        const response = await API.tenants.getAvailableUnits(
+          tenantId ? { tenant_id: tenantId } : {}
+        );
         if (response.data.success) {
           allUnits = response.data.data || [];
         }
@@ -104,9 +100,21 @@ const TenantManagement = () => {
             const response = await API.properties.getPropertyUnits(property.id);
             if (response.data.success) {
               const propertyUnits = response.data.data || [];
-              // Filter for unoccupied and active units
+              
+              // When editing a tenant, include their current unit even if occupied
               const availableUnitsInProperty = propertyUnits
-                .filter(unit => unit.is_occupied === false && unit.is_active === true)
+                .filter(unit => {
+                  // Always show active units
+                  if (!unit.is_active) return false;
+                  
+                  // When editing a specific tenant, include their current unit
+                  if (tenantId && unit.id === editingTenant?.unit_id) {
+                    return true; // Include current unit even if occupied
+                  }
+                  
+                  // Otherwise, only show unoccupied units
+                  return unit.is_occupied === false;
+                })
                 .map(unit => ({
                   ...unit,
                   property_name: property.name || 'Unknown Property',
@@ -121,14 +129,14 @@ const TenantManagement = () => {
         }
       }
       
-      console.log('✅ Available Units:', allUnits);
+      console.log('✅ Available Units (editing tenant:', tenantId, '):', allUnits);
       setAvailableUnits(Array.isArray(allUnits) ? allUnits : []);
       
     } catch (err) {
       console.error('❌ Error fetching available units:', err);
       setAvailableUnits([]);
     }
-  }, [assignedProperties, user?.role]);
+  }, [assignedProperties, user?.role, editingTenant?.unit_id]); // Added editingTenant?.unit_id dependency
 
   // Initial load
   useEffect(() => {
@@ -259,8 +267,9 @@ const TenantManagement = () => {
     if (!formData.phone_number.trim()) errors.phone_number = 'Phone number is required';
     
     // Unit allocation is REQUIRED
-    if (!formData.unit_id) errors.unit_id = 'Unit allocation is required';
-    
+    if (!editingTenant && !formData.unit_id) {
+  errors.unit_id = 'Unit allocation is required';
+}
     // Required if unit is allocated
     if (formData.unit_id) {
       if (!formData.lease_start_date) errors.lease_start_date = 'Lease start date is required';
@@ -348,7 +357,10 @@ const TenantManagement = () => {
 
   // Edit tenant
   const handleEdit = (tenant) => {
+
     setEditingTenant(tenant);
+    // Pass tenant ID to get available units including current unit
+  fetchAvailableUnits(tenant.id);
     setFormData({
       national_id: tenant.national_id || '',
       first_name: tenant.first_name || '',
