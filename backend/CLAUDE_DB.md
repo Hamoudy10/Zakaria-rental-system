@@ -348,4 +348,139 @@ CREATE INDEX idx_rent_payments_tenant_date ON rent_payments(tenant_id, created_a
 -- For tenant allocation lookups
 CREATE INDEX idx_tenant_allocations_active ON tenant_allocations(tenant_id, is_active);
 
+DATABASE SCHEMA CLARIFICATIONS (UPDATE 6.0)
+
+property_units Table - Critical Fields:
+
+sql
+CREATE TABLE property_units (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  property_id UUID NOT NULL REFERENCES properties(id),
+  unit_code VARCHAR(50) UNIQUE NOT NULL,      -- Generated: property_code + "-" + unit_number
+  unit_type VARCHAR(20) NOT NULL,             -- bedsitter, studio, one_bedroom, etc.
+  unit_number VARCHAR(20) NOT NULL,           -- Display number: "01", "101", etc.
+  rent_amount NUMERIC(10,2) NOT NULL,
+  deposit_amount NUMERIC(10,2) DEFAULT 0,
+  description TEXT,
+  features JSONB DEFAULT '{}'::jsonb,         -- Stored as object, NOT array
+  is_occupied BOOLEAN DEFAULT false,
+  is_active BOOLEAN DEFAULT true,
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  
+  -- Constraints
+  CHECK (rent_amount > 0),
+  CHECK (unit_number ~ '^[A-Za-z0-9-]+$')    -- Alphanumeric unit numbers
+);
+Important Notes on Features Field:
+
+Type: JSONB (Binary JSON for PostgreSQL)
+
+Default: '{}'::jsonb (empty object)
+
+Storage: Objects like {"Parking": true, "Balcony": false}
+
+Querying: Use features->>'Parking' = 'true' for filtering
+
+Indexing: Consider GIN index if querying features frequently
+
+Unit Code Generation Logic:
+
+sql
+-- Backend generates this during unit creation
+unit_code = CONCAT(
+  (SELECT property_code FROM properties WHERE id = :property_id),
+  '-',
+  :unit_number
+)
+Example Unit Records:
+
+sql
+INSERT INTO property_units 
+  (property_id, unit_code, unit_number, unit_type, rent_amount, deposit_amount, features)
+VALUES
+  ('ca72aa5b-da16-4792-9c56-cd0a306d251e', 'MJ-01', '01', 'studio', 10000.00, 10000.00, '{}'),
+  ('ca72aa5b-da16-4792-9c56-cd0a306d251e', 'MJ-02', '02', 'studio', 10000.00, 10000.00, '{}'),
+  ('ca72aa5b-da16-4792-9c56-cd0a306d251e', 'MJ-03', '03', 'studio', 10000.00, 10000.00, '{}');
+Recommended Indexes for Performance:
+
+sql
+-- For fast property unit lookups
+CREATE INDEX idx_property_units_property_id ON property_units(property_id);
+
+-- For unit code lookups (already indexed via UNIQUE constraint)
+
+-- For occupancy status filtering
+CREATE INDEX idx_property_units_occupied ON property_units(is_occupied) WHERE is_active = true;
+
+-- For features querying if needed
+CREATE INDEX idx_property_units_features ON property_units USING GIN(features);
+Data Integrity Rules:
+
+Unit Code Uniqueness: Enforced database-wide, not just per property
+
+Property Existence: Foreign key ensures property exists
+
+Positive Rent: CHECK constraint prevents negative rent
+
+Valid Unit Numbers: Regex enforces alphanumeric format
+
+Frontend Integration Points:
+
+Display: Use unit_code for identification, unit_number for display
+
+Features: Parse JSONB object into frontend state
+
+Status: Use is_occupied for vacancy indicators
+
+Stats: Calculate occupancy from is_occupied flag
+
+Migration Considerations:
+If changing features from array to object, run:
+
+sql
+UPDATE property_units 
+SET features = '{}'::jsonb 
+WHERE features = '[]'::jsonb OR features IS NULL;
+SUMMARY OF FIXES (UPDATE 6.0):
+Fixed PropertyContext.jsx:
+
+Removed caching that prevented unit fetching
+
+Added parallel unit fetching for all properties
+
+Improved state management for immediate UI updates
+
+Added comprehensive error logging
+
+Fixed UnitManagement.jsx:
+
+Corrected data format (features as object, not array)
+
+Removed unit_code field (backend generates it)
+
+Added refreshProperties for real-time updates
+
+Added debug logging for troubleshooting
+
+Fixed API Integration:
+
+Correct request format for unit creation
+
+Proper error handling for 400/404/409 errors
+
+Real-time state synchronization
+
+Fixed Database Schema Understanding:
+
+Clarified features field as JSONB object
+
+Documented unit code generation logic
+
+Added proper indexing recommendations
+
+Current System Status: Unit Management is now fully functional with proper data flow between frontend and backend.
+
+
 END OF DATABASE SCHEMA SUMMARY

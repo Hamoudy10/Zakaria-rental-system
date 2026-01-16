@@ -38,6 +38,7 @@ const TenantManagement = () => {
   const [idFrontImage, setIdFrontImage] = useState(null);
   const [idBackImage, setIdBackImage] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [formErrors, setFormErrors] = useState({});
 
   // Fetch tenants
   const fetchTenants = useCallback(async (page = 1, search = '') => {
@@ -70,36 +71,69 @@ const TenantManagement = () => {
       const errorMsg = err.response?.data?.message || err.message || 'Unknown error';
       setError('Failed to load tenants: ' + errorMsg);
       console.error('❌ Error fetching tenants:', err);
-      setTenants([]); // Set empty array on error
+      setTenants([]);
     } finally {
       setLoading(false);
     }
   }, [pagination.limit]);
 
-  // Fetch available units
+  // Fetch available units from agent's assigned properties
   const fetchAvailableUnits = useCallback(async () => {
     try {
       console.log('🔍 Fetching available units...');
-      const response = await API.tenants.getAvailableUnits();
-      console.log('📦 Available Units Response:', response.data);
       
-      if (response.data.success) {
-        const unitsData = response.data.data || [];
-        console.log('✅ Units Data:', unitsData);
-        setAvailableUnits(Array.isArray(unitsData) ? unitsData : []);
-      } else {
-        console.warn('⚠️ Units fetch unsuccessful:', response.data);
+      if (user?.role === 'agent' && assignedProperties.length === 0) {
+        console.log('⚠️ Agent has no assigned properties');
         setAvailableUnits([]);
+        return;
       }
+      
+      // For agents, we need to fetch units from their assigned properties
+      let allUnits = [];
+      
+      if (user?.role === 'admin') {
+        // Admin can see all available units
+        const response = await API.properties.getAvailableUnits();
+        if (response.data.success) {
+          allUnits = response.data.data || [];
+        }
+      } else {
+        // Agent - fetch units from assigned properties
+        for (const property of assignedProperties) {
+          try {
+            const response = await API.properties.getPropertyUnits(property.id);
+            if (response.data.success) {
+              const propertyUnits = response.data.data || [];
+              // Filter for unoccupied and active units
+              const availableUnitsInProperty = propertyUnits
+                .filter(unit => unit.is_occupied === false && unit.is_active === true)
+                .map(unit => ({
+                  ...unit,
+                  property_name: property.name || 'Unknown Property',
+                  property_code: property.property_code || ''
+                }));
+              
+              allUnits = [...allUnits, ...availableUnitsInProperty];
+            }
+          } catch (err) {
+            console.error(`Error fetching units for property ${property.id}:`, err);
+          }
+        }
+      }
+      
+      console.log('✅ Available Units:', allUnits);
+      setAvailableUnits(Array.isArray(allUnits) ? allUnits : []);
+      
     } catch (err) {
       console.error('❌ Error fetching available units:', err);
-      setAvailableUnits([]); // Set empty array on error
+      setAvailableUnits([]);
     }
-  }, []);
+  }, [assignedProperties, user?.role]);
 
-  // Initial load - FIXED: Remove function dependencies
+  // Initial load
   useEffect(() => {
     console.log('🚀 TenantManagement mounted, user:', user?.role);
+    console.log('🏠 Assigned Properties:', assignedProperties);
     
     const initializeData = async () => {
       await fetchTenants(1, '');
@@ -108,11 +142,17 @@ const TenantManagement = () => {
     
     initializeData();
     
-    // Cleanup
     return () => {
       console.log('🧹 TenantManagement unmounting');
     };
-  }, []); // Empty dependencies - only run once on mount
+  }, []);
+
+  // Refresh available units when assigned properties change
+  useEffect(() => {
+    if (assignedProperties.length > 0) {
+      fetchAvailableUnits();
+    }
+  }, [assignedProperties, fetchAvailableUnits]);
 
   // Handle form input changes
   const handleInputChange = (e) => {
@@ -121,6 +161,64 @@ const TenantManagement = () => {
       ...prev,
       [name]: value
     }));
+    
+    // Clear error for this field
+    if (formErrors[name]) {
+      setFormErrors(prev => ({
+        ...prev,
+        [name]: ''
+      }));
+    }
+  };
+
+  // Handle unit selection change
+  const handleUnitChange = (e) => {
+    const unitId = e.target.value;
+    setFormData(prev => ({
+      ...prev,
+      unit_id: unitId
+    }));
+    
+    // Auto-fill rent amount if unit is selected
+    if (unitId) {
+      const selectedUnit = availableUnits.find(unit => unit.id === unitId);
+      if (selectedUnit && selectedUnit.rent_amount) {
+        setFormData(prev => ({
+          ...prev,
+          monthly_rent: selectedUnit.rent_amount.toString()
+        }));
+      }
+    }
+    
+    // Clear unit error
+    if (formErrors.unit_id) {
+      setFormErrors(prev => ({
+        ...prev,
+        unit_id: ''
+      }));
+    }
+  };
+
+  // Format phone for display (convert 254 to 0)
+  const formatPhoneForDisplay = (phone) => {
+    if (!phone) return '';
+    return phone.replace(/^254/, '0');
+  };
+
+  // Format phone for backend (convert 0 to 254)
+  const formatPhoneForBackend = (phone) => {
+    if (!phone) return '';
+    // Remove all non-digit characters
+    const digits = phone.replace(/\D/g, '');
+    // If starts with 0, replace with 254
+    if (digits.startsWith('0')) {
+      return '254' + digits.substring(1);
+    }
+    // If doesn't start with 254, add it
+    if (!digits.startsWith('254')) {
+      return '254' + digits;
+    }
+    return digits;
   };
 
   // Handle ID image uploads
@@ -130,8 +228,12 @@ const TenantManagement = () => {
     try {
       setUploading(true);
       const formData = new FormData();
-      if (idFrontImage) formData.append('id_images', idFrontImage);
-      if (idBackImage) formData.append('id_images', idBackImage);
+      if (idFrontImage) {
+        formData.append('id_front_image', idFrontImage);
+      }
+      if (idBackImage) {
+        formData.append('id_back_image', idBackImage);
+      }
 
       await API.tenants.uploadIDImages(tenantId, formData);
       
@@ -146,17 +248,73 @@ const TenantManagement = () => {
     }
   };
 
+  // Validate form
+  const validateForm = () => {
+    const errors = {};
+    
+    // Required fields for all tenants
+    if (!formData.national_id.trim()) errors.national_id = 'National ID is required';
+    if (!formData.first_name.trim()) errors.first_name = 'First name is required';
+    if (!formData.last_name.trim()) errors.last_name = 'Last name is required';
+    if (!formData.phone_number.trim()) errors.phone_number = 'Phone number is required';
+    
+    // Unit allocation is REQUIRED
+    if (!formData.unit_id) errors.unit_id = 'Unit allocation is required';
+    
+    // Required if unit is allocated
+    if (formData.unit_id) {
+      if (!formData.lease_start_date) errors.lease_start_date = 'Lease start date is required';
+      if (!formData.monthly_rent) errors.monthly_rent = 'Monthly rent is required';
+    }
+    
+    // Phone format validation
+    const phoneRegex = /^(?:254|\+254|0)?(7\d{8})$/;
+    const phoneDigits = formData.phone_number.replace(/\D/g, '');
+    if (formData.phone_number && !phoneRegex.test(phoneDigits)) {
+      errors.phone_number = 'Invalid Kenyan phone number format (e.g., 0712345678)';
+    }
+    
+    const emergencyPhoneDigits = formData.emergency_contact_phone.replace(/\D/g, '');
+    if (formData.emergency_contact_phone && !phoneRegex.test(emergencyPhoneDigits)) {
+      errors.emergency_contact_phone = 'Invalid emergency contact phone format';
+    }
+    
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     
+    // Validate form
+    if (!validateForm()) {
+      setError('Please fix the form errors');
+      return;
+    }
+    
     try {
       setError(null);
+      setUploading(true);
+      
       let response;
+
+      // Format data for backend
+      const formattedData = {
+        ...formData,
+        // Format phone numbers to 254 format for backend
+        phone_number: formatPhoneForBackend(formData.phone_number),
+        emergency_contact_phone: formData.emergency_contact_phone 
+          ? formatPhoneForBackend(formData.emergency_contact_phone)
+          : '',
+        // Convert numeric fields
+        monthly_rent: parseFloat(formData.monthly_rent) || 0,
+        security_deposit: parseFloat(formData.security_deposit) || 0
+      };
 
       if (editingTenant) {
         // Update existing tenant
-        response = await API.tenants.updateTenant(editingTenant.id, formData);
+        response = await API.tenants.updateTenant(editingTenant.id, formattedData);
         
         // Upload ID images if provided
         if (idFrontImage || idBackImage) {
@@ -164,7 +322,7 @@ const TenantManagement = () => {
         }
       } else {
         // Create new tenant
-        response = await API.tenants.createTenant(formData);
+        response = await API.tenants.createTenant(formattedData);
         
         // Upload ID images if provided
         if ((idFrontImage || idBackImage) && response.data.data?.id) {
@@ -176,11 +334,15 @@ const TenantManagement = () => {
         // Reset form and refresh data
         resetForm();
         await fetchTenants();
+        await fetchAvailableUnits(); // Refresh available units after allocation
         alert(response.data.message || 'Tenant saved successfully!');
       }
     } catch (err) {
-      setError('Failed to save tenant: ' + (err.response?.data?.message || err.message));
+      const errorMsg = err.response?.data?.message || err.message || 'Failed to save tenant';
+      setError(errorMsg);
       console.error('Error saving tenant:', err);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -192,15 +354,18 @@ const TenantManagement = () => {
       first_name: tenant.first_name || '',
       last_name: tenant.last_name || '',
       email: tenant.email || '',
-      phone_number: tenant.phone_number || '',
+      phone_number: formatPhoneForDisplay(tenant.phone_number) || '',
       emergency_contact_name: tenant.emergency_contact_name || '',
-      emergency_contact_phone: tenant.emergency_contact_phone || '',
-      unit_id: tenant.unit_id || '',
-      lease_start_date: tenant.lease_start_date || '',
-      lease_end_date: tenant.lease_end_date || '',
-      monthly_rent: tenant.monthly_rent || '',
-      security_deposit: tenant.security_deposit || ''
+      emergency_contact_phone: formatPhoneForDisplay(tenant.emergency_contact_phone) || '',
+      unit_id: tenant.current_allocation?.unit_id || '',
+      lease_start_date: tenant.current_allocation?.lease_start_date ? tenant.current_allocation.lease_start_date.split('T')[0] : '',
+      lease_end_date: tenant.current_allocation?.lease_end_date ? tenant.current_allocation.lease_end_date.split('T')[0] : '',
+      monthly_rent: tenant.current_allocation?.monthly_rent?.toString() || '',
+      security_deposit: tenant.current_allocation?.security_deposit?.toString() || ''
     });
+    
+    // Clear any previous errors
+    setFormErrors({});
     setShowForm(true);
   };
 
@@ -212,6 +377,7 @@ const TenantManagement = () => {
         if (response.data.success) {
           alert(response.data.message);
           await fetchTenants();
+          await fetchAvailableUnits(); // Refresh available units after deletion
         }
       } catch (err) {
         setError('Failed to delete tenant: ' + (err.response?.data?.message || err.message));
@@ -239,6 +405,8 @@ const TenantManagement = () => {
     setIdBackImage(null);
     setEditingTenant(null);
     setShowForm(false);
+    setError(null);
+    setFormErrors({});
   };
 
   // Handle search
@@ -256,7 +424,7 @@ const TenantManagement = () => {
     }).format(amount || 0);
   };
 
-  // Format date
+  // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-KE');
@@ -280,14 +448,14 @@ const TenantManagement = () => {
           <p className="text-gray-600">Manage tenant information, allocations, and ID verification</p>
           {user.role === 'agent' && assignedProperties.length === 0 && !propertiesLoading && !loading && (
             <p className="text-sm text-amber-600 mt-2">
-            ⚠️ You have no properties assigned. Contact admin to assign properties.
+              ⚠️ You have no properties assigned. Contact admin to assign properties.
             </p>
-           )}
-
+          )}
         </div>
         <button
           onClick={() => setShowForm(true)}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+          disabled={user.role === 'agent' && assignedProperties.length === 0}
         >
           <span>+ Add New Tenant</span>
         </button>
@@ -356,9 +524,14 @@ const TenantManagement = () => {
                       value={formData.national_id}
                       onChange={handleInputChange}
                       required
-                      className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        formErrors.national_id ? 'border-red-500' : 'border-gray-300'
+                      }`}
                       placeholder="Enter national ID"
                     />
+                    {formErrors.national_id && (
+                      <p className="mt-1 text-sm text-red-600">{formErrors.national_id}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -370,9 +543,15 @@ const TenantManagement = () => {
                       value={formData.phone_number}
                       onChange={handleInputChange}
                       required
-                      className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="07XXXXXXXX"
+                      className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        formErrors.phone_number ? 'border-red-500' : 'border-gray-300'
+                      }`}
+                      placeholder="0712345678"
                     />
+                    {formErrors.phone_number && (
+                      <p className="mt-1 text-sm text-red-600">{formErrors.phone_number}</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">Enter in 07XXXXXXXX format</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -384,9 +563,14 @@ const TenantManagement = () => {
                       value={formData.first_name}
                       onChange={handleInputChange}
                       required
-                      className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        formErrors.first_name ? 'border-red-500' : 'border-gray-300'
+                      }`}
                       placeholder="Enter first name"
                     />
+                    {formErrors.first_name && (
+                      <p className="mt-1 text-sm text-red-600">{formErrors.first_name}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -398,9 +582,14 @@ const TenantManagement = () => {
                       value={formData.last_name}
                       onChange={handleInputChange}
                       required
-                      className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        formErrors.last_name ? 'border-red-500' : 'border-gray-300'
+                      }`}
                       placeholder="Enter last name"
                     />
+                    {formErrors.last_name && (
+                      <p className="mt-1 text-sm text-red-600">{formErrors.last_name}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -443,95 +632,131 @@ const TenantManagement = () => {
                         name="emergency_contact_phone"
                         value={formData.emergency_contact_phone}
                         onChange={handleInputChange}
-                        className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="07XXXXXXXX"
+                        className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                          formErrors.emergency_contact_phone ? 'border-red-500' : 'border-gray-300'
+                        }`}
+                        placeholder="0712345678"
                       />
+                      {formErrors.emergency_contact_phone && (
+                        <p className="mt-1 text-sm text-red-600">{formErrors.emergency_contact_phone}</p>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {/* Unit Allocation */}
+                {/* Unit Allocation - REQUIRED */}
                 <div className="border-t pt-4">
-                  <h4 className="font-medium text-gray-900 mb-3">Unit Allocation (Optional)</h4>
+                  <h4 className="font-medium text-gray-900 mb-3">Unit Allocation *</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Select Unit
+                        Select Unit *
                       </label>
                       <select
                         name="unit_id"
                         value={formData.unit_id}
-                        onChange={handleInputChange}
-                        className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        onChange={handleUnitChange}
+                        required
+                        className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                          formErrors.unit_id ? 'border-red-500' : 'border-gray-300'
+                        }`}
                       >
                         <option value="">
-                          {availableUnits.length === 0 ? 'No units available' : 'Select a unit (optional)'}
+                          {availableUnits.length === 0 
+                            ? 'No available units in assigned properties' 
+                            : 'Select a unit'}
                         </option>
                         {Array.isArray(availableUnits) && availableUnits.map(unit => (
                           <option 
                             key={String(unit?.id || `unit-${Math.random()}`)} 
                             value={unit?.id || ''}
                           >
-                            {unit?.property_name || 'Unknown Property'} - {unit?.unit_code || 'N/A'} (KES {unit?.rent_amount || 0})
+                            {unit?.property_name || 'Unknown Property'} - {unit?.unit_code || 'N/A'} (KES {unit?.rent_amount?.toLocaleString() || 0})
                           </option>
                         ))}
                       </select>
+                      {formErrors.unit_id && (
+                        <p className="mt-1 text-sm text-red-600">{formErrors.unit_id}</p>
+                      )}
+                      <p className="text-xs text-gray-500 mt-1">
+                        Units from your assigned properties: {availableUnits.length} unoccupied units available
+                      </p>
                     </div>
                   </div>
 
+                  {/* Lease Details - Show only when unit is selected */}
                   {formData.unit_id && (
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Lease Start Date *
-                        </label>
-                        <input
-                          type="date"
-                          name="lease_start_date"
-                          value={formData.lease_start_date}
-                          onChange={handleInputChange}
-                          required
-                          className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Lease End Date
-                        </label>
-                        <input
-                          type="date"
-                          name="lease_end_date"
-                          value={formData.lease_end_date}
-                          onChange={handleInputChange}
-                          className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Monthly Rent *
-                        </label>
-                        <input
-                          type="number"
-                          name="monthly_rent"
-                          value={formData.monthly_rent}
-                          onChange={handleInputChange}
-                          required={!!formData.unit_id}
-                          className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="Amount in KES"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Security Deposit
-                        </label>
-                        <input
-                          type="number"
-                          name="security_deposit"
-                          value={formData.security_deposit}
-                          onChange={handleInputChange}
-                          className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="Amount in KES"
-                        />
+                    <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                      <h5 className="font-medium text-gray-900 mb-3">Lease Details</h5>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Lease Start Date *
+                          </label>
+                          <input
+                            type="date"
+                            name="lease_start_date"
+                            value={formData.lease_start_date}
+                            onChange={handleInputChange}
+                            required
+                            className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                              formErrors.lease_start_date ? 'border-red-500' : 'border-gray-300'
+                            }`}
+                          />
+                          {formErrors.lease_start_date && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.lease_start_date}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Lease End Date
+                          </label>
+                          <input
+                            type="date"
+                            name="lease_end_date"
+                            value={formData.lease_end_date}
+                            onChange={handleInputChange}
+                            className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            min={formData.lease_start_date}
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Leave empty for month-to-month</p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Monthly Rent *
+                          </label>
+                          <input
+                            type="number"
+                            name="monthly_rent"
+                            value={formData.monthly_rent}
+                            onChange={handleInputChange}
+                            required
+                            className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                              formErrors.monthly_rent ? 'border-red-500' : 'border-gray-300'
+                            }`}
+                            placeholder="Amount in KES"
+                            min="0"
+                            step="100"
+                          />
+                          {formErrors.monthly_rent && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.monthly_rent}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Security Deposit
+                          </label>
+                          <input
+                            type="number"
+                            name="security_deposit"
+                            value={formData.security_deposit}
+                            onChange={handleInputChange}
+                            className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Amount in KES"
+                            min="0"
+                            step="100"
+                          />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -551,6 +776,11 @@ const TenantManagement = () => {
                         onChange={(e) => setIdFrontImage(e.target.files?.[0] || null)}
                         className="w-full border rounded-lg px-3 py-2"
                       />
+                      {idFrontImage && (
+                        <p className="text-xs text-green-600 mt-1">
+                          Selected: {idFrontImage.name}
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -562,6 +792,11 @@ const TenantManagement = () => {
                         onChange={(e) => setIdBackImage(e.target.files?.[0] || null)}
                         className="w-full border rounded-lg px-3 py-2"
                       />
+                      {idBackImage && (
+                        <p className="text-xs text-green-600 mt-1">
+                          Selected: {idBackImage.name}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <p className="text-sm text-gray-500 mt-2">
@@ -581,7 +816,7 @@ const TenantManagement = () => {
                   <button
                     type="submit"
                     disabled={uploading}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-50"
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {uploading ? 'Saving...' : editingTenant ? 'Update Tenant' : 'Save Tenant'}
                   </button>
@@ -621,13 +856,13 @@ const TenantManagement = () => {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {tenants.length === 0 ? (
-                <tr>
+                  <tr>
                     <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
-                        {user.role === 'agent' && assignedProperties.length === 0
+                      {user.role === 'agent' && assignedProperties.length === 0
                         ? 'No properties assigned. Contact admin to assign properties.'
                         : 'No tenants found. Click "Add New Tenant" to create one.'}
                     </td>
-                </tr>
+                  </tr>
                 ) : (
                   tenants.map((tenant, index) => (
                     <tr key={tenant?.id || `tenant-${index}`} className="hover:bg-gray-50">
@@ -642,7 +877,9 @@ const TenantManagement = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900">{tenant?.phone_number || 'N/A'}</div>
+                        <div className="text-sm text-gray-900">
+                          {formatPhoneForDisplay(tenant?.phone_number) || 'N/A'}
+                        </div>
                         <div className="text-sm text-gray-500">{tenant?.email || 'N/A'}</div>
                       </td>
                       <td className="px-6 py-4">
@@ -654,15 +891,27 @@ const TenantManagement = () => {
                             <div className="text-sm text-gray-500">
                               {tenant?.unit_code}
                             </div>
+                            {tenant?.lease_start_date && (
+                              <div className="text-xs text-gray-400">
+                                From: {formatDate(tenant.lease_start_date)}
+                              </div>
+                            )}
                           </div>
                         ) : (
-                          <span className="text-sm text-gray-400">Not allocated</span>
+                          <span className="text-sm text-amber-600">Not allocated</span>
                         )}
                       </td>
                       <td className="px-6 py-4">
                         {tenant?.monthly_rent ? (
-                          <div className="text-sm font-medium text-gray-900">
-                            {formatCurrency(tenant.monthly_rent)}
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {formatCurrency(tenant.monthly_rent)}
+                            </div>
+                            {tenant?.arrears_balance > 0 && (
+                              <div className="text-xs text-red-600">
+                                Arrears: {formatCurrency(tenant.arrears_balance)}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <span className="text-sm text-gray-400">N/A</span>

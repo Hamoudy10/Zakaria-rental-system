@@ -171,6 +171,24 @@ const getTenant = async (req, res) => {
   }
 };
 
+// Format phone number to 254 format
+const formatPhoneNumber = (phone) => {
+  if (!phone) return null;
+  // Remove all non-digit characters
+  const digits = phone.replace(/\D/g, '');
+  
+  // Convert to 254 format
+  if (digits.startsWith('0')) {
+    return '254' + digits.substring(1);
+  } else if (digits.startsWith('254')) {
+    return digits;
+  } else if (digits.startsWith('+254')) {
+    return digits.substring(1);
+  } else {
+    return '254' + digits;
+  }
+};
+
 // Create new tenant with agent property validation
 const createTenant = async (req, res) => {
   const client = await pool.connect();
@@ -193,13 +211,22 @@ const createTenant = async (req, res) => {
       security_deposit
     } = req.body;
 
+    console.log('Creating tenant with data:', req.body);
+
     // Validate required fields
     if (!national_id || !first_name || !last_name || !phone_number) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
         message: 'Missing required fields: national_id, first_name, last_name, phone_number'
       });
     }
+
+    // Format phone numbers
+    const formattedPhone = formatPhoneNumber(phone_number);
+    const formattedEmergencyPhone = emergency_contact_phone ? formatPhoneNumber(emergency_contact_phone) : null;
+
+    console.log('Formatted phone:', formattedPhone);
 
     // Check if national ID already exists
     const existingNationalId = await client.query(
@@ -208,6 +235,7 @@ const createTenant = async (req, res) => {
     );
     
     if (existingNationalId.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
         message: 'Tenant with this national ID already exists'
@@ -217,10 +245,11 @@ const createTenant = async (req, res) => {
     // Check if phone number already exists
     const existingPhone = await client.query(
       'SELECT id FROM tenants WHERE phone_number = $1',
-      [phone_number]
+      [formattedPhone]
     );
     
     if (existingPhone.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
         message: 'Tenant with this phone number already exists'
@@ -239,16 +268,19 @@ const createTenant = async (req, res) => {
         first_name,
         last_name,
         email,
-        phone_number,
+        formattedPhone,
         emergency_contact_name,
-        emergency_contact_phone,
+        formattedEmergencyPhone,
         req.user.id
       ]
     );
 
+    console.log('Tenant created:', tenantResult.rows[0]);
+
     // If unit_id is provided, create tenant allocation
     if (unit_id) {
       if (!lease_start_date || !monthly_rent) {
+        await client.query('ROLLBACK');
         return res.status(400).json({
           success: false,
           message: 'Missing required fields for allocation: lease_start_date, monthly_rent'
@@ -280,6 +312,7 @@ const createTenant = async (req, res) => {
       const unitCheck = await client.query(unitCheckQuery, unitCheckParams);
 
       if (unitCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
         return res.status(req.user.role === 'agent' ? 403 : 404).json({
           success: false,
           message: req.user.role === 'agent' 
@@ -289,13 +322,14 @@ const createTenant = async (req, res) => {
       }
 
       if (unitCheck.rows[0].is_occupied) {
+        await client.query('ROLLBACK');
         return res.status(400).json({
           success: false,
           message: 'Unit is already occupied'
         });
       }
 
-      // Create tenant allocation
+      // Create tenant allocation - FIXED: Use allocated_by instead of created_by
       await client.query(
         `INSERT INTO tenant_allocations 
           (tenant_id, unit_id, lease_start_date, lease_end_date, monthly_rent, security_deposit, allocated_by)
@@ -428,9 +462,10 @@ const updateTenant = async (req, res) => {
 
     // Check for duplicate phone number
     if (phone_number) {
+      const formattedPhone = formatPhoneNumber(phone_number);
       const existingPhone = await client.query(
         'SELECT id FROM tenants WHERE phone_number = $1 AND id != $2',
-        [phone_number, id]
+        [formattedPhone, id]
       );
       
       if (existingPhone.rows.length > 0) {
@@ -440,6 +475,10 @@ const updateTenant = async (req, res) => {
         });
       }
     }
+
+    // Format phone numbers if provided
+    const formattedPhone = phone_number ? formatPhoneNumber(phone_number) : undefined;
+    const formattedEmergencyPhone = emergency_contact_phone ? formatPhoneNumber(emergency_contact_phone) : undefined;
 
     const result = await client.query(
       `UPDATE tenants 
@@ -459,9 +498,9 @@ const updateTenant = async (req, res) => {
         first_name,
         last_name,
         email,
-        phone_number,
+        formattedPhone,
         emergency_contact_name,
-        emergency_contact_phone,
+        formattedEmergencyPhone,
         is_active,
         id
       ]
