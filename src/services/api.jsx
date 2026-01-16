@@ -735,6 +735,36 @@ export const tenantAPI = {
   
   // Get tenant statistics
   getTenantStats: () => api.get('/tenants/stats'),
+
+    // Upload ID images (with files)
+  uploadIDImages: (id, formData) => {
+    return api.post(`/tenants/${id}/upload-id`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+  },
+  
+  // Get tenant's ID images
+  getTenantIDImages: (id) => api.get(`/tenants/${id}/id-images`),
+  
+  // Delete specific ID image
+  deleteTenantIDImage: (id, imageType) => api.delete(`/tenants/${id}/id-images/${imageType}`),
+  
+  // Helper function to create form data for upload
+  createImageFormData: (frontImageFile, backImageFile) => {
+    const formData = new FormData();
+    
+    if (frontImageFile) {
+      formData.append('id_front_image', frontImageFile);
+    }
+    
+    if (backImageFile) {
+      formData.append('id_back_image', backImageFile);
+    }
+    
+    return formData;
+  }
 };
 
 // Then add to API object:

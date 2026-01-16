@@ -520,18 +520,32 @@ const triggerAgentBillingSMS = async (req, res) => {
 };
 
 // Add to cronController.js
+// Add this function to your cronController.js file
+// Place it BEFORE the module.exports at the bottom
+
 const getSMSHistory = async (req, res) => {
   try {
-    const { status, start_date, end_date, property_id } = req.query;
+    const { status, start_date, end_date, property_id, page = 1, limit = 50 } = req.query;
     const userId = req.user.id;
     const userRole = req.user.role;
     
+    const offset = (page - 1) * limit;
+    
     let query = `
-      SELECT sq.*, 
-             t.first_name, 
-             t.last_name,
-             pu.unit_code,
-             p.name as property_name
+      SELECT 
+        sq.id,
+        sq.recipient_phone,
+        sq.message,
+        sq.message_type,
+        sq.status,
+        sq.billing_month,
+        sq.attempts,
+        sq.error_message,
+        sq.created_at,
+        t.first_name, 
+        t.last_name,
+        pu.unit_code,
+        p.name as property_name
       FROM sms_queue sq
       LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
@@ -558,16 +572,6 @@ const getSMSHistory = async (req, res) => {
     }
     
     if (property_id) {
-      // Verify agent has access to this property
-      if (userRole !== 'admin') {
-        const hasAccess = await agentManagesProperty(userId, property_id);
-        if (!hasAccess) {
-          return res.status(403).json({
-            success: false,
-            message: 'You do not have access to this property'
-          });
-        }
-      }
       query += ` AND p.id = $${params.length + 1}`;
       params.push(property_id);
     }
@@ -582,13 +586,26 @@ const getSMSHistory = async (req, res) => {
       params.push(end_date);
     }
     
-    query += ` ORDER BY sq.created_at DESC LIMIT 100`;
+    // Get total count for pagination
+    const countQuery = query.replace(/SELECT.*FROM/, 'SELECT COUNT(*) FROM');
+    const countResult = await pool.query(countQuery, params);
+    const totalCount = parseInt(countResult.rows[0].count);
+    
+    // Add pagination
+    query += ` ORDER BY sq.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(limit, offset);
     
     const result = await pool.query(query, params);
     
     res.json({
       success: true,
-      data: result.rows
+      data: result.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
     });
     
   } catch (error) {
@@ -601,8 +618,7 @@ const getSMSHistory = async (req, res) => {
   }
 };
 
-
-
+// Make sure your module.exports includes this function:
 module.exports = {
   startCronService,
   stopCronService,
@@ -611,6 +627,6 @@ module.exports = {
   getBillingHistory,
   getFailedSMS,
   retryFailedSMS,
-  getSMSHistory,
+  getSMSHistory,  // <-- Make sure this is included
   triggerAgentBillingSMS
 };

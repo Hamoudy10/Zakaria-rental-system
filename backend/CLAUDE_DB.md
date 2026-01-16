@@ -1,76 +1,52 @@
-DATABASE SCHEMA & BUSINESS LOGIC
+DATABASE SCHEMA & BUSINESS LOGIC - SUMMARY
 
-DATABASE OVERVIEW
-Technology: PostgreSQL 15+ on Supabase
-UUIDs: All primary keys use uuid_generate_v4()
-Timestamps: created_at, updated_at patterns throughout
-Soft Deletes: is_active flags instead of hard deletes
+DATABASE OVERVIEW:
+- Technology: PostgreSQL 15+ on Supabase
+- UUIDs: All primary keys use uuid_generate_v4()
+- Timestamps: created_at, updated_at patterns throughout
+- Soft Deletes: is_active flags instead of hard deletes
 
-CORE USER TABLES
+CORE USER TABLES:
 
-users - System Users (Admins, Agents)
-Key Columns:
-- id (uuid): Primary key
-- national_id: Kenyan national ID (required, unique)
-- email, phone_number: Contact info
-- password_hash: bcrypt hashed password
-- role: ENUM('admin', 'agent', 'tenant') - defines permissions
-- is_active: Soft delete flag
-- notification_preferences: JSONB for communication settings
+1. users - System Users (Admins, Agents):
+   - id (uuid): Primary key
+   - national_id: Kenyan national ID (required, unique)
+   - email, phone_number: Contact info
+   - password_hash: bcrypt hashed password
+   - role: ENUM('admin', 'agent', 'tenant')
+   - is_active: Soft delete flag
+   - notification_preferences: JSONB for communication settings
 
-Business Rules:
-1. National ID must be unique across system
-2. Phone numbers stored in Kenyan format (254XXXXXXXXX)
-3. Profile images stored as URLs (Supabase Storage)
+2. tenants - Rental Tenants:
+   - id (uuid): Primary key
+   - national_id: Kenyan national ID (required, unique)
+   - first_name, last_name, phone_number
+   - id_front_image, id_back_image: KYC documentation
+   - emergency_contact_name, emergency_contact_phone
 
-tenants - Rental Tenants
-Key Columns:
-- id (uuid): Primary key
-- national_id: Kenyan national ID (required, unique)
-- first_name, last_name, phone_number
-- id_front_image, id_back_image: KYC documentation
-- emergency_contact_name, emergency_contact_phone
+PROPERTY MANAGEMENT TABLES:
 
-Relationship:
-- Tenants → tenant_allocations → property_units
-- One tenant can have multiple allocations over time
+1. properties - Rental Properties:
+   - id (uuid): Primary key
+   - property_code: Unique identifier (e.g., "PROP001")
+   - name, address, county, town: Location data
+   - total_units, available_units: Inventory tracking
+   - unit_type: ENUM default for property
+   - created_by: References users.id
 
-PROPERTY MANAGEMENT TABLES
+2. property_units - Individual Rental Units:
+   - id (uuid): Primary key
+   - property_id: References properties.id
+   - unit_code: Unique identifier (e.g., "PROP001-001")
+   - unit_type: ENUM('bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom')
+   - unit_number: Display number (e.g., "BS1", "2B3")
+   - rent_amount, deposit_amount: Monetary values
+   - is_occupied: Boolean occupancy status
+   - features: JSONB for amenities list
 
-properties - Rental Properties
-Key Columns:
-- id (uuid): Primary key
-- property_code: Unique identifier (e.g., "PROP001")
-- name, address, county, town: Location data
-- total_units, available_units: Inventory tracking
-- unit_type: ENUM default - defines default unit type for property
-- created_by: References users.id
+TENANT ALLOCATION TABLES:
 
-Business Rules:
-1. property_code must be uppercase alphanumeric, no spaces
-2. available_units auto-calculated from property_units.is_occupied
-3. County/Town follow Kenyan administrative divisions
-
-property_units - Individual Rental Units
-Key Columns:
-- id (uuid): Primary key
-- property_id: References properties.id
-- unit_code: Unique identifier (e.g., "PROP001-001")
-- unit_type: ENUM('bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom')
-- unit_number: Display number (e.g., "BS1", "2B3")
-- rent_amount, deposit_amount: Monetary values
-- is_occupied: Boolean occupancy status
-- features: JSONB for amenities list
-
-Business Rules:
-1. unit_code format: {property_code}-{3-digit-sequence}
-2. unit_number format varies by unit_type for readability
-3. Rent amount required, deposit defaults to 0
-
-TENANT ALLOCATION TABLES
-
-tenant_allocations - Unit Assignments
-Key Columns:
+tenant_allocations - Unit Assignments:
 - id (uuid): Primary key
 - tenant_id: References tenants.id
 - unit_id: References property_units.id
@@ -84,19 +60,9 @@ Key Columns:
 - last_billing_date DATE (Last bill generation date)
 - next_billing_date DATE (Next scheduled billing)
 
-Business Rules:
-1. Only one active allocation per tenant at a time
-2. Only one active allocation per unit at a time
-3. monthly_rent can differ from property_units.rent_amount
-4. End date can be null for month-to-month tenancy
-5. Arrears balance accumulates unpaid amounts across months
-6. Negative balance indicates advance payment credit
-7. Billing dates auto-calculated based on system settings
+PAYMENT TABLES:
 
-PAYMENT TABLES
-
-rent_payments - Rent Payment Records
-Key Columns:
+rent_payments - Rent Payment Records:
 - id (uuid): Primary key
 - tenant_id, unit_id: Payment context
 - mpesa_transaction_id: Safaricom transaction ID
@@ -112,19 +78,9 @@ Key Columns:
 - allocated_to_arrears NUMERIC DEFAULT 0 (Amount applied to arrears)
 - remaining_balance NUMERIC DEFAULT 0 (Balance after payment)
 
-Business Rules:
-1. Payment month format: First day of month (2024-03-01)
-2. Late fee calculation: (days_late * monthly_rent * 0.05)
-3. Advance payments flagged with is_advance_payment
-4. Allocation happens in order: arrears → water → rent
-5. Remaining balance triggers advance payment if positive
-6. Negative remaining balance indicates partial payment
+ENHANCED BILLING SYSTEM:
 
-ENHANCED PAYMENT & BILLING SYSTEM
-
-New Table: billing_runs
-Purpose: Audit log for automated monthly billing
-Columns:
+billing_runs Table (Audit log for automated monthly billing):
 - id (uuid): Primary key
 - month (varchar): Billing month in YYYY-MM format
 - total_tenants (integer): Number of active tenants during billing
@@ -133,17 +89,12 @@ Columns:
 - skipped (integer): Tenants skipped (due to advance payments)
 - failed_details (jsonb): Array of failed SMS with error details
 - skipped_details (jsonb): Array of skipped tenants with reasons
-- run_date (timestamp): When the billing run was executed
+- run_date (timestamp): When billing run was executed
 - created_at (timestamp): Record creation time
 
-Indexes:
-CREATE INDEX idx_billing_runs_month ON billing_runs(month DESC);
-CREATE INDEX idx_billing_runs_date ON billing_runs(run_date DESC);
+COMPLAINT MANAGEMENT TABLES:
 
-COMPLAINT MANAGEMENT TABLES
-
-complaints - Tenant Complaints
-Key Columns:
+complaints - Tenant Complaints:
 - id (uuid): Primary key
 - tenant_id, unit_id: Complaint context
 - title, description, category: Complaint details
@@ -153,41 +104,34 @@ Key Columns:
 - raised_at, acknowledged_at, resolved_at: Timeline
 - tenant_feedback, tenant_satisfaction_rating: Resolution feedback
 
-CHAT TABLES
+CHAT TABLES:
 
-chat_conversations
-Key Columns:
-- id (uuid): Primary key
-- conversation_type: ENUM('direct', 'group')
-- title: Required for group conversations
-- created_by: References users.id
-- is_active: Boolean active flag
-- created_at, updated_at: Timestamps
+1. chat_conversations:
+   - id (uuid): Primary key
+   - conversation_type: ENUM('direct', 'group')
+   - title: Required for group conversations
+   - created_by: References users.id
+   - is_active: Boolean active flag
 
-chat_messages
-Key Columns:
-- id (uuid): Primary key
-- conversation_id: References chat_conversations.id
-- sender_id: References users.id
-- message_text: Text content
-- message_type: ENUM('text', 'image', 'file', 'system')
-- is_deleted: Soft delete flag
-- deleted_at: When message was deleted
-- created_at: Timestamp
+2. chat_messages:
+   - id (uuid): Primary key
+   - conversation_id: References chat_conversations.id
+   - sender_id: References users.id
+   - message_text: Text content
+   - message_type: ENUM('text', 'image', 'file', 'system')
+   - is_deleted: Soft delete flag
 
-chat_participants
-Key Columns:
-- id (uuid): Primary key
-- conversation_id: References chat_conversations.id
-- user_id: References users.id
-- joined_at: When user joined
-- is_active: Boolean active flag (for leaving groups)
-- role: ENUM('member', 'admin') for group conversations
+3. chat_participants:
+   - id (uuid): Primary key
+   - conversation_id: References chat_conversations.id
+   - user_id: References users.id
+   - joined_at: When user joined
+   - is_active: Boolean active flag
+   - role: ENUM('member', 'admin') for group conversations
 
-ADMINISTRATION TABLES
+ADMINISTRATION TABLES:
 
-admin_settings - System Configuration
-Key Columns:
+admin_settings - System Configuration:
 - id (uuid): Primary key
 - setting_key: Unique setting identifier
 - setting_value: Text value (parsed as needed)
@@ -202,36 +146,20 @@ Key Settings:
 - paybill_number: Business paybill for SMS instructions
 - sms_billing_template: Customizable billing message
 
-KEY FOREIGN KEY RELATIONSHIPS
-1. User Creation Chain: users → properties → property_units
-2. Tenant Lifecycle: tenants → tenant_allocations → property_units
-3. Payment Flow: rent_payments → mpesa_transactions + tenant_allocations
-4. Complaint Resolution: complaints → complaint_updates + users (agents)
+DATA INTEGRITY RULES:
+1. Unique Constraints: users.national_id, properties.property_code, property_units.unit_code
+2. Check Constraints: rent_amount > 0, phone_number format validation, payment_month first day of month
+3. Business Rules: Only one active allocation per tenant/unit, unit_code format: {property_code}-{3-digit-sequence}
 
-DATA INTEGRITY RULES
-1. Cascade Deletes: Limited use, prefer soft deletes
-2. Unique Constraints:
-   - users.national_id UNIQUE
-   - properties.property_code UNIQUE
-   - property_units.unit_code UNIQUE
-   - tenant_allocations unique active per tenant/unit
-3. Check Constraints:
-   - rent_amount > 0
-   - phone_number format validation
-   - payment_month first day of month
-
-PERFORMANCE OPTIMIZATIONS
-Indexes Applied:
-- All foreign key columns
+PERFORMANCE OPTIMIZATIONS (Indexes):
+- All foreign key columns indexed
 - property_units.is_occupied + property_id
 - rent_payments.payment_month + tenant_id
-- notifications.user_id + is_read + created_at
-- billing_runs.month DESC
-- billing_runs.run_date DESC
+- billing_runs.month DESC, run_date DESC
 - tenant_allocations.arrears_balance WHERE arrears_balance > 0
 - water_bills.tenant_id + bill_month
 
-ENHANCED ARREARS TRACKING
+ENHANCED ARREARS TRACKING:
 Updated tenant_allocations Table:
 - arrears_balance: Total outstanding arrears
 - last_billing_date: Last bill generation date
@@ -243,72 +171,40 @@ Updated rent_payments Table:
 - allocated_to_arrears: Amount applied to arrears
 - remaining_balance: Balance after payment
 
-DATABASE INTEGRATION UPDATES
-
-Water Bill Integration Tables:
-tables referenced:
-- water_bills: Main water bill storage with tenant/property relationships
-- tenants: Tenant information for name resolution
-- property_units: Unit information for billing context
-- properties: Property information for grouping
-- agent_property_assignments: Agent data isolation
-- tenant_allocations: Active tenant verification
-
-Key Queries Implemented:
-
-Missing Water Bills Check:
-SELECT ta.tenant_id, t.first_name, t.last_name, t.phone_number, pu.unit_code, p.name as property_name, EXISTS(SELECT 1 FROM water_bills wb WHERE wb.tenant_id = ta.tenant_id AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)) as has_water_bill
+WATER BILL INTEGRATION:
+Missing Water Bills Check Query:
+SELECT ta.tenant_id, t.first_name, t.last_name, t.phone_number, pu.unit_code, p.name as property_name
 FROM tenant_allocations ta
 JOIN tenants t ON ta.tenant_id = t.id
 JOIN property_units pu ON ta.unit_id = pu.id
 JOIN properties p ON pu.property_id = p.id
-WHERE ta.is_active = true
+WHERE ta.is_active = true AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
 
-Agent Property Filtering:
-AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $2 AND is_active = true)
+SMS QUEUE MANAGEMENT TABLES:
 
-SMS QUEUE MANAGEMENT TABLES
+1. sms_queue (for failed SMS retry):
+   - id (uuid): Primary key
+   - recipient_phone (varchar): Formatted phone (254XXXXXXXXX)
+   - message (text): SMS message content
+   - message_type (varchar): 'bill_notification', 'payment_confirmation'
+   - status (varchar): 'pending', 'sent', 'failed'
+   - billing_month (varchar): Month in YYYY-MM format
+   - attempts (integer): Retry attempts (max 3)
+   - error_message (text): Last error message
+   - created_at (timestamp): When SMS was queued
+   - agent_id (uuid): Reference to users.id (who triggered)
 
-sms_queue table (for failed SMS retry):
-- id (uuid): Primary key
-- recipient_phone (varchar): Formatted phone number (254XXXXXXXXX)
-- message (text): SMS message content
-- message_type (varchar): 'bill_notification', 'payment_confirmation', etc.
-- status (varchar): 'pending', 'sent', 'failed'
-- billing_month (varchar): Month in YYYY-MM format
-- attempts (integer): Number of retry attempts (max 3)
-- error_message (text): Last error message
-- created_at (timestamp): When SMS was queued
-- sent_at (timestamp): When SMS was sent
-- last_attempt_at (timestamp): Last retry attempt
-- agent_id (uuid): Reference to users.id (who triggered)
+2. sms_notifications (for SMS history):
+   - id (uuid): Primary key
+   - phone_number (varchar): Recipient phone
+   - message_type (varchar): Type of SMS sent
+   - message_content (text): Full message content
+   - status (varchar): 'sent', 'failed'
+   - sent_at (timestamp): When SMS was sent
 
-sms_notifications table (for SMS history):
-- id (uuid): Primary key
-- phone_number (varchar): Recipient phone
-- message_type (varchar): Type of SMS sent
-- message_content (text): Full message content
-- status (varchar): 'sent', 'failed'
-- sent_at (timestamp): When SMS was sent
-- created_at (timestamp): Record creation time
+AGENT REPORTS DATABASE QUERIES:
 
-Key Queries for Agent SMS Management:
-
-Agent's Failed SMS Query:
-SELECT sq.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name
-FROM sms_queue sq
-LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
-LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-LEFT JOIN property_units pu ON ta.unit_id = pu.id
-LEFT JOIN properties p ON pu.property_id = p.id
-WHERE sq.status = 'failed' AND sq.message_type = 'bill_notification' AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
-ORDER BY sq.created_at DESC;
-
-AGENT REPORTS DATABASE QUERIES
-
-REQUIRED QUERIES FOR REPORTS:
-
-1. Agent Tenants Report:
+1. Agent Tenants Report Query:
 SELECT t.id, t.national_id, t.first_name, t.last_name, t.phone_number, t.email, t.created_at, pu.unit_code, p.name as property_name, ta.monthly_rent, ta.arrears_balance, ta.lease_start_date, ta.lease_end_date
 FROM tenants t
 LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
@@ -317,7 +213,7 @@ LEFT JOIN properties p ON pu.property_id = p.id
 WHERE p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
 ORDER BY p.name, pu.unit_code;
 
-2. Agent Payments Report:
+2. Agent Payments Report Query:
 SELECT rp.id, rp.amount, rp.payment_month, rp.status, rp.created_at, rp.mpesa_receipt_number, t.first_name, t.last_name, t.phone_number, pu.unit_code, p.name as property_name
 FROM rent_payments rp
 JOIN tenants t ON rp.tenant_id = t.id
@@ -327,7 +223,7 @@ JOIN properties p ON pu.property_id = p.id
 WHERE p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)
 ORDER BY rp.created_at DESC;
 
-3. Agent Revenue Report:
+3. Agent Revenue Report Query:
 SELECT p.name as property_name, COUNT(DISTINCT rp.id) as payment_count, SUM(rp.amount) as total_revenue, AVG(rp.amount) as average_payment, MIN(rp.created_at) as first_payment, MAX(rp.created_at) as last_payment
 FROM rent_payments rp
 JOIN tenants t ON rp.tenant_id = t.id
@@ -338,27 +234,15 @@ WHERE p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id
 GROUP BY p.id, p.name
 ORDER BY total_revenue DESC;
 
-PERFORMANCE INDEXES FOR REPORTS:
--- For fast agent property filtering
-CREATE INDEX idx_agent_property_assignments_agent ON agent_property_assignments(agent_id, is_active, property_id);
+DATABASE SCHEMA CLARIFICATIONS (UPDATE 6.0):
 
--- For payment reports
-CREATE INDEX idx_rent_payments_tenant_date ON rent_payments(tenant_id, created_at DESC);
-
--- For tenant allocation lookups
-CREATE INDEX idx_tenant_allocations_active ON tenant_allocations(tenant_id, is_active);
-
-DATABASE SCHEMA CLARIFICATIONS (UPDATE 6.0)
-
-property_units Table - Critical Fields:
-
-sql
+property_units Table Critical Fields:
 CREATE TABLE property_units (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   property_id UUID NOT NULL REFERENCES properties(id),
   unit_code VARCHAR(50) UNIQUE NOT NULL,      -- Generated: property_code + "-" + unit_number
-  unit_type VARCHAR(20) NOT NULL,             -- bedsitter, studio, one_bedroom, etc.
-  unit_number VARCHAR(20) NOT NULL,           -- Display number: "01", "101", etc.
+  unit_type VARCHAR(20) NOT NULL,             -- bedsitter, studio, etc.
+  unit_number VARCHAR(20) NOT NULL,           -- Display number: "01", "101"
   rent_amount NUMERIC(10,2) NOT NULL,
   deposit_amount NUMERIC(10,2) DEFAULT 0,
   description TEXT,
@@ -369,118 +253,105 @@ CREATE TABLE property_units (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   
-  -- Constraints
   CHECK (rent_amount > 0),
-  CHECK (unit_number ~ '^[A-Za-z0-9-]+$')    -- Alphanumeric unit numbers
+  CHECK (unit_number ~ '^[A-Za-z0-9-]+$')
 );
+
 Important Notes on Features Field:
-
-Type: JSONB (Binary JSON for PostgreSQL)
-
-Default: '{}'::jsonb (empty object)
-
-Storage: Objects like {"Parking": true, "Balcony": false}
-
-Querying: Use features->>'Parking' = 'true' for filtering
-
-Indexing: Consider GIN index if querying features frequently
+- Type: JSONB (Binary JSON for PostgreSQL)
+- Default: '{}'::jsonb (empty object)
+- Storage: Objects like {"Parking": true, "Balcony": false}
+- Querying: Use features->>'Parking' = 'true' for filtering
 
 Unit Code Generation Logic:
-
-sql
--- Backend generates this during unit creation
 unit_code = CONCAT(
   (SELECT property_code FROM properties WHERE id = :property_id),
   '-',
   :unit_number
 )
+
 Example Unit Records:
+INSERT INTO property_units VALUES
+  ('property-uuid', 'MJ-01', '01', 'studio', 10000.00, 10000.00, '{}'),
+  ('property-uuid', 'MJ-02', '02', 'studio', 10000.00, 10000.00, '{}'),
+  ('property-uuid', 'MJ-03', '03', 'studio', 10000.00, 10000.00, '{}');
 
-sql
-INSERT INTO property_units 
-  (property_id, unit_code, unit_number, unit_type, rent_amount, deposit_amount, features)
-VALUES
-  ('ca72aa5b-da16-4792-9c56-cd0a306d251e', 'MJ-01', '01', 'studio', 10000.00, 10000.00, '{}'),
-  ('ca72aa5b-da16-4792-9c56-cd0a306d251e', 'MJ-02', '02', 'studio', 10000.00, 10000.00, '{}'),
-  ('ca72aa5b-da16-4792-9c56-cd0a306d251e', 'MJ-03', '03', 'studio', 10000.00, 10000.00, '{}');
 Recommended Indexes for Performance:
-
-sql
 -- For fast property unit lookups
 CREATE INDEX idx_property_units_property_id ON property_units(property_id);
-
--- For unit code lookups (already indexed via UNIQUE constraint)
-
 -- For occupancy status filtering
 CREATE INDEX idx_property_units_occupied ON property_units(is_occupied) WHERE is_active = true;
-
 -- For features querying if needed
 CREATE INDEX idx_property_units_features ON property_units USING GIN(features);
-Data Integrity Rules:
 
-Unit Code Uniqueness: Enforced database-wide, not just per property
+UPDATE 8.0 - PRODUCTION DEPLOYMENT DEPENDENCIES:
 
-Property Existence: Foreign key ensures property exists
+PACKAGE DEPENDENCY UPDATES REQUIRED:
+MUST ADD TO package.json:
+{
+  "dependencies": {
+    "multer": "^1.4.5-lts.1",
+    // ... existing dependencies
+  }
+}
 
-Positive Rent: CHECK constraint prevents negative rent
+PRODUCTION FILE UPLOAD STRATEGY:
+Current Simplified Approach (Temporary):
+- ID images stored as base64 strings or URLs in tenants table
+- Avoids file system dependencies in cloud environment
 
-Valid Unit Numbers: Regex enforces alphanumeric format
+Recommended Production Approach:
+1. Cloud Storage Integration: AWS S3, Google Cloud Storage, or Azure Blob Storage
+2. Generate pre-signed URLs for direct client upload
+3. Store only file references in database
 
-Frontend Integration Points:
+File Upload Middleware Pattern for Production:
+const uploadToS3 = async (fileBuffer, fileName, mimeType) => {
+  const params = {
+    Bucket: process.env.S3_BUCKET,
+    Key: `tenant-ids/${Date.now()}-${fileName}`,
+    Body: fileBuffer,
+    ContentType: mimeType,
+    ACL: 'private'
+  };
+  const result = await s3.upload(params).promise();
+  return result.Location;
+};
 
-Display: Use unit_code for identification, unit_number for display
+DEPLOYMENT CHECKLIST FOR RENDER:
+✅ Required: All dependencies in package.json (not devDependencies)
+✅ Required: DATABASE_URL environment variable
+✅ Required: JWT_SECRET environment variable
+✅ Required: FRONTEND_URL for CORS
+✅ Recommended: S3 or cloud storage for file uploads
+✅ Recommended: Environment-specific configuration
 
-Features: Parse JSONB object into frontend state
+DATABASE MIGRATION CONSIDERATIONS:
+For production file uploads:
+1. Current: Store base64/text URLs
+2. Future: Store cloud storage URLs
+3. No schema changes needed if using TEXT columns
 
-Status: Use is_occupied for vacancy indicators
+SECURITY NOTES FOR PRODUCTION:
+1. File Upload Validation: Validate file types, set size limits (5MB max)
+2. Database Security: Use connection pooling, parameterized queries only, regular backups
+3. Environment Variables Required: DATABASE_URL, JWT_SECRET, FRONTEND_URL, S3_BUCKET (if using S3)
 
-Stats: Calculate occupancy from is_occupied flag
+PRODUCTION PERFORMANCE OPTIMIZATIONS:
+-- Indexes for fast tenant lookup
+CREATE INDEX idx_tenants_phone ON tenants(phone_number);
+CREATE INDEX idx_tenants_national_id ON tenants(national_id);
+-- For tenant allocation lookups
+CREATE INDEX idx_tenant_allocations_active_tenant ON tenant_allocations(tenant_id, is_active);
+-- For payment history
+CREATE INDEX idx_rent_payments_tenant_date ON rent_payments(tenant_id, created_at DESC);
 
-Migration Considerations:
-If changing features from array to object, run:
-
-sql
-UPDATE property_units 
-SET features = '{}'::jsonb 
-WHERE features = '[]'::jsonb OR features IS NULL;
 SUMMARY OF FIXES (UPDATE 6.0):
-Fixed PropertyContext.jsx:
+✅ Fixed PropertyContext.jsx: Removed caching, added parallel unit fetching, improved state management
+✅ Fixed UnitManagement.jsx: Corrected data format (features as object), removed unit_code field
+✅ Fixed API Integration: Correct request format, proper error handling
+✅ Fixed Database Schema Understanding: Clarified features field as JSONB object, documented unit code generation
 
-Removed caching that prevented unit fetching
+Current System Status: Database schema is production-ready with all billing, arrears tracking, and agent isolation features implemented.
 
-Added parallel unit fetching for all properties
-
-Improved state management for immediate UI updates
-
-Added comprehensive error logging
-
-Fixed UnitManagement.jsx:
-
-Corrected data format (features as object, not array)
-
-Removed unit_code field (backend generates it)
-
-Added refreshProperties for real-time updates
-
-Added debug logging for troubleshooting
-
-Fixed API Integration:
-
-Correct request format for unit creation
-
-Proper error handling for 400/404/409 errors
-
-Real-time state synchronization
-
-Fixed Database Schema Understanding:
-
-Clarified features field as JSONB object
-
-Documented unit code generation logic
-
-Added proper indexing recommendations
-
-Current System Status: Unit Management is now fully functional with proper data flow between frontend and backend.
-
-
-END OF DATABASE SCHEMA SUMMARY
+LAST UPDATED: After Update 8.0 - Production deployment dependencies addressed, schema optimized for performance.
