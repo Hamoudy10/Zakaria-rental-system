@@ -195,6 +195,17 @@ try {
   console.error('❌ Failed to load Water Bills routes:', err.message);
 }
 
+//======================= TENANTS ROUTE TEST ====================
+// Test if we can load tenants route
+console.log('🔍 Testing tenant route loading...');
+try {
+  const testRoute = require('./routes/tenants');
+  console.log('✅ Tenant route loaded successfully');
+} catch (error) {
+  console.error('❌ Error loading tenant route:', error.message);
+  console.error('❌ Error stack:', error.stack);
+}
+
 // ==================== OPTIONAL ROUTES (Using helper) ====================
 const optionalRoutes = [
   { path: '/api/tenants', file: './routes/tenants', name: 'Tenants' },
