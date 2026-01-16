@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const fs = require('fs');
 
 // Get all tenants with agent data isolation
 const getTenants = async (req, res) => {
@@ -665,11 +666,119 @@ const getAvailableUnits = async (req, res) => {
   }
 };
 
+const uploadIDImages = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Check if files were uploaded via multer
+    if (!req.files || (!req.files.id_front_image && !req.files.id_back_image)) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one ID image (front or back) is required"
+      });
+    }
+
+    // Prepare the update object for the database
+    const updateFields = {};
+    const values = [];
+    let querySetPart = '';
+    let paramCount = 1;
+
+    // Process front ID image if uploaded
+    if (req.files.id_front_image) {
+      const frontFile = req.files.id_front_image[0];
+      // Store the file path (or a URL if you later use cloud storage)
+      updateFields.id_front_image = `/uploads/id_images/${frontFile.filename}`;
+      querySetPart += `id_front_image = $${paramCount}, `;
+      values.push(updateFields.id_front_image);
+      paramCount++;
+    }
+
+    // Process back ID image if uploaded
+    if (req.files.id_back_image) {
+      const backFile = req.files.id_back_image[0];
+      updateFields.id_back_image = `/uploads/id_images/${backFile.filename}`;
+      querySetPart += `id_back_image = $${paramCount}, `;
+      values.push(updateFields.id_back_image);
+      paramCount++;
+    }
+
+    // Remove trailing comma and space from the SET clause
+    querySetPart = querySetPart.slice(0, -2);
+
+    // Add the tenant ID as the last parameter
+    values.push(id);
+
+    // Update the tenant record in the database
+    const query = `
+      UPDATE tenants 
+      SET ${querySetPart}
+      WHERE id = $${paramCount}
+      RETURNING id, national_id, id_front_image, id_back_image
+    `;
+
+    const result = await pool.query(query, values);
+
+    if (result.rows.length === 0) {
+      // If the tenant wasn't found, we should clean up the uploaded files
+      if (req.files.id_front_image) {
+        fs.unlinkSync(req.files.id_front_image[0].path);
+      }
+      if (req.files.id_back_image) {
+        fs.unlinkSync(req.files.id_back_image[0].path);
+      }
+      return res.status(404).json({
+        success: false,
+        message: "Tenant not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "ID images uploaded successfully",
+      data: {
+        tenantId: result.rows[0].id,
+        id_front_image: result.rows[0].id_front_image,
+        id_back_image: result.rows[0].id_back_image
+      }
+    });
+
+  } catch (error) {
+    console.error('Error uploading ID images:', error);
+
+    // On error, try to clean up any uploaded files
+    if (req.files) {
+      if (req.files.id_front_image) {
+        fs.unlinkSync(req.files.id_front_image[0].path).catch(e => console.error(e));
+      }
+      if (req.files.id_back_image) {
+        fs.unlinkSync(req.files.id_back_image[0].path).catch(e => console.error(e));
+      }
+    }
+
+    // Send specific error messages
+    if (error.message.includes('Only .jpeg')) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ success: false, message: 'File size must be less than 5MB' });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Server error uploading ID images",
+      // Avoid exposing internal errors in production
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 module.exports = {
   getTenants,
   getTenant,
   createTenant,
   updateTenant,
   deleteTenant,
-  getAvailableUnits
+  getAvailableUnits,
+  uploadIDImages 
 };
