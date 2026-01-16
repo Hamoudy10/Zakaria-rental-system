@@ -9,7 +9,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // Increased timeout for M-Pesa requests
+  timeout: 120000, // Increased timeout for M-Pesa requests
 });
 
 // Add auth token to requests
