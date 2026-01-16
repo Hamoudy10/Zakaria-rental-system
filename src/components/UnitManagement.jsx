@@ -2,18 +2,17 @@ import React, { useState, useEffect } from 'react'
 import { useProperty } from '../context/PropertyContext'
 
 const UnitManagement = () => {
-  const { properties, addUnit, updateUnit, deleteUnit, fetchProperties } = useProperty()
+  const { properties, addUnit, updateUnit, deleteUnit, fetchProperties, refreshProperties } = useProperty()
   const [showUnitModal, setShowUnitModal] = useState(false)
   const [editingUnit, setEditingUnit] = useState(null)
   const [selectedProperty, setSelectedProperty] = useState('')
   const [newUnit, setNewUnit] = useState({
-    unit_code: '',
-    unit_type: 'bedsitter',
     unit_number: '',
+    unit_type: 'bedsitter',
     rent_amount: '',
     deposit_amount: '',
     description: '',
-    features: []
+    features: {}
   })
   const [filterProperty, setFilterProperty] = useState('')
 
@@ -57,38 +56,38 @@ const UnitManagement = () => {
     }
     
     try {
-      // Find the selected property to validate and get details
-      const property = properties.find(p => p.id === selectedProperty)
-      if (!property) {
-        alert('Selected property not found')
-        return
-      }
-
-      // Generate unit code if not provided
-      const unitCode = newUnit.unit_code || `${property.property_code}-${newUnit.unit_number}`
-      
-      await addUnit(selectedProperty, {
-        ...newUnit,
-        unit_code: unitCode,
+      // Prepare data for backend
+      const unitData = {
+        unit_number: newUnit.unit_number,
+        unit_type: newUnit.unit_type,
         rent_amount: parseFloat(newUnit.rent_amount),
-        deposit_amount: parseFloat(newUnit.deposit_amount)
-      })
+        deposit_amount: parseFloat(newUnit.deposit_amount),
+        description: newUnit.description || '',
+        features: newUnit.features
+      };
+      
+      console.log('Sending unit data:', unitData)
+      
+      await addUnit(selectedProperty, unitData)
       
       // Reset form
       setNewUnit({
-        unit_code: '',
-        unit_type: 'bedsitter',
         unit_number: '',
+        unit_type: 'bedsitter',
         rent_amount: '',
         deposit_amount: '',
         description: '',
-        features: []
+        features: {}
       })
       setSelectedProperty('')
       setShowUnitModal(false)
+      
+      // Refresh properties to get updated data
+      refreshProperties()
+      
     } catch (error) {
       console.error('Error adding unit:', error)
-      alert('Failed to add unit: ' + (error.message || 'Unknown error'))
+      alert('Failed to add unit: ' + (error.response?.data?.message || error.message || 'Unknown error'))
     }
   }
 
@@ -96,47 +95,53 @@ const UnitManagement = () => {
     setEditingUnit(unit)
     setSelectedProperty(unit.property_id)
     setNewUnit({
-      unit_code: unit.unit_code,
-      unit_type: unit.unit_type,
       unit_number: unit.unit_number,
+      unit_type: unit.unit_type,
       rent_amount: unit.rent_amount,
       deposit_amount: unit.deposit_amount,
-      description: unit.description,
-      features: unit.features || []
+      description: unit.description || '',
+      features: unit.features || {}
     })
     setShowUnitModal(true)
   }
 
   const handleUpdateUnit = async (e) => {
     e.preventDefault()
-    if (!selectedProperty) {
-      alert('Please select a property')
+    if (!selectedProperty || !editingUnit) {
+      alert('Please select a property and unit to edit')
       return
     }
 
     try {
-      await updateUnit(selectedProperty, editingUnit.id, {
-        ...newUnit,
+      const unitData = {
+        unit_number: newUnit.unit_number,
+        unit_type: newUnit.unit_type,
         rent_amount: parseFloat(newUnit.rent_amount),
-        deposit_amount: parseFloat(newUnit.deposit_amount)
-      })
+        deposit_amount: parseFloat(newUnit.deposit_amount),
+        description: newUnit.description || '',
+        features: newUnit.features
+      }
+      
+      await updateUnit(selectedProperty, editingUnit.id, unitData)
       
       // Reset form
       setEditingUnit(null)
       setShowUnitModal(false)
       setNewUnit({
-        unit_code: '',
-        unit_type: 'bedsitter',
         unit_number: '',
+        unit_type: 'bedsitter',
         rent_amount: '',
         deposit_amount: '',
         description: '',
-        features: []
+        features: {}
       })
       setSelectedProperty('')
+      
+      // Refresh properties to get updated data
+      refreshProperties()
     } catch (error) {
       console.error('Error updating unit:', error)
-      alert('Failed to update unit: ' + (error.message || 'Unknown error'))
+      alert('Failed to update unit: ' + (error.response?.data?.message || error.message || 'Unknown error'))
     }
   }
 
@@ -144,9 +149,11 @@ const UnitManagement = () => {
     if (window.confirm('Are you sure you want to delete this unit? This action cannot be undone.')) {
       try {
         await deleteUnit(propertyId, unitId)
+        // Refresh properties to get updated data
+        refreshProperties()
       } catch (error) {
         console.error('Error deleting unit:', error)
-        alert('Failed to delete unit: ' + (error.message || 'Unknown error'))
+        alert('Failed to delete unit: ' + (error.response?.data?.message || error.message || 'Unknown error'))
       }
     }
   }
@@ -154,9 +161,10 @@ const UnitManagement = () => {
   const toggleFeature = (feature) => {
     setNewUnit(prev => ({
       ...prev,
-      features: prev.features.includes(feature)
-        ? prev.features.filter(f => f !== feature)
-        : [...prev.features, feature]
+      features: {
+        ...prev.features,
+        [feature]: !prev.features[feature]
+      }
     }))
   }
 
@@ -174,6 +182,13 @@ const UnitManagement = () => {
   const availableUnits = allUnits.filter(unit => !unit.is_occupied).length
   const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0
 
+  // Debug: Log current data
+  useEffect(() => {
+    console.log('📊 Properties:', properties)
+    console.log('📊 All Units:', allUnits)
+    console.log('📊 Filtered Units:', filteredUnits)
+  }, [properties, allUnits, filteredUnits])
+
   return (
     <div className="space-y-4 md:space-y-6">
       {/* Header */}
@@ -187,13 +202,12 @@ const UnitManagement = () => {
             setEditingUnit(null)
             setSelectedProperty('')
             setNewUnit({
-              unit_code: '',
-              unit_type: 'bedsitter',
               unit_number: '',
+              unit_type: 'bedsitter',
               rent_amount: '',
               deposit_amount: '',
               description: '',
-              features: []
+              features: {}
             })
             setShowUnitModal(true)
           }}
@@ -277,7 +291,7 @@ const UnitManagement = () => {
                     onChange={(e) => setSelectedProperty(e.target.value)}
                     className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
                     required
-                    disabled={!!editingUnit} // Disable when editing since we can't change property
+                    disabled={!!editingUnit}
                   >
                     <option value="">Choose a property</option>
                     {properties.map(property => (
@@ -295,20 +309,6 @@ const UnitManagement = () => {
 
                 <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                   <div>
-                    <label className="block text-xs sm:text-sm font-medium text-gray-700">Unit Code *</label>
-                    <input
-                      type="text"
-                      value={newUnit.unit_code}
-                      onChange={(e) => setNewUnit({...newUnit, unit_code: e.target.value})}
-                      className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
-                      placeholder="e.g., WL001-101"
-                      required
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Unique identifier for the unit
-                    </p>
-                  </div>
-                  <div>
                     <label className="block text-xs sm:text-sm font-medium text-gray-700">Unit Number *</label>
                     <input
                       type="text"
@@ -319,9 +319,6 @@ const UnitManagement = () => {
                       required
                     />
                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <label className="block text-xs sm:text-sm font-medium text-gray-700">Unit Type *</label>
                     <select
@@ -335,6 +332,9 @@ const UnitManagement = () => {
                       ))}
                     </select>
                   </div>
+                </div>
+
+                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <label className="block text-xs sm:text-sm font-medium text-gray-700">Rent Amount (KES) *</label>
                     <input
@@ -347,19 +347,18 @@ const UnitManagement = () => {
                       required
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs sm:text-sm font-medium text-gray-700">Deposit Amount (KES) *</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1000"
-                    value={newUnit.deposit_amount}
-                    onChange={(e) => setNewUnit({...newUnit, deposit_amount: e.target.value})}
-                    className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
-                    required
-                  />
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700">Deposit Amount (KES) *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={newUnit.deposit_amount}
+                      onChange={(e) => setNewUnit({...newUnit, deposit_amount: e.target.value})}
+                      className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 touch-target"
+                      required
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -380,7 +379,7 @@ const UnitManagement = () => {
                       <label key={feature} className="flex items-center space-x-2 touch-target">
                         <input
                           type="checkbox"
-                          checked={newUnit.features.includes(feature)}
+                          checked={!!newUnit.features[feature]}
                           onChange={() => toggleFeature(feature)}
                           className="h-3 w-3 sm:h-4 sm:w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
                         />
@@ -404,13 +403,12 @@ const UnitManagement = () => {
                       setShowUnitModal(false)
                       setEditingUnit(null)
                       setNewUnit({
-                        unit_code: '',
-                        unit_type: 'bedsitter',
                         unit_number: '',
+                        unit_type: 'bedsitter',
                         rent_amount: '',
                         deposit_amount: '',
                         description: '',
-                        features: []
+                        features: {}
                       })
                       setSelectedProperty('')
                     }}
@@ -502,20 +500,6 @@ const UnitManagement = () => {
                         <div className="text-xs text-gray-500 sm:hidden mt-1">
                           {unit.property_name}
                         </div>
-                        {unit.features && unit.features.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {unit.features.slice(0, 2).map((feature, index) => (
-                              <span key={index} className="px-1 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
-                                {feature}
-                              </span>
-                            ))}
-                            {unit.features.length > 2 && (
-                              <span className="px-1 py-0.5 bg-gray-100 text-gray-800 rounded text-xs">
-                                +{unit.features.length - 2} more
-                              </span>
-                            )}
-                          </div>
-                        )}
                       </div>
                     </td>
                     <td className="px-3 sm:px-6 py-4 whitespace-nowrap hidden sm:table-cell">

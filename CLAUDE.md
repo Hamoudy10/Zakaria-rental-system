@@ -282,4 +282,82 @@ PROJECT STATUS SUMMARY
 - Agent Features: Data isolation, SMS management, reports in progress
 - Current Focus: Fixing API structure and PDF export issues, then completing agent reports
 
+1. UPDATE TO root claude.md:
+UPDATE 6.0 - UNIT MANAGEMENT FIXES & PROPERTY CONTEXT ENHANCEMENTS
+
+Issues Fixed:
+
+Unit Creation 400 Error: Frontend was sending incorrect data format (features as array instead of object)
+
+Units Not Displaying: PropertyContext had incorrect state management and caching issues
+
+State Synchronization: Added/updated units weren't reflecting immediately in the UI
+
+Root Causes Identified:
+
+Data Format Mismatch: Frontend sending features: [] but backend expects features: {}
+
+Caching Logic Flaw: fetchProperties was returning early with cached data without fetching units
+
+Incorrect Unit Code Handling: Frontend was trying to generate unit_code, but backend handles this automatically
+
+Files Updated:
+
+1. PropertyContext.jsx (Complete Rewrite):
+
+Removed caching logic that prevented unit fetching
+
+Enhanced fetchProperties to fetch units for each property in parallel
+
+Fixed addUnit to update state immediately without extra API calls
+
+Added detailed error logging for debugging
+
+Changed features handling from array to object format
+
+Added refreshProperties function to force data refresh
+
+2. UnitManagement.jsx (Major Updates):
+
+Removed unit_code field from form (backend generates it)
+
+Changed features from array to object structure
+
+Added debug logging to track data flow
+
+Updated form validation to match backend expectations
+
+Added immediate state updates after CRUD operations
+
+Key Technical Improvements:
+
+Real-time State Updates: Units appear immediately after creation
+
+Proper Error Handling: Detailed error messages for debugging
+
+Data Consistency: Frontend and backend data formats now aligned
+
+Performance: Parallel fetching of property units instead of sequential
+
+Database Confirmation:
+Verified 3 units exist for Majengo Apartment:
+
+MJ-01 (studio, 10,000 KES)
+
+MJ-02 (studio, 10,000 KES)
+
+MJ-03 (studio, 10,000 KES)
+
+Testing Results:
+
+✅ Units now display correctly in Unit Management tab
+
+✅ Property statistics update in real-time
+
+✅ Form validation prevents incorrect data submission
+
+✅ Error handling provides clear debugging information
+
+Current Status: Unit Management is now fully functional with proper state synchronization between frontend and backend.
+
 END OF PROJECT MEMORY SUMMARY
