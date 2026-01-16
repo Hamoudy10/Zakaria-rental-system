@@ -622,50 +622,46 @@ const deleteTenant = async (req, res) => {
 // Get available units for tenant allocation with agent property validation
 const getAvailableUnits = async (req, res) => {
   try {
+     const { tenant_id } = req.query; // Optional: get tenant ID if editing
+    const agentId = req.user.id;
+
     let query = `
-      SELECT 
-        pu.*,
-        p.name as property_name,
-        p.property_code,
-        p.address
+      SELECT pu.*, p.name as property_name, p.property_code
       FROM property_units pu
-      LEFT JOIN properties p ON pu.property_id = p.id
-      WHERE pu.is_occupied = false AND pu.is_active = true
-    `;
+      JOIN properties p ON pu.property_id = p.id
+      WHERE pu.is_active = true 
+      AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)`;
 
-    const queryParams = [];
+    const params = [agentId];
 
-    // If user is agent, filter by their assigned properties
-    if (req.user.role === 'agent') {
-      query += `
-        AND EXISTS (
-          SELECT 1 FROM agent_property_assignments apa 
-          WHERE apa.property_id = p.id 
-          AND apa.agent_id = $${queryParams.length + 1}
-          AND apa.is_active = true
-        )
-      `;
-      queryParams.push(req.user.id);
+    if (tenant_id) {
+      // When editing a tenant, include their current unit even if occupied
+      query += ` AND (pu.is_occupied = false OR pu.id IN (
+        SELECT unit_id FROM tenant_allocations 
+        WHERE tenant_id = $2 AND is_active = true
+      ))`;
+      params.push(tenant_id);
+    } else {
+      // When creating new tenant, only show unoccupied units
+      query += ` AND pu.is_occupied = false`;
     }
 
     query += ` ORDER BY p.name, pu.unit_number`;
 
-    const { rows } = await pool.query(query, queryParams);
+    const result = await pool.query(query, params);
 
     res.json({
       success: true,
-      data: rows
+      data: result.rows
     });
   } catch (error) {
-    console.error('Get available units error:', error);
+    console.error('Error fetching available units:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error fetching available units',
-      error: error.message
+      message: 'Server error fetching available units'
     });
   }
 };
-
 const uploadIDImages = async (req, res) => {
   const { id } = req.params;
 

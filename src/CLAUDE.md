@@ -377,3 +377,26 @@ TESTING CONFIRMED:
 ✅ File type validation aligned frontend/backend
 ✅ Error messages properly displayed
 ✅ Image preview/display functional
+
+UPDATE 10.0 - CLOUDINARY INTEGRATION CONFIRMED
+
+FRONTEND STATUS: No functional changes were required.
+-   The `handleImageUpload` function in `TenantManagement.jsx` correctly uses `FormData` and the existing `API.tenants.uploadIDImages` endpoint.
+-   The backend middleware and controller changes are transparent to the frontend.
+
+IMAGE DISPLAY PATTERN:
+-   After a successful upload, the backend returns data containing Cloudinary URLs in `id_front_image` and `id_back_image`.
+-   The frontend can display these images directly using the returned URL:
+    ```jsx
+    <img
+        src={tenantData.id_front_image} // Full Cloudinary URL, e.g., "https://res.cloudinary.com/..."
+        alt="ID Front"
+        className="max-w-full h-auto"
+    />
+    ```
+-   CLOUDINARY BENEFITS: The URL points to Cloudinary's CDN, which provides automatic image optimization, fast delivery, and format selection based on the client browser.
+
+DEVELOPER NOTES:
+-   The frontend remains agnostic to the storage backend (local, S3, Cloudinary).
+-   The contract is simply: "POST FormData with images, receive URLs in response."
+-   This abstraction makes the frontend resilient to future changes in the storage infrastructure.

@@ -407,3 +407,26 @@ PRODUCTION RECOMMENDATIONS:
 2. Use CDN for image delivery
 3. Set up lifecycle policies for old images
 4. Implement image compression on upload
+UPDATE 10.0 - ID IMAGE STORAGE STRATEGY (CLOUDINARY)
+
+SCHEMA CLARIFICATION:
+-   The `tenants.id_front_image` and `id_back_image` columns (type: VARCHAR) **remain unchanged**.
+-   DATA FORMAT CHANGE: Columns now store **full Cloudinary HTTPS URLs** instead of local filesystem paths.
+-   EXAMPLE URL: `https://res.cloudinary.com/[cloud_name]/image/upload/v[version]/zakaria_rental/id_images/[public_id].jpg`
+
+STORAGE ARCHITECTURE:
+-   SOURCE: Files are uploaded directly from client to Cloudinary via the backend proxy.
+-   LOCATION: Files reside in the `zakaria_rental/id_images/` folder within the Cloudinary account.
+-   MANAGEMENT: Cloudinary handles optimization, transformation, delivery, and backup.
+
+MIGRATION & DATA CONSISTENCY:
+-   EXISTING DATA: Tenants with `NULL` image fields are unaffected. The schema supports both null and URL values.
+-   NEW DATA: All new tenant ID image uploads will populate these fields with Cloudinary URLs.
+-   INTEGRITY: The relational link between the tenant record and their image is maintained via the URL string. No foreign key is needed.
+
+PERFORMANCE & OPERATIONAL IMPACT:
+-   DATABASE SIZE: Minimal impact (storing a text URL is similar to storing a file path).
+-   QUERY PERFORMANCE: No change. Indexing on these columns is generally not required for current use cases.
+-   BACKUP STRATEGY:
+    1.  Database: Continue regular PostgreSQL backups via Supabase.
+    2.  Images: Cloudinary provides inherent redundancy and versioning. For disaster recovery, ensure you have your Cloudinary account credentials and backup any crucial transformation settings.

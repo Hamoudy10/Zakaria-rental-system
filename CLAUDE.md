@@ -171,3 +171,26 @@ TESTING CONFIRMED:
 ✅ Image URLs stored in database
 
 CURRENT SYSTEM STATUS: All tenant management functions fully operational with proper ID image uploads.
+UPDATE 10.0 - CLOUDINARY CLOUD STORAGE INTEGRATION (FINAL SOLUTION)
+
+PROBLEM RESOLVED: Persistent "ID image required" error and empty uploads folder on Render.
+ROOT CAUSE: Render's ephemeral filesystem deleted locally saved files, causing database fields to remain null.
+SOLUTION: Replaced local Multer storage with Cloudinary's cloud storage via `multer-storage-cloudinary`.
+
+IMPLEMENTATION SUMMARY:
+1.  ACCOUNT & SETUP: Created free-tier Cloudinary account (25 monthly credits).
+2.  BACKEND PACKAGES: Installed `cloudinary` and `multer-storage-cloudinary`.
+3.  ENVIRONMENT: Added `CLOUDINARY_CLOUD_NAME`, `API_KEY`, and `API_SECRET` to Render config.
+4.  MIDDLEWARE: Rewrote `/backend/middleware/uploadMiddleware.js` to stream files directly to Cloudinary, bypassing the local filesystem.
+5.  CONTROLLER: Updated `tenantController.uploadIDImages()` to save the secure Cloudinary URL (e.g., `file.path`) to the database.
+6.  FRONTEND: No changes required. The existing `FormData` upload in `TenantManagement.jsx` works seamlessly.
+
+KEY OUTCOMES:
+✅ PERSISTENCE: Images are permanently stored on Cloudinary and survive server restarts.
+✅ PERFORMANCE: Images are delivered via Cloudinary's global CDN.
+✅ SCALABILITY: Offloads image processing, storage, and delivery.
+✅ DATA FLOW: User File -> FormData -> Backend (Memory) -> Cloudinary -> Database (URL) -> Frontend (CDN URL).
+
+PRODUCTION STATUS: System now has a fully production-ready, persistent file storage solution.
+FILES MODIFIED: `uploadMiddleware.js`, `tenantController.js`, `package.json`.
+NEXT STEPS: Monitor Cloudinary dashboard for usage against free-tier limits.
