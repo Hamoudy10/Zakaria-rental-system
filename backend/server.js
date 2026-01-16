@@ -91,6 +91,9 @@ const initializeServices = async () => {
   }
 };
 
+// Serve static files from the 'uploads' directory
+app.use('/uploads', express.static('uploads'));
+
 // ==================== ROUTES SETUP ====================
 
 // Test & health check endpoints
