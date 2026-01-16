@@ -15,7 +15,7 @@ router.post('/stop', protect, agentOnly, cronController.stopCronService);
 router.post('/trigger-billing', protect, agentOnly, cronController.triggerManualBilling);
 router.get('/history', protect, agentOnly, cronController.getBillingHistory);
 // In backend/routes/cronRoutes.js, add:
-router.get('/sms-history', protect, requireAgent, getSMSHistory);
+router.get('/sms-history', protect, requireAgent, cronController.getSMSHistory);
 router.get('/failed-sms', protect, agentOnly, cronController.getFailedSMS);
 router.post('/retry-sms', protect, agentOnly, cronController.retryFailedSMS);
 
