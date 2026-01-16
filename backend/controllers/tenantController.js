@@ -666,6 +666,9 @@ const uploadIDImages = async (req, res) => {
   const { id } = req.params;
 
   try {
+    console.log('🔵 [Cloudinary] Starting upload for tenant:', id);
+    console.log('🔵 [Cloudinary] Files received:', req.files);
+    
     // Validate files were uploaded (via the middleware)
     if (!req.files || (!req.files.id_front_image && !req.files.id_back_image)) {
       return res.status(400).json({
@@ -681,6 +684,7 @@ const uploadIDImages = async (req, res) => {
 
     // Process front ID image (now a Cloudinary object)
     if (req.files.id_front_image) {
+       console.log('🔵 [Cloudinary] Processing front image:', req.files.id_front_image[0].originalname);
       const frontFile = req.files.id_front_image[0];
       // Store the secure URL from Cloudinary
       updateFields.id_front_image = frontFile.path; // This is the Cloudinary URL
@@ -691,6 +695,7 @@ const uploadIDImages = async (req, res) => {
 
     // Process back ID image
     if (req.files.id_back_image) {
+       console.log('🔵 [Cloudinary] Processing back image:', req.files.id_back_image[0].originalname);
       const backFile = req.files.id_back_image[0];
       updateFields.id_back_image = backFile.path; // Cloudinary URL
       querySetPart += `id_back_image = $${paramCount}, `;
@@ -728,8 +733,9 @@ const uploadIDImages = async (req, res) => {
         message: "Tenant not found"
       });
     }
-
   } catch (error) {
+      console.error('❌ [Cloudinary] Error in uploadIDImages:', error);
+    // Your error response...
     console.error('Error uploading ID images to Cloudinary:', error);
     // Error handling (no file cleanup needed)
     res.status(500).json({
