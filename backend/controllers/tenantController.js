@@ -711,6 +711,7 @@ const uploadIDImages = async (req, res) => {
     values.push(id);
 
     // Update the tenant record in the database
+     console.log('🟢 [2] Starting database transaction');
     const query = `
       UPDATE tenants 
       SET ${querySetPart}
@@ -732,6 +733,8 @@ const uploadIDImages = async (req, res) => {
         success: false,
         message: "Tenant not found"
       });
+    }else{
+      console.log('🟢 [3] Tenant ID images updated successfully in DB for tenant ID:', id);
     }
   } catch (error) {
       console.error('❌ [Cloudinary] Error in uploadIDImages:', error);
