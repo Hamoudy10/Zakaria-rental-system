@@ -349,7 +349,7 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
       [unit.property_id]
     );
 
-    // Create notification for tenant
+    // Create notification for tenant (tenant must be a user)
     await client.query(
       `INSERT INTO notifications (
         user_id, title, message, type, related_entity_type, related_entity_id
@@ -416,8 +416,8 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
   }
 });
 
-// UPDATE ALLOCATION (PUT)
-router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
+// UPDATE ALLOCATION (PUT) - SINGLE PUT ROUTE WITH FIXED NOTIFICATIONS
+router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -435,9 +435,11 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     
     // Check if allocation exists
     const allocationCheck = await client.query(`
-      SELECT ta.*, pu.property_id, pu.is_occupied
+      SELECT ta.*, pu.property_id, pu.is_occupied, 
+             t.first_name, t.last_name, pu.unit_code
       FROM tenant_allocations ta
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN tenants t ON ta.tenant_id = t.id
       WHERE ta.id = $1
     `, [id]);
     
@@ -468,15 +470,15 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         [currentAllocation.property_id]
       );
 
-      // Create notification for tenant
+      // ✅ FIXED: Notify the admin/agent performing the action instead of tenant
       await client.query(
         `INSERT INTO notifications (
           user_id, title, message, type, related_entity_type, related_entity_id
         ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          currentAllocation.tenant_id,
+          req.user.id, // Admin/agent performing the action
           'Tenancy Ended',
-          'Your tenancy allocation has been ended. Please ensure all dues are cleared.',
+          `Tenancy for ${currentAllocation.first_name} ${currentAllocation.last_name} in unit ${currentAllocation.unit_code} has been ended.`,
           'allocation',
           'allocation',
           id
@@ -516,15 +518,15 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         [currentAllocation.property_id]
       );
 
-      // Create notification for tenant
+      // ✅ FIXED: Notify the admin/agent performing the action instead of tenant
       await client.query(
         `INSERT INTO notifications (
           user_id, title, message, type, related_entity_type, related_entity_id
         ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          currentAllocation.tenant_id,
+          req.user.id, // Admin/agent performing the action
           'Tenancy Reactivated',
-          'Your tenancy allocation has been reactivated.',
+          `Tenancy for ${currentAllocation.first_name} ${currentAllocation.last_name} in unit ${currentAllocation.unit_code} has been reactivated.`,
           'allocation',
           'allocation',
           id
@@ -540,7 +542,8 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
            security_deposit = COALESCE($3, security_deposit),
            rent_due_day = COALESCE($4, rent_due_day),
            grace_period_days = COALESCE($5, grace_period_days),
-           is_active = COALESCE($6, is_active)
+           is_active = COALESCE($6, is_active),
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = $7
        RETURNING *`,
       [
@@ -574,68 +577,83 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
   }
 });
 
-// PUT route to deactivate an allocation (recommended)
-router.put('/:id', authMiddleware, requireRole(['admin']), async (req, res) => {
+// DELETE ALLOCATION (DELETE)
+router.delete('/:id', authMiddleware, requireRole(['admin']), async (req, res) => {
   const client = await pool.connect();
+  
   try {
     await client.query('BEGIN');
+    
     const { id } = req.params;
-
-    // 1. Check if allocation exists and is active
-    const allocationCheck = await client.query(
-      `SELECT ta.*, pu.property_id 
-       FROM tenant_allocations ta
-       LEFT JOIN property_units pu ON ta.unit_id = pu.id
-       WHERE ta.id = $1 AND ta.is_active = true`,
-      [id]
-    );
+    
+    // Check if allocation exists
+    const allocationCheck = await client.query(`
+      SELECT ta.*, pu.property_id, tenant.first_name, tenant.last_name
+      FROM tenant_allocations ta
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN tenants tenant ON ta.tenant_id = tenant.id
+      WHERE ta.id = $1
+    `, [id]);
     
     if (allocationCheck.rows.length === 0) {
-      await client.query('ROLLBACK');
       return res.status(404).json({
         success: false,
-        message: 'Active allocation not found'
+        message: 'Allocation not found'
       });
     }
-
+    
     const allocation = allocationCheck.rows[0];
+    
+    // If allocation is active, free up the unit
+    if (allocation.is_active) {
+      // Update unit to vacant
+      await client.query(
+        `UPDATE property_units 
+         SET is_occupied = false 
+         WHERE id = $1`,
+        [allocation.unit_id]
+      );
 
-    // 2. Deactivate the allocation
-    await client.query(
-      `UPDATE tenant_allocations 
-       SET is_active = false, 
-           lease_end_date = CURRENT_DATE 
-       WHERE id = $1`,
-      [id]
+      // Update property available units count
+      await client.query(
+        `UPDATE properties 
+         SET available_units = available_units + 1 
+         WHERE id = $1`,
+        [allocation.property_id]
+      );
+    }
+    
+    // Check for related records (payments, complaints)
+    const relatedPayments = await client.query(
+      'SELECT COUNT(*) FROM rent_payments WHERE tenant_id = $1 AND unit_id = $2',
+      [allocation.tenant_id, allocation.unit_id]
     );
 
-    // 3. Free up the unit
-    await client.query(
-      `UPDATE property_units SET is_occupied = false WHERE id = $1`,
-      [allocation.unit_id]
+    const relatedComplaints = await client.query(
+      'SELECT COUNT(*) FROM complaints WHERE tenant_id = $1 AND unit_id = $2',
+      [allocation.tenant_id, allocation.unit_id]
     );
 
-    // 4. Update property available units count
-    await client.query(
-      `UPDATE properties 
-       SET available_units = available_units + 1 
-       WHERE id = $1`,
-      [allocation.property_id]
-    );
-
+    if (parseInt(relatedPayments.rows[0].count) > 0 || parseInt(relatedComplaints.rows[0].count) > 0) {
+      console.log(`⚠️  Allocation has related records: ${relatedPayments.rows[0].count} payments, ${relatedComplaints.rows[0].count} complaints`);
+      // We'll proceed with deletion but log the related records
+    }
+    
+    // Delete the allocation
+    await client.query('DELETE FROM tenant_allocations WHERE id = $1', [id]);
+    
     await client.query('COMMIT');
     
     res.json({
       success: true,
-      message: 'Tenant deallocated (lease ended) successfully'
+      message: `Allocation for ${allocation.first_name} ${allocation.last_name} deleted successfully`
     });
-
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error deactivating allocation:', error);
+    console.error('Error deleting allocation:', error);
     res.status(500).json({
       success: false,
-      message: 'Error deactivating allocation',
+      message: 'Error deleting allocation',
       error: error.message
     });
   } finally {
@@ -644,7 +662,7 @@ router.put('/:id', authMiddleware, requireRole(['admin']), async (req, res) => {
 });
 
 // GET ALLOCATION STATISTICS
-router.get('/stats/overview', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
+router.get('/stats/overview', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
   try {
     const statsResult = await pool.query(`
       SELECT 
@@ -694,7 +712,7 @@ router.get('/stats/overview', authMiddleware, requireRole(['admin', 'agent']), a
 });
 
 // GET CURRENT TENANT ALLOCATION
-router.get('/my/allocation', authMiddleware, requireRole(['tenant']), async (req, res) => { // FIXED: Changed authorize to requireRole
+router.get('/my/allocation', authMiddleware, requireRole(['tenant']), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
