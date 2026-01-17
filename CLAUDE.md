@@ -194,3 +194,44 @@ KEY OUTCOMES:
 PRODUCTION STATUS: System now has a fully production-ready, persistent file storage solution.
 FILES MODIFIED: `uploadMiddleware.js`, `tenantController.js`, `package.json`.
 NEXT STEPS: Monitor Cloudinary dashboard for usage against free-tier limits.
+UPDATE 11.0 - TENANT DEALLOCATION ERROR RESOLUTION & DATA CONSISTENCY
+
+PROBLEMS RESOLVED:
+1. Fixed 500 error: Foreign key constraint violation in 'notifications' table
+2. Fixed SQL error: Attempt to update non-existent 'updated_at' column
+3. Fixed frontend logic: Redundant unit status update causing 400 error
+4. Addressed data drift: Inconsistent 'available_units' count in properties table
+
+ROOT CAUSES:
+1. Notification Mismatch: Backend tried to notify tenants using IDs from 'tenants' table, but 'notifications.user_id' must reference 'users.id'
+2. Schema Drift: Code attempted to update 'tenant_allocations.updated_at' which doesn't exist in the current schema
+3. Redundant Operations: Frontend manually updated unit occupancy after backend already handled it
+4. Cached Data Inconsistency: 'properties.available_units' cached value drifted from actual unit counts
+
+SOLUTIONS IMPLEMENTED:
+1. Notification Fix: Updated PUT route to notify the admin/agent (req.user.id) instead of the tenant
+2. Column Removal: Removed 'updated_at = CURRENT_TIMESTAMP' from allocation update query
+3. Frontend Cleanup: Removed redundant 'updateUnit' call in 'handleDeallocate' function
+4. Data Consistency: Recommended SQL to recalculate 'available_units' based on actual unit occupancy
+
+BACKEND FILES MODIFIED:
+- /backend/routes/allocations.js (PUT route: notification logic, SQL query cleanup)
+
+FRONTEND FILES MODIFIED:
+- /src/components/TenantAllocation.jsx ('handleDeallocate' function)
+
+DATABASE IMPACT:
+- Confirmed schema alignment: 'tenant_allocations' table lacks 'updated_at' column
+- Identified need for data reconciliation between cached and actual unit counts
+
+KEY LEARNING:
+- Tenants (renters) ≠ Users (system users) - notifications can only target Users
+- Let backend be single source of truth for state changes (unit occupancy)
+- Regularly validate derived/cached database fields against actual data
+
+TESTING CONFIRMED:
+✅ Tenant deallocation now completes without errors
+✅ Unit status correctly updates to vacant
+✅ Notifications created for admin/agent instead of tenant
+
+PRODUCTION READY: Tenant deallocation workflow is now stable and error-free.

@@ -489,3 +489,47 @@ PRODUCTION NOTES:
 -   The free tier includes 25 credits/month. Monitor usage in the Cloudinary console.
 -   Credentials are securely managed via environment variables.
 -   The system is now decoupled from the host server's filesystem, enabling true scalability.
+UPDATE 11.0 - ALLOCATIONS ROUTE FIXES & DATA INTEGRITY
+
+CRITICAL BUG FIXES IN /backend/routes/allocations.js:
+
+1. FOREIGN KEY CONSTRAINT VIOLATION (Notifications):
+   - ISSUE: PUT route tried to create notifications for tenants using 'tenant_allocations.tenant_id'
+   - CAUSE: 'notifications.user_id' foreign key references 'users.id', but tenants are in separate 'tenants' table
+   - FIX: Changed notification 'user_id' from 'currentAllocation.tenant_id' to 'req.user.id' (admin/agent performing action)
+
+2. SQL COLUMN NOT FOUND ERROR:
+   - ISSUE: Error: "column 'updated_at' of relation 'tenant_allocations' does not exist"
+   - CAUSE: Update query included 'updated_at = CURRENT_TIMESTAMP' but column doesn't exist
+   - FIX: Removed 'updated_at' assignment from the UPDATE statement in PUT route
+
+3. DATA CONSISTENCY ISSUE:
+   - SYMPTOM: 'properties.available_units' count incorrect after deallocation
+   - ROOT CAUSE: Cached count drifted from actual unoccupied unit count
+   - SOLUTION: Provided recalculation query and recommended permanent fix using COUNT() instead of increment/decrement
+
+UPDATED CODE SECTIONS:
+- PUT /api/allocations/:id route (lines ~220-280):
+  * Fixed notification INSERT queries (2 locations)
+  * Removed 'updated_at = CURRENT_TIMESTAMP' from UPDATE query
+  * Added tenant/unit details to notification messages for better context
+
+- DELETE /api/allocations/:id route:
+  * Fixed JOIN from 'LEFT JOIN users tenant' to 'LEFT JOIN tenants tenant'
+  * Ensures correct reference to tenants table
+
+ARCHITECTURAL LESSONS:
+1. Notification System Boundaries: Notifications can only target Users table entries, not all system entities
+2. Schema Awareness: Code must align with actual database schema; assumptions about columns lead to runtime errors
+3. State Synchronization: Cached counts (available_units) require reconciliation mechanisms
+
+PREVENTION RECOMMENDATIONS:
+1. Add database migration checks during server startup
+2. Consider database triggers or views for derived fields like 'available_units'
+3. Implement data validation endpoints to check for inconsistencies
+
+TESTING VALIDATED:
+✅ PUT /api/allocations/:id with {is_active: false} - Successfully deallocates tenant
+✅ Notification created for admin user, not tenant
+✅ No SQL errors about missing columns
+✅ Unit occupancy correctly toggled in property_units table

@@ -430,3 +430,68 @@ PERFORMANCE & OPERATIONAL IMPACT:
 -   BACKUP STRATEGY:
     1.  Database: Continue regular PostgreSQL backups via Supabase.
     2.  Images: Cloudinary provides inherent redundancy and versioning. For disaster recovery, ensure you have your Cloudinary account credentials and backup any crucial transformation settings.
+
+UPDATE 11.0 - SCHEMA ALIGNMENT & DATA CONSISTENCY FIXES
+
+SCHEMA DISCOVERIES & CORRECTIONS:
+
+1. TENANT_ALLOCATIONS TABLE SCHEMA:
+   - CONFIRMED: 'tenant_allocations' table does NOT have 'updated_at' column
+   - ACTION: Removed references to this column in application code
+   - RECOMMENDATION: Consider adding 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP' if change tracking needed
+
+2. DATA MODEL RELATIONSHIPS CLARIFIED:
+   - 'tenant_allocations.tenant_id' → References 'tenants.id' (renters)
+   - 'notifications.user_id' → References 'users.id' (system users: admins/agents)
+   - CRITICAL: These are separate tables; cannot use tenant_id as user_id
+
+3. DATA CONSISTENCY ISSUE IDENTIFIED:
+   - 'properties.available_units' is a cached/count field
+   - PROBLEM: Can become inconsistent with actual COUNT of unoccupied units
+   - SYMPTOM: Deallocation shows wrong available unit count
+
+RECALCULATION QUERY FOR DATA INTEGRITY:
+-- One-time fix for all properties:
+UPDATE properties p
+SET available_units = (
+  SELECT COUNT(*) 
+  FROM property_units pu 
+  WHERE pu.property_id = p.id 
+    AND pu.is_active = true 
+    AND pu.is_occupied = false
+);
+
+-- Query to identify discrepancies:
+SELECT 
+  p.id, p.name,
+  p.available_units as cached_count,
+  (SELECT COUNT(*) FROM property_units WHERE property_id = p.id AND is_active = true AND is_occupied = false) as actual_count,
+  (SELECT COUNT(*) FROM property_units WHERE property_id = p.id AND is_active = true) as total_units
+FROM properties p;
+
+PERMANENT FIX PATTERN:
+-- Instead of increment/decrement logic:
+UPDATE properties SET available_units = available_units + 1 WHERE id = $1
+
+-- Use recalculated count for accuracy:
+UPDATE properties p
+SET available_units = (
+  SELECT COUNT(*) FROM property_units 
+  WHERE property_id = p.id AND is_active = true AND is_occupied = false
+)
+WHERE id = $1
+
+SCHEMA ENHANCEMENT RECOMMENDATIONS:
+1. Consider adding 'updated_at' to 'tenant_allocations' for audit trail
+2. Evaluate using database VIEW for 'available_units' instead of cached column
+3. Add CHECK constraint or trigger to validate 'available_units ≤ total_units'
+
+MIGRATION CONSIDERATIONS:
+- Any future 'updated_at' column addition requires migration script
+- Data reconciliation should be part of deployment checklist
+- Consider adding 'last_synced_at' timestamp for derived fields
+
+PERFORMANCE NOTE:
+- Recalculation queries are efficient with proper indexes on:
+  * property_units(property_id, is_active, is_occupied)
+  * property_units(property_id, is_occupied) WHERE is_active = true
