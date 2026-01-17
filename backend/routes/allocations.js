@@ -516,11 +516,17 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         [currentAllocation.unit_id]
       );
 
-      // Update property available units count
+     // Use recalculation to ensure accuracy:
       await client.query(
-        `UPDATE properties 
-         SET available_units = available_units - 1 
-         WHERE id = $1`,
+        `UPDATE properties p
+        SET available_units = (
+          SELECT COUNT(*) 
+          FROM property_units pu 
+          WHERE pu.property_id = p.id 
+            AND pu.is_active = true 
+            AND pu.is_occupied = false
+        )
+        WHERE id = $1`,
         [currentAllocation.property_id]
       );
 
