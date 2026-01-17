@@ -574,83 +574,68 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
   }
 });
 
-// DELETE ALLOCATION (DELETE)
-router.delete('/:id', authMiddleware, requireRole(['admin']), async (req, res) => { // FIXED: Changed authorize to requireRole
+// PUT route to deactivate an allocation (recommended)
+router.put('/:id', authMiddleware, requireRole(['admin']), async (req, res) => {
   const client = await pool.connect();
-  
   try {
     await client.query('BEGIN');
-    
     const { id } = req.params;
-    
-    // Check if allocation exists
-    const allocationCheck = await client.query(`
-      SELECT ta.*, pu.property_id, tenant.first_name, tenant.last_name
-      FROM tenant_allocations ta
-      LEFT JOIN property_units pu ON ta.unit_id = pu.id
-      LEFT JOIN users tenant ON ta.tenant_id = tenant.id
-      WHERE ta.id = $1
-    `, [id]);
+
+    // 1. Check if allocation exists and is active
+    const allocationCheck = await client.query(
+      `SELECT ta.*, pu.property_id 
+       FROM tenant_allocations ta
+       LEFT JOIN property_units pu ON ta.unit_id = pu.id
+       WHERE ta.id = $1 AND ta.is_active = true`,
+      [id]
+    );
     
     if (allocationCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({
         success: false,
-        message: 'Allocation not found'
+        message: 'Active allocation not found'
       });
     }
-    
+
     const allocation = allocationCheck.rows[0];
-    
-    // If allocation is active, free up the unit
-    if (allocation.is_active) {
-      // Update unit to vacant
-      await client.query(
-        `UPDATE property_units 
-         SET is_occupied = false 
-         WHERE id = $1`,
-        [allocation.unit_id]
-      );
 
-      // Update property available units count
-      await client.query(
-        `UPDATE properties 
-         SET available_units = available_units + 1 
-         WHERE id = $1`,
-        [allocation.property_id]
-      );
-    }
-    
-    // Check for related records (payments, complaints)
-    const relatedPayments = await client.query(
-      'SELECT COUNT(*) FROM rent_payments WHERE tenant_id = $1 AND unit_id = $2',
-      [allocation.tenant_id, allocation.unit_id]
+    // 2. Deactivate the allocation
+    await client.query(
+      `UPDATE tenant_allocations 
+       SET is_active = false, 
+           lease_end_date = CURRENT_DATE 
+       WHERE id = $1`,
+      [id]
     );
 
-    const relatedComplaints = await client.query(
-      'SELECT COUNT(*) FROM complaints WHERE tenant_id = $1 AND unit_id = $2',
-      [allocation.tenant_id, allocation.unit_id]
+    // 3. Free up the unit
+    await client.query(
+      `UPDATE property_units SET is_occupied = false WHERE id = $1`,
+      [allocation.unit_id]
     );
 
-    if (parseInt(relatedPayments.rows[0].count) > 0 || parseInt(relatedComplaints.rows[0].count) > 0) {
-      console.log(`⚠️  Allocation has related records: ${relatedPayments.rows[0].count} payments, ${relatedComplaints.rows[0].count} complaints`);
-      // We'll proceed with deletion but log the related records
-    }
-    
-    // Delete the allocation
-    await client.query('DELETE FROM tenant_allocations WHERE id = $1', [id]);
-    
+    // 4. Update property available units count
+    await client.query(
+      `UPDATE properties 
+       SET available_units = available_units + 1 
+       WHERE id = $1`,
+      [allocation.property_id]
+    );
+
     await client.query('COMMIT');
     
     res.json({
       success: true,
-      message: `Allocation for ${allocation.first_name} ${allocation.last_name} deleted successfully`
+      message: 'Tenant deallocated (lease ended) successfully'
     });
+
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error deleting allocation:', error);
+    console.error('Error deactivating allocation:', error);
     res.status(500).json({
       success: false,
-      message: 'Error deleting allocation',
+      message: 'Error deactivating allocation',
       error: error.message
     });
   } finally {
