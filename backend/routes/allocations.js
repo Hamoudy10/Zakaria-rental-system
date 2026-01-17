@@ -534,28 +534,27 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
       );
     }
     
-    // Update the allocation
-    const updateResult = await client.query(
-      `UPDATE tenant_allocations 
-       SET lease_end_date = COALESCE($1, lease_end_date),
-           monthly_rent = COALESCE($2, monthly_rent),
-           security_deposit = COALESCE($3, security_deposit),
-           rent_due_day = COALESCE($4, rent_due_day),
-           grace_period_days = COALESCE($5, grace_period_days),
-           is_active = COALESCE($6, is_active),
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7
-       RETURNING *`,
-      [
-        lease_end_date,
-        monthly_rent,
-        security_deposit,
-        rent_due_day,
-        grace_period_days,
-        is_active,
-        id
-      ]
-    );
+   // Update the allocation
+const updateResult = await client.query(
+  `UPDATE tenant_allocations 
+   SET lease_end_date = COALESCE($1, lease_end_date),
+       monthly_rent = COALESCE($2, monthly_rent),
+       security_deposit = COALESCE($3, security_deposit),
+       rent_due_day = COALESCE($4, rent_due_day),
+       grace_period_days = COALESCE($5, grace_period_days),
+       is_active = COALESCE($6, is_active)
+   WHERE id = $7
+   RETURNING *`,
+  [
+    lease_end_date,
+    monthly_rent,
+    security_deposit,
+    rent_due_day,
+    grace_period_days,
+    is_active,
+    id
+  ]
+);
     
     await client.query('COMMIT');
     
