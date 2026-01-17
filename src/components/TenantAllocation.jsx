@@ -198,12 +198,6 @@ const TenantAllocation = () => {
       try {
         await deallocateTenant(allocationId)
         
-        // Update unit occupancy status
-        const property = safeProperties.find(p => p.units?.some(u => u.id === unitId))
-        if (property) {
-          await updateUnit(property.id, unitId, { is_occupied: false })
-        }
-        
         // Refresh allocations
         await fetchAllocations()
         await refreshAllocations() // NEW: Refresh allocation data in UserContext
