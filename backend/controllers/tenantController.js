@@ -591,7 +591,7 @@ const deleteTenant = async (req, res) => {
     if (activeAllocations.rows.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Cannot delete tenant with active allocations. Please deallocate first.'
+        message: 'Cannot delete tenant with active allocations. Please ask the admin to deallocate first.'
       });
     }
 
