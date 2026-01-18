@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -11,6 +11,10 @@ const getDisplayName = (conv) => {
   if (!conv) return 'Conversation';
   if (typeof conv.display_name === 'string' && conv.display_name.trim()) return conv.display_name;
   if (typeof conv.title === 'string' && conv.title.trim()) return conv.title;
+  if (conv.conversation_type === 'direct' && conv.participants && conv.participants.length > 0) {
+    const participant = conv.participants[0];
+    return `${participant.first_name} ${participant.last_name}`;
+  }
   return 'Conversation';
 };
 
@@ -44,7 +48,7 @@ const EmptyChatState = ({ onNewChat }) => (
   </div>
 );
 
-// Conversation Item (unchanged)
+// Conversation Item
 const ConversationItem = ({ conversation, isActive, onSelect, unreadCount }) => {
   const displayName = getDisplayName(conversation);
 
@@ -101,43 +105,116 @@ const ChatModule = () => {
   const {
     conversations,
     activeConversation,
-    messages,
+    getMessagesForConversation,
     loadMessages,
     sendMessage,
     setActiveConversation,
     getUnreadCount,
     getTotalUnreadCount,
-    loadAvailableUsers
+    loadAvailableUsers,
+    clearConversationMessages
   } = useChat();
 
   const { user } = useAuth();
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const messagesContainerRef = useRef(null);
+  const prevActiveConvIdRef = useRef(null);
+  const isLoadingRef = useRef(false); // Track loading state
 
-  // Auto-scroll messages ONLY
+  // Get messages for active conversation
+  const activeMessages = activeConversation 
+    ? getMessagesForConversation(activeConversation.id) 
+    : [];
+
+  // Auto-scroll to bottom when new messages are added to active conversation
   useEffect(() => {
     const el = messagesContainerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages.length, activeConversation?.id]);
+    if (!el || !activeConversation) return;
+    
+    // Scroll to bottom with smooth behavior
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: 'smooth'
+    });
+  }, [activeMessages.length, activeConversation?.id]);
 
-  // Load messages on conversation change
+  // SINGLE useEffect to handle conversation changes
   useEffect(() => {
-    if (activeConversation) {
-      loadMessages(activeConversation.id);
+    // If no active conversation, do nothing
+    if (!activeConversation) {
+      prevActiveConvIdRef.current = null;
+      return;
     }
-  }, [activeConversation, loadMessages]);
 
-  const handleSendMessage = async (text) => {
+    const currentConvId = activeConversation.id;
+    
+    // If we're already loading, skip
+    if (isLoadingRef.current) {
+      console.log('⏭️ Already loading, skipping');
+      return;
+    }
+
+    // If this is the same conversation, skip
+    if (prevActiveConvIdRef.current === currentConvId) {
+      console.log('⏭️ Same conversation, skipping load');
+      return;
+    }
+
+    console.log('💭 Active conversation changed:', currentConvId);
+    
+    // Clear messages from previous conversation if it exists and is different
+    if (prevActiveConvIdRef.current && prevActiveConvIdRef.current !== currentConvId) {
+      console.log('🧹 Clearing messages for previous conversation:', prevActiveConvIdRef.current);
+      clearConversationMessages(prevActiveConvIdRef.current);
+    }
+    
+    // Set loading flag
+    isLoadingRef.current = true;
+    
+    // Load messages for new conversation
+    loadMessages(currentConvId)
+      .catch(err => {
+        console.error('❌ Error loading messages:', err);
+      })
+      .finally(() => {
+        // Reset loading flag after a delay to prevent rapid reloading
+        setTimeout(() => {
+          isLoadingRef.current = false;
+        }, 100);
+      });
+    
+    // Update previous conversation ID
+    prevActiveConvIdRef.current = currentConvId;
+    
+    // Cleanup function
+    return () => {
+      // Nothing to cleanup here
+    };
+  }, [activeConversation, loadMessages, clearConversationMessages]);
+
+  // Separate useEffect to reset loading flag when component unmounts
+  useEffect(() => {
+    return () => {
+      isLoadingRef.current = false;
+      prevActiveConvIdRef.current = null;
+    };
+  }, []);
+
+  const handleSendMessage = useCallback(async (text) => {
     if (!activeConversation?.id || !text?.trim()) return;
     await sendMessage(activeConversation.id, text.trim());
-  };
+  }, [activeConversation, sendMessage]);
 
-  const openNewConversationModal = async () => {
+  const openNewConversationModal = useCallback(async () => {
     await loadAvailableUsers?.();
     setShowNewConversation(true);
-  };
+  }, [loadAvailableUsers]);
+
+  const handleSelectConversation = useCallback((conversation) => {
+    console.log('🎯 Selecting conversation:', conversation.id);
+    setActiveConversation(conversation);
+  }, [setActiveConversation]);
 
   const filteredConversations = conversations.filter(conv =>
     getDisplayName(conv).toLowerCase().includes(searchQuery.toLowerCase())
@@ -166,7 +243,8 @@ const ChatModule = () => {
             </h1>
             <button
               onClick={openNewConversationModal}
-              className="bg-blue-600 text-white rounded-full w-8 h-8"
+              className="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-blue-700"
+              aria-label="New conversation"
             >
               +
             </button>
@@ -174,23 +252,29 @@ const ChatModule = () => {
 
           <input
             type="text"
-            placeholder="Search..."
+            placeholder="Search conversations..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full p-2 bg-gray-100 rounded"
+            className="w-full p-2 bg-gray-100 rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {filteredConversations.map(conv => (
-            <ConversationItem
-              key={conv.id}
-              conversation={conv}
-              isActive={activeConversation?.id === conv.id}
-              onSelect={setActiveConversation}
-              unreadCount={getUnreadCount(conv.id)}
-            />
-          ))}
+          {filteredConversations.length === 0 ? (
+            <div className="p-4 text-center text-gray-500">
+              {searchQuery ? 'No conversations found' : 'No conversations yet'}
+            </div>
+          ) : (
+            filteredConversations.map(conv => (
+              <ConversationItem
+                key={conv.id}
+                conversation={conv}
+                isActive={activeConversation?.id === conv.id}
+                onSelect={handleSelectConversation}
+                unreadCount={getUnreadCount(conv.id)}
+              />
+            ))
+          )}
         </div>
       </div>
 
@@ -207,16 +291,23 @@ const ChatModule = () => {
             <div
               ref={messagesContainerRef}
               className="flex-1 overflow-y-auto p-4 overscroll-contain"
+              style={{ minHeight: 0 }}
             >
               <React.Suspense fallback={<LoadingFallback />}>
-                <MessageList messages={messages} />
+                <MessageList 
+                  messages={activeMessages} 
+                  conversationId={activeConversation.id}
+                />
               </React.Suspense>
             </div>
 
             {/* Input (fixed in layout, not scrolling) */}
             <div className="shrink-0 border-t bg-white">
               <React.Suspense fallback={null}>
-                <MessageInput onSendMessage={handleSendMessage} />
+                <MessageInput 
+                  onSendMessage={handleSendMessage} 
+                  disabled={!activeConversation}
+                />
               </React.Suspense>
             </div>
           </>
