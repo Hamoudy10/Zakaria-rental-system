@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-const { authMiddleware, requireRole } = require('../middleware/authMiddleware'); // FIXED: Changed to use requireRole
+const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 
 console.log('Allocations routes loaded');
 
 // GET ALL ALLOCATIONS (with advanced filtering)
-router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
+router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
   try {
     console.log('Fetching all tenant allocations...');
     
@@ -20,10 +20,15 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
     } = req.query;
     
     let query = `
-     SELECT 
+      SELECT 
         ta.*,
-        tenant.first_name as tenant_first_name,
-        tenant.last_name as tenant_last_name,
+        COALESCE(tenant.first_name, 'Unknown') as tenant_first_name,
+        COALESCE(tenant.last_name, 'Tenant') as tenant_last_name,
+        CONCAT(
+          COALESCE(tenant.first_name, 'Unknown'), 
+          ' ', 
+          COALESCE(tenant.last_name, 'Tenant')
+        ) as tenant_full_name,
         tenant.phone_number as tenant_phone,
         tenant.national_id as tenant_national_id,
         p.name as property_name,
@@ -32,8 +37,13 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
         pu.unit_code,
         pu.unit_type,
         pu.rent_amount,
-        agent.first_name as allocated_by_name,
-        agent.last_name as allocated_by_last_name
+        COALESCE(agent.first_name, 'System') as allocated_by_name,
+        COALESCE(agent.last_name, '') as allocated_by_last_name,
+        CONCAT(
+          COALESCE(agent.first_name, 'System'), 
+          ' ', 
+          COALESCE(agent.last_name, '')
+        ) as allocated_by_full_name
       FROM tenant_allocations ta
       LEFT JOIN tenants tenant ON ta.tenant_id = tenant.id
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
@@ -41,6 +51,7 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
       LEFT JOIN users agent ON ta.allocated_by = agent.id
       WHERE 1=1
     `;
+    
     const queryParams = [];
     let paramCount = 0;
 
@@ -83,8 +94,15 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
 
     const result = await pool.query(query, queryParams);
     
-    // Get total count for pagination
-    let countQuery = `SELECT COUNT(*) FROM tenant_allocations ta WHERE 1=1`;
+    // Get total count for pagination (with same filters)
+    let countQuery = `
+      SELECT COUNT(*) 
+      FROM tenant_allocations ta
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE 1=1
+    `;
+    
     const countParams = [];
     let countParamCount = 0;
 
@@ -100,10 +118,30 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
       countParams.push(tenant_id);
     }
 
+    if (unit_id) {
+      countParamCount++;
+      countQuery += ` AND ta.unit_id = $${countParamCount}`;
+      countParams.push(unit_id);
+    }
+
+    if (property_id) {
+      countParamCount++;
+      countQuery += ` AND p.id = $${countParamCount}`;
+      countParams.push(property_id);
+    }
+
     const countResult = await pool.query(countQuery, countParams);
     const totalCount = parseInt(countResult.rows[0].count);
     
-    console.log(`Found ${result.rows.length} allocations`);
+    console.log(`Found ${result.rows.length} allocations. First allocation:`, 
+      result.rows.length > 0 ? {
+        id: result.rows[0].id,
+        tenantId: result.rows[0].tenant_id,
+        tenantFullName: result.rows[0].tenant_full_name,
+        tenantFirstName: result.rows[0].tenant_first_name,
+        tenantLastName: result.rows[0].tenant_last_name
+      } : 'No allocations found'
+    );
     
     res.json({
       success: true,
@@ -124,7 +162,7 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
 });
 
 // GET ALLOCATION BY ID
-router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
+router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -133,8 +171,13 @@ router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     const result = await pool.query(`
       SELECT 
         ta.*,
-        tenant.first_name as tenant_first_name,
-        tenant.last_name as tenant_last_name,
+        COALESCE(tenant.first_name, 'Unknown') as tenant_first_name,
+        COALESCE(tenant.last_name, 'Tenant') as tenant_last_name,
+        CONCAT(
+          COALESCE(tenant.first_name, 'Unknown'), 
+          ' ', 
+          COALESCE(tenant.last_name, 'Tenant')
+        ) as tenant_full_name,
         tenant.phone_number as tenant_phone,
         tenant.national_id as tenant_national_id,
         p.name as property_name,
@@ -144,14 +187,14 @@ router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         pu.unit_code,
         pu.unit_type,
         pu.rent_amount as unit_rent_amount,
-        agent.first_name as allocated_by_name,
-        agent.last_name as allocated_by_last_name
+        COALESCE(agent.first_name, 'System') as allocated_by_name,
+        COALESCE(agent.last_name, '') as allocated_by_last_name
       FROM tenant_allocations ta
       LEFT JOIN tenants tenant ON ta.tenant_id = tenant.id
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON ta.allocated_by = agent.id
-      WHERE 1=1
+      WHERE ta.id = $1
     `, [id]);
     
     if (result.rows.length === 0) {
@@ -176,7 +219,7 @@ router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
 });
 
 // GET ALLOCATIONS BY TENANT
-router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', 'tenant']), async (req, res) => { // FIXED: Changed authorize to requireRole
+router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', 'tenant']), async (req, res) => {
   try {
     const { tenantId } = req.params;
     
@@ -196,7 +239,7 @@ router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', '
         pu.unit_number,
         pu.unit_code,
         pu.unit_type,
-        agent.first_name as allocated_by_name
+        COALESCE(agent.first_name, 'System') as allocated_by_name
       FROM tenant_allocations ta
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
@@ -221,7 +264,7 @@ router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', '
 });
 
 // CREATE NEW ALLOCATION (POST)
-router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => { // FIXED: Changed authorize to requireRole
+router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
   console.log('=== ALLOCATION POST REQUEST RECEIVED ===');
   console.log('Headers:', req.headers);
   console.log('Body:', req.body);
@@ -253,24 +296,24 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
       });
     }
     
-    // Verify tenant exists and is a tenant
+    // Verify tenant exists in tenants table
     const tenantCheck = await client.query(
-      `SELECT id, first_name, last_name, role 
+      `SELECT id, first_name, last_name 
        FROM tenants 
-       WHERE id = $1 `,
+       WHERE id = $1`,
       [tenant_id]
     );
     
     if (tenantCheck.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Tenant not found or invalid tenant role'
+        message: 'Tenant not found'
       });
     }
     
     // Verify unit exists and is available
     const unitCheck = await client.query(`
-      SELECT pu.*, p.name as property_name, p.available_units
+      SELECT pu.*, p.name as property_name, p.available_units, p.id as property_id
       FROM property_units pu
       LEFT JOIN properties p ON pu.property_id = p.id
       WHERE pu.id = $1 AND pu.is_active = true
@@ -341,32 +384,39 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
       [unit_id]
     );
 
-    // Update property available units count
+    // Update property available units count using recalculation
     await client.query(
-      `UPDATE properties 
-       SET available_units = available_units - 1 
+      `UPDATE properties p
+       SET available_units = (
+         SELECT COUNT(*) 
+         FROM property_units pu 
+         WHERE pu.property_id = p.id 
+           AND pu.is_active = true 
+           AND pu.is_occupied = false
+       )
        WHERE id = $1`,
       [unit.property_id]
     );
 
-    // Create notification for tenant (tenant must be a user)
+    // Create notification for admin/agent (not tenant, since tenants aren't in users table)
     await client.query(
       `INSERT INTO notifications (
         user_id, title, message, type, related_entity_type, related_entity_id
       ) VALUES ($1, $2, $3, $4, $5, $6)`,
       [
-        tenant_id,
-        'Unit Allocation Confirmed',
-        `You have been allocated to ${unit.property_name}, Unit ${unit.unit_number}. Monthly rent: KSh ${monthly_rent}.`,
+        req.user.id, // Notify the admin/agent who created the allocation
+        'New Tenant Allocation Created',
+        `You allocated ${tenantCheck.rows[0].first_name} ${tenantCheck.rows[0].last_name} to ${unit.property_name}, Unit ${unit.unit_number}. Monthly rent: KSh ${monthly_rent}.`,
         'allocation',
         'allocation',
         allocationResult.rows[0].id
       ]
     );
 
-    // Create notifications for agents/admins
+    // Create notifications for other agents/admins
     const agentsResult = await client.query(
-      `SELECT id FROM users WHERE role IN ('admin', 'agent') AND is_active = true`
+      `SELECT id FROM users WHERE role IN ('admin', 'agent') AND is_active = true AND id != $1`,
+      [req.user.id]
     );
 
     for (const agent of agentsResult.rows) {
@@ -377,7 +427,7 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
         [
           agent.id,
           'New Tenant Allocation',
-          `${tenantCheck.rows[0].first_name} ${tenantCheck.rows[0].last_name} allocated to ${unit.property_name}, Unit ${unit.unit_number}`,
+          `${tenantCheck.rows[0].first_name} ${tenantCheck.rows[0].last_name} was allocated to ${unit.property_name}, Unit ${unit.unit_number} by ${req.user.first_name || 'System'}.`,
           'allocation',
           'allocation',
           allocationResult.rows[0].id
@@ -416,7 +466,7 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
   }
 });
 
-// UPDATE ALLOCATION (PUT) - SINGLE PUT ROUTE WITH FIXED NOTIFICATIONS
+// UPDATE ALLOCATION (PUT)
 router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -462,27 +512,27 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         [currentAllocation.unit_id]
       );
 
-    // Use recalculation to ensure accuracy:
+      // Update property available units count using recalculation
       await client.query(
         `UPDATE properties p
-        SET available_units = (
-          SELECT COUNT(*) 
-          FROM property_units pu 
-          WHERE pu.property_id = p.id 
-            AND pu.is_active = true 
-            AND pu.is_occupied = false
-        )
-        WHERE id = $1`,
+         SET available_units = (
+           SELECT COUNT(*) 
+           FROM property_units pu 
+           WHERE pu.property_id = p.id 
+             AND pu.is_active = true 
+             AND pu.is_occupied = false
+         )
+         WHERE id = $1`,
         [currentAllocation.property_id]
       );
 
-      // ✅ FIXED: Notify the admin/agent performing the action instead of tenant
+      // Notify the admin/agent performing the action
       await client.query(
         `INSERT INTO notifications (
           user_id, title, message, type, related_entity_type, related_entity_id
         ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          req.user.id, // Admin/agent performing the action
+          req.user.id,
           'Tenancy Ended',
           `Tenancy for ${currentAllocation.first_name} ${currentAllocation.last_name} in unit ${currentAllocation.unit_code} has been ended.`,
           'allocation',
@@ -516,27 +566,27 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         [currentAllocation.unit_id]
       );
 
-     // Use recalculation to ensure accuracy:
+      // Update property available units count using recalculation
       await client.query(
         `UPDATE properties p
-        SET available_units = (
-          SELECT COUNT(*) 
-          FROM property_units pu 
-          WHERE pu.property_id = p.id 
-            AND pu.is_active = true 
-            AND pu.is_occupied = false
-        )
-        WHERE id = $1`,
+         SET available_units = (
+           SELECT COUNT(*) 
+           FROM property_units pu 
+           WHERE pu.property_id = p.id 
+             AND pu.is_active = true 
+             AND pu.is_occupied = false
+         )
+         WHERE id = $1`,
         [currentAllocation.property_id]
       );
 
-      // ✅ FIXED: Notify the admin/agent performing the action instead of tenant
+      // Notify the admin/agent performing the action
       await client.query(
         `INSERT INTO notifications (
           user_id, title, message, type, related_entity_type, related_entity_id
         ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          req.user.id, // Admin/agent performing the action
+          req.user.id,
           'Tenancy Reactivated',
           `Tenancy for ${currentAllocation.first_name} ${currentAllocation.last_name} in unit ${currentAllocation.unit_code} has been reactivated.`,
           'allocation',
@@ -546,27 +596,27 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
       );
     }
     
-   // Update the allocation
-const updateResult = await client.query(
-  `UPDATE tenant_allocations 
-   SET lease_end_date = COALESCE($1, lease_end_date),
-       monthly_rent = COALESCE($2, monthly_rent),
-       security_deposit = COALESCE($3, security_deposit),
-       rent_due_day = COALESCE($4, rent_due_day),
-       grace_period_days = COALESCE($5, grace_period_days),
-       is_active = COALESCE($6, is_active)
-   WHERE id = $7
-   RETURNING *`,
-  [
-    lease_end_date,
-    monthly_rent,
-    security_deposit,
-    rent_due_day,
-    grace_period_days,
-    is_active,
-    id
-  ]
-);
+    // Update the allocation
+    const updateResult = await client.query(
+      `UPDATE tenant_allocations 
+       SET lease_end_date = COALESCE($1, lease_end_date),
+           monthly_rent = COALESCE($2, monthly_rent),
+           security_deposit = COALESCE($3, security_deposit),
+           rent_due_day = COALESCE($4, rent_due_day),
+           grace_period_days = COALESCE($5, grace_period_days),
+           is_active = COALESCE($6, is_active)
+       WHERE id = $7
+       RETURNING *`,
+      [
+        lease_end_date,
+        monthly_rent,
+        security_deposit,
+        rent_due_day,
+        grace_period_days,
+        is_active,
+        id
+      ]
+    );
     
     await client.query('COMMIT');
     
@@ -625,10 +675,16 @@ router.delete('/:id', authMiddleware, requireRole(['admin']), async (req, res) =
         [allocation.unit_id]
       );
 
-      // Update property available units count
+      // Update property available units count using recalculation
       await client.query(
-        `UPDATE properties 
-         SET available_units = available_units + 1 
+        `UPDATE properties p
+         SET available_units = (
+           SELECT COUNT(*) 
+           FROM property_units pu 
+           WHERE pu.property_id = p.id 
+             AND pu.is_active = true 
+             AND pu.is_occupied = false
+         )
          WHERE id = $1`,
         [allocation.property_id]
       );
@@ -647,7 +703,6 @@ router.delete('/:id', authMiddleware, requireRole(['admin']), async (req, res) =
 
     if (parseInt(relatedPayments.rows[0].count) > 0 || parseInt(relatedComplaints.rows[0].count) > 0) {
       console.log(`⚠️  Allocation has related records: ${relatedPayments.rows[0].count} payments, ${relatedComplaints.rows[0].count} complaints`);
-      // We'll proceed with deletion but log the related records
     }
     
     // Delete the allocation
@@ -725,6 +780,21 @@ router.get('/stats/overview', authMiddleware, requireRole(['admin', 'agent']), a
 // GET CURRENT TENANT ALLOCATION
 router.get('/my/allocation', authMiddleware, requireRole(['tenant']), async (req, res) => {
   try {
+    // For tenant role, we need to find their tenant record first
+    const tenantResult = await pool.query(
+      'SELECT id FROM tenants WHERE id = $1 OR national_id = $2',
+      [req.user.id, req.user.national_id]
+    );
+    
+    if (tenantResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No tenant record found for this user'
+      });
+    }
+    
+    const tenantId = tenantResult.rows[0].id;
+    
     const result = await pool.query(`
       SELECT 
         ta.*,
@@ -733,7 +803,7 @@ router.get('/my/allocation', authMiddleware, requireRole(['tenant']), async (req
         pu.unit_number,
         pu.unit_code,
         pu.unit_type,
-        agent.first_name as allocated_by_name
+        COALESCE(agent.first_name, 'System') as allocated_by_name
       FROM tenant_allocations ta
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
@@ -741,7 +811,7 @@ router.get('/my/allocation', authMiddleware, requireRole(['tenant']), async (req
       WHERE ta.tenant_id = $1 AND ta.is_active = true
       ORDER BY ta.allocation_date DESC
       LIMIT 1
-    `, [req.user.id]);
+    `, [tenantId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({
