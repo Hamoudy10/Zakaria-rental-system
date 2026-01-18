@@ -301,6 +301,10 @@ exports.getConversationMessages = async (req, res) => {
 /**
  * POST /chat/messages/send
  */
+/**
+ * POST /chat/messages/send
+ * FIXED: Proper socket emission to ALL participants including sender
+ */
 exports.sendMessage = async (req, res) => {
   try {
     const senderId = req.user.id;
@@ -309,6 +313,8 @@ exports.sendMessage = async (req, res) => {
     if (!conversationId || !messageText) {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
+
+    console.log(`📤 User ${senderId} sending message to conversation ${conversationId}`);
 
     const result = await db.query(
       `
@@ -322,22 +328,35 @@ exports.sendMessage = async (req, res) => {
       [conversationId, senderId, messageText]
     );
 
-     const message = result.rows[0];
+    const message = result.rows[0];
+    console.log(`✅ Message saved to database, ID: ${message.id}`);
 
-    // Emit via Socket.IO to conversation room
+    // Emit via Socket.IO
     if (ioInstance) {
+      // ✅ FIX: Broadcast to conversation room (includes ALL participants)
       ioInstance.to(`conversation_${conversationId}`).emit('new_message', {
         message: message,
         conversationId: conversationId
       });
+      console.log(`📡 Broadcasted new_message to conversation_${conversationId}`);
 
-      // Notify individual participants
+      // ✅ ALSO emit to individual user rooms as backup
       const participantsResult = await db.query(
         'SELECT user_id FROM chat_participants WHERE conversation_id = $1 AND is_active = true',
         [conversationId]
       );
 
+      console.log(`👥 Found ${participantsResult.rows.length} participants in conversation`);
+
       participantsResult.rows.forEach(participant => {
+        // Emit to EVERY participant's personal room (including sender)
+        ioInstance.to(`user_${participant.user_id}`).emit('new_message', {
+          message: message,
+          conversationId: conversationId
+        });
+        console.log(`📡 Sent new_message to user_${participant.user_id}`);
+
+        // Send notification only to OTHER participants (not sender)
         if (participant.user_id !== senderId) {
           ioInstance.to(`user_${participant.user_id}`).emit('chat_notification', {
             type: 'new_message',
@@ -345,16 +364,19 @@ exports.sendMessage = async (req, res) => {
             message: message,
             unreadCount: 1
           });
+          console.log(`🔔 Sent notification to user_${participant.user_id}`);
         }
       });
+    } else {
+      console.warn('⚠️ Socket.IO instance not available');
     }
 
     res.json({
       success: true,
-      data: result.rows[0]
+      data: message
     });
   } catch (error) {
-    console.error('sendMessage error:', error);
+    console.error('❌ sendMessage error:', error);
     res.status(500).json({ success: false, message: 'Failed to send message' });
   }
 };
