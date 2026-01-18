@@ -235,3 +235,55 @@ TESTING CONFIRMED:
 ✅ Notifications created for admin/agent instead of tenant
 
 PRODUCTION READY: Tenant deallocation workflow is now stable and error-free.
+
+UPDATE 12.0 - TENANT ALLOCATION SYSTEM FIXES & FRONTEND-BACKEND SYNCHRONIZATION
+
+PROBLEMS RESOLVED:
+1. Fixed 500 Internal Server Error in GET /api/allocations route
+2. Resolved "Unknown Tenant" display issue in TenantAllocation.jsx
+3. Synchronized frontend and backend data structures
+4. Corrected SQL query bugs in allocations routes
+
+ROOT CAUSES IDENTIFIED:
+1. SQL Query Bug: Main GET route had "WHERE ta.id = $1" instead of "WHERE 1=1" for list endpoint
+2. Database Schema Mismatch: Frontend looking in users table, backend returning from tenants table
+3. Missing Columns: API trying to select non-existent tenant.email column
+4. Inconsistent Data Flow: Frontend getTenantName() searching wrong data source
+
+SOLUTIONS IMPLEMENTED:
+
+BACKEND FIXES (/backend/routes/allocations.js):
+✅ Fixed main GET route query: Changed "WHERE ta.id = $1" → "WHERE 1=1"
+✅ Removed non-existent "tenant.email" column from SELECT clause
+✅ Added COALESCE() functions for null-safe tenant name display
+✅ Added computed "tenant_full_name" field for easy frontend consumption
+✅ Fixed GET /:id route: Changed "WHERE 1=1" → "WHERE ta.id = $1"
+✅ Enhanced POST route tenant validation: Changed from users table to tenants table
+✅ Improved property unit recalculation logic for data consistency
+✅ Added comprehensive logging for debugging allocations
+
+FRONTEND FIXES (/src/components/TenantAllocation.jsx):
+✅ Replaced getTenantName() function with getTenantDetails() that uses allocation data directly
+✅ Updated to use tenant_first_name, tenant_last_name, tenant_full_name from API response
+✅ Removed dependency on users array for tenant name resolution
+✅ Enhanced unit details extraction from allocation object
+✅ Maintained responsive design for mobile/desktop views
+
+API RESPONSE STRUCTURE ENHANCEMENTS:
+- Now returns: tenant_first_name, tenant_last_name, tenant_full_name, tenant_phone, tenant_national_id
+- All tenant data comes from tenants table (not users table)
+- Consistent field naming across all allocation endpoints
+
+DATABASE REALIGNMENT:
+- Confirmed: tenant_allocations.tenant_id → tenants.id (not users.id)
+- All tenant data correctly sourced from tenants table
+- Added proper joins for tenant, unit, and property data
+
+TESTING CONFIRMED:
+✅ GET /api/allocations now returns 200 with proper tenant names
+✅ Tenant Allocation tab displays "Mahmoud Badikuu", "Ali Ahmed", etc. (not "Unknown Tenant")
+✅ Mobile and desktop views render correctly
+✅ Allocation creation/deletion works with proper data flow
+✅ Backend no longer returns 500 errors for allocation queries
+
+SYSTEM STATUS: Tenant Allocation system fully operational with proper data synchronization between frontend and backend. All tenant names display correctly in admin dashboard.

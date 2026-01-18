@@ -120,6 +120,10 @@ exports.createConversation = async (req, res) => {
  * GET /chat/recent-chats?limit=50&offset=0
  * Returns recent conversations for the user with last message info
  */
+/**
+ * GET /chat/recent-chats?limit=50&offset=0
+ * Returns recent conversations for the user with last message info
+ */
 exports.getRecentChats = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -128,44 +132,64 @@ exports.getRecentChats = async (req, res) => {
 
     const result = await db.query(
       `
-            SELECT
+      SELECT
         c.id,
         c.conversation_type,
         c.title,
         c.created_at,
         (
-            SELECT cm.message_text
-            FROM chat_messages cm
-            WHERE cm.conversation_id = c.id
+          SELECT cm.message_text
+          FROM chat_messages cm
+          WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
-            ORDER BY cm.created_at DESC
-            LIMIT 1
+          ORDER BY cm.created_at DESC
+          LIMIT 1
         ) AS last_message,
         (
-            SELECT cm.created_at
-            FROM chat_messages cm
-            WHERE cm.conversation_id = c.id
+          SELECT cm.created_at
+          FROM chat_messages cm
+          WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
-            ORDER BY cm.created_at DESC
-            LIMIT 1
+          ORDER BY cm.created_at DESC
+          LIMIT 1
         ) AS last_message_at,
-        -- Add participants
-        json_agg(
-            json_build_object(
-            'id', u.id,
-            'first_name', u.first_name,
-            'last_name', u.last_name
+        (
+          SELECT COUNT(*)
+          FROM chat_messages cm
+          WHERE cm.conversation_id = c.id
+            AND cm.is_deleted = false
+            AND cm.sender_id != $1
+            AND NOT EXISTS (
+              SELECT 1
+              FROM chat_message_reads mr
+              WHERE mr.message_id = cm.id
+                AND mr.user_id = $1
             )
-        ) FILTER (WHERE u.id != $1) AS participants
-        FROM chat_conversations c
-        JOIN chat_participants cp ON c.id = cp.conversation_id
-        JOIN users u ON u.id = cp.user_id
-        WHERE cp.user_id = $1
-        AND cp.is_active = true
-        GROUP BY c.id
-        ORDER BY last_message_at DESC NULLS LAST
-        LIMIT $2 OFFSET $3;
-
+        ) AS unread_count,
+        (
+          SELECT json_agg(
+            json_build_object(
+              'id', u.id,
+              'first_name', u.first_name,
+              'last_name', u.last_name
+            )
+          )
+          FROM chat_participants cp2
+          JOIN users u ON u.id = cp2.user_id
+          WHERE cp2.conversation_id = c.id
+            AND cp2.user_id != $1
+            AND cp2.is_active = true
+        ) AS participants
+      FROM chat_conversations c
+      WHERE EXISTS (
+        SELECT 1
+        FROM chat_participants cp
+        WHERE cp.conversation_id = c.id
+          AND cp.user_id = $1
+          AND cp.is_active = true
+      )
+      ORDER BY last_message_at DESC NULLS LAST
+      LIMIT $2 OFFSET $3
       `,
       [userId, limit, offset]
     );
@@ -176,8 +200,6 @@ exports.getRecentChats = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to load recent chats' });
   }
 };
-
-
 /**
  * GET /chat/conversations
  * Returns all conversations for the user
