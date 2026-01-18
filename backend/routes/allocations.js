@@ -40,7 +40,7 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON ta.allocated_by = agent.id
-      WHERE ta.id = $1
+      WHERE 1=1
     `;
     const queryParams = [];
     let paramCount = 0;
