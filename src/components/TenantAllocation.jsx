@@ -4,7 +4,6 @@ import { useProperty } from '../context/PropertyContext'
 import { useUser } from '../context/UserContext'
 
 const TenantAllocation = () => {
-  // Use availableTenants directly from UserContext instead of computing it here
   const { 
     users, 
     availableTenants, 
@@ -51,40 +50,33 @@ const TenantAllocation = () => {
     })
   }, [safeProperties])
 
-  // Enhanced: Get tenant name by ID with fallback
-  const getTenantName = useCallback((tenantId) => {
-    if (!tenantId) return { firstName: 'Unknown', lastName: 'Tenant' }
+  // ✅ UPDATED: Get tenant details from allocation object directly (from tenants table)
+  const getTenantDetails = useCallback((allocation) => {
+    if (!allocation) return { firstName: 'Unknown', lastName: 'Tenant', phone: 'N/A' }
     
-    const tenant = safeUsers.find(user => user.id === tenantId)
-    if (!tenant) return { firstName: 'Unknown', lastName: 'Tenant' }
-    
+    // Use tenant data returned directly from the API (from tenants table)
     return {
-      firstName: tenant.first_name || 'Unknown',
-      lastName: tenant.last_name || 'Tenant',
-      phone: tenant.phone_number || 'N/A',
-      email: tenant.email || 'N/A'
+      firstName: allocation.tenant_first_name || 'Unknown',
+      lastName: allocation.tenant_last_name || 'Tenant',
+      phone: allocation.tenant_phone || 'N/A',
+      fullName: allocation.tenant_full_name || `${allocation.tenant_first_name || 'Unknown'} ${allocation.tenant_last_name || 'Tenant'}`,
+      nationalId: allocation.tenant_national_id || 'N/A'
     }
-  }, [safeUsers])
+  }, [])
 
-  // Enhanced: Get unit details by ID with fallback
-  const getUnitDetails = useCallback((unitId) => {
-    if (!unitId) return { unitCode: 'Unknown Unit', propertyName: 'Unknown Property' }
+  // ✅ UPDATED: Get unit details from allocation object directly
+  const getUnitDetails = useCallback((allocation) => {
+    if (!allocation) return { unitCode: 'Unknown Unit', propertyName: 'Unknown Property' }
     
-    for (const property of safeProperties) {
-      const propertyUnits = Array.isArray(property.units) ? property.units : []
-      const unit = propertyUnits.find(u => u.id === unitId)
-      if (unit) {
-        return {
-          unitCode: unit.unit_code || 'Unknown Unit',
-          unitType: unit.unit_type || 'N/A',
-          propertyName: property.name || 'Unknown Property',
-          propertyId: property.id
-        }
-      }
+    // Use unit data returned directly from the API
+    return {
+      unitCode: allocation.unit_code || 'Unknown Unit',
+      unitNumber: allocation.unit_number || 'N/A',
+      unitType: allocation.unit_type || 'N/A',
+      propertyName: allocation.property_name || 'Unknown Property',
+      propertyCode: allocation.property_code || 'N/A'
     }
-    
-    return { unitCode: 'Unknown Unit', propertyName: 'Unknown Property' }
-  }, [safeProperties])
+  }, [])
 
   // Load allocations on component mount
   useEffect(() => {
@@ -92,7 +84,7 @@ const TenantAllocation = () => {
     fetchAllocations()
   }, [fetchAllocations])
 
-  // NEW: Refresh users and allocations when modal opens
+  // Refresh users and allocations when modal opens
   useEffect(() => {
     if (showAllocationModal) {
       console.log('🔄 Modal opened, refreshing users and allocations...')
@@ -172,7 +164,7 @@ const TenantAllocation = () => {
       // Close modal and refresh data
       setShowAllocationModal(false)
       await fetchAllocations()
-      await refreshAllocations() // NEW: Refresh allocation data in UserContext
+      await refreshAllocations()
       
       alert('Tenant allocated successfully!')
     } catch (error) {
@@ -200,7 +192,7 @@ const TenantAllocation = () => {
         
         // Refresh allocations
         await fetchAllocations()
-        await refreshAllocations() // NEW: Refresh allocation data in UserContext
+        await refreshAllocations()
         alert('Tenant deallocated successfully!')
       } catch (error) {
         console.error('Error deallocating tenant:', error)
@@ -325,7 +317,7 @@ const TenantAllocation = () => {
                   value={selectedTenant}
                   onChange={(e) => {
                     setSelectedTenant(e.target.value)
-                    setAllocationError('') // Clear error when user makes a selection
+                    setAllocationError('')
                   }}
                   className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                   required
@@ -349,7 +341,7 @@ const TenantAllocation = () => {
                   value={selectedUnit}
                   onChange={(e) => {
                     setSelectedUnit(e.target.value)
-                    setAllocationError('') // Clear error when user makes a selection
+                    setAllocationError('')
                   }}
                   className="w-full p-3 text-sm md:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                   required
@@ -482,8 +474,8 @@ const TenantAllocation = () => {
             {/* Mobile Card View */}
             <div className="md:hidden space-y-3">
               {activeAllocations.map((allocation) => {
-                const tenant = getTenantName(allocation.tenant_id)
-                const unit = getUnitDetails(allocation.unit_id)
+                const tenant = getTenantDetails(allocation)
+                const unit = getUnitDetails(allocation)
                 
                 return (
                   <div key={allocation.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
@@ -494,7 +486,7 @@ const TenantAllocation = () => {
                         </div>
                         <div className="ml-3">
                           <div className="text-sm font-medium text-gray-900">
-                            {tenant.firstName} {tenant.lastName}
+                            {tenant.fullName}
                           </div>
                           <div className="text-xs text-gray-500">{tenant.phone}</div>
                         </div>
@@ -567,8 +559,8 @@ const TenantAllocation = () => {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {activeAllocations.map((allocation) => {
-                    const tenant = getTenantName(allocation.tenant_id)
-                    const unit = getUnitDetails(allocation.unit_id)
+                    const tenant = getTenantDetails(allocation)
+                    const unit = getUnitDetails(allocation)
                     
                     return (
                       <tr key={allocation.id} className="hover:bg-gray-50">
@@ -579,17 +571,17 @@ const TenantAllocation = () => {
                             </div>
                             <div className="ml-4">
                               <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                                {tenant.firstName} {tenant.lastName}
+                                {tenant.fullName}
                               </div>
                               <div className="text-sm text-gray-500 whitespace-nowrap">
-                                {tenant.phone}
+                                {tenant.phone} • ID: {tenant.nationalId}
                               </div>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900 whitespace-nowrap">
-                            {unit.unitCode}
+                            {unit.unitCode} ({unit.unitType})
                           </div>
                           <div className="text-sm text-gray-500 whitespace-nowrap">
                             {unit.propertyName}
