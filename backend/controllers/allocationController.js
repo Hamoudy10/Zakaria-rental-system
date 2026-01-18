@@ -3,9 +3,19 @@ const pool = require('../config/database');
 // @desc    Get all allocations
 // @route   GET /api/allocations
 // @access  Private (Admin, Agent)
+// @desc    Get all allocations
+// @route   GET /api/allocations
+// @access  Private (Admin, Agent)
 const getAllocations = async (req, res) => {
   try {
     console.log('Getting all allocations...');
+    
+    // Get pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = (page - 1) * limit;
+    
+    // ✅ FIXED: Changed from 'users tenant' to 'tenants tenant'
     const query = `
       SELECT 
         ta.*,
@@ -21,26 +31,37 @@ const getAllocations = async (req, res) => {
         agent.first_name as allocated_by_name,
         agent.last_name as allocated_by_last_name
       FROM tenant_allocations ta
-      LEFT JOIN users tenant ON ta.tenant_id = tenant.id
+      LEFT JOIN tenants tenant ON ta.tenant_id = tenant.id
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON ta.allocated_by = agent.id
-      ORDER BY ta.created_at DESC
+      ORDER BY ta.allocation_date DESC
+      LIMIT $1 OFFSET $2
     `;
     
-    const { rows } = await pool.query(query);
+    // Get total count for pagination
+    const countQuery = `SELECT COUNT(*) FROM tenant_allocations`;
+    const countResult = await pool.query(countQuery);
+    const total = parseInt(countResult.rows[0].count);
     
-    console.log(`Found ${rows.length} allocations`);
+    const { rows } = await pool.query(query, [limit, offset]);
+    
+    console.log(`✅ Found ${rows.length} allocations (page ${page} of ${Math.ceil(total / limit)})`);
     
     res.json({
       success: true,
+      count: rows.length,
+      total: total,
+      page: page,
+      totalPages: Math.ceil(total / limit),
       data: rows
     });
   } catch (error) {
-    console.error('Get allocations error:', error);
+    console.error('❌ Get allocations error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error fetching allocations'
+      message: 'Server error fetching allocations',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -53,6 +74,7 @@ const getAllocation = async (req, res) => {
     const { id } = req.params;
     console.log('Getting allocation with ID:', id);
     
+    // ✅ FIXED: Changed from 'users tenant' to 'tenants tenant'
     const query = `
       SELECT 
         ta.*,
@@ -60,15 +82,17 @@ const getAllocation = async (req, res) => {
         tenant.last_name as tenant_last_name,
         tenant.phone_number as tenant_phone,
         tenant.email as tenant_email,
+        tenant.national_id as tenant_national_id,
         p.name as property_name,
         p.property_code,
         pu.unit_number,
         pu.unit_code,
         pu.unit_type,
+        pu.rent_amount,
         agent.first_name as allocated_by_name,
         agent.last_name as allocated_by_last_name
       FROM tenant_allocations ta
-      LEFT JOIN users tenant ON ta.tenant_id = tenant.id
+      LEFT JOIN tenants tenant ON ta.tenant_id = tenant.id
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON ta.allocated_by = agent.id
@@ -78,25 +102,28 @@ const getAllocation = async (req, res) => {
     const { rows } = await pool.query(query, [id]);
     
     if (rows.length === 0) {
+      console.log('❌ Allocation not found:', id);
       return res.status(404).json({
         success: false,
         message: 'Allocation not found'
       });
     }
     
+    console.log('✅ Allocation found:', rows[0].tenant_first_name, rows[0].tenant_last_name);
+    
     res.json({
       success: true,
       data: rows[0]
     });
   } catch (error) {
-    console.error('Get allocation error:', error);
+    console.error('❌ Get allocation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error fetching allocation'
+      message: 'Server error fetching allocation',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
-
 // @desc    Create allocation
 // @route   POST /api/allocations
 // @access  Private (Admin, Agent)
