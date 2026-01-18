@@ -20,25 +20,27 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
     } = req.query;
     
     let query = `
-      SELECT 
+     SELECT 
         ta.*,
         tenant.first_name as tenant_first_name,
         tenant.last_name as tenant_last_name,
         tenant.phone_number as tenant_phone,
         tenant.email as tenant_email,
+        tenant.national_id as tenant_national_id,
         p.name as property_name,
         p.property_code,
         pu.unit_number,
         pu.unit_code,
         pu.unit_type,
+        pu.rent_amount,
         agent.first_name as allocated_by_name,
         agent.last_name as allocated_by_last_name
       FROM tenant_allocations ta
-      LEFT JOIN users tenant ON ta.tenant_id = tenant.id
+      LEFT JOIN tenants tenant ON ta.tenant_id = tenant.id
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON ta.allocated_by = agent.id
-      WHERE 1=1
+      WHERE ta.id = $1
     `;
     const queryParams = [];
     let paramCount = 0;
@@ -147,7 +149,7 @@ router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         agent.first_name as allocated_by_name,
         agent.last_name as allocated_by_last_name
       FROM tenant_allocations ta
-      LEFT JOIN users tenant ON ta.tenant_id = tenant.id
+      LEFT JOIN tenants tenant ON ta.tenant_id = tenant.id
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON ta.allocated_by = agent.id
