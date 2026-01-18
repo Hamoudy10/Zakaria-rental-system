@@ -25,7 +25,6 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
         tenant.first_name as tenant_first_name,
         tenant.last_name as tenant_last_name,
         tenant.phone_number as tenant_phone,
-        tenant.email as tenant_email,
         tenant.national_id as tenant_national_id,
         p.name as property_name,
         p.property_code,
@@ -137,7 +136,6 @@ router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         tenant.first_name as tenant_first_name,
         tenant.last_name as tenant_last_name,
         tenant.phone_number as tenant_phone,
-        tenant.email as tenant_email,
         tenant.national_id as tenant_national_id,
         p.name as property_name,
         p.address as property_address,
@@ -153,7 +151,7 @@ router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON ta.allocated_by = agent.id
-      WHERE ta.id = $1
+      WHERE 1=1
     `, [id]);
     
     if (result.rows.length === 0) {
@@ -258,8 +256,8 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
     // Verify tenant exists and is a tenant
     const tenantCheck = await client.query(
       `SELECT id, first_name, last_name, role 
-       FROM users 
-       WHERE id = $1 AND role = 'tenant' AND is_active = true`,
+       FROM tenants 
+       WHERE id = $1 `,
       [tenant_id]
     );
     
