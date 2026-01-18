@@ -666,11 +666,12 @@ const uploadIDImages = async (req, res) => {
   const { id } = req.params;
 
   try {
-    console.log('🔵 [Cloudinary] Starting upload for tenant:', id);
-    console.log('🔵 [Cloudinary] Files received:', req.files);
+    console.log('🔵 [Upload Start] Tenant ID:', id);
+    console.log('🔵 [Upload Start] Files received:', req.files ? Object.keys(req.files) : 'none');
     
     // Validate files were uploaded (via the middleware)
     if (!req.files || (!req.files.id_front_image && !req.files.id_back_image)) {
+      console.log('❌ [Upload] No files received');
       return res.status(400).json({
         success: false,
         message: "At least one ID image (front or back) is required"
@@ -682,27 +683,33 @@ const uploadIDImages = async (req, res) => {
     let querySetPart = '';
     let paramCount = 1;
 
-    // Process front ID image (now a Cloudinary object)
-    if (req.files.id_front_image) {
-       console.log('🔵 [Cloudinary] Processing front image:', req.files.id_front_image[0].originalname);
+    // Process front ID image (Cloudinary URL)
+    if (req.files.id_front_image && req.files.id_front_image[0]) {
       const frontFile = req.files.id_front_image[0];
-      // Store the secure URL from Cloudinary
-      updateFields.id_front_image = frontFile.path; // This is the Cloudinary URL
+      console.log('✅ [Front Image] Uploaded to Cloudinary');
+      console.log('   Original:', frontFile.originalname);
+      console.log('   URL:', frontFile.path);
+      console.log('   Size:', (frontFile.size / 1024).toFixed(2), 'KB');
+      
+      updateFields.id_front_image = frontFile.path; // Cloudinary secure URL
       querySetPart += `id_front_image = $${paramCount}, `;
       values.push(updateFields.id_front_image);
       paramCount++;
     }
 
-    // Process back ID image
-    if (req.files.id_back_image) {
-       console.log('🔵 [Cloudinary] Processing back image:', req.files.id_back_image[0].originalname);
+    // Process back ID image (Cloudinary URL)
+    if (req.files.id_back_image && req.files.id_back_image[0]) {
       const backFile = req.files.id_back_image[0];
-      updateFields.id_back_image = backFile.path; // Cloudinary URL
+      console.log('✅ [Back Image] Uploaded to Cloudinary');
+      console.log('   Original:', backFile.originalname);
+      console.log('   URL:', backFile.path);
+      console.log('   Size:', (backFile.size / 1024).toFixed(2), 'KB');
+      
+      updateFields.id_back_image = backFile.path; // Cloudinary secure URL
       querySetPart += `id_back_image = $${paramCount}, `;
       values.push(updateFields.id_back_image);
       paramCount++;
     }
-  
 
     // Remove trailing comma and space from the SET clause
     querySetPart = querySetPart.slice(0, -2);
@@ -711,39 +718,61 @@ const uploadIDImages = async (req, res) => {
     values.push(id);
 
     // Update the tenant record in the database
-     console.log('🟢 [2] Starting database transaction');
+    console.log('🔄 [Database] Updating tenant record...');
     const query = `
       UPDATE tenants 
-      SET ${querySetPart}
+      SET ${querySetPart}, updated_at = CURRENT_TIMESTAMP
       WHERE id = $${paramCount}
-      RETURNING id, national_id, id_front_image, id_back_image
+      RETURNING id, national_id, first_name, last_name, id_front_image, id_back_image
     `;
 
     const result = await pool.query(query, values);
 
     if (result.rows.length === 0) {
-      // If the tenant wasn't found, we should clean up the uploaded files
-      if (req.files.id_front_image) {
-        fs.unlinkSync(req.files.id_front_image[0].path);
-      }
-      if (req.files.id_back_image) {
-        fs.unlinkSync(req.files.id_back_image[0].path);
-      }
+      console.log('❌ [Database] Tenant not found:', id);
+      // NOTE: No need to delete files - Cloudinary handles storage
+      // Files will remain in Cloudinary (can be cleaned up manually if needed)
       return res.status(404).json({
         success: false,
         message: "Tenant not found"
       });
-    }else{
-      console.log('🟢 [3] Tenant ID images updated successfully in DB for tenant ID:', id);
     }
+
+    console.log('✅ [Database] Tenant updated successfully');
+    console.log('✅ [Complete] Upload process finished for tenant:', id);
+
+    // ⚠️ CRITICAL: Send success response to client
+    return res.status(200).json({
+      success: true,
+      message: 'ID images uploaded successfully',
+      data: result.rows[0]
+    });
+
   } catch (error) {
-      console.error('❌ [Cloudinary] Error in uploadIDImages:', error);
-    // Your error response...
-    console.error('Error uploading ID images to Cloudinary:', error);
-    // Error handling (no file cleanup needed)
-    res.status(500).json({
+    console.error('❌ [Error] Upload failed:', error.message);
+    console.error('   Stack:', error.stack);
+    
+    // Check for specific error types
+    if (error.code === 'ETIMEDOUT' || error.code === 'ESOCKETTIMEDOUT') {
+      return res.status(504).json({
+        success: false,
+        message: 'Upload timed out. Please try again with a smaller image or check your connection.'
+      });
+    }
+
+    if (error.message && error.message.includes('Cloudinary')) {
+      return res.status(500).json({
+        success: false,
+        message: 'Cloudinary upload error. Please verify your credentials.',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+
+    // Generic error response
+    return res.status(500).json({
       success: false,
       message: "Server error uploading ID images",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
