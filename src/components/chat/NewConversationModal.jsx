@@ -7,24 +7,31 @@ const NewConversationModal = ({ onClose }) => {
     const [conversationTitle, setConversationTitle] = useState('');
     const [conversationType, setConversationType] = useState('direct');
     const [messageText, setMessageText] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+    const [localError, setLocalError] = useState('');
     const [step, setStep] = useState(1);
 
-    const { loadConversations, conversations, setActiveConversation, sendMessage, createConversation, availableUsers, loadAvailableUsers } = useChat();
+    const { 
+        loadConversations, 
+        conversations, 
+        setActiveConversation, 
+        sendMessage, 
+        createConversation, 
+        availableUsers, 
+        loadAvailableUsers,
+        loading, // Get loading from context
+        error: contextError // Get error from context
+    } = useChat();
+    
     const { user: currentUser } = useAuth();
 
     // Load users
     useEffect(() => {
         const fetchUsers = async () => {
             try {
-                setLoading(true);
                 await loadAvailableUsers?.();
             } catch (err) {
                 console.error(err);
-                setError('Failed to load users');
-            } finally {
-                setLoading(false);
+                setLocalError('Failed to load users');
             }
         };
         fetchUsers();
@@ -32,6 +39,13 @@ const NewConversationModal = ({ onClose }) => {
 
     const filteredUsers = (availableUsers || []).filter(u => u.id !== currentUser?.id);
 
+    /**
+     * Handles toggling of a user in the selected users list.
+     * If the user is already selected, removes them from the list.
+     * If the conversation type is 'direct', sets the selected user to the toggled user.
+     * If the conversation type is not 'direct', adds the toggled user to the list of selected users.
+     * @param {string} userId - The ID of the user to toggle
+     */
     const handleUserToggle = (userId) => {
         setSelectedUsers(prev => {
             if (prev.includes(userId)) return prev.filter(id => id !== userId);
@@ -42,27 +56,26 @@ const NewConversationModal = ({ onClose }) => {
 
     const handleNextStep = () => {
         if (!selectedUsers.length) {
-            setError('Select at least one participant');
+            setLocalError('Select at least one participant');
             return;
         }
-        setError('');
+        setLocalError('');
         setStep(2);
     };
 
     const handleBackStep = () => {
-        setError('');
+        setLocalError('');
         setStep(1);
     };
 
     const handleSubmit = async () => {
         if (!selectedUsers.length) {
-            setError('Select at least one participant');
+            setLocalError('Select at least one participant');
             return;
         }
 
         try {
-            setLoading(true);
-            setError('');
+            setLocalError('');
 
             // 1️⃣ Create conversation
             const conversation = await createConversation(selectedUsers, conversationTitle || null, conversationType);
@@ -80,11 +93,16 @@ const NewConversationModal = ({ onClose }) => {
             onClose();
         } catch (err) {
             console.error(err);
-            setError(err.message || 'Failed to create conversation');
-        } finally {
-            setLoading(false);
+            setLocalError(err.message || 'Failed to create conversation');
         }
     };
+
+    // Show context error if any
+    useEffect(() => {
+        if (contextError) {
+            setLocalError(contextError);
+        }
+    }, [contextError]);
 
     // Auto-generate title for groups
     useEffect(() => {
@@ -106,6 +124,9 @@ const NewConversationModal = ({ onClose }) => {
         }
     }, [conversationType, selectedUsers.length]);
 
+    // Combine errors
+    const errorMessage = localError || contextError;
+
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg w-full max-w-md flex flex-col max-h-[90vh]">
@@ -117,13 +138,17 @@ const NewConversationModal = ({ onClose }) => {
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6">
-                    {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">{error}</div>}
+                    {errorMessage && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">{errorMessage}</div>}
                     
                     {step === 1 && (
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">Conversation Type</label>
-                                <select value={conversationType} onChange={e => setConversationType(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors">
+                                <select 
+                                    value={conversationType} 
+                                    onChange={e => setConversationType(e.target.value)} 
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                >
                                     <option value="direct">Direct Message</option>
                                     <option value="group">Group Chat</option>
                                 </select>
@@ -135,10 +160,20 @@ const NewConversationModal = ({ onClose }) => {
                                     {filteredUsers.length === 0 ? (
                                         <div className="p-4 text-center text-gray-500">No users available</div>
                                     ) : filteredUsers.map(u => (
-                                        <div key={u.id} className={`flex items-center p-3 border-b border-gray-200 last:border-b-0 transition-colors ${selectedUsers.includes(u.id) ? 'bg-blue-50 border-blue-200' : 'hover:bg-white'}`}>
-                                            <input type={conversationType === 'direct' ? 'radio' : 'checkbox'} checked={selectedUsers.includes(u.id)} onChange={() => handleUserToggle(u.id)} className="mr-3" />
+                                        <div 
+                                            key={u.id} 
+                                            className={`flex items-center p-3 border-b border-gray-200 last:border-b-0 transition-colors ${selectedUsers.includes(u.id) ? 'bg-blue-50 border-blue-200' : 'hover:bg-white'}`}
+                                        >
+                                            <input 
+                                                type={conversationType === 'direct' ? 'radio' : 'checkbox'} 
+                                                checked={selectedUsers.includes(u.id)} 
+                                                onChange={() => handleUserToggle(u.id)} 
+                                                className="mr-3" 
+                                            />
                                             <label className="flex-1 cursor-pointer flex items-center">
-                                                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-sm mr-3">{u.first_name?.charAt(0)}</div>
+                                                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-sm mr-3">
+                                                    {u.first_name?.charAt(0)}
+                                                </div>
                                                 <div>
                                                     <div className="font-medium">{u.first_name} {u.last_name}</div>
                                                     <div className="text-sm text-gray-500">{u.role}</div>
@@ -152,7 +187,13 @@ const NewConversationModal = ({ onClose }) => {
                             {(conversationType === 'group' || selectedUsers.length > 1) && (
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">Conversation Title</label>
-                                    <input type="text" value={conversationTitle} onChange={e => setConversationTitle(e.target.value)} placeholder="Enter title..." className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        value={conversationTitle} 
+                                        onChange={e => setConversationTitle(e.target.value)} 
+                                        placeholder="Enter title..." 
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors" 
+                                    />
                                 </div>
                             )}
                         </div>
@@ -162,7 +203,13 @@ const NewConversationModal = ({ onClose }) => {
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">Your Message (Optional)</label>
-                                <textarea value={messageText} onChange={e => setMessageText(e.target.value)} placeholder="Type your first message..." rows="4" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none" />
+                                <textarea 
+                                    value={messageText} 
+                                    onChange={e => setMessageText(e.target.value)} 
+                                    placeholder="Type your first message..." 
+                                    rows="4" 
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none" 
+                                />
                             </div>
                         </div>
                     )}
@@ -172,13 +219,34 @@ const NewConversationModal = ({ onClose }) => {
                 <div className="flex-shrink-0 border-t border-gray-200 bg-gray-50 p-6 flex justify-between space-x-3">
                     {step === 1 ? (
                         <>
-                            <button onClick={onClose} className="px-6 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                            <button onClick={handleNextStep} disabled={selectedUsers.length === 0 || loading} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">Next</button>
+                            <button 
+                                onClick={onClose} 
+                                className="px-6 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                            <button 
+                                onClick={handleNextStep} 
+                                disabled={selectedUsers.length === 0 || loading} 
+                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                            >
+                                Next
+                            </button>
                         </>
                     ) : (
                         <>
-                            <button onClick={handleBackStep} disabled={loading} className="px-6 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Back</button>
-                            <button onClick={handleSubmit} disabled={loading} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                            <button 
+                                onClick={handleBackStep} 
+                                disabled={loading} 
+                                className="px-6 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                            >
+                                Back
+                            </button>
+                            <button 
+                                onClick={handleSubmit} 
+                                disabled={loading} 
+                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                            >
                                 {loading ? 'Creating...' : 'Create Conversation'}
                             </button>
                         </>

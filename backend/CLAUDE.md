@@ -533,3 +533,68 @@ TESTING VALIDATED:
 ✅ Notification created for admin user, not tenant
 ✅ No SQL errors about missing columns
 ✅ Unit occupancy correctly toggled in property_units table
+UPDATE 12.0 - ALLOCATIONS ROUTE CRITICAL BUG FIXES & DATA INTEGRITY
+
+CRITICAL BUGS FIXED IN /backend/routes/allocations.js:
+
+1. MAIN GET ROUTE SQL FIX:
+   - BUG: "WHERE ta.id = $1" in list endpoint (line ~13)
+   - FIX: Changed to "WHERE 1=1" to allow parameterized filtering
+   - IMPACT: Resolved 500 Internal Server Error when loading allocations
+
+2. MISSING COLUMN REFERENCE:
+   - BUG: Selecting "tenant.email as tenant_email" (non-existent column)
+   - FIX: Removed email column from SELECT clause
+   - IMPACT: Database query no longer fails due to missing column
+
+3. GET BY ID ROUTE FIX:
+   - BUG: "WHERE 1=1" in single allocation endpoint (line ~83)
+   - FIX: Changed to "WHERE ta.id = $1" for proper ID filtering
+   - IMPACT: Single allocation retrieval now works correctly
+
+4. POST ROUTE TENANT VALIDATION:
+   - BUG: Checking users table for tenant existence
+   - FIX: Changed to query tenants table directly
+   - IMPACT: Allocation creation now validates against correct table
+
+ENHANCEMENTS IMPLEMENTED:
+
+1. NULL-SAFE DATA HANDLING:
+   - Added COALESCE(tenant.first_name, 'Unknown') as tenant_first_name
+   - Added COALESCE(tenant.last_name, 'Tenant') as tenant_last_name
+   - Added computed tenant_full_name field for frontend convenience
+
+2. COMPREHENSIVE DATA RETURNS:
+   - Returns: tenant_first_name, tenant_last_name, tenant_full_name
+   - Returns: tenant_phone, tenant_national_id
+   - Returns: unit_code, unit_number, unit_type, property_name
+
+3. PROPERTY UNIT RECALCULATION:
+   - Updated all occupancy changes to use accurate COUNT() queries
+   - Replaced increment/decrement logic with precise recalculations
+   - Ensures properties.available_units stays synchronized
+
+4. IMPROVED LOGGING:
+   - Added detailed console logs for allocation operations
+   - Logs tenant names and unit details for debugging
+   - Better error messages with specific context
+
+DATABASE SCHEMA ALIGNMENT:
+- Confirmed: tenant_allocations.tenant_id references tenants.id (not users.id)
+- All JOIN operations now correctly reference tenants table
+- Notification system updated to avoid foreign key violations
+
+KEY CODE CHANGES:
+
+1. Line ~13: WHERE 1=1 instead of WHERE ta.id = $1
+2. Lines ~15-18: Removed tenant.email, added national_id
+3. Lines ~125-129: Tenant validation from tenants table, not users
+4. Lines ~180-185: Property unit recalculation for accuracy
+5. Throughout: Added COALESCE() for null-safe data return
+
+DEPLOYMENT NOTES:
+- Backend server restart required after changes
+- No database migration needed (schema unchanged)
+- Compatible with existing frontend after component updates
+
+PRODUCTION READY: Allocations system now stable with proper tenant data retrieval and display.

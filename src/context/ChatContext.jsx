@@ -25,8 +25,26 @@ const initialState = {
 const chatReducer = (state, action) => {
   switch (action.type) {
     case 'SET_CONVERSATIONS':
-      return { ...state, conversations: action.payload };
+      // Ensure no duplicates when setting conversations
+      const uniqueConvs = [];
+      const seenIds = new Set();
+      action.payload.forEach(conv => {
+        if (!seenIds.has(conv.id)) {
+          seenIds.add(conv.id);
+          uniqueConvs.push(conv);
+        }
+      });
+      return { ...state, conversations: uniqueConvs };
     case 'ADD_CONVERSATION':
+      // Check if conversation already exists before adding
+      const exists = state.conversations.some(c => c.id === action.payload.id);
+      if (exists) {
+        // Update existing conversation instead of adding duplicate
+        const updatedConvs = state.conversations.map(c =>
+          c.id === action.payload.id ? { ...c, ...action.payload } : c
+        );
+        return { ...state, conversations: updatedConvs };
+      }
       return { ...state, conversations: [action.payload, ...state.conversations] };
     case 'SET_ACTIVE_CONVERSATION':
       return { ...state, activeConversation: action.payload };
@@ -64,15 +82,57 @@ export const ChatProvider = ({ children }) => {
       dispatch({ type: 'SET_LOADING', payload: true });
       const convs = await ChatService.getRecentChats(50);
 
-      dispatch({ type: 'SET_CONVERSATIONS', payload: convs });
-      convsRef.current = convs;
+      // Ensure no duplicates from API
+      const uniqueConvs = [];
+      const seenIds = new Set();
+      convs.forEach(conv => {
+        if (!seenIds.has(conv.id)) {
+          seenIds.add(conv.id);
+          uniqueConvs.push(conv);
+        }
+      });
+
+      dispatch({ type: 'SET_CONVERSATIONS', payload: uniqueConvs });
+      convsRef.current = uniqueConvs;
 
       const unread = {};
-      convs.forEach(c => unread[c.id] = c.unreadCount ?? 0);
+      uniqueConvs.forEach(c => unread[c.id] = c.unreadCount ?? 0);
       dispatch({ type: 'SET_UNREAD_COUNTS', payload: unread });
       unreadCountsRef.current = unread;
     } catch (err) {
       dispatch({ type: 'SET_ERROR', payload: err.message });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  }, [user]);
+
+  /* -------------------- CREATE CONVERSATION -------------------- */
+  const createConversation = useCallback(async (participantIds, title = null, type = 'direct') => {
+    if (!user || !participantIds || participantIds.length === 0) {
+      throw new Error('Cannot create conversation: No participants selected');
+    }
+
+    try {
+      dispatch({ type: 'SET_LOADING', payload: true });
+      
+      // Create conversation via API
+      const conversation = await ChatService.createConversation(
+        participantIds,
+        title,
+        type
+      );
+      
+      // Add to local state immediately
+      dispatch({ type: 'ADD_CONVERSATION', payload: conversation });
+      
+      // Join socket room for real-time updates
+      socketRef.current?.emit('join_conversation', conversation.id);
+      
+      return conversation;
+    } catch (error) {
+      console.error('Error creating conversation:', error);
+      dispatch({ type: 'SET_ERROR', payload: error.message });
+      throw error;
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
@@ -105,33 +165,59 @@ export const ChatProvider = ({ children }) => {
   const sendMessage = useCallback(async (conversationId, messageText) => {
     if (!conversationId || !messageText?.trim()) return;
 
-    // Save via REST
-    const message = await ChatService.sendMessage(
-      conversationId,
-      messageText.trim()
-    );
+    try {
+      // Save via REST
+      const message = await ChatService.sendMessage(
+        conversationId,
+        messageText.trim()
+      );
 
-    // Optimistic UI update
-    dispatch({ type: 'ADD_MESSAGE', payload: message });
+      // Optimistic UI update for message
+      dispatch({ type: 'ADD_MESSAGE', payload: message });
 
-    // Emit socket event for instant delivery
-    socketRef.current?.emit('send_message', {
-      conversationId,
-      messageText: message.message_text,
-      parentMessageId: message.parent_message_id || null,
-    });
+      // Update conversation list - move to top and update last message
+      const existingConvIndex = convsRef.current.findIndex(c => c.id === conversationId);
+      
+      if (existingConvIndex >= 0) {
+        // Update existing conversation and move to top
+        const updatedConvs = [...convsRef.current];
+        const updatedConv = {
+          ...updatedConvs[existingConvIndex],
+          last_message: message.message_text,
+          last_message_at: message.created_at
+        };
+        
+        // Remove from current position and add to beginning
+        updatedConvs.splice(existingConvIndex, 1);
+        updatedConvs.unshift(updatedConv);
+        
+        // Remove any duplicates by ID
+        const uniqueConvs = [];
+        const seenIds = new Set();
+        updatedConvs.forEach(conv => {
+          if (!seenIds.has(conv.id)) {
+            seenIds.add(conv.id);
+            uniqueConvs.push(conv);
+          }
+        });
+        
+        convsRef.current = uniqueConvs;
+        dispatch({ type: 'SET_CONVERSATIONS', payload: uniqueConvs });
+      }
 
-    // Update conversation list
-    const updatedConvs = convsRef.current.map(c =>
-      c.id === conversationId
-        ? { ...c, last_message: message.message_text, last_message_at: message.created_at }
-        : c
-    );
+      // Emit socket event for instant delivery
+      socketRef.current?.emit('send_message', {
+        conversationId,
+        messageText: message.message_text,
+        parentMessageId: message.parent_message_id || null,
+      });
 
-    convsRef.current = updatedConvs;
-    dispatch({ type: 'SET_CONVERSATIONS', payload: updatedConvs });
-
-    return message;
+      return message;
+    } catch (error) {
+      console.error('Error sending message:', error);
+      dispatch({ type: 'SET_ERROR', payload: error.message });
+      throw error;
+    }
   }, []);
 
   /* -------------------- ACTIVE CONVERSATION -------------------- */
@@ -169,32 +255,63 @@ export const ChatProvider = ({ children }) => {
     socket.on('disconnect', () => console.log('🔴 Socket disconnected'));
 
     socket.on('new_message', ({ message, conversationId }) => {
-      // Prevent duplicate messages (sender already added optimistically)
-      if (message.sender_id === user.id) return;
-
+      // Prevent duplicate updates for sender's own messages
+      // The frontend already handles this optimistically in sendMessage
+      if (message.sender_id === user.id) {
+        // We already updated this in sendMessage function
+        return;
+      }
+      
+      // Add message if we're in this conversation
       if (activeConvRef.current?.id === conversationId) {
         dispatch({ type: 'ADD_MESSAGE', payload: message });
       } else {
+        // Increment unread count for this conversation
         unreadCountsRef.current[conversationId] =
           (unreadCountsRef.current[conversationId] || 0) + 1;
-
+        
         dispatch({
           type: 'SET_UNREAD_COUNTS',
           payload: { ...unreadCountsRef.current }
         });
       }
 
-      const updatedConvs = convsRef.current.map(c =>
-        c.id === conversationId
-          ? { ...c, last_message: message.message_text, last_message_at: message.created_at }
-          : c
-      );
-
-      convsRef.current = updatedConvs;
-      dispatch({ type: 'SET_CONVERSATIONS', payload: updatedConvs });
+      // Update conversation in list - move to top
+      const existingConvIndex = convsRef.current.findIndex(c => c.id === conversationId);
+      
+      if (existingConvIndex >= 0) {
+        // Update existing conversation and move to top
+        const updatedConvs = [...convsRef.current];
+        const updatedConv = {
+          ...updatedConvs[existingConvIndex],
+          last_message: message.message_text,
+          last_message_at: message.created_at
+        };
+        
+        // Remove from current position and add to beginning
+        updatedConvs.splice(existingConvIndex, 1);
+        updatedConvs.unshift(updatedConv);
+        
+        // Remove any duplicates by ID
+        const uniqueConvs = [];
+        const seenIds = new Set();
+        updatedConvs.forEach(conv => {
+          if (!seenIds.has(conv.id)) {
+            seenIds.add(conv.id);
+            uniqueConvs.push(conv);
+          }
+        });
+        
+        convsRef.current = uniqueConvs;
+        dispatch({ type: 'SET_CONVERSATIONS', payload: uniqueConvs });
+      }
     });
 
-    return () => socket.disconnect();
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
   }, [user]);
 
   /* -------------------- SYNC REFS -------------------- */
@@ -219,6 +336,7 @@ export const ChatProvider = ({ children }) => {
       availableUsers,
       loadAvailableUsers,
       loadConversations,
+      createConversation,
       loadMessages,
       sendMessage,
       setActiveConversation,

@@ -400,3 +400,93 @@ DEVELOPER NOTES:
 -   The frontend remains agnostic to the storage backend (local, S3, Cloudinary).
 -   The contract is simply: "POST FormData with images, receive URLs in response."
 -   This abstraction makes the frontend resilient to future changes in the storage infrastructure.
+UPDATE 12.0 - TENANT ALLOCATION COMPONENT SYNCHRONIZATION WITH BACKEND API
+
+FRONTEND ARCHITECTURE UPDATES:
+
+PROBLEM RESOLVED: "Unknown Tenant" display in Tenant Allocation tab
+ROOT CAUSE: Frontend searching users array, backend returning from tenants table
+
+FRONTEND FIXES IMPLEMENTED (/src/components/TenantAllocation.jsx):
+
+1. DATA EXTRACTION FUNCTIONS UPDATED:
+   - REMOVED: getTenantName() function (lines ~33-46)
+   - ADDED: getTenantDetails(allocation) function (lines ~33-45)
+   - ADDED: getUnitDetails(allocation) function (lines ~47-57)
+
+2. NEW DATA FLOW PATTERN:
+   OLD: tenantId → search users array → display name
+   NEW: allocation object → extract tenant_first_name, tenant_last_name → display
+
+3. API RESPONSE FIELD MAPPING:
+   - tenant_first_name: allocation.tenant_first_name
+   - tenant_last_name: allocation.tenant_last_name  
+   - tenant_full_name: allocation.tenant_full_name
+   - tenant_phone: allocation.tenant_phone
+   - tenant_national_id: allocation.tenant_national_id
+   - unit_code: allocation.unit_code
+   - property_name: allocation.property_name
+
+4. COMPONENT RENDERING UPDATES:
+   - Mobile Card View: Uses tenant.fullName from getTenantDetails()
+   - Desktop Table View: Uses tenant.fullName and tenant.phone
+   - Both views now show tenant national ID in desktop mode
+
+KEY CODE CHANGES:
+
+BEFORE (Problematic):
+const getTenantName = useCallback((tenantId) => {
+  const tenant = safeUsers.find(user => user.id === tenantId)
+  return {
+    firstName: tenant.first_name || 'Unknown',
+    lastName: tenant.last_name || 'Tenant'
+  }
+}, [safeUsers])
+
+AFTER (Fixed):
+const getTenantDetails = useCallback((allocation) => {
+  return {
+    firstName: allocation.tenant_first_name || 'Unknown',
+    lastName: allocation.tenant_last_name || 'Tenant',
+    fullName: allocation.tenant_full_name || 
+      `${allocation.tenant_first_name || 'Unknown'} ${allocation.tenant_last_name || 'Tenant'}`,
+    phone: allocation.tenant_phone || 'N/A'
+  }
+}, [])
+
+RENDERING PATTERNS UPDATED:
+
+Mobile View (lines ~290-295):
+<div className="text-sm font-medium text-gray-900">
+  {tenant.fullName}  ← Using new fullName field
+</div>
+<div className="text-xs text-gray-500">{tenant.phone}</div>
+
+Desktop View (lines ~375-380):
+<div className="text-sm font-medium text-gray-900 whitespace-nowrap">
+  {tenant.fullName}  ← Using new fullName field  
+</div>
+<div className="text-sm text-gray-500 whitespace-nowrap">
+  {tenant.phone} • ID: {tenant.nationalId}  ← Added national ID
+</div>
+
+DATA FLOW VALIDATION:
+✅ Backend API returns tenant data in allocations response
+✅ Frontend extracts data directly from allocation object
+✅ No unnecessary API calls to users endpoint
+✅ Single source of truth: allocation data from /api/allocations
+
+PERFORMANCE IMPROVEMENTS:
+- Eliminated redundant search through users array
+- Reduced API dependencies
+- Faster rendering with direct data access
+- Better TypeScript/type safety with predictable fields
+
+TESTING CONFIRMED:
+✅ Tenant names display correctly from tenants table
+✅ Phone numbers and national IDs show properly
+✅ Mobile and desktop views synchronized
+✅ No more "Unknown Tenant" display
+✅ Allocation creation/deletion maintains proper data flow
+
+FRONTEND STATUS: TenantAllocation component now fully synchronized with backend API response structure and displays accurate tenant information.
