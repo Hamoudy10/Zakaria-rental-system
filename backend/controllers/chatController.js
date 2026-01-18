@@ -300,22 +300,25 @@ exports.getConversationMessages = async (req, res) => {
 
 /**
  * POST /chat/messages/send
- */
-/**
- * POST /chat/messages/send
- * FIXED: Proper socket emission to ALL participants including sender
+ * Send a new message with detailed socket emission logging
  */
 exports.sendMessage = async (req, res) => {
   try {
     const senderId = req.user.id;
     const { conversationId, messageText } = req.body;
 
+    console.log('========================================');
+    console.log('📤 SEND MESSAGE REQUEST');
+    console.log(`Sender ID: ${senderId}`);
+    console.log(`Conversation ID: ${conversationId}`);
+    console.log(`Message: ${messageText}`);
+    console.log('========================================');
+
     if (!conversationId || !messageText) {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
 
-    console.log(`📤 User ${senderId} sending message to conversation ${conversationId}`);
-
+    // Save message to database
     const result = await db.query(
       `
       INSERT INTO chat_messages (conversation_id, sender_id, message_text)
@@ -331,45 +334,69 @@ exports.sendMessage = async (req, res) => {
     const message = result.rows[0];
     console.log(`✅ Message saved to database, ID: ${message.id}`);
 
+    // Get all participants for logging
+    const participantsResult = await db.query(
+      'SELECT user_id FROM chat_participants WHERE conversation_id = $1 AND is_active = true',
+      [conversationId]
+    );
+
+    console.log(`👥 Conversation has ${participantsResult.rows.length} participants:`, 
+      participantsResult.rows.map(p => p.user_id));
+
     // Emit via Socket.IO
     if (ioInstance) {
-      // ✅ FIX: Broadcast to conversation room (includes ALL participants)
-      ioInstance.to(`conversation_${conversationId}`).emit('new_message', {
+      console.log('📡 Socket.IO instance available, emitting messages...');
+
+      // METHOD 1: Broadcast to conversation room
+      const roomName = `conversation_${conversationId}`;
+      ioInstance.to(roomName).emit('new_message', {
         message: message,
         conversationId: conversationId
       });
-      console.log(`📡 Broadcasted new_message to conversation_${conversationId}`);
+      console.log(`📡 Emitted to room: ${roomName}`);
 
-      // ✅ ALSO emit to individual user rooms as backup
-      const participantsResult = await db.query(
-        'SELECT user_id FROM chat_participants WHERE conversation_id = $1 AND is_active = true',
-        [conversationId]
-      );
+      // Get sockets in the room for verification
+      const socketsInRoom = await ioInstance.in(roomName).fetchSockets();
+      console.log(`🔍 Sockets in room ${roomName}: ${socketsInRoom.length}`);
+      socketsInRoom.forEach(s => {
+        console.log(`  - Socket ${s.id}, User ${s.userId}`);
+      });
 
-      console.log(`👥 Found ${participantsResult.rows.length} participants in conversation`);
-
-      participantsResult.rows.forEach(participant => {
-        // Emit to EVERY participant's personal room (including sender)
-        ioInstance.to(`user_${participant.user_id}`).emit('new_message', {
+      // METHOD 2: Also emit to individual user rooms (backup)
+      for (const participant of participantsResult.rows) {
+        const userRoom = `user_${participant.user_id}`;
+        
+        ioInstance.to(userRoom).emit('new_message', {
           message: message,
           conversationId: conversationId
         });
-        console.log(`📡 Sent new_message to user_${participant.user_id}`);
+        console.log(`📡 Emitted to user room: ${userRoom}`);
 
-        // Send notification only to OTHER participants (not sender)
+        // Send notification only to OTHER participants
         if (participant.user_id !== senderId) {
-          ioInstance.to(`user_${participant.user_id}`).emit('chat_notification', {
+          ioInstance.to(userRoom).emit('chat_notification', {
             type: 'new_message',
             conversationId: conversationId,
             message: message,
             unreadCount: 1
           });
-          console.log(`🔔 Sent notification to user_${participant.user_id}`);
+          console.log(`🔔 Sent notification to ${userRoom}`);
         }
-      });
+
+        // Verify socket in user room
+        const userSockets = await ioInstance.in(userRoom).fetchSockets();
+        console.log(`🔍 Sockets in ${userRoom}: ${userSockets.length}`);
+      }
+
+      console.log('✅ All socket emissions complete');
+
     } else {
-      console.warn('⚠️ Socket.IO instance not available');
+      console.error('❌ Socket.IO instance NOT available!');
     }
+
+    console.log('========================================');
+    console.log('✅ SEND MESSAGE COMPLETE');
+    console.log('========================================');
 
     res.json({
       success: true,
@@ -380,7 +407,6 @@ exports.sendMessage = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to send message' });
   }
 };
-
 /**
  * POST /chat/messages/mark-read
  */

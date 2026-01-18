@@ -4,19 +4,28 @@ const db = require('../config/database');
 class ChatService {
   constructor(io) {
     this.io = io;
+    console.log('💬 ChatService initialized');
     this.setupSocketHandlers();
   }
 
   setupSocketHandlers() {
     this.io.on('connection', async (socket) => {
-      console.log('💬 User connected to chat:', socket.userId, socket.userName);
+      const userId = socket.userId;
+      const userName = socket.userName;
+
+      console.log('========================================');
+      console.log('💬 NEW CHAT CONNECTION');
+      console.log(`User ID: ${userId}`);
+      console.log(`User Name: ${userName}`);
+      console.log(`Socket ID: ${socket.id}`);
+      console.log('========================================');
 
       try {
-        // Join user to their personal room
-        socket.join(`user_${socket.userId}`);
-        console.log(`✅ User ${socket.userId} joined personal room: user_${socket.userId}`);
+        // 1. Join user to their personal room
+        socket.join(`user_${userId}`);
+        console.log(`✅ User ${userId} joined personal room: user_${userId}`);
 
-        // Auto-join user to all their active conversations
+        // 2. Auto-join user to ALL their active conversations
         const conversationsResult = await db.query(
           `
           SELECT DISTINCT c.id
@@ -24,24 +33,38 @@ class ChatService {
           JOIN chat_participants cp ON c.id = cp.conversation_id
           WHERE cp.user_id = $1 AND cp.is_active = true
           `,
-          [socket.userId]
+          [userId]
         );
+
+        console.log(`📊 Found ${conversationsResult.rows.length} conversations for user ${userId}`);
 
         conversationsResult.rows.forEach(row => {
           socket.join(`conversation_${row.id}`);
-          console.log(`✅ User ${socket.userId} auto-joined conversation: ${row.id}`);
+          console.log(`✅ User ${userId} auto-joined conversation_${row.id}`);
         });
 
-        console.log(`📊 User ${socket.userId} joined ${conversationsResult.rows.length} conversation rooms`);
+        // 3. Emit connection success to user
+        socket.emit('chat_connected', {
+          success: true,
+          userId: userId,
+          conversationCount: conversationsResult.rows.length
+        });
+
+        console.log(`🎉 User ${userId} successfully connected to ${conversationsResult.rows.length} conversations`);
 
       } catch (error) {
-        console.error('❌ Error auto-joining conversations:', error);
+        console.error('❌ Error during socket connection setup:', error);
+        socket.emit('chat_error', {
+          message: 'Failed to initialize chat connection'
+        });
       }
 
-      // Handle explicit join_conversation events
+      // ==================== EVENT HANDLERS ====================
+
+      // Handle explicit join_conversation
       socket.on('join_conversation', async (conversationId) => {
         try {
-          console.log(`🔗 User ${socket.userId} joining conversation: ${conversationId}`);
+          console.log(`🔗 User ${userId} requesting to join conversation: ${conversationId}`);
 
           // Verify user is a participant
           const participantCheck = await db.query(
@@ -49,68 +72,67 @@ class ChatService {
             SELECT 1 FROM chat_participants
             WHERE conversation_id = $1 AND user_id = $2 AND is_active = true
             `,
-            [conversationId, socket.userId]
+            [conversationId, userId]
           );
 
           if (participantCheck.rows.length === 0) {
-            console.warn(`⚠️ User ${socket.userId} not a participant of conversation ${conversationId}`);
+            console.warn(`⚠️ User ${userId} is NOT a participant of conversation ${conversationId}`);
             return;
           }
 
           socket.join(`conversation_${conversationId}`);
-          console.log(`✅ User ${socket.userId} joined conversation room: conversation_${conversationId}`);
+          console.log(`✅ User ${userId} joined conversation_${conversationId}`);
+
+          // Confirm to client
+          socket.emit('conversation_joined', {
+            conversationId: conversationId
+          });
 
         } catch (error) {
           console.error('❌ Error joining conversation:', error);
         }
       });
 
-      // Handle leave_conversation events
+      // Handle leave_conversation
       socket.on('leave_conversation', (conversationId) => {
         socket.leave(`conversation_${conversationId}`);
-        console.log(`👋 User ${socket.userId} left conversation: ${conversationId}`);
+        console.log(`👋 User ${userId} left conversation_${conversationId}`);
       });
 
-      // Handle send_message events (optional - your REST API already handles this)
-      socket.on('send_message', async ({ conversationId, messageText, parentMessageId }) => {
-        try {
-          console.log(`📤 Socket send_message from user ${socket.userId} to conversation ${conversationId}`);
-          
-          // This is redundant if you're using REST API
-          // But keeping it for backward compatibility
-          console.log('⚠️ Message should be sent via REST API, not socket');
-          
-        } catch (error) {
-          console.error('❌ Socket send_message error:', error);
-        }
-      });
-
-      // Handle typing indicators (optional feature)
+      // Handle typing indicators
       socket.on('typing_start', ({ conversationId }) => {
         socket.to(`conversation_${conversationId}`).emit('user_typing', {
-          userId: socket.userId,
-          userName: socket.userName,
-          conversationId
+          userId: userId,
+          userName: userName,
+          conversationId: conversationId
         });
+        console.log(`⌨️ User ${userId} started typing in conversation ${conversationId}`);
       });
 
       socket.on('typing_stop', ({ conversationId }) => {
         socket.to(`conversation_${conversationId}`).emit('user_stopped_typing', {
-          userId: socket.userId,
-          conversationId
+          userId: userId,
+          conversationId: conversationId
         });
+        console.log(`⌨️ User ${userId} stopped typing in conversation ${conversationId}`);
       });
 
       // Handle disconnect
       socket.on('disconnect', (reason) => {
-        console.log(`💬 User disconnected from chat: ${socket.userId}, reason: ${reason}`);
+        console.log('========================================');
+        console.log('💬 CHAT DISCONNECTION');
+        console.log(`User ID: ${userId}`);
+        console.log(`Reason: ${reason}`);
+        console.log('========================================');
       });
 
       // Error handling
       socket.on('error', (error) => {
-        console.error(`❌ Socket error for user ${socket.userId}:`, error);
+        console.error(`❌ Socket error for user ${userId}:`, error);
       });
     });
+
+    console.log('✅ Socket handlers setup complete');
   }
 
   // Helper method to broadcast a message to a conversation
@@ -119,7 +141,7 @@ class ChatService {
       message,
       conversationId
     });
-    console.log(`📡 Broadcasted message ${message.id} to conversation ${conversationId}`);
+    console.log(`📡 Broadcasted message ${message.id} to conversation_${conversationId}`);
   }
 
   // Helper method to notify a specific user
@@ -132,6 +154,12 @@ class ChatService {
   async getOnlineUsers(conversationId) {
     const sockets = await this.io.in(`conversation_${conversationId}`).fetchSockets();
     return sockets.map(socket => socket.userId);
+  }
+
+  // Helper method to check if user is in room
+  async isUserInRoom(userId, roomName) {
+    const sockets = await this.io.in(roomName).fetchSockets();
+    return sockets.some(socket => socket.userId === userId);
   }
 }
 
