@@ -112,7 +112,6 @@ app.get('/api/health', (req, res) => res.json({
 }));
 
 // Helper function for optional routes
-// Helper function for optional routes
 const loadRoute = (path, file, name, placeholderData = []) => {
   try {
     const route = require(file);
@@ -128,10 +127,10 @@ const loadRoute = (path, file, name, placeholderData = []) => {
         data: placeholderData 
       }));
     } else {
-      console.error(`❌ Failed to load ${name} routes:`, err.message); // FIXED LINE
+      console.error(`❌ Failed to load ${name} routes:`, err.message);
       app.use(path, (req, res) => res.status(500).json({ 
         success: false, 
-        message: `${name} temporarily unavailable`  // FIXED LINE
+        message: `${name} temporarily unavailable`
       }));
     }
   }
@@ -186,7 +185,6 @@ try {
 }
 
 // ==================== ADMIN ROUTES ====================
-// Using the updated adminRoutes.js that includes both dashboard and settings
 try {
   app.use('/api/admin', adminRoutes);
   console.log('✅ Loaded Admin routes (includes dashboard and settings)');
@@ -213,7 +211,6 @@ try {
 }
 
 //======================= TENANTS ROUTE TEST ====================
-// Test if we can load tenants route
 console.log('🔍 Testing tenant route loading...');
 try {
   const testRoute = require('./routes/tenants');
@@ -284,4 +281,5 @@ server.listen(PORT, '0.0.0.0', () => {
   initializeServices();
 });
 
+// ✅ CRITICAL: Export io instance so it can be used in other files
 module.exports = { app, server, io };

@@ -14,8 +14,9 @@ const ChatService = {
     return res.data?.data || [];
   },
 
+  // ✅ FIXED: Correct endpoint for recent chats
   getRecentChats: async (limit = 50, offset = 0) => {
-    const res = await api.get('/chat/conversations', {
+    const res = await api.get('/chat/recent-chats', {
       params: { limit, offset },
     });
     return res.data?.data || [];
@@ -31,6 +32,7 @@ const ChatService = {
   },
 
   // ---------- MESSAGES ----------
+  // ✅ FIXED: Correct endpoint for getting messages
   getMessages: async (conversationId, page = 1) => {
     const res = await api.get(`/chat/conversations/${conversationId}/messages`, {
       params: { page },
@@ -48,8 +50,8 @@ const ChatService = {
 
   // ---------- OPTIONAL FEATURES ----------
   searchMessages: async (query, conversationId = null) => {
-    const res = await api.get('/chat/messages/search', {
-      params: { query, conversationId },
+    const res = await api.get('/chat/search', {
+      params: { q: query, conversationId },
     });
     return res.data?.data || [];
   },
@@ -64,6 +66,11 @@ const ChatService = {
 
   stopTyping: async (conversationId) => {
     await api.post(`/chat/conversations/${conversationId}/typing/stop`);
+  },
+
+  getUnreadCount: async () => {
+    const res = await api.get('/chat/unread-count');
+    return res.data?.data || 0;
   },
 };
 
