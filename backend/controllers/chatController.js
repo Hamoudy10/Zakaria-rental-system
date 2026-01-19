@@ -344,14 +344,14 @@ exports.sendMessage = async (req, res) => {
       [conversationId]
     );
 
-    console.log(`👥 Conversation has ${participantsResult.rows.length} participants:`, 
+    console.log(`👥 Conversation has ${participantsResult.rows.length} participants:`,
       participantsResult.rows.map(p => p.user_id));
 
     // ✅ Emit via Socket.IO if instance is available
     if (ioInstance) {
       console.log('📡 Socket.IO instance available, emitting messages...');
 
-      // METHOD 1: Broadcast to conversation room
+      // ✅ SINGLE EMISSION: Broadcast to conversation room ONLY
       const roomName = `conversation_${conversationId}`;
       ioInstance.to(roomName).emit('new_message', {
         message: message,
@@ -366,15 +366,9 @@ exports.sendMessage = async (req, res) => {
         console.log(`  - Socket ${s.id}, User ${s.userId}`);
       });
 
-      // METHOD 2: Also emit to individual user rooms (backup)
+      // ✅ Keep notification emission for user rooms (optional)
       for (const participant of participantsResult.rows) {
         const userRoom = `user_${participant.user_id}`;
-        
-        ioInstance.to(userRoom).emit('new_message', {
-          message: message,
-          conversationId: conversationId
-        });
-        console.log(`📡 Emitted to user room: ${userRoom}`);
 
         // Send notification only to OTHER participants (not the sender)
         if (participant.user_id !== senderId) {
@@ -393,7 +387,6 @@ exports.sendMessage = async (req, res) => {
       }
 
       console.log('✅ All socket emissions complete');
-
     } else {
       console.error('❌ Socket.IO instance NOT available!');
     }
