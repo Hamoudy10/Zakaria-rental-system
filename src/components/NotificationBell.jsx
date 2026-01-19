@@ -1,85 +1,48 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { API } from '../services/api';
-import { Bell, CheckCircle, Loader } from 'lucide-react'; // Added Loader for spinner
+import { Bell, CheckCircle, Loader, MessageSquare } from 'lucide-react';
 import clsx from 'clsx';
 import { useChat } from '../context/ChatContext';
+import { useNotification } from '../context/NotificationContext';
 
 const NotificationBell = () => {
-  const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const { 
+    notifications, 
+    unreadCount, 
+    loading, 
+    fetchNotifications, 
+    refreshNotifications 
+  } = useNotification();
 
-  const { getTotalUnreadCount: getChatUnreadCount, markAsRead: markAllChatsRead } = useChat();
-  const chatUnreadCount = getChatUnreadCount();
+  const { setActiveConversation } = useChat();
 
-  const fetchTimeoutRef = useRef(null);
-  const retryTimeoutRef = useRef(null);
-
-  // Fetch notifications safely with retry on 429
-  const fetchNotifications = useCallback(async () => {
-    if (fetchTimeoutRef.current) return;
-
-    fetchTimeoutRef.current = setTimeout(async () => {
-      fetchTimeoutRef.current = null;
-      setLoading(true);
-
-      try {
-        const res = await API.notifications.getNotifications(20, 0);
-
-        // Ensure data is array
-        const notificationsData = Array.isArray(res.data) ? res.data : [];
-        setNotifications(notificationsData);
-
-        const unread = notificationsData.filter((n) => !n.is_read).length || 0;
-        setUnreadCount(unread);
-      } catch (error) {
-        if (error.response?.status === 429) {
-          console.warn('Too many requests. Retrying in 5 seconds...');
-          retryTimeoutRef.current = setTimeout(fetchNotifications, 5000);
-        } else {
-          console.error('Failed to fetch notifications:', error);
-        }
-      } finally {
-        setLoading(false);
-      }
-    }, 300);
-  }, []);
-
-  // Mark a single notification as read
-  const markNotificationRead = async (id) => {
+  // Mark a single notification as read and handle navigation
+  const handleNotificationClick = async (notification) => {
     try {
-      await API.notifications.markAsRead(id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
-      );
-      setUnreadCount((prev) => Math.max(prev - 1, 0));
+      await API.notifications.markAsRead(notification.id);
+      
+      // If it's a chat notification, open the chat
+      if (notification.type === 'chat' && notification.related_entity_id) {
+        setActiveConversation({ id: notification.related_entity_id });
+        // Optional: window.location.href = '/chat' if not using a modal
+      }
+      
+      refreshNotifications();
+      setDropdownOpen(false);
     } catch (error) {
-      console.error('Failed to mark notification read:', error);
+      console.error('Failed to process notification click:', error);
     }
   };
 
-  // Mark all notifications as read
-  const markAllNotificationsRead = async () => {
+  const handleMarkAllRead = async () => {
     try {
       await API.notifications.markAllAsRead();
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-      setUnreadCount(0);
+      refreshNotifications();
     } catch (error) {
       console.error('Failed to mark all notifications read:', error);
     }
   };
-
-  // Cleanup timers
-  React.useEffect(() => {
-    return () => {
-      clearTimeout(fetchTimeoutRef.current);
-      clearTimeout(retryTimeoutRef.current);
-    };
-  }, []);
-
-  // Total unread for badge
-  const totalUnread = unreadCount + chatUnreadCount;
 
   return (
     <div className="relative">
@@ -94,84 +57,75 @@ const NotificationBell = () => {
         }}
       >
         <Bell className="w-6 h-6 text-gray-700" />
-        {totalUnread > 0 && (
+        {unreadCount > 0 && (
           <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center animate-pulse">
-            {totalUnread}
+            {unreadCount}
           </span>
         )}
       </button>
 
       {dropdownOpen && (
-        <div className="absolute right-0 mt-2 w-96 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-[400px] overflow-y-auto">
-          <div className="flex justify-between items-center p-2 border-b">
-            <span className="font-semibold">Notifications</span>
-            <div className="flex space-x-2">
-              {unreadCount > 0 && (
-                <button
-                  onClick={markAllNotificationsRead}
-                  className="text-sm text-blue-600 hover:underline"
-                >
-                  Mark all read
-                </button>
-              )}
-              {chatUnreadCount > 0 && (
-                <button
-                  onClick={markAllChatsRead}
-                  className="text-sm text-green-600 hover:underline"
-                >
-                  Mark chats read
-                </button>
-              )}
-            </div>
+        <div className="absolute right-0 mt-2 w-96 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-[450px] flex flex-col">
+          <div className="flex justify-between items-center p-3 border-b">
+            <span className="font-bold">Notifications</span>
+            {unreadCount > 0 && (
+              <button
+                onClick={handleMarkAllRead}
+                className="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Mark all as read
+              </button>
+            )}
           </div>
 
-          {loading ? (
-            <div className="p-4 flex justify-center items-center text-gray-500">
-              <Loader className="w-6 h-6 animate-spin" />
-              <span className="ml-2">Loading...</span>
-            </div>
-          ) : (
-            <ul className="divide-y divide-gray-200">
-              {notifications.length === 0 && chatUnreadCount === 0 && (
-                <li className="p-4 text-center text-gray-500">No notifications</li>
-              )}
-
-              {notifications.map((n) => (
-                <li
-                  key={n.id}
-                  className={clsx(
-                    'p-4 hover:bg-gray-50 cursor-pointer flex items-start transition-colors',
-                    !n.is_read && 'bg-gray-100'
-                  )}
-                  onClick={() => markNotificationRead(n.id)}
-                >
-                  <span className="mr-3">{API.notificationUtils.getNotificationIcon(n.type)}</span>
-                  <div className="flex-1">
-                    <p className="text-sm">{API.notificationUtils.formatNotificationMessage(n)}</p>
-                    <p className="text-xs text-gray-400">
-                      {API.notificationUtils.formatTimestamp(n.created_at)}
-                    </p>
-                  </div>
-                  {!n.is_read && <CheckCircle className="w-4 h-4 text-blue-500 ml-2" />}
-                </li>
-              ))}
-
-              {chatUnreadCount > 0 && (
-                <li
-                  className="p-4 hover:bg-gray-50 cursor-pointer flex items-start bg-gray-50 transition-colors"
-                  onClick={markAllChatsRead}
-                >
-                  <span className="mr-3">💬</span>
-                  <div className="flex-1">
-                    <p className="text-sm">
-                      You have {chatUnreadCount} unread chat {chatUnreadCount > 1 ? 'messages' : 'message'}
-                    </p>
-                    <p className="text-xs text-gray-400">Click to mark all as read</p>
-                  </div>
-                </li>
-              )}
-            </ul>
-          )}
+          <div className="overflow-y-auto flex-1">
+            {loading && notifications.length === 0 ? (
+              <div className="p-8 flex justify-center items-center text-gray-500">
+                <Loader className="w-6 h-6 animate-spin" />
+              </div>
+            ) : notifications.length === 0 ? (
+              <div className="p-8 text-center text-gray-500 text-sm">
+                No new notifications
+              </div>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {notifications.map((n) => (
+                  <li
+                    key={n.id}
+                    className={clsx(
+                      'p-4 hover:bg-gray-50 cursor-pointer flex items-start transition-colors',
+                      !n.is_read ? 'bg-blue-50/50' : 'bg-white'
+                    )}
+                    onClick={() => handleNotificationClick(n)}
+                  >
+                    <div className="mr-3 mt-1">
+                      {n.type === 'chat' ? (
+                        <div className="bg-blue-100 p-2 rounded-full">
+                          <MessageSquare className="w-4 h-4 text-blue-600" />
+                        </div>
+                      ) : (
+                        <div className="bg-gray-100 p-2 rounded-full">
+                          {API.notificationUtils.getNotificationIcon(n.type)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={clsx("text-sm", !n.is_read ? "font-semibold text-gray-900" : "text-gray-700")}>
+                        {n.title}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {n.message}
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {API.notificationUtils.formatTimestamp(n.created_at)}
+                      </p>
+                    </div>
+                    {!n.is_read && <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 ml-2"></div>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       )}
     </div>
