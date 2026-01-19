@@ -116,12 +116,13 @@ export const ChatProvider = ({ children }) => {
   const socketRef = useRef(null);
   const unreadCountsRef = useRef({});
   const convsRef = useRef([]);
-  const messagesByConvRef = useRef({}); // Store messages by conversation ID
+  const messagesByConvRef = useRef({});
   const activeConvRef = useRef(null);
   const initializedRef = useRef(false);
   const reconnectAttemptsRef = useRef(0);
   const MAX_RECONNECT_ATTEMPTS = 5;
-  const processingMessagesRef = useRef(new Set()); // Track processing message IDs
+  const processingMessagesRef = useRef(new Set());
+  const socketSetupInProgressRef = useRef(false); // ✅ NEW: Prevent duplicate socket setup
 
   /* -------------------- SHOW NOTIFICATION -------------------- */
   const showNotification = useCallback((message, conversation) => {
@@ -227,7 +228,10 @@ export const ChatProvider = ({ children }) => {
         convsRef.current.unshift(conversation);
       }
       
-      socketRef.current?.emit('join_conversation', conversation.id);
+      // ✅ Check socket is ready before emitting
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('join_conversation', conversation.id);
+      }
       
       return conversation;
     } catch (error) {
@@ -323,7 +327,7 @@ export const ChatProvider = ({ children }) => {
     }
   }, [state.loading]);
 
-  /* -------------------- SEND MESSAGE (FIXED - INSTANT + NO DUPLICATE) -------------------- */
+  /* -------------------- SEND MESSAGE (INSTANT + NO DUPLICATE) -------------------- */
   const sendMessage = useCallback(async (conversationId, messageText) => {
     if (!conversationId || !messageText?.trim()) return;
 
@@ -337,7 +341,6 @@ export const ChatProvider = ({ children }) => {
       console.log('✅ Message sent, ID:', message.id);
 
       // ✅ IMMEDIATELY add message to state for instant UI update
-      // The deduplication in ADD_MESSAGE reducer will prevent duplicates when socket fires
       dispatch({ 
         type: 'ADD_MESSAGE', 
         payload: { conversationId, message } 
@@ -382,7 +385,6 @@ export const ChatProvider = ({ children }) => {
         dispatch({ type: 'SET_CONVERSATIONS', payload: uniqueConvs });
       }
 
-      // Socket broadcast will be handled by backend, but we've already shown it in UI
       console.log('📡 Message displayed instantly, socket will notify other participants');
 
       return message;
@@ -404,7 +406,12 @@ export const ChatProvider = ({ children }) => {
     // Clear processing messages for this conversation
     processingMessagesRef.current.clear();
     
-    socketRef.current?.emit('join_conversation', conv.id);
+    // ✅ Check socket is ready before emitting
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('join_conversation', conv.id);
+    } else {
+      console.warn('⚠️ Socket not connected, cannot join conversation');
+    }
   }, []);
 
   /* -------------------- AVAILABLE USERS -------------------- */
@@ -417,8 +424,14 @@ export const ChatProvider = ({ children }) => {
 
   /* -------------------- SOCKET SETUP -------------------- */
   const setupSocket = useCallback(() => {
-    if (!user || socketRef.current?.connected) {
-      console.log('⚠️ Socket already connected or no user');
+    // ✅ Prevent duplicate socket setup
+    if (socketSetupInProgressRef.current || !user) {
+      console.log('⚠️ Socket setup already in progress or no user');
+      return;
+    }
+
+    if (socketRef.current?.connected) {
+      console.log('⚠️ Socket already connected');
       return;
     }
 
@@ -428,6 +441,7 @@ export const ChatProvider = ({ children }) => {
       return;
     }
 
+    socketSetupInProgressRef.current = true;
     console.log('🔌 Setting up socket connection...');
     
     // Clean up existing socket
@@ -452,7 +466,9 @@ export const ChatProvider = ({ children }) => {
       console.log('🟢 Socket connected, ID:', socket.id);
       dispatch({ type: 'SET_SOCKET_CONNECTED', payload: true });
       reconnectAttemptsRef.current = 0;
+      socketSetupInProgressRef.current = false;
       
+      // Join active conversation if exists
       if (activeConvRef.current?.id) {
         socket.emit('join_conversation', activeConvRef.current.id);
       }
@@ -469,11 +485,12 @@ export const ChatProvider = ({ children }) => {
       
       if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
         console.error('❌ Max reconnection attempts reached');
+        socketSetupInProgressRef.current = false;
         socket.disconnect();
       }
     });
 
-    /* -------------------- NEW_MESSAGE LISTENER (FIXED FOR DEDUPLICATION) -------------------- */
+    /* -------------------- NEW_MESSAGE LISTENER (INSTANT MESSAGE) -------------------- */
     socket.on('new_message', ({ message, conversationId }) => {
       console.log('📨 Socket received message:', message.id, 'for conversation:', conversationId);
       
@@ -493,12 +510,12 @@ export const ChatProvider = ({ children }) => {
         showNotification(message, conversation);
       }
       
-      // Check if message already exists in current messages (prevents duplicate from socket)
+      // Check if message already exists in current messages (prevents duplicate)
       const currentMessages = messagesByConvRef.current[conversationId] || [];
       const messageExists = currentMessages.some(m => m.id === message.id);
       
       if (messageExists) {
-        console.log('⏭️ Message already exists in state (added via sendMessage), skipping socket duplicate');
+        console.log('⏭️ Message already exists in state, skipping socket duplicate');
         processingMessagesRef.current.delete(message.id);
         return;
       }
@@ -560,6 +577,11 @@ export const ChatProvider = ({ children }) => {
       processingMessagesRef.current.delete(message.id);
     });
 
+    socket.on('chat_notification', (notification) => {
+      console.log('🔔 Socket notification received:', notification);
+      // Handle additional notifications if needed
+    });
+
     socket.on('error', (error) => {
       console.error('❌ Socket error:', error);
     });
@@ -581,6 +603,7 @@ export const ChatProvider = ({ children }) => {
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
+        socketSetupInProgressRef.current = false;
       }
     };
   }, [user, setupSocket]);

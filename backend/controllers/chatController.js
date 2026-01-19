@@ -1,5 +1,12 @@
 const db = require('../config/database');
-const ioInstance = require('../server').io; 
+let ioInstance = null;
+
+// ✅ Function to set io instance from service
+const setIOInstance = (io) => {
+  ioInstance = io;
+  console.log('✅ Chat controller received io instance');
+};
+
 /**
  * GET /chat/available-users
  * Returns all users except the authenticated user
@@ -120,10 +127,6 @@ exports.createConversation = async (req, res) => {
  * GET /chat/recent-chats?limit=50&offset=0
  * Returns recent conversations for the user with last message info
  */
-/**
- * GET /chat/recent-chats?limit=50&offset=0
- * Returns recent conversations for the user with last message info
- */
 exports.getRecentChats = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -200,6 +203,7 @@ exports.getRecentChats = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to load recent chats' });
   }
 };
+
 /**
  * GET /chat/conversations
  * Returns all conversations for the user
@@ -300,7 +304,7 @@ exports.getConversationMessages = async (req, res) => {
 
 /**
  * POST /chat/messages/send
- * Send a new message with detailed socket emission logging
+ * Send a new message with proper socket emission
  */
 exports.sendMessage = async (req, res) => {
   try {
@@ -333,7 +337,7 @@ exports.sendMessage = async (req, res) => {
 
     const message = result.rows[0];
     console.log(`✅ Message saved to database, ID: ${message.id}`);
-    req.app.get('io').chatService.broadcastMessage(conversationId, savedMessage);
+
     // Get all participants for logging
     const participantsResult = await db.query(
       'SELECT user_id FROM chat_participants WHERE conversation_id = $1 AND is_active = true',
@@ -343,7 +347,7 @@ exports.sendMessage = async (req, res) => {
     console.log(`👥 Conversation has ${participantsResult.rows.length} participants:`, 
       participantsResult.rows.map(p => p.user_id));
 
-    // Emit via Socket.IO
+    // ✅ Emit via Socket.IO if instance is available
     if (ioInstance) {
       console.log('📡 Socket.IO instance available, emitting messages...');
 
@@ -372,7 +376,7 @@ exports.sendMessage = async (req, res) => {
         });
         console.log(`📡 Emitted to user room: ${userRoom}`);
 
-        // Send notification only to OTHER participants
+        // Send notification only to OTHER participants (not the sender)
         if (participant.user_id !== senderId) {
           ioInstance.to(userRoom).emit('chat_notification', {
             type: 'new_message',
@@ -407,6 +411,7 @@ exports.sendMessage = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to send message' });
   }
 };
+
 /**
  * POST /chat/messages/mark-read
  */
@@ -503,3 +508,6 @@ exports.searchMessages = async (req, res) => {
     res.status(500).json({ success: false, message: 'Search failed' });
   }
 };
+
+// ✅ Export the setIOInstance function
+exports.setIOInstance = setIOInstance;

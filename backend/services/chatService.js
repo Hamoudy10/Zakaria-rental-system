@@ -1,10 +1,15 @@
 // backend/services/chatService.js
 const db = require('../config/database');
+const chatController = require('../controllers/chatController');
 
 class ChatService {
   constructor(io) {
     this.io = io;
     console.log('💬 ChatService initialized');
+    
+    // ✅ Pass io instance to controller
+    chatController.setIOInstance(io);
+    
     this.setupSocketHandlers();
   }
 
