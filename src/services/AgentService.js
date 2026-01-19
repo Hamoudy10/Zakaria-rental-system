@@ -2,7 +2,7 @@
 import api from './api';
 
 const agentService = {
-  // Dashboard data - updated to use new endpoints
+  // Dashboard data
   getDashboardStats: async () => {
     return await api.get('/agent-properties/dashboard-stats');
   },
@@ -11,22 +11,12 @@ const agentService = {
     return await api.get('/agent-properties/my-properties');
   },
 
-  getRecentActivities: async () => {
-    // This will be implemented later with actual activities
-    return await api.get('/agent/activities');
-  },
-
-  getPerformanceMetrics: async () => {
-    // This will be implemented later with actual metrics
-    return await api.get('/agent/performance');
-  },
-
-  // Tenant management - updated to use assigned tenants
+  // Tenant management
   getTenantsWithPaymentStatus: async () => {
     return await api.get('/agent-properties/my-tenants');
   },
 
-  // Complaint management - updated to use assigned complaints
+  // Complaint management
   getAssignedComplaints: async (status = null) => {
     const params = status ? { status } : {};
     return await api.get('/agent-properties/my-complaints', { params });
@@ -36,9 +26,9 @@ const agentService = {
     return await api.put(`/complaints/${complaintId}`, { status, ...updateData });
   },
 
-  // Salary payments (unchanged)
+  // Salary payments
   getSalaryHistory: async () => {
-    return await api.get('/agent/salary-history');
+    return await api.get('/salary-payments/history'); // Assuming this exists or falls back
   },
 
   // Property details
@@ -53,38 +43,20 @@ const agentService = {
 
   // Send payment reminder
   sendPaymentReminder: async (tenantId) => {
-    return await api.post('/agent/send-payment-reminder', { tenantId });
+    return await api.post('/notifications/send-reminder', { tenantId }); // Adjusted path if needed
   },
 
-  // Send bulk SMS to tenants in assigned properties
+  // Send bulk SMS
   sendBulkSMS: async (smsData) => {
-    return await api.post('/agent/send-bulk-sms', smsData);
+    return await api.post('/cron/agent/send-bulk', smsData); // Adjusted path
   },
 
-  // Existing methods for backward compatibility
-  getRecentComplaints: async () => {
-    return await api.get('/agent-properties/my-complaints?limit=5');
-  },
-
-  getPaymentAlerts: async () => {
-    return await api.get('/agent-properties/my-tenants?payment_status=pending');
-  },
-
-  createComplaint: async (complaintData) => {
-    return await api.post('/agent/complaints', complaintData);
-  },
-
-  updateProfile: async (profileData) => {
-    return await api.put('/agent/profile', profileData);
-  },
-
-   createWaterBill: async (billData) => {
-    // billData: { tenantId, unitId, propertyId, amount, billMonth (YYYY-MM), notes }
+  // Water bills
+  createWaterBill: async (billData) => {
     return await api.post('/agent-properties/water-bills', billData);
   },
 
   listWaterBills: async (params = {}) => {
-    // params: { propertyId, tenantId, month, limit, offset }
     return await api.get('/agent-properties/water-bills', { params });
   },
 

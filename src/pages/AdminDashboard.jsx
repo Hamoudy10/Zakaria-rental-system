@@ -1,11 +1,10 @@
 // src/pages/AdminDashboard.jsx
 import React, { useState, useEffect, Suspense, lazy } from 'react'
-import api from '../services/api'; // Add this import
+import api from '../services/api' // Add this import
 
 // Lazy load admin components
 const UserManagement = lazy(() => import('../components/UserManagement'))
 const PropertyManagement = lazy(() => import('../components/PropertyManagement'))
-const Reports = lazy(() => import('../components/ReportsPage'))
 const SalaryPayment = lazy(() => import('../components/SalaryPayment'))
 const SystemSettings = lazy(() => import('../components/SystemSettings'))
 const TenantAllocation = lazy(() => import('../components/TenantAllocation'))
@@ -13,6 +12,9 @@ const PaymentManagement = lazy(() => import('../components/PaymentManagement'))
 const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'))
 const UnitManagement = lazy(() => import('../components/UnitManagement'))
 const AgentAllocation = lazy(() => import('../components/AgentAllocation'))
+
+// ✅ NEW: reuse the AgentReports component for admin reports UI
+const AgentReports = lazy(() => import('../components/AgentReports'))
 
 // Loading spinner
 const TabLoadingSpinner = () => (
@@ -31,25 +33,23 @@ const AdminDashboard = () => {
   // Fetch dashboard data
   // --------------------
   useEffect(() => {
-  const fetchData = async () => {
-    try {
-      // Use axios instance instead of fetch - it has auth token interceptor
-      const statsRes = await api.get('/admin/dashboard/stats');
-      setAdminStats(statsRes.data.data);
+    const fetchData = async () => {
+      try {
+        const statsRes = await api.get('/admin/dashboard/stats')
+        setAdminStats(statsRes.data.data)
 
-      const activitiesRes = await api.get('/admin/dashboard/recent-activities');
-      setRecentActivities(activitiesRes.data.data);
+        const activitiesRes = await api.get('/admin/dashboard/recent-activities')
+        setRecentActivities(activitiesRes.data.data)
 
-      const topPropsRes = await api.get('/admin/dashboard/top-properties');
-      setTopProperties(topPropsRes.data.data);
-
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+        const topPropsRes = await api.get('/admin/dashboard/top-properties')
+        setTopProperties(topPropsRes.data.data)
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error)
+      }
     }
-  };
 
-  fetchData();
-}, []);
+    fetchData()
+  }, [])
 
   const tabs = [
     { id: 'overview', name: 'Overview', shortName: 'Overview' },
@@ -67,16 +67,67 @@ const AdminDashboard = () => {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'users': return <Suspense fallback={<TabLoadingSpinner />}><UserManagement /></Suspense>
-      case 'properties': return <Suspense fallback={<TabLoadingSpinner />}><PropertyManagement /></Suspense>
-      case 'units': return <Suspense fallback={<TabLoadingSpinner />}><UnitManagement /></Suspense>
-      case 'allocations': return <Suspense fallback={<TabLoadingSpinner />}><TenantAllocation /></Suspense>
-      case 'agentAllocation': return <Suspense fallback={<TabLoadingSpinner />}><AgentAllocation /></Suspense>
-      case 'payments': return <Suspense fallback={<TabLoadingSpinner />}><PaymentManagement /></Suspense>
-      case 'salaries': return <Suspense fallback={<TabLoadingSpinner />}><SalaryPayment /></Suspense>
-      case 'complaints': return <Suspense fallback={<TabLoadingSpinner />}><ComplaintManagement /></Suspense>
-      case 'reports': return <Suspense fallback={<TabLoadingSpinner />}><Reports /></Suspense>
-      case 'settings': return <Suspense fallback={<TabLoadingSpinner />}><SystemSettings /></Suspense>
+      case 'users':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <UserManagement />
+          </Suspense>
+        )
+      case 'properties':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <PropertyManagement />
+          </Suspense>
+        )
+      case 'units':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <UnitManagement />
+          </Suspense>
+        )
+      case 'allocations':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <TenantAllocation />
+          </Suspense>
+        )
+      case 'agentAllocation':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AgentAllocation />
+          </Suspense>
+        )
+      case 'payments':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <PaymentManagement />
+          </Suspense>
+        )
+      case 'salaries':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <SalaryPayment />
+          </Suspense>
+        )
+      case 'complaints':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <ComplaintManagement />
+          </Suspense>
+        )
+      case 'reports':
+        // ✅ Use the same Reports UI as AgentDashboard
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AgentReports />
+          </Suspense>
+        )
+      case 'settings':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <SystemSettings />
+          </Suspense>
+        )
       case 'overview':
       default:
         return (
@@ -96,7 +147,7 @@ const AdminDashboard = () => {
         {/* Tab Navigation */}
         <div className="border-b border-gray-200 mb-4">
           <nav className="-mb-px flex space-x-1 xs:space-x-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-            {tabs.map(tab => (
+            {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -126,18 +177,12 @@ const AdminDashboard = () => {
 // --------------------
 // DashboardOverview
 // --------------------
-// --------------------
-// DashboardOverview
-// --------------------
 const DashboardOverview = ({ setActiveTab, adminStats, recentActivities, topProperties }) => {
   if (!adminStats) return <TabLoadingSpinner />
 
   return (
     <div className="space-y-6">
-
-      {/* =====================
-          STATISTICS OVERVIEW
-      ===================== */}
+      {/* STATISTICS OVERVIEW */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white border rounded-lg p-4 shadow-sm">
           <p className="text-xs text-gray-500">Total Properties</p>
@@ -168,9 +213,7 @@ const DashboardOverview = ({ setActiveTab, adminStats, recentActivities, topProp
         </div>
       </div>
 
-      {/* =====================
-          RECENT ACTIVITIES
-      ===================== */}
+      {/* RECENT ACTIVITIES */}
       <div className="bg-white border rounded-lg p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">
           Recent Activities
@@ -197,9 +240,7 @@ const DashboardOverview = ({ setActiveTab, adminStats, recentActivities, topProp
         )}
       </div>
 
-      {/* =====================
-          TOP PROPERTIES
-      ===================== */}
+      {/* TOP PROPERTIES */}
       <div className="bg-white border rounded-lg p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">
           Top Performing Properties
@@ -228,15 +269,10 @@ const DashboardOverview = ({ setActiveTab, adminStats, recentActivities, topProp
           </div>
         )}
       </div>
-
     </div>
   )
 }
 
-
-// --------------------
-// PendingActionCard
-// --------------------
 const PendingActionCard = ({ title, count, color, onClick }) => {
   const colorMap = {
     orange: 'bg-orange-500 text-white',
