@@ -333,7 +333,7 @@ exports.sendMessage = async (req, res) => {
 
     const message = result.rows[0];
     console.log(`✅ Message saved to database, ID: ${message.id}`);
-
+    req.app.get('io').chatService.broadcastMessage(conversationId, savedMessage);
     // Get all participants for logging
     const participantsResult = await db.query(
       'SELECT user_id FROM chat_participants WHERE conversation_id = $1 AND is_active = true',
