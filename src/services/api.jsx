@@ -45,29 +45,20 @@ api.interceptors.response.use(
 
 // Add this NEW agentSMSAPI section (add it after billingAPI):
 export const agentSMSAPI = {
-  // Agent trigger billing SMS for their properties
   triggerAgentBillingSMS: (data) => api.post('/cron/agent/trigger-billing', data),
-  
-  // Agent view failed SMS (filtered by their properties)
   getAgentFailedSMS: (params = {}) => api.get('/cron/agent/failed-sms', { params }),
-  
-  // Agent retry failed SMS (filtered by their properties)
   retryAgentFailedSMS: (data) => api.post('/cron/agent/retry-sms', data),
-  
-  // Get water bill missing tenants
   checkMissingWaterBills: (month, propertyId = null) => {
     const params = new URLSearchParams();
     params.append('month', month);
     if (propertyId) params.append('propertyId', propertyId);
     return api.get(`/water-bills/missing-tenants?${params.toString()}`);
   },
-  
-  // Get SMS queue status
   getSMSQueueStatus: () => api.get('/cron/queue-status'),
-  
-  // Get SMS history for agent
   getAgentSMSHistory: (params = {}) => api.get('/cron/agent/history', { params })
 };
+
+
 
 
 // M-Pesa utility functions

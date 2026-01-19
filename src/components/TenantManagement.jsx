@@ -19,6 +19,11 @@ const TenantManagement = () => {
     limit: 10
   });
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // New states for viewing tenant details
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [selectedTenantData, setSelectedTenantData] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -76,6 +81,35 @@ const TenantManagement = () => {
       setLoading(false);
     }
   }, [pagination.limit]);
+
+  // Fetch tenant details by ID
+  const fetchTenantDetails = async (tenantId) => {
+    try {
+      setLoadingDetails(true);
+      const response = await API.tenants.getTenant(tenantId);
+      
+      if (response.data.success) {
+        setSelectedTenantData(response.data.data);
+        setShowViewModal(true);
+      }
+    } catch (err) {
+      console.error('❌ Error fetching tenant details:', err);
+      alert('Failed to load tenant details. Please try again.');
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  // Handle view tenant details
+  const handleViewDetails = async (tenant) => {
+    await fetchTenantDetails(tenant.id);
+  };
+
+  // Close view modal
+  const handleCloseViewModal = () => {
+    setShowViewModal(false);
+    setSelectedTenantData(null);
+  };
 
   //fetch available units
 const fetchAvailableUnits = useCallback(async (tenantId = null) => {
@@ -136,7 +170,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
       console.error('❌ Error fetching available units:', err);
       setAvailableUnits([]);
     }
-  }, [assignedProperties, user?.role, editingTenant?.unit_id]); // Added editingTenant?.unit_id dependency
+  }, [assignedProperties, user?.role, editingTenant?.unit_id]);
 
   // Initial load
   useEffect(() => {
@@ -839,6 +873,278 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
         </div>
       )}
 
+      {/* View Tenant Details Modal */}
+      {showViewModal && selectedTenantData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              {/* Modal Header */}
+              <div className="flex justify-between items-center mb-6 pb-4 border-b">
+                <h3 className="text-2xl font-bold text-gray-900">
+                  Tenant Records
+                </h3>
+                <button
+                  onClick={handleCloseViewModal}
+                  className="text-gray-400 hover:text-gray-600 text-2xl font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Tenant Profile Section */}
+              <div className="mb-8">
+                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                  <span className="mr-2">👤</span> Personal Information
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg">
+                  <div>
+                    <label className="text-sm text-gray-600">Full Name</label>
+                    <p className="font-medium text-gray-900">
+                      {selectedTenantData.first_name} {selectedTenantData.last_name}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">National ID</label>
+                    <p className="font-medium text-gray-900">{selectedTenantData.national_id}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">Phone Number</label>
+                    <p className="font-medium text-gray-900">
+                      {formatPhoneForDisplay(selectedTenantData.phone_number)}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">Email Address</label>
+                    <p className="font-medium text-gray-900">
+                      {selectedTenantData.email || 'Not provided'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">Status</label>
+                    <p className="font-medium">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        selectedTenantData.is_active 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {selectedTenantData.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">Registration Date</label>
+                    <p className="font-medium text-gray-900">
+                      {formatDate(selectedTenantData.created_at)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Emergency Contact Section */}
+              {(selectedTenantData.emergency_contact_name || selectedTenantData.emergency_contact_phone) && (
+                <div className="mb-8">
+                  <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                    <span className="mr-2">🚨</span> Emergency Contact
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg">
+                    <div>
+                      <label className="text-sm text-gray-600">Contact Name</label>
+                      <p className="font-medium text-gray-900">
+                        {selectedTenantData.emergency_contact_name || 'Not provided'}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Contact Phone</label>
+                      <p className="font-medium text-gray-900">
+                        {formatPhoneForDisplay(selectedTenantData.emergency_contact_phone) || 'Not provided'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Unit & Lease Information */}
+              {selectedTenantData.unit_code && (
+                <div className="mb-8">
+                  <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                    <span className="mr-2">🏠</span> Unit & Lease Information
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg">
+                    <div>
+                      <label className="text-sm text-gray-600">Property</label>
+                      <p className="font-medium text-gray-900">
+                        {selectedTenantData.property_name || 'N/A'}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Unit Code</label>
+                      <p className="font-medium text-gray-900">{selectedTenantData.unit_code}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Monthly Rent</label>
+                      <p className="font-medium text-gray-900">
+                        {formatCurrency(selectedTenantData.monthly_rent)}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Security Deposit</label>
+                      <p className="font-medium text-gray-900">
+                        {formatCurrency(selectedTenantData.security_deposit || 0)}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Lease Start Date</label>
+                      <p className="font-medium text-gray-900">
+                        {formatDate(selectedTenantData.lease_start_date)}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Lease End Date</label>
+                      <p className="font-medium text-gray-900">
+                        {selectedTenantData.lease_end_date ? formatDate(selectedTenantData.lease_end_date) : 'Month-to-Month'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Payment History */}
+              {selectedTenantData.paymentHistory && selectedTenantData.paymentHistory.length > 0 && (
+                <div className="mb-8">
+                  <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                    <span className="mr-2">💰</span> Recent Payment History
+                  </h4>
+                  <div className="bg-gray-50 rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-200">
+                        <tr>
+                          <th className="px-4 py-2 text-left">Month</th>
+                          <th className="px-4 py-2 text-left">Amount</th>
+                          <th className="px-4 py-2 text-left">Status</th>
+                          <th className="px-4 py-2 text-left">Date</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {selectedTenantData.paymentHistory.slice(0, 6).map((payment, index) => (
+                          <tr key={payment.id || index} className="hover:bg-gray-100">
+                            <td className="px-4 py-2">
+                              {new Date(payment.payment_month).toLocaleDateString('en-KE', { 
+                                month: 'short', 
+                                year: 'numeric' 
+                              })}
+                            </td>
+                            <td className="px-4 py-2 font-medium">
+                              {formatCurrency(payment.amount)}
+                            </td>
+                            <td className="px-4 py-2">
+                              <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
+                                payment.status === 'completed' 
+                                  ? 'bg-green-100 text-green-800' 
+                                  : payment.status === 'pending'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}>
+                                {payment.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-gray-600">
+                              {formatDate(payment.created_at)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* ID Documents Section */}
+              <div className="mb-6">
+                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                  <span className="mr-2">🆔</span> ID Documents
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Front ID */}
+                  <div>
+                    <label className="text-sm text-gray-600 block mb-2">ID Front</label>
+                    {selectedTenantData.id_front_image ? (
+                      <div className="border rounded-lg overflow-hidden bg-gray-50">
+                        <img 
+                          src={selectedTenantData.id_front_image}
+                          alt="ID Front"
+                          className="w-full h-64 object-contain cursor-pointer hover:opacity-90"
+                          onClick={() => window.open(selectedTenantData.id_front_image, '_blank')}
+                        />
+                        <div className="p-2 text-center">
+                          <button
+                            onClick={() => window.open(selectedTenantData.id_front_image, '_blank')}
+                            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                          >
+                            View Full Size
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="border rounded-lg p-8 bg-gray-50 text-center text-gray-500">
+                        <span className="text-3xl mb-2 block">📷</span>
+                        No front ID image uploaded
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Back ID */}
+                  <div>
+                    <label className="text-sm text-gray-600 block mb-2">ID Back</label>
+                    {selectedTenantData.id_back_image ? (
+                      <div className="border rounded-lg overflow-hidden bg-gray-50">
+                        <img 
+                          src={selectedTenantData.id_back_image}
+                          alt="ID Back"
+                          className="w-full h-64 object-contain cursor-pointer hover:opacity-90"
+                          onClick={() => window.open(selectedTenantData.id_back_image, '_blank')}
+                        />
+                        <div className="p-2 text-center">
+                          <button
+                            onClick={() => window.open(selectedTenantData.id_back_image, '_blank')}
+                            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                          >
+                            View Full Size
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="border rounded-lg p-8 bg-gray-50 text-center text-gray-500">
+                        <span className="text-3xl mb-2 block">📷</span>
+                        No back ID image uploaded
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <button
+                  onClick={handleCloseViewModal}
+                  className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    handleCloseViewModal();
+                    handleEdit(selectedTenantData);
+                  }}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                >
+                  Edit Tenant
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tenants Table */}
       {!loading && !showForm && (
         <div className="bg-white rounded-lg border overflow-hidden">
@@ -940,6 +1246,13 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => handleViewDetails(tenant)}
+                            className="text-purple-600 hover:text-purple-900 font-medium text-sm"
+                            disabled={loadingDetails}
+                          >
+                            View
+                          </button>
                           <button
                             onClick={() => handleEdit(tenant)}
                             className="text-blue-600 hover:text-blue-900 font-medium text-sm"

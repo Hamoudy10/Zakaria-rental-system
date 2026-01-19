@@ -107,20 +107,30 @@ const getAgentAllocations = async (req, res) => {
 // Get assigned properties for logged-in agent
 const getMyProperties = async (req, res) => {
   try {
-    const agent_id = req.user.id;
+    const { user } = req;
 
-    const { rows } = await db.query(`
+    let query = `
       SELECT 
         p.*,
-        apa.assigned_at,
-        apa.assigned_by,
         (SELECT COUNT(*) FROM property_units pu WHERE pu.property_id = p.id AND pu.is_occupied = true) as occupied_units,
         (SELECT COUNT(*) FROM property_units pu WHERE pu.property_id = p.id) as total_units
-      FROM agent_property_assignments apa
-      JOIN properties p ON p.id = apa.property_id
-      WHERE apa.agent_id = $1 AND apa.is_active = true
-      ORDER BY p.name
-    `, [agent_id]);
+      FROM properties p
+    `;
+    
+    const params = [];
+
+    // If Agent, filter by assignment
+    if (user.role === 'agent') {
+      query += `
+        JOIN agent_property_assignments apa ON p.id = apa.property_id
+        WHERE apa.agent_id = $1 AND apa.is_active = true
+      `;
+      params.push(user.id);
+    }
+
+    query += ` ORDER BY p.name`;
+
+    const { rows } = await db.query(query, params);
 
     res.json({
       success: true,
@@ -128,21 +138,17 @@ const getMyProperties = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching assigned properties:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch assigned properties',
-      error: error.message
-    });
+    console.error('Error fetching properties:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch properties' });
   }
 };
 
-// Get assigned tenants for logged-in agent
+// Get assigned tenants (Agent) OR All tenants (Admin)
 const getMyTenants = async (req, res) => {
   try {
-    const agent_id = req.user.id;
+    const { user } = req;
 
-    const { rows } = await db.query(`
+    let query = `
       SELECT DISTINCT
         t.*,
         ta.unit_id,
@@ -164,32 +170,40 @@ const getMyTenants = async (req, res) => {
       JOIN tenant_allocations ta ON ta.tenant_id = t.id
       JOIN property_units pu ON pu.id = ta.unit_id
       JOIN properties p ON p.id = pu.property_id
-      JOIN agent_property_assignments apa ON apa.property_id = p.id
-      WHERE apa.agent_id = $1 
-        AND apa.is_active = true 
-        AND ta.is_active = true
-      ORDER BY p.name, pu.unit_code
-    `, [agent_id]);
+    `;
 
-    res.json({
-      success: true,
-      data: rows
-    });
+    const params = [];
+
+    // If Agent, filter by assignment
+    if (user.role === 'agent') {
+      query += `
+        JOIN agent_property_assignments apa ON apa.property_id = p.id
+        WHERE apa.agent_id = $1 
+          AND apa.is_active = true 
+          AND ta.is_active = true
+      `;
+      params.push(user.id);
+    } else {
+      // Admin: ensure we only get active allocations
+      query += ` WHERE ta.is_active = true `;
+    }
+
+    query += ` ORDER BY p.name, pu.unit_code`;
+
+    const { rows } = await db.query(query, params);
+
+    res.json({ success: true, data: rows });
 
   } catch (error) {
-    console.error('Error fetching assigned tenants:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch assigned tenants',
-      error: error.message
-    });
+    console.error('Error fetching tenants:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch tenants' });
   }
 };
 
-// Get assigned complaints for logged-in agent
+// Get assigned complaints (Agent) OR All complaints (Admin)
 const getMyComplaints = async (req, res) => {
   try {
-    const agent_id = req.user.id;
+    const { user } = req;
     const { status } = req.query;
 
     let query = `
@@ -206,12 +220,21 @@ const getMyComplaints = async (req, res) => {
       JOIN tenants t ON t.id = c.tenant_id
       JOIN property_units pu ON pu.id = c.unit_id
       JOIN properties p ON p.id = pu.property_id
-      JOIN agent_property_assignments apa ON apa.property_id = p.id
       LEFT JOIN users agent ON agent.id = c.assigned_agent
-      WHERE apa.agent_id = $1 AND apa.is_active = true
     `;
 
-    const params = [agent_id];
+    const params = [];
+
+    // If Agent, filter by assignment
+    if (user.role === 'agent') {
+      query += `
+        JOIN agent_property_assignments apa ON apa.property_id = p.id
+        WHERE apa.agent_id = $1 AND apa.is_active = true
+      `;
+      params.push(user.id);
+    } else {
+      query += ` WHERE 1=1 `; // dummy clause for admin filtering
+    }
 
     if (status && status !== 'all') {
       query += ` AND c.status = $${params.length + 1}`;
@@ -222,18 +245,11 @@ const getMyComplaints = async (req, res) => {
 
     const { rows } = await db.query(query, params);
 
-    res.json({
-      success: true,
-      data: rows
-    });
+    res.json({ success: true, data: rows });
 
   } catch (error) {
-    console.error('Error fetching assigned complaints:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch assigned complaints',
-      error: error.message
-    });
+    console.error('Error fetching complaints:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch complaints' });
   }
 };
 
