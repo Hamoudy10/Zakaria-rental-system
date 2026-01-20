@@ -19,7 +19,11 @@ export const PaymentProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [pendingPayments, setPendingPayments] = useState(new Map()); // Track pending payments
-
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalCount: 0,
+  });
   // Clear error
   const clearError = useCallback(() => setError(null), []);
 
@@ -49,19 +53,40 @@ export const PaymentProvider = ({ children }) => {
     return `${year}-${month}-01`;
   };
 
-  // Fetch all payments
-  const fetchPayments = useCallback(async () => {
+  const fetchPayments = useCallback(async (params = {}) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await paymentAPI.getPayments();
-      setPayments(response.data.payments || []);
+      const response = await paymentAPI.getPayments(params);
+      if (response.data.success) {
+        setPayments(response.data.data.payments || []);
+        setPagination(response.data.data.pagination || {});
+      } else {
+        throw new Error(response.data.message || 'Failed to fetch payments');
+      }
     } catch (err) {
       console.error('Error fetching payments:', err);
-      setError('Failed to fetch payments');
+      setError(err.message);
       setPayments([]);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+ // ✅ NEW: Fetch full payment history for a single tenant
+  const fetchTenantHistory = useCallback(async (tenantId) => {
+    // This function will be called from the UI component directly, 
+    // so we don't set global loading state here to avoid blocking the main table.
+    try {
+      const response = await paymentAPI.getPaymentHistory(tenantId);
+      if (response.data.success) {
+        return response.data.data; // Returns { payments: [], summary: {} }
+      }
+      throw new Error(response.data.message || 'Failed to fetch tenant history');
+    } catch (err) {
+      console.error('Error fetching tenant history:', err);
+      setError(err.message); // Set global error for feedback
+      return null;
     }
   }, []);
 
@@ -738,6 +763,7 @@ export const PaymentProvider = ({ children }) => {
     loading,
     error,
     selectedPayment,
+     etchTenantHistory,
     
     // Setters
     setSelectedPayment,
@@ -785,6 +811,7 @@ export const PaymentProvider = ({ children }) => {
     selectedPayment,
     fetchPayments,
     getPaymentsByTenant,
+    fetchTenantHistory,
     getPaymentsByUnit,
     createPayment,
     updatePayment,
