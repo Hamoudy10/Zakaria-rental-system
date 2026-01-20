@@ -1,13 +1,15 @@
+// backend/controllers/paymentController.js
 const axios = require('axios');
 const moment = require('moment');
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
 const SMSService = require('../services/smsService');
 
-// Check database connection
+// ==================== UTILITY HELPERS ====================
+
 const checkDatabase = async () => {
   try {
-    const result = await pool.query('SELECT NOW()');
+    await pool.query('SELECT NOW()');
     console.log('✅ Database connection successful');
     return true;
   } catch (error) {
@@ -16,7 +18,6 @@ const checkDatabase = async () => {
   }
 };
 
-// Generate timestamp for M-Pesa (YYYYMMDDHHmmss format)
 const generateTimestamp = () => {
   const date = new Date();
   const year = date.getFullYear();
@@ -28,13 +29,11 @@ const generateTimestamp = () => {
   return `${year}${month}${day}${hours}${minutes}${seconds}`;
 };
 
-// Generate M-Pesa password
 const generatePassword = (shortCode, passKey, timestamp) => {
   const passwordString = `${shortCode}${passKey}${timestamp}`;
   return Buffer.from(passwordString).toString('base64');
 };
 
-// Get M-Pesa access token
 const getAccessToken = async () => {
   try {
     const consumerKey = process.env.MPESA_CONSUMER_KEY;
@@ -49,9 +48,7 @@ const getAccessToken = async () => {
     const response = await axios.get(
       'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
       {
-        headers: {
-          'Authorization': `Basic ${auth}`,
-        },
+        headers: { 'Authorization': `Basic ${auth}` },
         timeout: 10000,
       }
     );
@@ -63,7 +60,6 @@ const getAccessToken = async () => {
   }
 };
 
-// Format payment month to proper date format
 const formatPaymentMonth = (paymentMonth) => {
   console.log('📅 Formatting payment month:', paymentMonth);
   
@@ -85,10 +81,10 @@ const formatPaymentMonth = (paymentMonth) => {
   return `${year}-${month}-01`;
 };
 
-// ENHANCED: Track rent payment with partial payments and carry-forward logic
+// ==================== CORE BUSINESS LOGIC ====================
+
 const trackRentPayment = async (tenantId, unitId, amount, paymentDate, targetMonth = null) => {
   try {
-    // Get tenant allocation and current month's rent status
     const allocationQuery = `
       SELECT ta.*, pu.rent_amount 
       FROM tenant_allocations ta 
@@ -105,17 +101,14 @@ const trackRentPayment = async (tenantId, unitId, amount, paymentDate, targetMon
     const monthlyRent = parseFloat(allocation.monthly_rent);
     const paymentAmount = parseFloat(amount);
     
-    // Determine the target month for payment allocation
     let paymentMonth = targetMonth;
     if (!paymentMonth) {
-      paymentMonth = new Date(paymentDate).toISOString().slice(0, 7); // YYYY-MM
+      paymentMonth = new Date(paymentDate).toISOString().slice(0, 7);
     }
     
-    // Check if target month is in the future
     const currentMonth = new Date().toISOString().slice(0, 7);
     const isFutureMonth = paymentMonth > currentMonth;
 
-    // Check target month's paid amount
     const targetMonthPaymentsQuery = `
       SELECT COALESCE(SUM(amount), 0) as total_paid 
       FROM rent_payments 
@@ -132,11 +125,9 @@ const trackRentPayment = async (tenantId, unitId, amount, paymentDate, targetMon
     let isMonthComplete = false;
     
     if (paymentAmount <= remainingForTargetMonth) {
-      // Full amount applies to target month
       allocatedAmount = paymentAmount;
       isMonthComplete = (targetMonthPaid + allocatedAmount) >= monthlyRent;
     } else {
-      // Part applies to target month, rest carries forward
       allocatedAmount = remainingForTargetMonth;
       carryForwardAmount = paymentAmount - remainingForTargetMonth;
       isMonthComplete = true;
@@ -158,19 +149,18 @@ const trackRentPayment = async (tenantId, unitId, amount, paymentDate, targetMon
   }
 };
 
-// ENHANCED: Record carry-forward payment with future month support
-const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, paymentDate, mpesa_receipt_number,phone_number, confirmedBy) => {
+const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, paymentDate, mpesa_receipt_number, phone_number, confirmedBy) => {
   try {
     let nextMonth = new Date(paymentDate);
     let remainingAmount = amount;
     const createdPayments = [];
-    let index = 0; 
+    let index = 0;
+    
     while (remainingAmount > 0) {
       index++;
       nextMonth.setMonth(nextMonth.getMonth() + 1);
       const nextMonthFormatted = nextMonth.toISOString().slice(0, 7) + '-01';
       
-      // Check if future month already has payments
       const futureMonthQuery = `
         SELECT COALESCE(SUM(amount), 0) as total_paid 
         FROM rent_payments 
@@ -181,7 +171,6 @@ const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, p
       const futureMonthResult = await pool.query(futureMonthQuery, [tenantId, unitId, nextMonthFormatted]);
       const futureMonthPaid = parseFloat(futureMonthResult.rows[0].total_paid);
       
-      // Get monthly rent for calculation
       const allocationQuery = `
         SELECT monthly_rent FROM tenant_allocations 
         WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
@@ -193,7 +182,7 @@ const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, p
       const allocationAmount = Math.min(remainingAmount, remainingForFutureMonth);
       
       if (allocationAmount > 0) {
-         const carryForwardQuery = `
+        const carryForwardQuery = `
           INSERT INTO rent_payments 
           (tenant_id, unit_id, amount, payment_month, status, is_advance_payment, 
            original_payment_id, payment_date, mpesa_transaction_id, mpesa_receipt_number, 
@@ -205,14 +194,14 @@ const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, p
         const result = await pool.query(carryForwardQuery, [
           tenantId, 
           unitId, 
-          amount,
+          allocationAmount,
           nextMonthFormatted, 
           originalPaymentId,
           paymentDate,
-          `CF_${originalPaymentId}_${index}`, // Generate carry-forward transaction ID
-          `${mpesa_receipt_number}_CF${index}`, // Carry-forward receipt number
-          phone_number, // Use original phone number
-          'paybill', // Payment method
+          `CF_${originalPaymentId}_${index}`,
+          `${mpesa_receipt_number}_CF${index}`,
+          phone_number,
+          'carry_forward',
           confirmedBy,
           paymentDate
         ]);
@@ -222,14 +211,10 @@ const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, p
         
         console.log(`✅ Carry-forward payment recorded: KSh ${allocationAmount} for ${nextMonthFormatted}`);
         
-        // If we've allocated all remaining amount, break the loop
         if (remainingAmount <= 0) break;
-
-         return [result.rows[0]]; 
-      } else {
-        // If this month is already fully paid, move to next month
-        continue;
       }
+      
+      if (index > 24) break; // Safety limit: 2 years ahead
     }
     
     return createdPayments;
@@ -239,20 +224,20 @@ const recordCarryForward = async (tenantId, unitId, amount, originalPaymentId, p
   }
 };
 
-// ENHANCED: Payment notification system with partial payment support
+// ==================== NOTIFICATION FUNCTIONS ====================
+
 const sendPaymentNotifications = async (payment, trackingResult, isCarryForward = false) => {
   try {
     const paymentId = payment.id || payment.payment_id;
     const tenantId = payment.tenant_id;
     const amount = payment.amount;
     
-    // Get tenant and property details for notifications
     const detailsQuery = `
       SELECT 
-        u.first_name, u.last_name, u.phone_number,
+        t.first_name, t.last_name, t.phone_number,
         p.name as property_name, pu.unit_number, pu.unit_code
       FROM rent_payments rp
-      LEFT JOIN users u ON rp.tenant_id = u.id
+      LEFT JOIN tenants t ON rp.tenant_id = t.id
       LEFT JOIN property_units pu ON rp.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       WHERE rp.id = $1
@@ -270,7 +255,6 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
     const unitInfo = `Unit ${details.unit_number} (${details.unit_code})`;
     
     if (isCarryForward) {
-      // Notification for carry-forward payment
       const carryForwardNotification = {
         userId: tenantId,
         title: 'Payment Carry-Forward',
@@ -282,7 +266,6 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
       
       await NotificationService.createNotification(carryForwardNotification);
     } else {
-      // Success notification to tenant
       let tenantMessage = `Your rent payment of KSh ${amount} has been processed successfully. `;
       
       if (trackingResult.carryForwardAmount > 0) {
@@ -304,7 +287,6 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
       
       await NotificationService.createNotification(tenantNotification);
       
-      // Notification to all admins
       const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
       
       for (const admin of adminUsers.rows) {
@@ -338,7 +320,6 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
   }
 };
 
-// NEW: Send SMS notifications for paybill payments
 const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
   try {
     const tenantName = `${unit.tenant_first_name} ${unit.tenant_last_name}`;
@@ -356,13 +337,12 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
       month
     });
 
-const wbRes = await pool.query(
-  `SELECT amount FROM water_bills WHERE tenant_id = $1 AND bill_month = $2 LIMIT 1`,
-  [unit.tenant_id, `${month}-01`]
-);
-const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
+    const wbRes = await pool.query(
+      `SELECT amount FROM water_bills WHERE tenant_id = $1 AND bill_month = $2 LIMIT 1`,
+      [unit.tenant_id, `${month}-01`]
+    );
+    const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
 
-    // Send confirmation to tenant
     const tenantSMSResult = await SMSService.sendPaymentConfirmation(
       tenantPhone,
       tenantName,
@@ -375,7 +355,6 @@ const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
 
     console.log('✅ Tenant SMS result:', tenantSMSResult);
 
-    // Get admin phone numbers and send alerts
     const adminUsers = await pool.query(
       'SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL',
       ['admin']
@@ -396,7 +375,6 @@ const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
       adminSMSResults.push(adminResult);
     }
 
-    // Record SMS notifications in database
     await pool.query(
       `INSERT INTO payment_notifications 
         (payment_id, recipient_id, message_type, message_content, mpesa_code, amount, 
@@ -426,7 +404,8 @@ const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
   }
 };
 
-// ✅ NEW: Get all payments with filters, sorting, and pagination
+// ==================== CONTROLLER HANDLERS ====================
+
 const getAllPayments = async (req, res) => {
   try {
     const { 
@@ -436,13 +415,13 @@ const getAllPayments = async (req, res) => {
       tenantId, 
       startDate, 
       endDate, 
+      search,
       sortBy = 'payment_date', 
       sortOrder = 'desc' 
     } = req.query;
     
     const offset = (page - 1) * limit;
 
-    // Whitelist for safe sorting
     const validSortColumns = ['payment_date', 'amount', 'first_name', 'property_name', 'status'];
     const safeSortBy = validSortColumns.includes(sortBy) ? sortBy : 'payment_date';
     const safeSortOrder = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
@@ -480,17 +459,20 @@ const getAllPayments = async (req, res) => {
       whereClauses.push(`rp.payment_date <= $${paramIndex++}`);
       queryParams.push(endDate);
     }
+    if (search) {
+      whereClauses.push(`(t.first_name ILIKE $${paramIndex} OR t.last_name ILIKE $${paramIndex} OR rp.mpesa_receipt_number ILIKE $${paramIndex})`);
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
 
     if (whereClauses.length > 0) {
       baseQuery += ` WHERE ${whereClauses.join(' AND ')}`;
     }
 
-    // Count total records with filters
     const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) as filtered_payments`;
     const countResult = await pool.query(countQuery, queryParams);
     const totalCount = parseInt(countResult.rows[0].count, 10);
     
-    // Add sorting and pagination to the main query
     baseQuery += ` ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     queryParams.push(limit, offset);
 
@@ -514,7 +496,68 @@ const getAllPayments = async (req, res) => {
   }
 };
 
-// NEW: Process M-Pesa paybill payment using unit code
+const getTenantPaymentHistory = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+
+    const paymentsQuery = await pool.query(
+      `SELECT rp.*, p.name as property_name, pu.unit_code 
+       FROM rent_payments rp
+       JOIN property_units pu ON rp.unit_id = pu.id
+       JOIN properties p ON pu.property_id = p.id
+       WHERE rp.tenant_id = $1 
+       ORDER BY rp.payment_date DESC`,
+      [tenantId]
+    );
+
+    const allocationsQuery = await pool.query(
+      `SELECT lease_start_date, lease_end_date, monthly_rent 
+       FROM tenant_allocations 
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    
+    let totalExpected = 0;
+    const now = new Date();
+    
+    allocationsQuery.rows.forEach(alloc => {
+      const start = new Date(alloc.lease_start_date);
+      const end = alloc.lease_end_date ? new Date(alloc.lease_end_date) : now;
+      if (end < start) return;
+      
+      let months = (end.getFullYear() - start.getFullYear()) * 12;
+      months -= start.getMonth();
+      months += end.getMonth();
+      const monthCount = months < 0 ? 0 : months + 1;
+      
+      totalExpected += monthCount * parseFloat(alloc.monthly_rent);
+    });
+
+    const totalPaid = paymentsQuery.rows
+      .filter(p => p.status === 'completed')
+      .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    
+    const balance = totalExpected - totalPaid;
+
+    res.json({
+      success: true,
+      data: {
+        payments: paymentsQuery.rows,
+        summary: {
+          totalExpected,
+          totalPaid,
+          balance,
+          arrears: balance > 0 ? balance : 0,
+        },
+      },
+    });
+
+  } catch (error) {
+    console.error('Error fetching tenant history:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching tenant history' });
+  }
+};
+
 const processPaybillPayment = async (req, res) => {
   const client = await pool.connect();
   try {
@@ -535,7 +578,6 @@ const processPaybillPayment = async (req, res) => {
       phone_number 
     });
 
-    // Validate required fields
     if (!unit_code || !amount || !mpesa_receipt_number || !phone_number) {
       return res.status(400).json({
         success: false,
@@ -543,12 +585,12 @@ const processPaybillPayment = async (req, res) => {
       });
     }
 
-    // Find unit by unit code
-    const unitResult = await pool.query(
+    const unitResult = await client.query(
       `SELECT 
         pu.*,
         p.name as property_name,
         p.property_code,
+        p.id as property_id,
         ta.tenant_id,
         t.first_name as tenant_first_name,
         t.last_name as tenant_last_name,
@@ -587,7 +629,6 @@ const processPaybillPayment = async (req, res) => {
     const paymentDate = transaction_date ? new Date(transaction_date) : new Date();
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
 
-    // Track payment
     const trackingResult = await trackRentPayment(
       unit.tenant_id, 
       unit.id, 
@@ -596,35 +637,32 @@ const processPaybillPayment = async (req, res) => {
       formattedPaymentMonth.slice(0, 7)
     );
 
-    // Record the payment
-   const paymentQuery = `
-    INSERT INTO rent_payments 
-    (tenant_id, unit_id, amount, payment_month, payment_date, status,
-    mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, 
-    payment_method, mpesa_transaction_id)
-    VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11)
-    RETURNING *
-  `;
+    const paymentQuery = `
+      INSERT INTO rent_payments 
+      (tenant_id, unit_id, amount, payment_month, payment_date, status,
+      mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, 
+      payment_method, mpesa_transaction_id)
+      VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11)
+      RETURNING *
+    `;
 
-   const paymentResult = await pool.query(paymentQuery, [
-    unit.tenant_id,
-    unit.id,
-    trackingResult.allocatedAmount,
-    formattedPaymentMonth,
-    paymentDate,
-    mpesa_receipt_number,
-    phone_number,
-    req.user?.id || unit.tenant_id,
-    paymentDate,
-    'paybill',
-    `PB_${mpesa_receipt_number}` // Generate paybill transaction ID
-  ]);
-  
+    const paymentResult = await client.query(paymentQuery, [
+      unit.tenant_id,
+      unit.id,
+      trackingResult.allocatedAmount,
+      formattedPaymentMonth,
+      paymentDate,
+      mpesa_receipt_number,
+      phone_number,
+      req.user?.id || unit.tenant_id,
+      paymentDate,
+      'paybill',
+      `PB_${mpesa_receipt_number}`
+    ]);
+    
     const paymentRecord = paymentResult.rows[0];
 
-       // ✅ NEW: Notification Logic
     try {
-      // Find admin and assigned agent IDs
       const adminUsersQuery = await client.query("SELECT id FROM users WHERE role = 'admin' AND is_active = true");
       const agentAssignmentQuery = await client.query(
         "SELECT agent_id FROM agent_property_assignments WHERE property_id = $1 AND is_active = true",
@@ -658,9 +696,7 @@ const processPaybillPayment = async (req, res) => {
     } catch (notificationError) {
       console.error("Failed to send payment notifications, but payment was processed:", notificationError);
     }
-    // End of New Notification Logic
 
-    // Handle carry forward if applicable
     if (trackingResult.carryForwardAmount > 0) {
       console.log(`🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`);
       const carryForwardPayments = await recordCarryForward(
@@ -669,29 +705,27 @@ const processPaybillPayment = async (req, res) => {
         trackingResult.carryForwardAmount,
         paymentRecord.id,
         paymentDate,
-        mpesa_receipt_number, // Pass receipt number
+        mpesa_receipt_number,
         phone_number,
         req.user?.id || unit.tenant_id
       );
 
-      // Send notifications for carry-forward payments
       for (const carryForwardPayment of carryForwardPayments) {
         await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
       }
     }
 
-    // Send SMS notifications
     await sendPaybillSMSNotifications(paymentRecord, trackingResult, unit);
-
-    // Also send in-app notifications
     await sendPaymentNotifications(paymentRecord, trackingResult, false);
 
     await client.query('COMMIT');
     res.status(201).json({
       success: true,
       message: 'Paybill payment processed successfully',
-      payment: paymentRecord,
-      tracking: trackingResult
+      data: {
+        payment: paymentRecord,
+        tracking: trackingResult
+      }
     });
 
   } catch (error) {
@@ -702,89 +736,21 @@ const processPaybillPayment = async (req, res) => {
       message: 'Failed to process paybill payment',
       error: error.message
     });
-  }finally {
+  } finally {
     client.release();
   }
 };
 
-// ✅ NEW: Get full payment history for a single tenant
-const getTenantPaymentHistory = async (req, res) => {
-  try {
-    const { tenantId } = req.params;
-
-    // Get all payments for the tenant
-    const paymentsQuery = await pool.query(
-      `SELECT rp.*, p.name as property_name, pu.unit_code 
-       FROM rent_payments rp
-       JOIN property_units pu ON rp.unit_id = pu.id
-       JOIN properties p ON pu.property_id = p.id
-       WHERE rp.tenant_id = $1 
-       ORDER BY rp.payment_date DESC`,
-      [tenantId]
-    );
-
-    // Get all allocations to calculate total expected payment
-    const allocationsQuery = await pool.query(
-      `SELECT lease_start_date, lease_end_date, monthly_rent 
-       FROM tenant_allocations 
-       WHERE tenant_id = $1`,
-      [tenantId]
-    );
-    
-    let totalExpected = 0;
-    const now = new Date();
-    
-    allocationsQuery.rows.forEach(alloc => {
-      const start = new Date(alloc.lease_start_date);
-      const end = alloc.lease_end_date ? new Date(alloc.lease_end_date) : now;
-      if (end < start) return; // Skip invalid date ranges
-      
-      let months = (end.getFullYear() - start.getFullYear()) * 12;
-      months -= start.getMonth();
-      months += end.getMonth();
-      const monthCount = months < 0 ? 0 : months + 1;
-      
-      totalExpected += monthCount * parseFloat(alloc.monthly_rent);
-    });
-
-    const totalPaid = paymentsQuery.rows
-      .filter(p => p.status === 'completed')
-      .reduce((sum, p) => sum + parseFloat(p.amount), 0);
-    
-    const balance = totalExpected - totalPaid;
-
-    res.json({
-      success: true,
-      data: {
-        payments: paymentsQuery.rows,
-        summary: {
-          totalExpected,
-          totalPaid,
-          balance,
-          arrears: balance > 0 ? balance : 0,
-        },
-      },
-    });
-
-  } catch (error) {
-    console.error('Error fetching tenant history:', error);
-    res.status(500).json({ success: false, message: 'Server error fetching tenant history' });
-  }
-};
-
-
-// NEW: Get payment status by unit code
 const getPaymentStatusByUnitCode = async (req, res) => {
   try {
     const { unitCode } = req.params;
     const { month } = req.query;
 
     const currentDate = new Date();
-    const targetMonth = month || currentDate.toISOString().slice(0, 7); // YYYY-MM
+    const targetMonth = month || currentDate.toISOString().slice(0, 7);
 
     console.log('🔍 Checking payment status for unit:', unitCode, 'month:', targetMonth);
 
-    // Find unit and tenant
     const unitResult = await pool.query(
       `SELECT 
         pu.*,
@@ -823,7 +789,6 @@ const getPaymentStatusByUnitCode = async (req, res) => {
       });
     }
 
-    // Get payment summary for the month
     const paymentSummaryQuery = `
       SELECT 
         COALESCE(SUM(amount), 0) as total_paid,
@@ -845,7 +810,6 @@ const getPaymentStatusByUnitCode = async (req, res) => {
     const isFullyPaid = balance <= 0;
     const paymentCount = parseInt(summaryResult.rows[0].payment_count);
 
-    // Get payment history for the month
     const paymentHistoryQuery = `
       SELECT * FROM rent_payments 
       WHERE unit_id = $1 
@@ -858,7 +822,6 @@ const getPaymentStatusByUnitCode = async (req, res) => {
       `${targetMonth}-01`
     ]);
 
-    // Get future payment status (advance payments)
     const futurePaymentsQuery = `
       SELECT 
         DATE_TRUNC('month', payment_month) as month,
@@ -910,14 +873,12 @@ const getPaymentStatusByUnitCode = async (req, res) => {
   }
 };
 
-// NEW: Send balance reminders for overdue payments
 const sendBalanceReminders = async (req, res) => {
   try {
     console.log('🔔 Sending balance reminders...');
 
-    // Find units with outstanding balances for current month
     const currentDate = new Date();
-    const currentMonth = currentDate.toISOString().slice(0, 7); // YYYY-MM
+    const currentMonth = currentDate.toISOString().slice(0, 7);
 
     const overdueUnitsQuery = `
       SELECT 
@@ -957,14 +918,12 @@ const sendBalanceReminders = async (req, res) => {
       details: []
     };
 
-    // Send reminders for each overdue unit
     for (const unit of overdueUnits) {
       try {
         const dueDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), unit.rent_due_day);
         const gracePeriodEnd = new Date(dueDate);
         gracePeriodEnd.setDate(gracePeriodEnd.getDate() + unit.grace_period_days);
 
-        // Only send reminder if we're past the due date but within grace period
         if (currentDate > dueDate && currentDate <= gracePeriodEnd) {
           const smsResult = await SMSService.sendBalanceReminder(
             unit.tenant_phone,
@@ -1017,7 +976,361 @@ const sendBalanceReminders = async (req, res) => {
   }
 };
 
-// ENHANCED: M-Pesa callback with partial payment tracking
+const recordManualPayment = async (req, res) => {
+  try {
+    const { 
+      tenant_id, 
+      unit_id, 
+      amount, 
+      payment_month, 
+      mpesa_receipt_number, 
+      phone_number,
+      notes 
+    } = req.body;
+
+    console.log('📝 Recording manual payment:', { tenant_id, unit_id, amount, payment_month });
+
+    if (!tenant_id || !unit_id || !amount || !payment_month) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: tenant_id, unit_id, amount, payment_month'
+      });
+    }
+
+    const paymentDate = new Date();
+    const formattedPaymentMonth = formatPaymentMonth(payment_month);
+
+    const trackingResult = await trackRentPayment(
+      tenant_id, 
+      unit_id, 
+      amount, 
+      paymentDate,
+      formattedPaymentMonth.slice(0, 7)
+    );
+
+    const paymentQuery = `
+      INSERT INTO rent_payments 
+      (tenant_id, unit_id, amount, payment_month, payment_date, status,
+       mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, notes)
+      VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10)
+      RETURNING *
+    `;
+
+    const paymentResult = await pool.query(paymentQuery, [
+      tenant_id,
+      unit_id,
+      trackingResult.allocatedAmount,
+      formattedPaymentMonth,
+      paymentDate,
+      mpesa_receipt_number,
+      phone_number,
+      req.user.id,
+      paymentDate,
+      notes
+    ]);
+
+    const paymentRecord = paymentResult.rows[0];
+
+    if (trackingResult.carryForwardAmount > 0) {
+      console.log(`🔄 Processing carry-forward for manual payment: KSh ${trackingResult.carryForwardAmount}`);
+      const carryForwardPayments = await recordCarryForward(
+        tenant_id,
+        unit_id,
+        trackingResult.carryForwardAmount,
+        paymentRecord.id,
+        paymentDate,
+        mpesa_receipt_number || 'MANUAL',
+        phone_number,
+        req.user.id
+      );
+
+      for (const carryForwardPayment of carryForwardPayments) {
+        await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
+      }
+    }
+
+    await sendPaymentNotifications(paymentRecord, trackingResult, false);
+
+    res.status(201).json({
+      success: true,
+      message: 'Manual payment recorded successfully',
+      data: {
+        payment: paymentRecord,
+        tracking: trackingResult
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR recording manual payment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to record manual payment',
+      error: error.message
+    });
+  }
+};
+
+const getPaymentSummary = async (req, res) => {
+  try {
+    const { tenantId, unitId } = req.params;
+
+    const currentDate = new Date();
+    const currentMonth = currentDate.toISOString().slice(0, 7);
+
+    const allocationQuery = `
+      SELECT ta.*, pu.rent_amount, p.name as property_name, pu.unit_number
+      FROM tenant_allocations ta
+      JOIN property_units pu ON ta.unit_id = pu.id
+      JOIN properties p ON pu.property_id = p.id
+      WHERE ta.tenant_id = $1 AND ta.unit_id = $2 AND ta.is_active = true
+    `;
+    const allocationResult = await pool.query(allocationQuery, [tenantId, unitId]);
+
+    if (allocationResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active allocation found'
+      });
+    }
+
+    const allocation = allocationResult.rows[0];
+    const monthlyRent = parseFloat(allocation.monthly_rent);
+
+    const currentMonthPaymentsQuery = `
+      SELECT COALESCE(SUM(amount), 0) as total_paid, 
+             COUNT(*) as payment_count
+      FROM rent_payments 
+      WHERE tenant_id = $1 AND unit_id = $2 
+      AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
+      AND status = 'completed'
+    `;
+    const currentMonthResult = await pool.query(currentMonthPaymentsQuery, [tenantId, unitId, `${currentMonth}-01`]);
+
+    const totalPaid = parseFloat(currentMonthResult.rows[0].total_paid);
+    const balance = monthlyRent - totalPaid;
+    const isFullyPaid = balance <= 0;
+
+    const advancePaymentsQuery = `
+      SELECT COALESCE(SUM(amount), 0) as advance_amount,
+             COUNT(*) as advance_count
+      FROM rent_payments 
+      WHERE tenant_id = $1 AND unit_id = $2 
+      AND is_advance_payment = true
+      AND status = 'completed'
+      AND DATE_TRUNC('month', payment_month) > DATE_TRUNC('month', $3::date)
+    `;
+    const advanceResult = await pool.query(advancePaymentsQuery, [tenantId, unitId, `${currentMonth}-01`]);
+    const advanceAmount = parseFloat(advanceResult.rows[0].advance_amount);
+    const advanceCount = parseInt(advanceResult.rows[0].advance_count);
+
+    const historyQuery = `
+      SELECT 
+        DATE_TRUNC('month', payment_month) as month,
+        COALESCE(SUM(amount), 0) as total_paid,
+        COUNT(*) as payment_count
+      FROM rent_payments 
+      WHERE tenant_id = $1 AND unit_id = $2 
+      AND payment_month >= NOW() - INTERVAL '12 months'
+      AND status = 'completed'
+      GROUP BY DATE_TRUNC('month', payment_month)
+      ORDER BY month DESC
+    `;
+    const historyResult = await pool.query(historyQuery, [tenantId, unitId]);
+
+    const monthlyStatus = historyResult.rows.map(row => {
+      const month = new Date(row.month).toISOString().slice(0, 7);
+      const totalPaid = parseFloat(row.total_paid);
+      const isComplete = totalPaid >= monthlyRent;
+      
+      return {
+        month,
+        totalPaid,
+        balance: monthlyRent - totalPaid,
+        isComplete,
+        paymentCount: parseInt(row.payment_count)
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          monthlyRent,
+          totalPaid,
+          balance,
+          isFullyPaid,
+          advanceAmount,
+          advanceCount,
+          paymentCount: parseInt(currentMonthResult.rows[0].payment_count),
+          propertyName: allocation.property_name,
+          unitNumber: allocation.unit_number,
+          monthlyStatus
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting payment summary:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get payment summary',
+      error: error.message
+    });
+  }
+};
+
+const getPaymentHistory = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const { unitId, months = 12 } = req.query;
+
+    let paymentsQuery = `
+      SELECT 
+        rp.*,
+        p.name as property_name,
+        pu.unit_number,
+        pu.unit_code,
+        rp.is_advance_payment,
+        rp.original_payment_id
+      FROM rent_payments rp
+      LEFT JOIN property_units pu ON rp.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE rp.tenant_id = $1
+      AND rp.payment_month >= NOW() - INTERVAL '${months} months'
+    `;
+
+    const queryParams = [tenantId];
+    
+    if (unitId) {
+      paymentsQuery += ` AND rp.unit_id = $2`;
+      queryParams.push(unitId);
+    }
+
+    paymentsQuery += ` ORDER BY rp.payment_month DESC, rp.payment_date DESC`;
+
+    const result = await pool.query(paymentsQuery, queryParams);
+
+    const monthlySummary = {};
+    result.rows.forEach(payment => {
+      const month = payment.payment_month.toISOString().slice(0, 7);
+      if (!monthlySummary[month]) {
+        monthlySummary[month] = {
+          month: month,
+          totalPaid: 0,
+          payments: [],
+          isFullyPaid: false,
+          paymentCount: 0
+        };
+      }
+      monthlySummary[month].totalPaid += parseFloat(payment.amount);
+      monthlySummary[month].payments.push(payment);
+      monthlySummary[month].paymentCount++;
+    });
+
+    let allocationQuery = `
+      SELECT monthly_rent FROM tenant_allocations 
+      WHERE tenant_id = $1 AND is_active = true
+    `;
+    const allocationParams = [tenantId];
+    
+    if (unitId) {
+      allocationQuery += ` AND unit_id = $2`;
+      allocationParams.push(unitId);
+    }
+
+    const allocationResult = await pool.query(allocationQuery, allocationParams);
+    
+    const monthlyRent = allocationResult.rows.length > 0 ? parseFloat(allocationResult.rows[0].monthly_rent) : 0;
+
+    Object.keys(monthlySummary).forEach(month => {
+      monthlySummary[month].isFullyPaid = monthlySummary[month].totalPaid >= monthlyRent;
+      monthlySummary[month].balance = monthlyRent - monthlySummary[month].totalPaid;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        payments: result.rows,
+        monthlySummary: Object.values(monthlySummary),
+        monthlyRent,
+        totalMonths: Object.keys(monthlySummary).length
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting payment history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get payment history',
+      error: error.message
+    });
+  }
+};
+
+const getFuturePaymentsStatus = async (req, res) => {
+  try {
+    const { tenantId, unitId } = req.params;
+    const { futureMonths = 6 } = req.query;
+
+    const allocationQuery = `
+      SELECT monthly_rent FROM tenant_allocations 
+      WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
+    `;
+    const allocationResult = await pool.query(allocationQuery, [tenantId, unitId]);
+    
+    if (allocationResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active allocation found'
+      });
+    }
+
+    const monthlyRent = parseFloat(allocationResult.rows[0].monthly_rent);
+    const currentDate = new Date();
+    const futurePayments = [];
+
+    for (let i = 1; i <= parseInt(futureMonths); i++) {
+      const futureMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + i, 1);
+      const monthFormatted = futureMonth.toISOString().slice(0, 7) + '-01';
+
+      const paymentsQuery = `
+        SELECT COALESCE(SUM(amount), 0) as total_paid
+        FROM rent_payments 
+        WHERE tenant_id = $1 AND unit_id = $2 
+        AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
+        AND status = 'completed'
+      `;
+      const paymentsResult = await pool.query(paymentsQuery, [tenantId, unitId, monthFormatted]);
+      const totalPaid = parseFloat(paymentsResult.rows[0].total_paid);
+
+      futurePayments.push({
+        month: futureMonth.toISOString().slice(0, 7),
+        monthlyRent,
+        totalPaid,
+        balance: monthlyRent - totalPaid,
+        isFullyPaid: totalPaid >= monthlyRent,
+        isAdvance: totalPaid > 0
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        futurePayments,
+        monthlyRent
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting future payments status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get future payments status',
+      error: error.message
+    });
+  }
+};
+
 const handleMpesaCallback = async (req, res) => {
   console.log('📞 M-Pesa callback received:', JSON.stringify(req.body, null, 2));
 
@@ -1038,17 +1351,16 @@ const handleMpesaCallback = async (req, res) => {
 
     console.log('🔍 Processing callback for:', checkoutRequestId, 'ResultCode:', resultCode);
 
-    // Find the payment record with tenant and property details
     const paymentResult = await pool.query(
       `SELECT 
         rp.*,
-        u.first_name,
-        u.last_name,
+        t.first_name,
+        t.last_name,
         p.name as property_name,
         pu.unit_number,
         pu.unit_code
        FROM rent_payments rp
-       LEFT JOIN users u ON rp.tenant_id = u.id
+       LEFT JOIN tenants t ON rp.tenant_id = t.id
        LEFT JOIN property_units pu ON rp.unit_id = pu.id
        LEFT JOIN properties p ON pu.property_id = p.id
        WHERE rp.mpesa_transaction_id = $1`,
@@ -1065,7 +1377,6 @@ const handleMpesaCallback = async (req, res) => {
 
     const payment = paymentResult.rows[0];
 
-    // Check if transaction was successful
     if (resultCode === 0) {
       const callbackMetadata = stkCallback.CallbackMetadata?.Item;
       
@@ -1076,7 +1387,6 @@ const handleMpesaCallback = async (req, res) => {
           ['failed', 'No callback metadata received', payment.id]
         );
 
-        // Create failure notification
         try {
           await NotificationService.createNotification({
             userId: payment.tenant_id,
@@ -1087,7 +1397,6 @@ const handleMpesaCallback = async (req, res) => {
             relatedEntityId: payment.id
           });
 
-          // Notify admins about failed transaction
           const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
           for (const admin of adminUsers.rows) {
             await NotificationService.createNotification({
@@ -1109,7 +1418,6 @@ const handleMpesaCallback = async (req, res) => {
         });
       }
 
-      // Extract payment details from callback metadata
       let amount, mpesaReceiptNumber, transactionDate, phoneNumber;
 
       if (Array.isArray(callbackMetadata)) {
@@ -1138,17 +1446,15 @@ const handleMpesaCallback = async (req, res) => {
         transactionDate: transactionDate
       });
 
-      // ENHANCED: Track payment and handle carry-forward
       const paymentDate = new Date();
       const trackingResult = await trackRentPayment(
         payment.tenant_id, 
         payment.unit_id, 
         amount || payment.amount, 
         paymentDate,
-        payment.payment_month.toISOString().slice(0, 7) // Use the original payment month
+        payment.payment_month.toISOString().slice(0, 7)
       );
 
-      // Update payment status to completed
       await pool.query(
         `UPDATE rent_payments 
          SET status = 'completed', 
@@ -1161,15 +1467,14 @@ const handleMpesaCallback = async (req, res) => {
         [
           mpesaReceiptNumber,
           paymentDate,
-          payment.tenant_id, // Using tenant_id as confirmed_by for auto-confirmation
-          trackingResult.allocatedAmount, // Use the allocated amount for target month
+          payment.tenant_id,
+          trackingResult.allocatedAmount,
           payment.id
         ]
       );
 
       console.log('✅ Payment completed in database');
 
-      // ENHANCED: Handle carry-forward if applicable
       if (trackingResult.carryForwardAmount > 0) {
         console.log(`🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`);
         const carryForwardPayments = await recordCarryForward(
@@ -1177,27 +1482,26 @@ const handleMpesaCallback = async (req, res) => {
           payment.unit_id,
           trackingResult.carryForwardAmount,
           payment.id,
-          paymentDate
+          paymentDate,
+          mpesaReceiptNumber,
+          phoneNumber,
+          payment.tenant_id
         );
         
-        // Send carry-forward notifications for each created payment
         for (const carryForwardPayment of carryForwardPayments) {
           await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
         }
       }
 
-      // ENHANCED: Send enhanced payment notifications
       await sendPaymentNotifications(payment, trackingResult, false);
 
     } else {
-      // Transaction failed
       const failureReason = stkCallback.ResultDesc || 'Payment failed';
       await pool.query(
         'UPDATE rent_payments SET status = $1, failure_reason = $2 WHERE id = $3',
         ['failed', failureReason, payment.id]
       );
 
-      // Create failure notification for tenant
       try {
         await NotificationService.createNotification({
           userId: payment.tenant_id,
@@ -1208,7 +1512,6 @@ const handleMpesaCallback = async (req, res) => {
           relatedEntityId: payment.id
         });
 
-        // Notify admins about failed transaction
         const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
         for (const admin of adminUsers.rows) {
           await NotificationService.createNotification({
@@ -1227,7 +1530,6 @@ const handleMpesaCallback = async (req, res) => {
       console.log('❌ Payment failed:', failureReason);
     }
 
-    // Always return success to M-Pesa to avoid repeated callbacks
     res.status(200).json({ 
       ResultCode: 0, 
       ResultDesc: 'Success' 
@@ -1236,7 +1538,6 @@ const handleMpesaCallback = async (req, res) => {
   } catch (error) {
     console.error('❌ ERROR in M-Pesa callback:', error);
     
-    // Notify admins about system error
     try {
       const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
       for (const admin of adminUsers.rows) {
@@ -1252,7 +1553,6 @@ const handleMpesaCallback = async (req, res) => {
       console.error('Failed to create system error notification:', notificationError);
     }
     
-    // Still return success to M-Pesa to avoid repeated callbacks
     res.status(200).json({ 
       ResultCode: 0, 
       ResultDesc: 'Success' 
@@ -1260,357 +1560,328 @@ const handleMpesaCallback = async (req, res) => {
   }
 };
 
-// ENHANCED: Manual payment recording with tracking
-const recordManualPayment = async (req, res) => {
+const initiateSTKPush = async (req, res) => {
+  console.log('🚀 initiateSTKPush called with:', {
+    body: req.body,
+    user: req.user
+  });
+
   try {
+    const dbConnected = await checkDatabase();
+    if (!dbConnected) {
+      return res.status(500).json({
+        success: false,
+        message: 'Database connection failed'
+      });
+    }
+
     const { 
-      tenant_id, 
-      unit_id, 
+      phone, 
       amount, 
-      payment_month, 
-      mpesa_receipt_number, 
-      phone_number,
-      notes 
+      unitId,
+      paymentMonth,
+      account_reference = 'RENTAL_PAYMENT',
+      transaction_desc = 'Monthly Rent Payment'
     } = req.body;
 
-    console.log('📝 Recording manual payment:', { tenant_id, unit_id, amount, payment_month });
+    console.log('📦 Payment data:', { phone, amount, unitId, paymentMonth });
 
-    // Validate required fields
-    if (!tenant_id || !unit_id || !amount || !payment_month) {
+    if (!phone || !amount || !unitId || !paymentMonth) {
+      console.log('❌ Missing required fields');
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: tenant_id, unit_id, amount, payment_month'
+        message: 'Missing required fields: phone, amount, unitId, paymentMonth'
       });
     }
 
-    const paymentDate = new Date();
-    const formattedPaymentMonth = formatPaymentMonth(payment_month);
+    const formattedPaymentMonth = formatPaymentMonth(paymentMonth);
+    console.log('📅 Formatted payment month:', formattedPaymentMonth);
 
-    // Track payment
-    const trackingResult = await trackRentPayment(
-      tenant_id, 
-      unit_id, 
-      amount, 
-      paymentDate,
-      formattedPaymentMonth.slice(0, 7) // Use the specified payment month
-    );
-
-    // Record the main payment
-    const paymentQuery = `
-      INSERT INTO rent_payments 
-      (tenant_id, unit_id, amount, payment_month, payment_date, status,
-       mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, notes)
-      VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10)
-      RETURNING *
-    `;
-
-    const paymentResult = await pool.query(paymentQuery, [
-      tenant_id,
-      unit_id,
-      trackingResult.allocatedAmount,
-      formattedPaymentMonth,
-      paymentDate,
-      mpesa_receipt_number,
-      phone_number,
-      req.user.id, // Admin user recording the payment
-      paymentDate,
-      notes
-    ]);
-
-    const paymentRecord = paymentResult.rows[0];
-
-    // Handle carry forward if applicable
-    if (trackingResult.carryForwardAmount > 0) {
-      console.log(`🔄 Processing carry-forward for manual payment: KSh ${trackingResult.carryForwardAmount}`);
-      const carryForwardPayments = await recordCarryForward(
-        tenant_id,
-        unit_id,
-        trackingResult.carryForwardAmount,
-        paymentRecord.id,
-        paymentDate
-      );
-
-      // Send notifications for carry-forward payments
-      for (const carryForwardPayment of carryForwardPayments) {
-        await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
-      }
-    }
-
-    // Send notifications for main payment
-    await sendPaymentNotifications(paymentRecord, trackingResult, false);
-
-    res.status(201).json({
-      success: true,
-      message: 'Manual payment recorded successfully',
-      payment: paymentRecord,
-      tracking: trackingResult
-    });
-
-  } catch (error) {
-    console.error('❌ ERROR recording manual payment:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to record manual payment',
-      error: error.message
-    });
-  }
-};
-
-// ENHANCED: Get payment tracking summary for tenant
-const getPaymentSummary = async (req, res) => {
-  try {
-    const { tenantId, unitId } = req.params;
-
-    const currentDate = new Date();
-    const currentMonth = currentDate.toISOString().slice(0, 7); // YYYY-MM
-
-    // Get allocation details
-    const allocationQuery = `
-      SELECT ta.*, pu.rent_amount, p.name as property_name, pu.unit_number
-      FROM tenant_allocations ta
-      JOIN property_units pu ON ta.unit_id = pu.id
-      JOIN properties p ON pu.property_id = p.id
-      WHERE ta.tenant_id = $1 AND ta.unit_id = $2 AND ta.is_active = true
-    `;
-    const allocationResult = await pool.query(allocationQuery, [tenantId, unitId]);
-
-    if (allocationResult.rows.length === 0) {
-      return res.status(404).json({
+    const cleanedPhone = phone.replace(/\s+/g, '');
+    const phoneRegex = /^(?:254|\+254|0)?(7[0-9]{8})$/;
+    const match = cleanedPhone.match(phoneRegex);
+    
+    if (!match) {
+      console.log('❌ Invalid phone number format:', cleanedPhone);
+      return res.status(400).json({
         success: false,
-        message: 'No active allocation found'
+        message: 'Invalid phone number format. Use Kenyan format: 07... or 254...'
       });
     }
 
-    const allocation = allocationResult.rows[0];
-    const monthlyRent = parseFloat(allocation.monthly_rent);
+    const formattedPhone = `254${match[1]}`;
+    console.log('📞 Formatted phone:', formattedPhone);
 
-    // Get current month payments
-    const currentMonthPaymentsQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_paid, 
-             COUNT(*) as payment_count
-      FROM rent_payments 
-      WHERE tenant_id = $1 AND unit_id = $2 
-      AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
-      AND status = 'completed'
-    `;
-    const currentMonthResult = await pool.query(currentMonthPaymentsQuery, [tenantId, unitId, `${currentMonth}-01`]);
-
-    const totalPaid = parseFloat(currentMonthResult.rows[0].total_paid);
-    const balance = monthlyRent - totalPaid;
-    const isFullyPaid = balance <= 0;
-
-    // Get advance payments (carry-forward for future months)
-    const advancePaymentsQuery = `
-      SELECT COALESCE(SUM(amount), 0) as advance_amount,
-             COUNT(*) as advance_count
-      FROM rent_payments 
-      WHERE tenant_id = $1 AND unit_id = $2 
-      AND is_advance_payment = true
-      AND status = 'completed'
-      AND DATE_TRUNC('month', payment_month) > DATE_TRUNC('month', $3::date)
-    `;
-    const advanceResult = await pool.query(advancePaymentsQuery, [tenantId, unitId, `${currentMonth}-01`]);
-    const advanceAmount = parseFloat(advanceResult.rows[0].advance_amount);
-    const advanceCount = parseInt(advanceResult.rows[0].advance_count);
-
-    // Get payment history for last 12 months
-    const historyQuery = `
-      SELECT 
-        DATE_TRUNC('month', payment_month) as month,
-        COALESCE(SUM(amount), 0) as total_paid,
-        COUNT(*) as payment_count
-      FROM rent_payments 
-      WHERE tenant_id = $1 AND unit_id = $2 
-      AND payment_month >= NOW() - INTERVAL '12 months'
-      AND status = 'completed'
-      GROUP BY DATE_TRUNC('month', payment_month)
-      ORDER BY month DESC
-    `;
-    const historyResult = await pool.query(historyQuery, [tenantId, unitId]);
-
-    // Calculate monthly status
-    const monthlyStatus = historyResult.rows.map(row => {
-      const month = new Date(row.month).toISOString().slice(0, 7);
-      const totalPaid = parseFloat(row.total_paid);
-      const isComplete = totalPaid >= monthlyRent;
-      
-      return {
-        month,
-        totalPaid,
-        balance: monthlyRent - totalPaid,
-        isComplete,
-        paymentCount: parseInt(row.payment_count)
-      };
-    });
-
-    res.json({
-      success: true,
-      summary: {
-        monthlyRent,
-        totalPaid,
-        balance,
-        isFullyPaid,
-        advanceAmount,
-        advanceCount,
-        paymentCount: currentMonthResult.rows[0].payment_count,
-        propertyName: allocation.property_name,
-        unitNumber: allocation.unit_number,
-        monthlyStatus
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ ERROR getting payment summary:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get payment summary',
-      error: error.message
-    });
-  }
-};
-
-// ENHANCED: Get payment history with detailed tracking info
-const getPaymentHistory = async (req, res) => {
-  try {
-    const { tenantId, unitId } = req.params;
-    const { months = 12 } = req.query;
-
-    const paymentsQuery = `
-      SELECT 
-        rp.*,
+    console.log('🔍 Checking tenant allocation for user:', req.user.id, 'unit:', unitId);
+    const allocationCheck = await pool.query(
+      `SELECT 
+        ta.id, 
+        ta.tenant_id, 
+        ta.unit_id,
+        ta.monthly_rent,
         p.name as property_name,
         pu.unit_number,
-        pu.unit_code,
-        rp.is_advance_payment,
-        rp.original_payment_id
-      FROM rent_payments rp
-      LEFT JOIN property_units pu ON rp.unit_id = pu.id
-      LEFT JOIN properties p ON pu.property_id = p.id
-      WHERE rp.tenant_id = $1 AND rp.unit_id = $2
-      AND rp.payment_month >= NOW() - INTERVAL '${months} months'
-      ORDER BY rp.payment_month DESC, rp.payment_date DESC
-    `;
+        t.first_name,
+        t.last_name
+       FROM tenant_allocations ta
+       LEFT JOIN property_units pu ON ta.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       LEFT JOIN tenants t ON ta.tenant_id = t.id
+       WHERE ta.unit_id = $1 AND ta.tenant_id = $2 AND ta.is_active = true`,
+      [unitId, req.user.id]
+    );
 
-    const result = await pool.query(paymentsQuery, [tenantId, unitId]);
+    if (allocationCheck.rows.length === 0) {
+      console.log('❌ No active allocation found for this unit and tenant');
+      return res.status(400).json({
+        success: false,
+        message: 'You are not allocated to this unit or allocation is not active'
+      });
+    }
 
-    // Group payments by month and calculate totals
-    const monthlySummary = {};
-    result.rows.forEach(payment => {
-      const month = payment.payment_month.toISOString().slice(0, 7); // YYYY-MM
-      if (!monthlySummary[month]) {
-        monthlySummary[month] = {
-          month: month,
-          totalPaid: 0,
-          payments: [],
-          isFullyPaid: false,
-          paymentCount: 0
-        };
-      }
-      monthlySummary[month].totalPaid += parseFloat(payment.amount);
-      monthlySummary[month].payments.push(payment);
-      monthlySummary[month].paymentCount++;
-    });
+    const allocation = allocationCheck.rows[0];
+    console.log('✅ Allocation found:', allocation);
 
-    // Get monthly rent for comparison
-    const allocationQuery = `
-      SELECT monthly_rent FROM tenant_allocations 
-      WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
-    `;
-    const allocationResult = await pool.query(allocationQuery, [tenantId, unitId]);
+    const paymentAmount = parseFloat(amount);
     
-    const monthlyRent = allocationResult.rows.length > 0 ? parseFloat(allocationResult.rows[0].monthly_rent) : 0;
+    console.log('🔍 Checking for existing payment...');
+    const existingPayment = await pool.query(
+      `SELECT id, status FROM rent_payments 
+       WHERE tenant_id = $1 AND unit_id = $2 AND payment_month = $3 AND status = 'pending'`,
+      [req.user.id, unitId, formattedPaymentMonth]
+    );
 
-    // Mark months as fully paid and calculate balances
-    Object.keys(monthlySummary).forEach(month => {
-      monthlySummary[month].isFullyPaid = monthlySummary[month].totalPaid >= monthlyRent;
-      monthlySummary[month].balance = monthlyRent - monthlySummary[month].totalPaid;
+    if (existingPayment.rows.length > 0) {
+      const payment = existingPayment.rows[0];
+      console.log('⚠️ Existing pending payment found:', payment);
+      
+      return res.status(400).json({
+        success: false,
+        message: 'A pending payment for this month already exists. Please wait for it to complete.'
+      });
+    }
+
+    console.log('🔧 Initiating real M-Pesa STK Push...');
+
+    const shortCode = process.env.MPESA_SHORT_CODE;
+    const passKey = process.env.MPESA_PASSKEY;
+    const callbackUrl = process.env.MPESA_CALLBACK_URL || `${process.env.BACKEND_URL || 'http://localhost:3001'}/api/payments/mpesa-callback`;
+
+    console.log('🔗 Callback URL:', callbackUrl);
+
+    if (!shortCode || !passKey) {
+      throw new Error('M-Pesa configuration missing: MPESA_SHORT_CODE or MPESA_PASSKEY not set');
+    }
+
+    if (!callbackUrl || callbackUrl.includes('undefined')) {
+      throw new Error('M-Pesa callback URL is not properly configured. Check BACKEND_URL environment variable.');
+    }
+
+    const access_token = await getAccessToken();
+    console.log('✅ M-Pesa access token obtained');
+
+    const timestamp = generateTimestamp();
+    const password = generatePassword(shortCode, passKey, timestamp);
+
+    const stkPushPayload = {
+      BusinessShortCode: shortCode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: 'CustomerPayBillOnline',
+      Amount: Math.round(paymentAmount),
+      PartyA: formattedPhone,
+      PartyB: shortCode,
+      PhoneNumber: formattedPhone,
+      CallBackURL: callbackUrl,
+      AccountReference: account_reference,
+      TransactionDesc: transaction_desc,
+    };
+
+    console.log('🎯 FINAL STK PUSH DETAILS:', {
+      phone: formattedPhone,
+      amount: paymentAmount,
+      shortCode: shortCode,
+      callbackUrl: callbackUrl,
+      timestamp: timestamp,
+      environment: process.env.MPESA_ENVIRONMENT
     });
+
+    console.log('📤 Initiating STK Push to M-Pesa...');
+    
+    const stkResponse = await axios.post(
+      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      stkPushPayload,
+      {
+        headers: {
+          'Authorization': `Bearer ${access_token}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    console.log('✅ STK Push initiated:', stkResponse.data);
+
+    if (stkResponse.data.ResponseCode !== '0') {
+      throw new Error(`M-Pesa API error: ${stkResponse.data.ResponseDescription}`);
+    }
+
+    const paymentResult = await pool.query(
+      `INSERT INTO rent_payments (
+        tenant_id, unit_id, phone_number, amount, 
+        payment_month, status, mpesa_transaction_id,
+        merchant_request_id, payment_method, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      RETURNING *`,
+      [
+        req.user.id,
+        unitId,
+        formattedPhone,
+        paymentAmount,
+        formattedPaymentMonth,
+        'pending',
+        stkResponse.data.CheckoutRequestID,
+        stkResponse.data.MerchantRequestID,
+        'mpesa'
+      ]
+    );
+
+    const paymentRecord = paymentResult.rows[0];
+    console.log('✅ Pending payment record created:', paymentRecord.id);
+
+    try {
+      await NotificationService.createNotification({
+        userId: req.user.id,
+        title: 'Payment Initiated',
+        message: `Your rent payment of KSh ${paymentAmount} for ${paymentMonth} has been initiated. Please check your phone to enter your M-Pesa PIN.`,
+        type: 'payment_pending',
+        relatedEntityType: 'rent_payment',
+        relatedEntityId: paymentRecord.id
+      });
+      console.log('✅ Pending payment notification created');
+    } catch (notificationError) {
+      console.error('❌ Failed to create pending payment notification:', notificationError);
+    }
 
     res.json({
       success: true,
-      payments: result.rows,
-      monthlySummary: Object.values(monthlySummary),
-      monthlyRent,
-      totalMonths: Object.keys(monthlySummary).length
+      message: 'M-Pesa payment initiated successfully. Please check your phone to enter your M-Pesa PIN.',
+      checkoutRequestID: stkResponse.data.CheckoutRequestID,
+      merchantRequestID: stkResponse.data.MerchantRequestID,
+      responseCode: stkResponse.data.ResponseCode,
+      responseDescription: stkResponse.data.ResponseDescription,
+      customerMessage: stkResponse.data.CustomerMessage,
+      payment: paymentRecord
     });
 
   } catch (error) {
-    console.error('❌ ERROR getting payment history:', error);
+    console.error('❌ ERROR in initiateSTKPush:', error);
+    
+    try {
+      await NotificationService.createNotification({
+        userId: req.user.id,
+        title: 'Payment Failed',
+        message: `Failed to initiate rent payment: ${error.message}`,
+        type: 'payment_failed'
+      });
+
+      const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+      for (const admin of adminUsers.rows) {
+        await NotificationService.createNotification({
+          userId: admin.id,
+          title: 'Payment Initiation Failed',
+          message: `Payment initiation failed for tenant. Error: ${error.message}`,
+          type: 'payment_failed'
+        });
+      }
+    } catch (notificationError) {
+      console.error('Failed to create error notification:', notificationError);
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Failed to get payment history',
-      error: error.message
+      message: 'Error initiating M-Pesa payment',
+      error: error.message,
+      details: error.response?.data || error.message,
     });
   }
 };
 
-// NEW: Get future payment status
-const getFuturePaymentsStatus = async (req, res) => {
+const checkPaymentStatus = async (req, res) => {
   try {
-    const { tenantId, unitId } = req.params;
-    const { futureMonths = 6 } = req.query;
+    const { checkoutRequestId } = req.params;
 
-    // Get allocation details
-    const allocationQuery = `
-      SELECT monthly_rent FROM tenant_allocations 
-      WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
-    `;
-    const allocationResult = await pool.query(allocationQuery, [tenantId, unitId]);
-    
-    if (allocationResult.rows.length === 0) {
+    console.log('🔍 Checking payment status for:', checkoutRequestId);
+
+    const result = await pool.query(
+      `SELECT 
+        rp.*,
+        t.first_name as tenant_first_name,
+        t.last_name as tenant_last_name,
+        p.name as property_name,
+        pu.unit_number
+       FROM rent_payments rp
+       LEFT JOIN tenants t ON rp.tenant_id = t.id
+       LEFT JOIN property_units pu ON rp.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       WHERE rp.mpesa_transaction_id = $1`,
+      [checkoutRequestId]
+    );
+
+    if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No active allocation found'
-      });
-    }
-
-    const monthlyRent = parseFloat(allocationResult.rows[0].monthly_rent);
-    const currentDate = new Date();
-    const futurePayments = [];
-
-    // Check status for future months
-    for (let i = 1; i <= parseInt(futureMonths); i++) {
-      const futureMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + i, 1);
-      const monthFormatted = futureMonth.toISOString().slice(0, 7) + '-01';
-
-      // Get payments for this future month
-      const paymentsQuery = `
-        SELECT COALESCE(SUM(amount), 0) as total_paid
-        FROM rent_payments 
-        WHERE tenant_id = $1 AND unit_id = $2 
-        AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
-        AND status = 'completed'
-      `;
-      const paymentsResult = await pool.query(paymentsQuery, [tenantId, unitId, monthFormatted]);
-      const totalPaid = parseFloat(paymentsResult.rows[0].total_paid);
-
-      futurePayments.push({
-        month: futureMonth.toISOString().slice(0, 7),
-        monthlyRent,
-        totalPaid,
-        balance: monthlyRent - totalPaid,
-        isFullyPaid: totalPaid >= monthlyRent,
-        isAdvance: totalPaid > 0
+        message: 'Payment not found'
       });
     }
 
     res.json({
       success: true,
-      futurePayments,
-      monthlyRent
+      data: {
+        payment: result.rows[0]
+      }
     });
 
   } catch (error) {
-    console.error('❌ ERROR getting future payments status:', error);
+    console.error('❌ ERROR checking payment status:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get future payments status',
+      message: 'Failed to check payment status',
       error: error.message
     });
   }
 };
 
-// NEW: Process salary payment function
+const getTenantAllocations = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+
+    const result = await pool.query(
+      `SELECT ta.*, pu.unit_code, p.name as property_name 
+       FROM tenant_allocations ta
+       JOIN property_units pu ON ta.unit_id = pu.id
+       JOIN properties p ON pu.property_id = p.id
+       WHERE ta.tenant_id = $1`,
+      [tenantId]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        allocations: result.rows
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting tenant allocations:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get tenant allocations',
+      error: error.message
+    });
+  }
+};
+
 const processSalaryPayment = async (req, res) => {
   try {
     const { 
@@ -1623,7 +1894,6 @@ const processSalaryPayment = async (req, res) => {
 
     console.log('💰 Processing salary payment:', { agent_id, amount, payment_month });
 
-    // Validate required fields
     if (!agent_id || !amount || !payment_month || !phone_number) {
       return res.status(400).json({
         success: false,
@@ -1631,7 +1901,6 @@ const processSalaryPayment = async (req, res) => {
       });
     }
 
-    // Check if agent exists and is actually an agent
     const agentCheck = await pool.query(
       'SELECT id, first_name, last_name FROM users WHERE id = $1 AND role = $2',
       [agent_id, 'agent']
@@ -1648,7 +1917,6 @@ const processSalaryPayment = async (req, res) => {
     const paymentDate = new Date();
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
 
-    // Check for duplicate salary payment for the same month
     const existingPayment = await pool.query(
       `SELECT id FROM salary_payments 
        WHERE agent_id = $1 AND payment_month = $2`,
@@ -1662,7 +1930,6 @@ const processSalaryPayment = async (req, res) => {
       });
     }
 
-    // Create salary payment record
     const salaryPaymentQuery = `
       INSERT INTO salary_payments 
       (agent_id, amount, payment_month, phone_number, paid_by, payment_date, status)
@@ -1675,13 +1942,12 @@ const processSalaryPayment = async (req, res) => {
       amount,
       formattedPaymentMonth,
       phone_number,
-      req.user.id, // Admin user processing the payment
+      req.user.id,
       paymentDate
     ]);
 
     const salaryPayment = salaryResult.rows[0];
 
-    // Create notification for the agent
     await NotificationService.createNotification({
       userId: agent_id,
       title: 'Salary Paid',
@@ -1691,7 +1957,6 @@ const processSalaryPayment = async (req, res) => {
       relatedEntityId: salaryPayment.id
     });
 
-    // Notify admins about the salary payment
     const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
     for (const admin of adminUsers.rows) {
       await NotificationService.createNotification({
@@ -1709,7 +1974,9 @@ const processSalaryPayment = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Salary payment processed successfully',
-      payment: salaryPayment
+      data: {
+        payment: salaryPayment
+      }
     });
 
   } catch (error) {
@@ -1722,7 +1989,6 @@ const processSalaryPayment = async (req, res) => {
   }
 };
 
-// NEW: Get salary payments
 const getSalaryPayments = async (req, res) => {
   try {
     const { page = 1, limit = 10, agent_id } = req.query;
@@ -1784,7 +2050,6 @@ const getSalaryPayments = async (req, res) => {
   }
 };
 
-// NEW: Get agent salary payments
 const getAgentSalaryPayments = async (req, res) => {
   try {
     const { agentId } = req.params;
@@ -1803,7 +2068,9 @@ const getAgentSalaryPayments = async (req, res) => {
 
     res.json({
       success: true,
-      payments: result.rows
+      data: {
+        payments: result.rows
+      }
     });
 
   } catch (error) {
@@ -1816,320 +2083,6 @@ const getAgentSalaryPayments = async (req, res) => {
   }
 };
 
-// ENHANCED: M-Pesa STK Push with real integration
-const initiateSTKPush = async (req, res) => {
-  console.log('🚀 initiateSTKPush called with:', {
-    body: req.body,
-    user: req.user
-  });
-
-  try {
-    // Check database connection first
-    const dbConnected = await checkDatabase();
-    if (!dbConnected) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database connection failed'
-      });
-    }
-
-    const { 
-      phone, 
-      amount, 
-      unitId,
-      paymentMonth,
-      account_reference = 'RENTAL_PAYMENT',
-      transaction_desc = 'Monthly Rent Payment'
-    } = req.body;
-
-    console.log('📦 Payment data:', { phone, amount, unitId, paymentMonth });
-
-    // Validate required fields
-    if (!phone || !amount || !unitId || !paymentMonth) {
-      console.log('❌ Missing required fields');
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields: phone, amount, unitId, paymentMonth'
-      });
-    }
-
-    // Format payment month to proper date format
-    const formattedPaymentMonth = formatPaymentMonth(paymentMonth);
-    console.log('📅 Formatted payment month:', formattedPaymentMonth);
-
-    // Validate phone number format (Kenyan format)
-    const cleanedPhone = phone.replace(/\s+/g, '');
-    const phoneRegex = /^(?:254|\+254|0)?(7[0-9]{8})$/;
-    const match = cleanedPhone.match(phoneRegex);
-    
-    if (!match) {
-      console.log('❌ Invalid phone number format:', cleanedPhone);
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid phone number format. Use Kenyan format: 07... or 254...'
-      });
-    }
-
-    const formattedPhone = `254${match[1]}`;
-    console.log('📞 Formatted phone:', formattedPhone);
-
-    // Check tenant allocation
-    console.log('🔍 Checking tenant allocation for user:', req.user.id, 'unit:', unitId);
-    const allocationCheck = await pool.query(
-      `SELECT 
-        ta.id, 
-        ta.tenant_id, 
-        ta.unit_id,
-        ta.monthly_rent,
-        p.name as property_name,
-        pu.unit_number,
-        u.first_name,
-        u.last_name
-       FROM tenant_allocations ta
-       LEFT JOIN property_units pu ON ta.unit_id = pu.id
-       LEFT JOIN properties p ON pu.property_id = p.id
-       LEFT JOIN users u ON ta.tenant_id = u.id
-       WHERE ta.unit_id = $1 AND ta.tenant_id = $2 AND ta.is_active = true`,
-      [unitId, req.user.id]
-    );
-
-    if (allocationCheck.rows.length === 0) {
-      console.log('❌ No active allocation found for this unit and tenant');
-      return res.status(400).json({
-        success: false,
-        message: 'You are not allocated to this unit or allocation is not active'
-      });
-    }
-
-    const allocation = allocationCheck.rows[0];
-    console.log('✅ Allocation found:', allocation);
-
-    // ENHANCED: Allow any amount with partial payment tracking
-    const unitMonthlyRent = parseFloat(allocation.monthly_rent);
-    const paymentAmount = parseFloat(amount);
-    
-    // Check for existing pending payment for this month
-    console.log('🔍 Checking for existing payment...');
-    const existingPayment = await pool.query(
-      `SELECT id, status FROM rent_payments 
-       WHERE tenant_id = $1 AND unit_id = $2 AND payment_month = $3 AND status = 'pending'`,
-      [req.user.id, unitId, formattedPaymentMonth]
-    );
-
-    if (existingPayment.rows.length > 0) {
-      const payment = existingPayment.rows[0];
-      console.log('⚠️ Existing pending payment found:', payment);
-      
-      return res.status(400).json({
-        success: false,
-        message: 'A pending payment for this month already exists. Please wait for it to complete.'
-      });
-    }
-
-    // REAL M-Pesa Integration
-    console.log('🔧 Initiating real M-Pesa STK Push...');
-
-    // Get M-Pesa credentials from environment
-    const shortCode = process.env.MPESA_SHORT_CODE;
-    const passKey = process.env.MPESA_PASSKEY;
-    
-    // Use environment variable for callback URL with fallback
-    const callbackUrl = process.env.MPESA_CALLBACK_URL || `${process.env.BACKEND_URL || 'http://localhost:3001'}/api/payments/mpesa-callback`;
-
-    console.log('🔗 Callback URL:', callbackUrl);
-
-    if (!shortCode || !passKey) {
-      throw new Error('M-Pesa configuration missing: MPESA_SHORT_CODE or MPESA_PASSKEY not set');
-    }
-
-    // Validate callback URL is set
-    if (!callbackUrl || callbackUrl.includes('undefined')) {
-      throw new Error('M-Pesa callback URL is not properly configured. Check BACKEND_URL environment variable.');
-    }
-
-    // Get access token
-    const access_token = await getAccessToken();
-    console.log('✅ M-Pesa access token obtained');
-
-    // Generate timestamp and password
-    const timestamp = generateTimestamp();
-    const password = generatePassword(shortCode, passKey, timestamp);
-
-    // Prepare STK Push request payload
-    const stkPushPayload = {
-      BusinessShortCode: shortCode,
-      Password: password,
-      Timestamp: timestamp,
-      TransactionType: 'CustomerPayBillOnline',
-      Amount: Math.round(paymentAmount), // M-Pesa requires whole numbers
-      PartyA: formattedPhone,
-      PartyB: shortCode,
-      PhoneNumber: formattedPhone,
-      CallBackURL: callbackUrl,
-      AccountReference: account_reference,
-      TransactionDesc: transaction_desc,
-    };
-
-    console.log('🎯 FINAL STK PUSH DETAILS:', {
-      phone: formattedPhone,
-      amount: paymentAmount,
-      shortCode: shortCode,
-      callbackUrl: callbackUrl,
-      timestamp: timestamp,
-      environment: process.env.MPESA_ENVIRONMENT
-    });
-
-    console.log('📤 Initiating STK Push to M-Pesa...');
-    
-    // Initiate STK Push
-    const stkResponse = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
-      stkPushPayload,
-      {
-        headers: {
-          'Authorization': `Bearer ${access_token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
-
-    console.log('✅ STK Push initiated:', stkResponse.data);
-
-    if (stkResponse.data.ResponseCode !== '0') {
-      throw new Error(`M-Pesa API error: ${stkResponse.data.ResponseDescription}`);
-    }
-
-    // Create pending payment record
-    const paymentResult = await pool.query(
-      `INSERT INTO rent_payments (
-        tenant_id, unit_id, phone_number, amount, 
-        payment_month, status, mpesa_transaction_id,
-        merchant_request_id, payment_method, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-      RETURNING *`,
-      [
-        req.user.id,
-        unitId,
-        formattedPhone,
-        paymentAmount,
-        formattedPaymentMonth, // Use formatted date
-        'pending',
-        stkResponse.data.CheckoutRequestID,
-        stkResponse.data.MerchantRequestID,
-        'mpesa'
-      ]
-    );
-
-    const paymentRecord = paymentResult.rows[0];
-    console.log('✅ Pending payment record created:', paymentRecord.id);
-
-    // Create pending payment notification for tenant
-    try {
-      await NotificationService.createNotification({
-        userId: req.user.id,
-        title: 'Payment Initiated',
-        message: `Your rent payment of KSh ${paymentAmount} for ${paymentMonth} has been initiated. Please check your phone to enter your M-Pesa PIN.`,
-        type: 'payment_pending',
-        relatedEntityType: 'rent_payment',
-        relatedEntityId: paymentRecord.id
-      });
-      console.log('✅ Pending payment notification created');
-    } catch (notificationError) {
-      console.error('❌ Failed to create pending payment notification:', notificationError);
-    }
-
-    res.json({
-      success: true,
-      message: 'M-Pesa payment initiated successfully. Please check your phone to enter your M-Pesa PIN.',
-      checkoutRequestID: stkResponse.data.CheckoutRequestID,
-      merchantRequestID: stkResponse.data.MerchantRequestID,
-      responseCode: stkResponse.data.ResponseCode,
-      responseDescription: stkResponse.data.ResponseDescription,
-      customerMessage: stkResponse.data.CustomerMessage,
-      payment: paymentRecord
-    });
-
-  } catch (error) {
-    console.error('❌ ERROR in initiateSTKPush:', error);
-    
-    // Create error notification for tenant and admin
-    try {
-      await NotificationService.createNotification({
-        userId: req.user.id,
-        title: 'Payment Failed',
-        message: `Failed to initiate rent payment: ${error.message}`,
-        type: 'payment_failed'
-      });
-
-      // Notify admins
-      const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
-      for (const admin of adminUsers.rows) {
-        await NotificationService.createNotification({
-          userId: admin.id,
-          title: 'Payment Initiation Failed',
-          message: `Payment initiation failed for tenant. Error: ${error.message}`,
-          type: 'payment_failed'
-        });
-      }
-    } catch (notificationError) {
-      console.error('Failed to create error notification:', notificationError);
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Error initiating M-Pesa payment',
-      error: error.message,
-      details: error.response?.data || error.message,
-    });
-  }
-};
-
-// Check payment status
-const checkPaymentStatus = async (req, res) => {
-  try {
-    const { checkoutRequestId } = req.params;
-
-    console.log('🔍 Checking payment status for:', checkoutRequestId);
-
-    const result = await pool.query(
-      `SELECT 
-        rp.*,
-        u.first_name as tenant_first_name,
-        u.last_name as tenant_last_name,
-        p.name as property_name,
-        pu.unit_number
-       FROM rent_payments rp
-       LEFT JOIN users u ON rp.tenant_id = u.id
-       LEFT JOIN property_units pu ON rp.unit_id = pu.id
-       LEFT JOIN properties p ON pu.property_id = p.id
-       WHERE rp.mpesa_transaction_id = $1`,
-      [checkoutRequestId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Payment not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      payment: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('❌ ERROR checking payment status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to check payment status',
-      error: error.message
-    });
-  }
-};
-
-// NEW: Get overdue reminders
 const getOverdueReminders = async (req, res) => {
   try {
     const { days_overdue = 5 } = req.query;
@@ -2137,15 +2090,15 @@ const getOverdueReminders = async (req, res) => {
     const reminders = await pool.query(
       `SELECT 
         ta.tenant_id,
-        u.first_name,
-        u.last_name,
-        u.phone_number,
+        t.first_name,
+        t.last_name,
+        t.phone_number,
         pu.unit_code,
         p.name as property_name,
         ta.monthly_rent,
         EXTRACT(DAY FROM (CURRENT_DATE - (DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' - INTERVAL '1 day'))) as days_overdue
        FROM tenant_allocations ta
-       LEFT JOIN users u ON ta.tenant_id = u.id
+       LEFT JOIN tenants t ON ta.tenant_id = t.id
        LEFT JOIN property_units pu ON ta.unit_id = pu.id
        LEFT JOIN properties p ON pu.property_id = p.id
        WHERE ta.is_active = true
@@ -2162,8 +2115,10 @@ const getOverdueReminders = async (req, res) => {
 
     res.json({
       success: true,
-      data: reminders.rows,
-      total: reminders.rows.length
+      data: {
+        reminders: reminders.rows,
+        total: reminders.rows.length
+      }
     });
 
   } catch (error) {
@@ -2176,19 +2131,19 @@ const getOverdueReminders = async (req, res) => {
   }
 };
 
-// NEW: Send overdue reminders
 const sendOverdueReminders = async (req, res) => {
   try {
     const { tenant_ids, custom_message } = req.body;
 
     console.log('📤 Sending overdue reminders to:', tenant_ids);
 
-    // This would integrate with your SMS/notification system
     res.json({
       success: true,
       message: 'Overdue reminders sent successfully',
-      recipients: tenant_ids || ['all_overdue'],
-      custom_message: custom_message
+      data: {
+        recipients: tenant_ids || ['all_overdue'],
+        custom_message: custom_message
+      }
     });
 
   } catch (error) {
@@ -2201,7 +2156,6 @@ const sendOverdueReminders = async (req, res) => {
   }
 };
 
-// NEW: Get upcoming reminders
 const getUpcomingReminders = async (req, res) => {
   try {
     const { days_ahead = 3 } = req.query;
@@ -2209,15 +2163,15 @@ const getUpcomingReminders = async (req, res) => {
     const reminders = await pool.query(
       `SELECT 
         ta.tenant_id,
-        u.first_name,
-        u.last_name,
-        u.phone_number,
+        t.first_name,
+        t.last_name,
+        t.phone_number,
         pu.unit_code,
         p.name as property_name,
         ta.monthly_rent,
         (DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month')::date as due_date
        FROM tenant_allocations ta
-       LEFT JOIN users u ON ta.tenant_id = u.id
+       LEFT JOIN tenants t ON ta.tenant_id = t.id
        LEFT JOIN property_units pu ON ta.unit_id = pu.id
        LEFT JOIN properties p ON pu.property_id = p.id
        WHERE ta.is_active = true
@@ -2234,8 +2188,10 @@ const getUpcomingReminders = async (req, res) => {
 
     res.json({
       success: true,
-      data: reminders.rows,
-      total: reminders.rows.length
+      data: {
+        reminders: reminders.rows,
+        total: reminders.rows.length
+      }
     });
 
   } catch (error) {
@@ -2248,19 +2204,19 @@ const getUpcomingReminders = async (req, res) => {
   }
 };
 
-// NEW: Send upcoming reminders
 const sendUpcomingReminders = async (req, res) => {
   try {
     const { tenant_ids, custom_message } = req.body;
 
     console.log('📤 Sending upcoming reminders to:', tenant_ids);
 
-    // This would integrate with your SMS/notification system
     res.json({
       success: true,
       message: 'Upcoming reminders sent successfully',
-      recipients: tenant_ids || ['all_upcoming'],
-      custom_message: custom_message
+      data: {
+        recipients: tenant_ids || ['all_upcoming'],
+        custom_message: custom_message
+      }
     });
 
   } catch (error) {
@@ -2273,7 +2229,6 @@ const sendUpcomingReminders = async (req, res) => {
   }
 };
 
-// NEW: Test SMS service
 const testSMSService = async (req, res) => {
   try {
     const { phone, message } = req.body;
@@ -2291,7 +2246,9 @@ const testSMSService = async (req, res) => {
     res.json({
       success: true,
       message: 'SMS test completed',
-      result
+      data: {
+        result
+      }
     });
 
   } catch (error) {
@@ -2304,7 +2261,6 @@ const testSMSService = async (req, res) => {
   }
 };
 
-// NEW: Test M-Pesa configuration
 const testMpesaConfig = async (req, res) => {
   try {
     console.log('🔧 Testing M-Pesa configuration...');
@@ -2321,7 +2277,6 @@ const testMpesaConfig = async (req, res) => {
 
     console.log('📋 M-Pesa Configuration:', mpesaConfig);
 
-    // Test access token generation
     try {
       const access_token = await getAccessToken();
       mpesaConfig.accessToken = access_token ? '✅ Obtained' : '❌ Failed';
@@ -2334,8 +2289,10 @@ const testMpesaConfig = async (req, res) => {
     res.json({
       success: true,
       message: 'M-Pesa configuration test',
-      config: mpesaConfig,
-      instructions: 'If any items show as ❌ Missing, check your .env file'
+      data: {
+        config: mpesaConfig,
+        instructions: 'If any items show as ❌ Missing, check your .env file'
+      }
     });
 
   } catch (error) {
@@ -2343,6 +2300,89 @@ const testMpesaConfig = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'M-Pesa configuration test failed',
+      error: error.message
+    });
+  }
+};
+
+const getPaymentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT 
+        rp.*,
+        t.first_name as tenant_first_name,
+        t.last_name as tenant_last_name,
+        p.name as property_name,
+        pu.unit_number
+       FROM rent_payments rp
+       LEFT JOIN tenants t ON rp.tenant_id = t.id
+       LEFT JOIN property_units pu ON rp.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       WHERE rp.id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        payment: result.rows[0]
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting payment by ID:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get payment',
+      error: error.message
+    });
+  }
+};
+
+const getPaymentsByTenant = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+
+    console.log('🔍 Getting payments for tenant:', tenantId);
+
+    const result = await pool.query(
+      `SELECT 
+        rp.*,
+        p.name as property_name,
+        pu.unit_number,
+        pu.unit_code
+       FROM rent_payments rp
+       LEFT JOIN property_units pu ON rp.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       WHERE rp.tenant_id = $1
+       ORDER BY rp.payment_month DESC, rp.payment_date DESC`,
+      [tenantId]
+    );
+
+    console.log(`✅ Found ${result.rows.length} payments for tenant ${tenantId}`);
+
+    res.json({
+      success: true,
+      data: {
+        payments: result.rows,
+        count: result.rows.length
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR getting payments by tenant:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get tenant payments',
       error: error.message
     });
   }
@@ -2362,10 +2402,17 @@ module.exports = {
   sendBalanceReminders,
   
   // Payment management functions
+  getAllPayments,
+  getTenantPaymentHistory,
+  getPaymentById,
+  getPaymentsByTenant,
   recordManualPayment,
   getPaymentSummary,
   getPaymentHistory,
   getFuturePaymentsStatus,
+  
+  // Tenant allocations
+  getTenantAllocations,
   
   // Salary payment functions
   processSalaryPayment,
@@ -2382,154 +2429,9 @@ module.exports = {
   getUpcomingReminders,
   sendUpcomingReminders,
   
-  // Existing utility functions
+  // Utility functions (exported for use by other modules)
   formatPaymentMonth,
   trackRentPayment,
   recordCarryForward,
-  sendPaymentNotifications,
-
-  getAllPayments, // Export the new function
-  getTenantPaymentHistory, // Export the new function
-  
-  // Existing route handlers for backward compatibility
-  getPaymentById: async (req, res) => {
-    try {
-      const { id } = req.params;
-
-      const result = await pool.query(
-        `SELECT 
-          rp.*,
-          u.first_name as tenant_first_name,
-          u.last_name as tenant_last_name,
-          p.name as property_name,
-          pu.unit_number
-         FROM rent_payments rp
-         LEFT JOIN users u ON rp.tenant_id = u.id
-         LEFT JOIN property_units pu ON rp.unit_id = pu.id
-         LEFT JOIN properties p ON pu.property_id = p.id
-         WHERE rp.id = $1`,
-        [id]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Payment not found'
-        });
-      }
-
-      res.json({
-        success: true,
-        payment: result.rows[0]
-      });
-
-    } catch (error) {
-      console.error('❌ ERROR getting payment by ID:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get payment',
-        error: error.message
-      });
-    }
-  },
-  
-  getPaymentsByTenant: async (req, res) => {
-    try {
-      const { tenantId } = req.params;
-
-      console.log('🔍 Getting payments for tenant:', tenantId);
-
-      const result = await pool.query(
-        `SELECT 
-          rp.*,
-          p.name as property_name,
-          pu.unit_number,
-          pu.unit_code
-         FROM rent_payments rp
-         LEFT JOIN property_units pu ON rp.unit_id = pu.id
-         LEFT JOIN properties p ON pu.property_id = p.id
-         WHERE rp.tenant_id = $1
-         ORDER BY rp.payment_month DESC, rp.payment_date DESC`,
-        [tenantId]
-      );
-
-      console.log(`✅ Found ${result.rows.length} payments for tenant ${tenantId}`);
-
-      res.json({
-        success: true,
-        count: result.rows.length,
-        payments: result.rows
-      });
-
-    } catch (error) {
-      console.error('❌ ERROR getting payments by tenant:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get tenant payments',
-        error: error.message
-      });
-    }
-  },
-  
-  getAllPayments: async (req, res) => {
-    try {
-      const { page = 1, limit = 10, status } = req.query;
-      const offset = (page - 1) * limit;
-
-      let query = `
-        SELECT 
-          rp.*,
-          u.first_name as tenant_first_name,
-          u.last_name as tenant_last_name,
-          p.name as property_name,
-          pu.unit_number
-        FROM rent_payments rp
-        LEFT JOIN users u ON rp.tenant_id = u.id
-        LEFT JOIN property_units pu ON rp.unit_id = pu.id
-        LEFT JOIN properties p ON pu.property_id = p.id
-      `;
-
-      let countQuery = `SELECT COUNT(*) FROM rent_payments rp`;
-      const queryParams = [];
-      const countParams = [];
-
-      if (status) {
-        query += ` WHERE rp.status = $1`;
-        countQuery += ` WHERE rp.status = $1`;
-        queryParams.push(status);
-        countParams.push(status);
-      }
-
-      query += ` ORDER BY rp.created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
-      queryParams.push(limit, offset);
-
-      const paymentsResult = await pool.query(query, queryParams);
-      const countResult = await pool.query(countQuery, countParams);
-
-      const totalCount = parseInt(countResult.rows[0].count);
-      const totalPages = Math.ceil(totalCount / limit);
-
-      res.json({
-        success: true,
-        data: {
-          payments: paymentsResult.rows,
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages,
-            totalCount,
-            hasNext: page < totalPages,
-            hasPrev: page > 1
-          }
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ ERROR getting all payments:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get payments',
-        error: error.message
-      });
-    }
-  }
+  sendPaymentNotifications
 };
