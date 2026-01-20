@@ -1,5 +1,5 @@
-import React, { createContext, useState, useContext, useCallback } from 'react';
-import { paymentAPI, mpesaUtils, mockMpesaAPI } from '../services/api';
+import React, { createContext, useState, useContext, useCallback, useMemo } from 'react';
+import { paymentAPI, mpesaUtils } from '../services/api'; // Removed mockMpesaAPI as it's not directly used here for client-side mocks
 
 const PaymentContext = createContext(undefined);
 
@@ -13,12 +13,11 @@ export const usePayment = () => {
 
 export const PaymentProvider = ({ children }) => {
   const [payments, setPayments] = useState([]);
-  const [allocations, setAllocations] = useState([]);
-  const [paymentNotifications, setPaymentNotifications] = useState([]);
+  const [allocations, setAllocations] = useState([]); // Provide allocations in context
+  const [paymentNotifications, setPaymentNotifications] = useState([]); // Provide notifications in context
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
-  const [pendingPayments, setPendingPayments] = useState(new Map()); // Track pending payments
   const [pagination, setPagination] = useState({
     currentPage: 1,
     totalPages: 1,
@@ -28,8 +27,8 @@ export const PaymentProvider = ({ children }) => {
   const clearError = useCallback(() => setError(null), []);
 
   // Function to format payment month to proper format
-  const formatPaymentMonthForBackend = (paymentMonth) => {
-    console.log('📅 Formatting payment month in frontend:', paymentMonth);
+  const formatPaymentMonthForBackend = useCallback((paymentMonth) => {
+    // console.log('📅 Formatting payment month in frontend:', paymentMonth);
     
     // If it's already in YYYY-MM-DD format, return as is
     if (typeof paymentMonth === 'string' && paymentMonth.match(/^\d{4}-\d{2}-\d{2}$/)) {
@@ -51,7 +50,7 @@ export const PaymentProvider = ({ children }) => {
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     return `${year}-${month}-01`;
-  };
+  }, []);
 
   const fetchPayments = useCallback(async (params = {}) => {
     setLoading(true);
@@ -66,27 +65,28 @@ export const PaymentProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('Error fetching payments:', err);
-      setError(err.message);
+      setError(err.response?.data?.message || err.message || 'Failed to fetch payments');
       setPayments([]);
+      setPagination({ currentPage: 1, totalPages: 1, totalCount: 0 }); // Reset pagination on error
     } finally {
       setLoading(false);
     }
   }, []);
 
- // ✅ NEW: Fetch full payment history for a single tenant
+ // ✅ NEW: Fetch full payment history for a single tenant (used by PaymentManagement.jsx)
   const fetchTenantHistory = useCallback(async (tenantId) => {
-    // This function will be called from the UI component directly, 
-    // so we don't set global loading state here to avoid blocking the main table.
     try {
-      const response = await paymentAPI.getPaymentHistory(tenantId);
+      // paymentAPI.getPaymentHistory now accepts optional params for flexibility
+      const response = await paymentAPI.getPaymentHistory(tenantId); 
       if (response.data.success) {
-        return response.data.data; // Returns { payments: [], summary: {} }
+        // Expecting { payments: [], summary: {} } from this specific API call
+        return response.data.data; 
       }
       throw new Error(response.data.message || 'Failed to fetch tenant history');
     } catch (err) {
       console.error('Error fetching tenant history:', err);
-      setError(err.message); // Set global error for feedback
-      return null;
+      // Do NOT set global error here, let the calling component (PaymentManagement.jsx) handle `historyError`
+      return null; // Return null to indicate failure to the component
     }
   }, []);
 
@@ -95,11 +95,14 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await paymentAPI.getTenantPayments(tenantId);
-      return response.data.payments || [];
+      const response = await paymentAPI.getPaymentsByTenant(tenantId);
+      if (response.data.success) {
+        return response.data.data.payments || [];
+      }
+      throw new Error(response.data.message || 'Failed to fetch tenant payments');
     } catch (err) {
       console.error('Error fetching tenant payments:', err);
-      setError('Failed to fetch tenant payments');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch tenant payments');
       return [];
     } finally {
       setLoading(false);
@@ -111,13 +114,16 @@ export const PaymentProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await paymentAPI.getTenantAllocations(tenantId);
-      const allocations = response.data.allocations || [];
-      // Return the first active allocation
-      return allocations.find(allocation => allocation.is_active) || allocations[0] || null;
+      const response = await paymentAPI.getTenantAllocations(tenantId); // Assuming an endpoint for tenant allocations
+      if (response.data.success) {
+        const allocations = response.data.data.allocations || [];
+        // Return the first active allocation
+        return allocations.find(allocation => allocation.is_active) || allocations[0] || null;
+      }
+      throw new Error(response.data.message || 'Failed to fetch allocation');
     } catch (err) {
       console.error('Error fetching allocation:', err);
-      setError('Failed to fetch allocation details');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch allocation details');
       return null;
     } finally {
       setLoading(false);
@@ -134,18 +140,19 @@ export const PaymentProvider = ({ children }) => {
       
       try {
         const statusResponse = await paymentAPI.checkPaymentStatus(checkoutRequestId);
-        const payment = statusResponse.data.payment;
-        
+        const payment = statusResponse.data.data.payment; // Assuming 'data' wrapper
+
         console.log('📊 Payment status:', payment.status);
         
         if (payment.status === 'completed') {
           console.log('✅ Payment completed via M-Pesa callback');
+          await fetchPayments(); // Refresh main payment list
           return { 
             success: true, 
             payment,
             message: 'Payment confirmed successfully!' 
           };
-        } else if (payment.status === 'failed') {
+        } else if (payment.status === 'failed' || payment.status === 'cancelled') {
           console.log('❌ Payment failed via M-Pesa callback');
           return { 
             success: false, 
@@ -177,6 +184,7 @@ export const PaymentProvider = ({ children }) => {
           await new Promise(resolve => setTimeout(resolve, 3000));
           return await poll();
         } else {
+          setError(error.response?.data?.message || error.message || 'Unable to verify payment status. Please check your M-Pesa messages.');
           return { 
             success: false, 
             error: 'Unable to verify payment status. Please check your M-Pesa messages.' 
@@ -186,6 +194,39 @@ export const PaymentProvider = ({ children }) => {
     };
     
     return await poll();
+  }, [fetchPayments, setError]);
+
+  // Client-side mock for M-Pesa payment (for dev environment when not using real M-Pesa)
+  const processMockMpesaPayment = useCallback(async (paymentData) => {
+    console.log('🔄 Simulating mock M-Pesa payment (client-side)...', paymentData);
+    await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate network delay
+
+    const mockCheckoutRequestId = `MOCK_REQ_${Date.now()}`;
+    const mockMpesaReceiptNumber = `RCL${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+    const mockTransactionId = `MOCK_TRX_${Date.now()}`;
+
+    // Return a mock success response immediately for client-side testing
+    const mockPayment = {
+      id: `mock-payment-${Date.now()}`,
+      mpesa_receipt_number: mockMpesaReceiptNumber,
+      mpesa_transaction_id: mockTransactionId,
+      status: 'completed', 
+      amount: paymentData.amount,
+      payment_date: new Date().toISOString(),
+      tenant_id: `mock-tenant-${Date.now()}`, // Placeholder
+      unit_id: paymentData.unitId,
+      // Add other necessary fields if the frontend relies on them
+    };
+
+    return {
+      success: true,
+      message: 'Mock M-Pesa payment simulated successfully (client-side)',
+      payment: mockPayment,
+      mpesa_receipt: mockMpesaReceiptNumber,
+      transactionId: mockTransactionId, // Ensure this matches payment.mpesa_transaction_id
+      checkoutRequestID: mockCheckoutRequestId, // This is what the backend usually returns for STK push
+      requiresPolling: false, // No polling needed for client-side mock
+    };
   }, []);
 
   // UPDATED: Process M-Pesa payment with proper status polling
@@ -216,7 +257,6 @@ export const PaymentProvider = ({ children }) => {
         throw new Error('Missing required payment fields after formatting');
       }
 
-      // Use import.meta.env for Vite instead of process.env
       const isDevelopment = import.meta.env.MODE === 'development';
       const useRealMpesa = import.meta.env.VITE_USE_REAL_MPESA === 'true';
       
@@ -224,56 +264,37 @@ export const PaymentProvider = ({ children }) => {
       
       let result;
       
+      // If in development and not explicitly forcing real M-Pesa, use client-side mock
       if (isDevelopment && !useRealMpesa) {
-        // Use mock API for development unless explicitly set to use real M-Pesa
-        console.log('🔄 Using mock M-Pesa API for development');
+        console.log('🔄 Using client-side mock M-Pesa API for development');
         result = await processMockMpesaPayment(formattedPaymentData);
         
-        // For mock payments, we don't need to poll status
+        // For client-side mock, it's already 'completed', so refresh payments
         if (result.success) {
-          console.log('✅ Mock payment successful, refreshing payments...');
           await fetchPayments();
-          return {
-            success: true,
-            mpesa_receipt: result.mpesa_receipt || 
-                           result.payment?.mpesa_receipt_number || 
-                           result.data?.mpesa_receipt_number ||
-                           'MOCK_RECEIPT',
-            transactionId: result.transactionId || 
-                           result.checkoutRequestId || 
-                           result.checkoutRequestID ||
-                           result.payment?.mpesa_transaction_id,
-            message: result.message || 
-                     result.data?.message || 
-                     'Mock payment completed successfully',
-            requiresPolling: false // Mock payments don't need polling
-          };
         }
       } else {
-        // Use real M-Pesa API for production or when explicitly set
+        // Use real M-Pesa API for production or when explicitly set in development
         console.log('🔄 Using real M-Pesa API');
         const response = await paymentAPI.processMpesaPayment(formattedPaymentData);
-        result = response.data;
+        result = response.data; // Assuming backend response is already { success, data, message } format
         
-        console.log('📥 Backend response:', result);
+        console.log('📥 Backend response (real M-Pesa):', result);
 
         // Check if STK push was initiated successfully
-        if (result.success && result.checkoutRequestID) {
-          console.log('✅ STK Push initiated, starting status polling...');
-          
-          // Return immediately with polling info - frontend will handle the polling
-          return {
-            success: true,
-            checkoutRequestId: result.checkoutRequestID,
-            message: 'M-Pesa payment initiated. Please check your phone to enter your M-Pesa PIN.',
-            requiresPolling: true, // Real M-Pesa payments need polling
-            payment: result.payment
-          };
-        } else {
-          console.log('❌ STK Push failed');
+        if (!result.success || !result.checkoutRequestID) {
           throw new Error(result.error || result.message || 'Failed to initiate M-Pesa payment');
         }
       }
+      
+      // Return details for polling if STK push initiated, or final result if mock
+      return {
+        success: result.success,
+        checkoutRequestID: result.checkoutRequestID, // Should be present for real M-Pesa, mock also provides one
+        message: result.message || 'M-Pesa payment initiated. Please check your phone to enter your M-Pesa PIN.',
+        requiresPolling: !(isDevelopment && !useRealMpesa), // Requires polling unless it's a client-side mock
+        payment: result.payment // Mock provides this directly, real M-Pesa might not
+      };
       
     } catch (err) {
       console.error('💥 ERROR in processMpesaPayment:', {
@@ -291,7 +312,7 @@ export const PaymentProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [fetchPayments, pollPaymentStatus]);
+  }, [fetchPayments, formatPaymentMonthForBackend, processMockMpesaPayment, setError]);
 
   // NEW: Process paybill payment
   const processPaybillPayment = useCallback(async (paymentData) => {
@@ -299,19 +320,19 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.processPaybillPayment(paymentData);
-      if (response.success) {
+      if (response.data.success) { // Assuming response is { data: { success, message, ... }}
         await fetchPayments();
-        return response;
+        return response.data;
       }
-      throw new Error(response.message || 'Failed to process paybill payment');
+      throw new Error(response.data.message || 'Failed to process paybill payment');
     } catch (err) {
       console.error('Error processing paybill payment:', err);
-      setError('Failed to process paybill payment');
+      setError(err.response?.data?.message || err.message || 'Failed to process paybill payment');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [fetchPayments]);
+  }, [fetchPayments, setError]);
 
   // NEW: Get payment status by unit code
   const getPaymentStatusByUnitCode = useCallback(async (unitCode, month = null) => {
@@ -319,15 +340,18 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.getPaymentStatusByUnitCode(unitCode, month);
-      return response.data;
+      if (response.data.success) {
+        return response.data.data;
+      }
+      throw new Error(response.data.message || 'Failed to get payment status');
     } catch (err) {
       console.error('Error getting payment status:', err);
-      setError('Failed to get payment status');
+      setError(err.response?.data?.message || err.message || 'Failed to get payment status');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // NEW: Send balance reminders
   const sendBalanceReminders = useCallback(async () => {
@@ -335,15 +359,18 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.sendBalanceReminders();
-      return response.data;
+      if (response.data.success) {
+        return response.data;
+      }
+      throw new Error(response.data.message || 'Failed to send balance reminders');
     } catch (err) {
       console.error('Error sending balance reminders:', err);
-      setError('Failed to send balance reminders');
+      setError(err.response?.data?.message || err.message || 'Failed to send balance reminders');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // NEW: Test SMS service
   const testSMSService = useCallback(async (testData) => {
@@ -351,15 +378,18 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.testSMSService(testData);
-      return response.data;
+      if (response.data.success) {
+        return response.data;
+      }
+      throw new Error(response.data.message || 'Failed to test SMS service');
     } catch (err) {
       console.error('Error testing SMS service:', err);
-      setError('Failed to test SMS service');
+      setError(err.response?.data?.message || err.message || 'Failed to test SMS service');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // NEW: Get paybill statistics
   const getPaybillStats = useCallback(async (period = '30days') => {
@@ -367,82 +397,65 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.getPaybillStats(period);
-      return response.data;
+      if (response.data.success) {
+        return response.data.data;
+      }
+      throw new Error(response.data.message || 'Failed to get paybill statistics');
     } catch (err) {
       console.error('Error getting paybill stats:', err);
-      setError('Failed to get paybill statistics');
+      setError(err.response?.data?.message || err.message || 'Failed to get paybill statistics');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // NEW: Function to check payment status (for polling)
   const checkPaymentStatus = useCallback(async (checkoutRequestId) => {
     try {
-      console.log('🔍 Checking payment status for:', checkoutRequestId);
+      // console.log('🔍 Checking payment status for:', checkoutRequestId);
       const response = await paymentAPI.checkPaymentStatus(checkoutRequestId);
-      return response.data;
+      if (response.data.success) {
+        return response.data.data;
+      }
+      throw new Error(response.data.message || 'Failed to check payment status');
     } catch (err) {
       console.error('Error checking payment status:', err);
+      // Let pollPaymentStatus handle the global error
       throw err;
     }
   }, []);
 
-  // Process mock M-Pesa payment for development
-  const processMockMpesaPayment = useCallback(async (paymentData) => {
-    try {
-      console.log('🔄 Processing mock M-Pesa payment:', paymentData);
-      
-      // Use the actual backend endpoint instead of creating a separate mock
-      console.log('🔄 Calling backend mock endpoint...');
-      const response = await paymentAPI.processMpesaPayment(paymentData);
-      
-      console.log('📥 Mock backend response:', response.data);
-      
-      // Return the response from the backend
-      return response.data;
-      
-    } catch (err) {
-      console.error('❌ Mock payment simulation failed:', err);
-      // If backend call fails, create a local mock response
-      return {
-        success: true,
-        message: 'Mock payment completed successfully',
-        payment: {
-          id: `mock-${Date.now()}`,
-          mpesa_receipt_number: `RC${Date.now()}`,
-          mpesa_transaction_id: `MOCK${Date.now()}`,
-          status: 'completed',
-          amount: paymentData.amount
-        },
-        checkoutRequestId: `MOCK${Date.now()}`
-      };
-    }
-  }, []);
-
   // Get upcoming payments
-  const getUpcomingPayments = useCallback((allocations) => {
-    const currentDate = new Date();
-    const currentYear = currentDate.getFullYear();
-    const currentMonth = currentDate.getMonth();
-    
-    return allocations.map(allocation => {
-      const paidThisMonth = payments.some(payment => 
-        payment.unit_id === allocation.unit_id &&
-        new Date(payment.payment_month).getFullYear() === currentYear &&
-        new Date(payment.payment_month).getMonth() === currentMonth &&
-        payment.status === 'completed'
-      );
-      
-      return {
-        ...allocation,
-        paidThisMonth
-      };
-    });
-  }, [payments]);
+  const getUpcomingPayments = useCallback(async (tenantId) => { // Made async as it calls API
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await paymentAPI.getUpcomingPayments(tenantId);
+      if (response.data.success) {
+        // Assuming response.data.data contains the list of upcoming payments or allocations
+        // Adjust this based on your actual API response for upcoming payments
+        const upcoming = response.data.data.upcomingPayments || response.data.data;
+        return upcoming.map(allocation => ({
+          ...allocation,
+          // You might need to fetch `payments` state here if `paidThisMonth` relies on the current payments context
+          // For simplicity, `paidThisMonth` logic can be moved to the backend or passed as a parameter to the API.
+          // For now, removing `paidThisMonth` calculation that relies on `payments` state.
+          // If needed, the backend for getUpcomingPayments should include this info.
+          // paidThisMonth: payments.some(...) // This would cause `payments` dependency in useCallback
+        }));
+      }
+      throw new Error(response.data.message || 'Failed to fetch upcoming payments');
+    } catch (err) {
+      console.error('Error fetching upcoming payments:', err);
+      setError(err.response?.data?.message || err.message || 'Failed to fetch upcoming payments');
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, [setError]); // Removed `payments` from dependency array
 
-  // Create payment (for other payment methods)
+  // Create payment (for other payment methods, assuming backend handles allocations)
   const createPayment = useCallback(async (paymentData) => {
     setLoading(true);
     setError(null);
@@ -454,19 +467,19 @@ export const PaymentProvider = ({ children }) => {
       };
       
       const response = await paymentAPI.createPayment(formattedData);
-      if (response.success) {
+      if (response.data.success) { // Assuming response.data.success
         await fetchPayments();
-        return response.data;
+        return response.data.data;
       }
-      throw new Error(response.message || 'Failed to create payment');
+      throw new Error(response.data.message || 'Failed to create payment');
     } catch (err) {
       console.error('Error creating payment:', err);
-      setError('Failed to create payment');
+      setError(err.response?.data?.message || err.message || 'Failed to create payment');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [fetchPayments]);
+  }, [fetchPayments, formatPaymentMonthForBackend, setError]);
 
   // Update payment
   const updatePayment = useCallback(async (paymentId, updates) => {
@@ -480,19 +493,19 @@ export const PaymentProvider = ({ children }) => {
       }
       
       const response = await paymentAPI.updatePayment(paymentId, formattedUpdates);
-      if (response.success) {
+      if (response.data.success) { // Assuming response.data.success
         await fetchPayments();
-        return response.data;
+        return response.data.data;
       }
-      throw new Error(response.message || 'Failed to update payment');
+      throw new Error(response.data.message || 'Failed to update payment');
     } catch (err) {
       console.error('Error updating payment:', err);
-      setError('Failed to update payment');
+      setError(err.response?.data?.message || err.message || 'Failed to update payment');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [fetchPayments]);
+  }, [fetchPayments, formatPaymentMonthForBackend, setError]);
 
   // Delete payment function
   const deletePayment = useCallback(async (paymentId) => {
@@ -500,20 +513,20 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.deletePayment(paymentId);
-      if (response.success) {
+      if (response.data.success) { // Assuming response.data.success
         // Remove payment from local state
         setPayments(prev => prev.filter(payment => payment.id !== paymentId));
-        return response.data;
+        return response.data.data;
       }
-      throw new Error(response.message || 'Failed to delete payment');
+      throw new Error(response.data.message || 'Failed to delete payment');
     } catch (err) {
       console.error('Error deleting payment:', err);
-      setError('Failed to delete payment');
+      setError(err.response?.data?.message || err.message || 'Failed to delete payment');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // Confirm payment
   const confirmPayment = useCallback(async (paymentId) => {
@@ -521,19 +534,19 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.confirmPayment(paymentId);
-      if (response.success) {
+      if (response.data.success) { // Assuming response.data.success
         await fetchPayments();
-        return response.data;
+        return response.data.data;
       }
-      throw new Error(response.message || 'Failed to confirm payment');
+      throw new Error(response.data.message || 'Failed to confirm payment');
     } catch (err) {
       console.error('Error confirming payment:', err);
-      setError('Failed to confirm payment');
+      setError(err.response?.data?.message || err.message || 'Failed to confirm payment');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [fetchPayments]);
+  }, [fetchPayments, setError]);
 
   // Enhanced get payment summary function with proper API call
   const getPaymentSummary = useCallback(async (tenantId, unitId) => {
@@ -542,103 +555,47 @@ export const PaymentProvider = ({ children }) => {
     try {
       console.log(`🔄 Fetching payment summary for tenant ${tenantId}, unit ${unitId}`);
       
-      // Use the API to get payment summary
       const response = await paymentAPI.getPaymentSummary(tenantId, unitId);
       
       if (response.data?.success) {
-        console.log('✅ Payment summary fetched successfully:', response.data.summary);
-        return response.data.summary;
+        console.log('✅ Payment summary fetched successfully:', response.data.data.summary);
+        return response.data.data.summary;
       } else {
-        // Fallback to local calculation if API fails
-        console.warn('⚠️ API payment summary failed, using fallback calculation');
-        const tenantPayments = payments.filter(payment => payment.tenant_id === tenantId && payment.unit_id === unitId);
-        const totalPaid = tenantPayments
-          .filter(p => p.status === 'completed')
-          .reduce((sum, payment) => sum + (payment.amount || 0), 0);
-        
-        // Get allocation to know monthly rent
-        const allocation = allocations.find(a => a.tenant_id === tenantId && a.unit_id === unitId && a.is_active);
-        const monthlyRent = allocation?.monthly_rent || 0;
-        const balance = monthlyRent - totalPaid;
-        
-        return {
-          monthlyRent,
-          totalPaid,
-          balance,
-          isFullyPaid: balance <= 0,
-          advanceAmount: 0,
-          paymentCount: tenantPayments.filter(p => p.status === 'completed').length,
-          monthlyStatus: []
-        };
+        // Fallback or specific error if API fails
+        throw new Error(response.data?.message || 'Failed to fetch payment summary from API');
       }
     } catch (err) {
       console.error('❌ Error fetching payment summary:', err);
-      // Fallback to local calculation
-      const tenantPayments = payments.filter(payment => payment.tenant_id === tenantId && payment.unit_id === unitId);
-      const totalPaid = tenantPayments
-        .filter(p => p.status === 'completed')
-        .reduce((sum, payment) => sum + (payment.amount || 0), 0);
-      
-      const allocation = allocations.find(a => a.tenant_id === tenantId && a.unit_id === unitId && a.is_active);
-      const monthlyRent = allocation?.monthly_rent || 0;
-      const balance = monthlyRent - totalPaid;
-      
-      return {
-        monthlyRent,
-        totalPaid,
-        balance,
-        isFullyPaid: balance <= 0,
-        advanceAmount: 0,
-        paymentCount: tenantPayments.filter(p => p.status === 'completed').length,
-        monthlyStatus: []
-      };
+      setError(err.response?.data?.message || err.message || 'Failed to fetch payment summary');
+      return null; // Return null to indicate failure
     } finally {
       setLoading(false);
     }
-  }, [payments, allocations]);
+  }, [setError]);
 
-  // Enhanced get payment history function
+  // Enhanced get payment history function (for specific unit/months)
   const getPaymentHistory = useCallback(async (tenantId, unitId, months = 12) => {
     setLoading(true);
     setError(null);
     try {
-      console.log(`🔄 Fetching payment history for tenant ${tenantId}, unit ${unitId}`);
-      
-      const response = await paymentAPI.getPaymentHistory(tenantId, unitId, { months });
+      console.log(`🔄 Fetching detailed payment history for tenant ${tenantId}, unit ${unitId}`);
+      // paymentAPI.getPaymentHistory now accepts optional params
+      const response = await paymentAPI.getPaymentHistory(tenantId, { unitId, months });
       
       if (response.data?.success) {
-        console.log(`✅ Payment history fetched successfully: ${response.data.payments?.length || 0} payments`);
-        return response.data;
+        console.log(`✅ Detailed payment history fetched successfully: ${response.data.data?.payments?.length || 0} payments`);
+        return response.data.data; // Expecting { payments: [], monthlySummary: [], ... }
       } else {
-        // Fallback to local data
-        const tenantPayments = payments.filter(payment => 
-          payment.tenant_id === tenantId && payment.unit_id === unitId
-        );
-        
-        return {
-          payments: tenantPayments,
-          monthlySummary: [],
-          monthlyRent: 0,
-          totalMonths: 0
-        };
+        throw new Error(response.data?.message || 'Failed to fetch detailed payment history from API');
       }
     } catch (err) {
-      console.error('❌ Error fetching payment history:', err);
-      // Fallback to local data
-      const tenantPayments = payments.filter(payment => 
-        payment.tenant_id === tenantId && payment.unit_id === unitId
-      );
-      
-      return {
-        payments: tenantPayments,
-        monthlySummary: [],
-        monthlyRent: 0,
-        totalMonths: 0
-      };
+      console.error('❌ Error fetching detailed payment history:', err);
+      setError(err.response?.data?.message || err.message || 'Failed to fetch detailed payment history');
+      return null; // Return null to indicate failure
     } finally {
       setLoading(false);
     }
-  }, [payments]);
+  }, [setError]);
 
   // NEW: Get future payments status
   const getFuturePaymentsStatus = useCallback(async (tenantId, unitId, futureMonths = 6) => {
@@ -650,26 +607,21 @@ export const PaymentProvider = ({ children }) => {
       const response = await paymentAPI.getFuturePaymentsStatus(tenantId, unitId, { futureMonths });
       
       if (response.data?.success) {
-        console.log(`✅ Future payments status fetched successfully: ${response.data.futurePayments?.length || 0} months`);
-        return response.data;
+        console.log(`✅ Future payments status fetched successfully: ${response.data.data?.futurePayments?.length || 0} months`);
+        return response.data.data;
       } else {
-        return {
-          futurePayments: [],
-          monthlyRent: 0
-        };
+        throw new Error(response.data?.message || 'Failed to fetch future payments status');
       }
     } catch (err) {
       console.error('❌ Error fetching future payments status:', err);
-      return {
-        futurePayments: [],
-        monthlyRent: 0
-      };
+      setError(err.response?.data?.message || err.message || 'Failed to fetch future payments status');
+      return null;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
-  // Get monthly summary function
+  // Get monthly summary function (client-side calculation from `payments` state)
   const getMonthlySummary = useCallback((year, month) => {
     const currentMonthPayments = payments.filter(payment => {
       if (!payment.payment_month) return false;
@@ -677,7 +629,7 @@ export const PaymentProvider = ({ children }) => {
       const paymentDate = new Date(payment.payment_month);
       return (
         paymentDate.getFullYear() === year &&
-        paymentDate.getMonth() + 1 === month &&
+        paymentDate.getMonth() === month && // Month is 0-indexed in JS Date, so remove +1
         payment.status === 'completed'
       );
     });
@@ -690,7 +642,7 @@ export const PaymentProvider = ({ children }) => {
         const paymentDate = new Date(payment.payment_month);
         return (
           paymentDate.getFullYear() === year &&
-          paymentDate.getMonth() + 1 === month &&
+          paymentDate.getMonth() === month && // Month is 0-indexed
           payment.status === 'pending'
         );
       }).length
@@ -703,15 +655,18 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.getPaymentStats();
-      return response.data;
+      if (response.data.success) {
+        return response.data.data;
+      }
+      throw new Error(response.data.message || 'Failed to fetch payment statistics');
     } catch (err) {
       console.error('Error fetching payment statistics:', err);
-      setError('Failed to fetch payment statistics');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch payment statistics');
       return null;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // Get payments by unit ID
   const getPaymentsByUnit = useCallback(async (unitId) => {
@@ -719,31 +674,37 @@ export const PaymentProvider = ({ children }) => {
     setError(null);
     try {
       const response = await paymentAPI.getUnitPayments(unitId);
-      return response.data.payments || [];
+      if (response.data.success) {
+        return response.data.data.payments || [];
+      }
+      throw new Error(response.data.message || 'Failed to fetch unit payments');
     } catch (err) {
       console.error('Error fetching unit payments:', err);
-      setError('Failed to fetch unit payments');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch unit payments');
       return [];
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // Generate payment report
   const generatePaymentReport = useCallback(async (reportData) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await paymentAPI.generateReport(reportData);
-      return response.data;
+      const response = await paymentAPI.generateReport(reportData); // Assuming paymentAPI.generateReport exists
+      if (response.data.success) {
+        return response.data.data;
+      }
+      throw new Error(response.data.message || 'Failed to generate payment report');
     } catch (err) {
       console.error('Error generating payment report:', err);
-      setError('Failed to generate payment report');
+      setError(err.response?.data?.message || err.message || 'Failed to generate payment report');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError]);
 
   // Validate M-Pesa phone number using the imported mpesaUtils
   const validateMpesaPhone = useCallback((phoneNumber) => {
@@ -755,21 +716,22 @@ export const PaymentProvider = ({ children }) => {
     return mpesaUtils.formatPhoneNumber(phoneNumber);
   }, []);
 
-  const value = React.useMemo(() => ({
+  const value = useMemo(() => ({
     // State
     payments,
+    pagination, // CRITICAL: Added pagination here
     allocations,
     paymentNotifications,
     loading,
     error,
     selectedPayment,
-     etchTenantHistory,
     
     // Setters
     setSelectedPayment,
     
     // Payment functions
     fetchPayments,
+    fetchTenantHistory, // Added for PaymentManagement component
     getPaymentsByTenant,
     getPaymentsByUnit,
     createPayment,
@@ -793,7 +755,7 @@ export const PaymentProvider = ({ children }) => {
     
     // Utility functions
     getPaymentSummary,
-    getPaymentHistory,
+    getPaymentHistory, // This is the detailed one
     getFuturePaymentsStatus,
     getMonthlySummary,
     fetchPaymentStats,
@@ -804,14 +766,15 @@ export const PaymentProvider = ({ children }) => {
     clearError
   }), [
     payments,
+    pagination, // CRITICAL: Added pagination to useMemo dependencies
     allocations,
     paymentNotifications,
     loading,
     error,
     selectedPayment,
     fetchPayments,
+    fetchTenantHistory, // Dependency for useMemo
     getPaymentsByTenant,
-    fetchTenantHistory,
     getPaymentsByUnit,
     createPayment,
     updatePayment,

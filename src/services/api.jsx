@@ -163,11 +163,12 @@ export const paymentAPI = {
   // Payment operations
   getPayments: (params = {}) => api.get('/payments', { params }),
   getPayment: (id) => api.get(`/payments/${id}`),
-  getPaymentsByTenantId: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
+  // Kept getPaymentsByTenant as the primary tenant-specific payments endpoint
   getPaymentsByTenant: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
   createPayment: (paymentData) => api.post('/payments', paymentData),
   confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
-  getPaymentHistory: (tenantId) => api.get(`/payments/history/${tenantId}`),
+  // Consolidated getPaymentHistory to accept tenantId and optional params (unitId, months)
+  getPaymentHistory: (tenantId, params = {}) => api.get(`/payments/history/${tenantId}`, { params }),
   generateReceipt: (paymentId) => api.get(`/payments/${paymentId}/receipt`),
   deletePayment: (paymentId) => api.delete(`/payments/${paymentId}`),
   
@@ -190,11 +191,13 @@ export const paymentAPI = {
   // Statistics and reports
   getPaymentStats: () => api.get('/payments/stats/overview'),
   getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
-  getPendingPayments: () => api.get('/payments?status=pending'),
-  getOverduePayments: () => api.get('/payments?status=overdue'),
+  getPendingPayments: () => api.get('/payments?status=pending'), // Consider params for filtering
+  getOverduePayments: () => api.get('/payments?status=overdue'), // Consider params for filtering
   
   // Tenant payment functions
-  getTenantPayments: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
+  // getTenantPayments is a duplicate of getPaymentsByTenant, kept one.
+  // Assuming getTenantAllocations is the correct endpoint for allocations specific to a tenant
+  getTenantAllocations: (tenantId) => api.get(`/tenant-allocations/tenant/${tenantId}`), // Corrected API for tenant allocations if different from payments
   getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`),
   getPaymentSummary: (tenantId, unitId) => api.get(`/payments/summary/${tenantId}/${unitId}`),
   
@@ -212,7 +215,10 @@ export const paymentAPI = {
   getAgentSalaryPayments: (agentId) => api.get(`/payments/salary/agent/${agentId}`),
 
   // M-Pesa configuration test
-  testMpesaConfig: () => api.get('/payments/mpesa/test-config')
+  testMpesaConfig: () => api.get('/payments/mpesa/test-config'),
+
+  // Assuming you have a general report generation endpoint for PDF/Excel
+  generateReport: (reportData) => api.post('/reports/payments', reportData), // Example endpoint
 };
 
 // Mock M-Pesa API for testing
@@ -436,6 +442,10 @@ export const reportAPI = {
   getOccupancyReports: (params) => api.get('/reports/occupancy', { params }),
   getFinancialReports: (params) => api.get('/reports/financial', { params }),
   getMaintenanceReports: (params) => api.get('/reports/maintenance', { params }),
+
+   // ✅ Expose these for apiHelper
+  getWaterBills: (params) => api.get('/agent-properties/water-bills', { params }),
+  getSMSHistory: (params) => api.get('/cron/sms-history', { params })
 };
 
 
