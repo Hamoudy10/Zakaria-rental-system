@@ -598,3 +598,30 @@ DEPLOYMENT NOTES:
 - Compatible with existing frontend after component updates
 
 PRODUCTION READY: Allocations system now stable with proper tenant data retrieval and display.
+
+UPDATE 13.0 - CHAT SOCKET EMISSION FIX
+
+PROBLEM RESOLVED: Clients were receiving duplicate `new_message` events for every message sent.
+
+ROOT CAUSE: The `sendMessage` function in `chatController.js` was emitting the same `new_message` event twice: once to the conversation-specific room and again in a loop to each participant's user-specific room.
+
+SOLUTION IMPLEMENTED:
+-   The redundant loop emitting `new_message` to user rooms was **removed**.
+-   The code now relies on the single, more efficient emission to the conversation room (`io.to('conversation_...')`).
+-   The separate `chat_notification` event, which is intended for push notifications and does not affect the message list, was preserved. This change eliminates the double-counting issue on the frontend.
+
+FILE MODIFIED: `/backend/controllers/chatController.js`.
+
+---
+UPDATE 15.0 - ADMIN-AWARE AGENT ENDPOINTS
+
+PROBLEM RESOLVED: Admins could not use the new, unified reports UI because agent-scoped API endpoints were strictly filtering data by the logged-in user's ID.
+
+SOLUTION IMPLEMENTED:
+-   **Conditional Filtering:** The controllers in `agentPropertyController.js` (e.g., `getMyProperties`, `getMyTenants`, `getMyComplaints`) were updated.
+-   **Admin Override Logic:** A check for `req.user.role === 'admin'` was added.
+    -   If the user is an **agent**, the `WHERE agent_id = $1` clause is applied to the SQL query.
+    -   If the user is an **admin**, this clause is skipped, causing the query to return all records from the table.
+-   This makes the agent-scoped endpoints "admin-aware," allowing them to serve filtered data to agents and complete data to admins, which simplifies the frontend logic.
+
+FILE MODIFIED: `/backend/controllers/agentPropertyController.js`.

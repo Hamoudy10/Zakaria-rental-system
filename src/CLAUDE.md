@@ -490,3 +490,52 @@ TESTING CONFIRMED:
 ✅ Allocation creation/deletion maintains proper data flow
 
 FRONTEND STATUS: TenantAllocation component now fully synchronized with backend API response structure and displays accurate tenant information.
+
+UPDATE 13.0 - CHAT CONTEXT & UI FIXES
+
+PROBLEM RESOLVED:
+1.  The "X" button on the chat header was unresponsive and did not close the active conversation view.
+2.  Unread message counts were being incremented incorrectly due to duplicate socket events.
+
+ROOT CAUSE:
+-   The `setActiveConversation` function in `ChatContext.jsx` had a guard `if (!conv) return;`, which prevented setting the active conversation to `null`.
+-   The frontend was correctly structured to handle single events, but the backend was emitting duplicates.
+
+SOLUTION IMPLEMENTED:
+-   The guard clause in `setActiveConversation` was removed, allowing `setActiveConversation(null)` to be dispatched. This correctly unmounts the message view and shows the `EmptyChatState`.
+-   The `new_message` socket listener in `ChatContext.jsx` was confirmed to have deduplication logic, making it resilient to the (now-fixed) backend issue.
+
+FILE MODIFIED: `/src/context/ChatContext.jsx`.
+
+---
+UPDATE 14.0 - NEW COMPONENT: TENANT DETAILS MODAL
+
+FEATURE IMPLEMENTED: A read-only "View Records" modal was added to `TenantManagement.jsx`.
+
+COMPONENT STRUCTURE:
+-   **Trigger:** A new "View" button in the tenant table.
+-   **State:** Added `showViewModal` and `selectedTenantData` to manage the modal's state and data.
+-   **Data Flow:**
+    1.  `handleViewDetails(tenant)` is called on button click.
+    2.  An API call is made to `GET /api/tenants/:id` to fetch full details.
+    3.  The response is stored in `selectedTenantData`, and `showViewModal` is set to `true`.
+-   **Modal UI:**
+    -   Displays data in organized sections (Personal, Lease, Emergency, Payments, ID Docs).
+    -   Renders ID images directly from the Cloudinary URLs (`id_front_image`, `id_back_image`).
+    -   Includes a "Close" button and a convenient "Edit Tenant" button to switch to the edit form.
+
+FILE MODIFIED: `/src/components/TenantManagement.jsx`.
+
+---
+UPDATE 15.0 - ADMIN REPORTS REFACTORING
+
+PROBLEM RESOLVED: The Admin "Reports" tab was not functional and used a different UI from the Agent's tab.
+
+ARCHITECTURAL CHANGE: Replaced a legacy report component with the `AgentReports.jsx` component for UI consistency across dashboards.
+
+IMPLEMENTATION DETAILS:
+1.  **Component Swap:** In `AdminDashboard.jsx`, the "Reports" tab now lazy-loads and renders `<AgentReports />` instead of the old component.
+2.  **API Helper Fix (`apiHelper.js`):** The `getReportAPI` helper function was updated. It no longer has separate logic for `admin` and `agent`. It now consistently uses the `agentService` API calls (e.g., `/api/agent-properties/my-tenants`) for both roles.
+3.  **Data Consistency:** This change ensures that the admin report tab receives data in the exact flat-array structure that the `AgentReports.jsx` component expects, resolving data fetching and display errors.
+
+FILES MODIFIED: `/src/pages/AdminDashboard.jsx`, `/src/utils/apiHelper.js`.

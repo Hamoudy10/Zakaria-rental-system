@@ -356,6 +356,12 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
       month
     });
 
+const wbRes = await pool.query(
+  `SELECT amount FROM water_bills WHERE tenant_id = $1 AND bill_month = $2 LIMIT 1`,
+  [unit.tenant_id, `${month}-01`]
+);
+const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
+
     // Send confirmation to tenant
     const tenantSMSResult = await SMSService.sendPaymentConfirmation(
       tenantPhone,
@@ -363,7 +369,8 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
       payment.amount,
       unitCode,
       balance,
-      month
+      month,
+      waterAmount
     );
 
     console.log('✅ Tenant SMS result:', tenantSMSResult);
@@ -419,9 +426,99 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
   }
 };
 
+// ✅ NEW: Get all payments with filters, sorting, and pagination
+const getAllPayments = async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 15, 
+      propertyId, 
+      tenantId, 
+      startDate, 
+      endDate, 
+      sortBy = 'payment_date', 
+      sortOrder = 'desc' 
+    } = req.query;
+    
+    const offset = (page - 1) * limit;
+
+    // Whitelist for safe sorting
+    const validSortColumns = ['payment_date', 'amount', 'first_name', 'property_name', 'status'];
+    const safeSortBy = validSortColumns.includes(sortBy) ? sortBy : 'payment_date';
+    const safeSortOrder = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+
+    let baseQuery = `
+      SELECT 
+        rp.id, rp.amount, rp.payment_month, rp.payment_date, rp.status, 
+        rp.mpesa_receipt_number, rp.mpesa_transaction_id, rp.phone_number,
+        t.id as tenant_id, t.first_name, t.last_name,
+        p.name as property_name,
+        pu.unit_code
+      FROM rent_payments rp
+      JOIN tenants t ON rp.tenant_id = t.id
+      JOIN property_units pu ON rp.unit_id = pu.id
+      JOIN properties p ON pu.property_id = p.id
+    `;
+    
+    const whereClauses = [];
+    const queryParams = [];
+    let paramIndex = 1;
+    
+    if (propertyId) {
+      whereClauses.push(`p.id = $${paramIndex++}`);
+      queryParams.push(propertyId);
+    }
+    if (tenantId) {
+      whereClauses.push(`t.id = $${paramIndex++}`);
+      queryParams.push(tenantId);
+    }
+    if (startDate) {
+      whereClauses.push(`rp.payment_date >= $${paramIndex++}`);
+      queryParams.push(startDate);
+    }
+    if (endDate) {
+      whereClauses.push(`rp.payment_date <= $${paramIndex++}`);
+      queryParams.push(endDate);
+    }
+
+    if (whereClauses.length > 0) {
+      baseQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+    }
+
+    // Count total records with filters
+    const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) as filtered_payments`;
+    const countResult = await pool.query(countQuery, queryParams);
+    const totalCount = parseInt(countResult.rows[0].count, 10);
+    
+    // Add sorting and pagination to the main query
+    baseQuery += ` ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    queryParams.push(limit, offset);
+
+    const paymentsResult = await pool.query(baseQuery, queryParams);
+
+    res.json({
+      success: true,
+      data: {
+        payments: paymentsResult.rows,
+        pagination: {
+          currentPage: parseInt(page, 10),
+          totalPages: Math.ceil(totalCount / limit),
+          totalCount,
+        },
+      },
+    });
+
+  } catch (error) {
+    console.error('Error fetching all payments:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching payments' });
+  }
+};
+
 // NEW: Process M-Pesa paybill payment using unit code
 const processPaybillPayment = async (req, res) => {
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const { 
       unit_code, 
       amount, 
@@ -472,7 +569,6 @@ const processPaybillPayment = async (req, res) => {
         message: 'Unit not found with the provided unit code'
       });
     }
-
     const unit = unitResult.rows[0];
 
     if (!unit.tenant_id || !unit.allocation_active) {
@@ -526,6 +622,44 @@ const processPaybillPayment = async (req, res) => {
   
     const paymentRecord = paymentResult.rows[0];
 
+       // ✅ NEW: Notification Logic
+    try {
+      // Find admin and assigned agent IDs
+      const adminUsersQuery = await client.query("SELECT id FROM users WHERE role = 'admin' AND is_active = true");
+      const agentAssignmentQuery = await client.query(
+        "SELECT agent_id FROM agent_property_assignments WHERE property_id = $1 AND is_active = true",
+        [unit.property_id]
+      );
+
+      const adminIds = adminUsersQuery.rows.map(u => u.id);
+      const agentId = agentAssignmentQuery.rows[0]?.agent_id;
+
+      const recipientIds = new Set(adminIds);
+      if (agentId) {
+        recipientIds.add(agentId);
+      }
+
+      const tenantName = `${unit.tenant_first_name} ${unit.tenant_last_name}`;
+      const notificationTitle = 'Payment Received';
+      const notificationMessage = `KSh ${amount} received from ${tenantName} for ${unit.property_name} (${unit.unit_code}). M-Pesa: ${mpesa_receipt_number}.`;
+
+      for (const userId of recipientIds) {
+        await NotificationService.createNotification({
+          userId,
+          title: notificationTitle,
+          message: notificationMessage,
+          type: 'payment_received',
+          relatedEntityType: 'payment',
+          relatedEntityId: paymentRecord.id
+        });
+      }
+      console.log(`✅ Payment notifications sent to ${recipientIds.size} users.`);
+
+    } catch (notificationError) {
+      console.error("Failed to send payment notifications, but payment was processed:", notificationError);
+    }
+    // End of New Notification Logic
+
     // Handle carry forward if applicable
     if (trackingResult.carryForwardAmount > 0) {
       console.log(`🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`);
@@ -552,6 +686,7 @@ const processPaybillPayment = async (req, res) => {
     // Also send in-app notifications
     await sendPaymentNotifications(paymentRecord, trackingResult, false);
 
+    await client.query('COMMIT');
     res.status(201).json({
       success: true,
       message: 'Paybill payment processed successfully',
@@ -560,14 +695,83 @@ const processPaybillPayment = async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('❌ ERROR processing paybill payment:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to process paybill payment',
       error: error.message
     });
+  }finally {
+    client.release();
   }
 };
+
+// ✅ NEW: Get full payment history for a single tenant
+const getTenantPaymentHistory = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+
+    // Get all payments for the tenant
+    const paymentsQuery = await pool.query(
+      `SELECT rp.*, p.name as property_name, pu.unit_code 
+       FROM rent_payments rp
+       JOIN property_units pu ON rp.unit_id = pu.id
+       JOIN properties p ON pu.property_id = p.id
+       WHERE rp.tenant_id = $1 
+       ORDER BY rp.payment_date DESC`,
+      [tenantId]
+    );
+
+    // Get all allocations to calculate total expected payment
+    const allocationsQuery = await pool.query(
+      `SELECT lease_start_date, lease_end_date, monthly_rent 
+       FROM tenant_allocations 
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    
+    let totalExpected = 0;
+    const now = new Date();
+    
+    allocationsQuery.rows.forEach(alloc => {
+      const start = new Date(alloc.lease_start_date);
+      const end = alloc.lease_end_date ? new Date(alloc.lease_end_date) : now;
+      if (end < start) return; // Skip invalid date ranges
+      
+      let months = (end.getFullYear() - start.getFullYear()) * 12;
+      months -= start.getMonth();
+      months += end.getMonth();
+      const monthCount = months < 0 ? 0 : months + 1;
+      
+      totalExpected += monthCount * parseFloat(alloc.monthly_rent);
+    });
+
+    const totalPaid = paymentsQuery.rows
+      .filter(p => p.status === 'completed')
+      .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    
+    const balance = totalExpected - totalPaid;
+
+    res.json({
+      success: true,
+      data: {
+        payments: paymentsQuery.rows,
+        summary: {
+          totalExpected,
+          totalPaid,
+          balance,
+          arrears: balance > 0 ? balance : 0,
+        },
+      },
+    });
+
+  } catch (error) {
+    console.error('Error fetching tenant history:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching tenant history' });
+  }
+};
+
 
 // NEW: Get payment status by unit code
 const getPaymentStatusByUnitCode = async (req, res) => {
@@ -2183,6 +2387,9 @@ module.exports = {
   trackRentPayment,
   recordCarryForward,
   sendPaymentNotifications,
+
+  getAllPayments, // Export the new function
+  getTenantPaymentHistory, // Export the new function
   
   // Existing route handlers for backward compatibility
   getPaymentById: async (req, res) => {

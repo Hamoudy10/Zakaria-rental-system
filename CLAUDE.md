@@ -287,3 +287,57 @@ TESTING CONFIRMED:
 ✅ Backend no longer returns 500 errors for allocation queries
 
 SYSTEM STATUS: Tenant Allocation system fully operational with proper data synchronization between frontend and backend. All tenant names display correctly in admin dashboard.
+UPDATE 13.0 - CHAT SYSTEM ENHANCEMENTS & FIXES
+
+PROBLEMS RESOLVED:
+1.  **Double Message/Notification:** Users received two notifications/messages for every single message sent.
+2.  **UI Glitch:** The 'X' button to close an active chat did not work, preventing users from returning to the conversation list view.
+
+ROOT CAUSES:
+1.  **Backend:** `chatController.js` was emitting the `new_message` socket event twice: once to the conversation room and again in a loop to each participant's user room.
+2.  **Frontend:** The `setActiveConversation` function in `ChatContext.jsx` had a guard clause that prevented it from accepting `null` to clear the active conversation state.
+
+SOLUTIONS IMPLEMENTED:
+✅ **Backend:** Removed the redundant `new_message` emission loop in `chatController.js`. Now only a single, efficient broadcast to the conversation room is sent.
+✅ **Frontend:** Corrected `setActiveConversation` in `ChatContext.jsx` to allow a `null` value, enabling the UI to close the chat view and return to the default state.
+
+FILES MODIFIED: `/backend/controllers/chatController.js`, `/src/context/ChatContext.jsx`.
+
+---
+UPDATE 14.0 - TENANT MANAGEMENT UI/UX UPGRADE
+
+NEW FEATURE ADDED: **View Tenant Records Modal**
+
+PROBLEM RESOLVED: Agents had no way to view a comprehensive, read-only summary of a tenant's information without entering the "Edit" form.
+
+SOLUTION IMPLEMENTED:
+1.  **"View" Button:** Added a "View" button to each row in the tenant list table in `TenantManagement.jsx`.
+2.  **Details Modal:** Clicking "View" opens a new modal displaying a full summary of the tenant's records.
+3.  **Comprehensive Data:** The modal includes:
+    *   Personal Information (Name, ID, Contacts)
+    *   Lease & Unit Details (Property, Rent, Dates)
+    *   Emergency Contacts
+    *   Recent Payment History
+    *   **ID Images:** Displays the front and back ID images from Cloudinary, with a link to view full-size.
+4.  **Data Flow:** The modal fetches complete tenant data, including payment history, from the `GET /api/tenants/:id` endpoint.
+
+FILES MODIFIED: `/src/components/TenantManagement.jsx`.
+
+---
+UPDATE 15.0 - ADMIN REPORTS UI/UX & DATA SYNC
+
+PROBLEM RESOLVED:
+1.  The Admin "Reports" tab had a different, non-functional UI compared to the Agent dashboard.
+2.  When the UI was switched, it failed to fetch any data because it was hard-wired to agent-specific endpoints.
+
+ROOT CAUSE:
+1.  `AdminDashboard.jsx` was rendering an old `ReportsPage.jsx` component.
+2.  The frontend `apiHelper.js` was calling different API endpoints for admins and agents, leading to data structure mismatches.
+3.  Backend `agentPropertyController.js` was strictly filtering data by `agent_id`, blocking admins from viewing all records.
+
+SOLUTIONS IMPLEMENTED:
+1.  **UI Unification:** Replaced the old report component in `AdminDashboard.jsx` with the agent's `AgentReports.jsx` component for a consistent UI.
+2.  **Backend Logic Update:** Modified controllers in `agentPropertyController.js` to be "admin-aware." If `req.user.role === 'admin'`, the `agent_id` filter is skipped, returning all records.
+3.  **Frontend API Fix:** Updated `apiHelper.js` to use the same smart endpoints (e.g., `/api/agent-properties/my-tenants`) for both Admin and Agent roles, relying on the backend to handle data scoping.
+
+FILES MODIFIED: `/src/pages/AdminDashboard.jsx`, `/backend/controllers/agentPropertyController.js`, `/src/utils/apiHelper.js`.

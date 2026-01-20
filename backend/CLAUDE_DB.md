@@ -495,3 +495,9 @@ PERFORMANCE NOTE:
 - Recalculation queries are efficient with proper indexes on:
   * property_units(property_id, is_active, is_occupied)
   * property_units(property_id, is_occupied) WHERE is_active = true
+
+  UPDATE 13.0-15.0 - NO SCHEMA CHANGES
+
+The recent fixes and features implemented for the chat system, tenant record viewing, and admin report functionality were all handled at the application layer (frontend state management and backend controller logic).
+
+No database migrations, schema alterations, or changes to table structures were required to resolve these issues. The existing schema correctly supported the required logic once the application code was fixed.
