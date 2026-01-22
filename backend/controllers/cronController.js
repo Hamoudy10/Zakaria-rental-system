@@ -538,9 +538,9 @@ const getSMSHistory = async (req, res) => {
         sq.message,
         sq.message_type,
         sq.status,
-        sq.billing_month,
         sq.attempts,
-        sq.error_message,
+        sq.last_attempt_at,
+        sq.sent_at,
         sq.created_at,
         t.first_name, 
         t.last_name,
@@ -617,7 +617,6 @@ const getSMSHistory = async (req, res) => {
     });
   }
 };
-
 // Make sure your module.exports includes this function:
 module.exports = {
   startCronService,
