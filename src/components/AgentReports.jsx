@@ -1,4 +1,4 @@
-// /src/components/AgentReports.jsx - COMPLETELY UPDATED WITH FIXED API CALLS
+// /src/components/AgentReports.jsx - FIXED DATA EXTRACTION & ERROR HANDLING
 import React, { useState, useEffect } from 'react';
 import { API } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -40,6 +40,53 @@ const AgentReports = () => {
     { id: 'sms', name: 'SMS Report', icon: MessageSquare, color: 'bg-indigo-500' },
   ];
 
+  // Helper function to extract array from various response formats
+  const extractDataArray = (response, reportType) => {
+    console.log(`🔍 Extracting data for ${reportType}:`, response);
+    
+    if (!response?.data?.success) {
+      console.warn(`⚠️ Response not successful for ${reportType}`);
+      return [];
+    }
+    
+    const responseData = response.data.data;
+    
+    // If it's already an array, return it
+    if (Array.isArray(responseData)) {
+      console.log(`✅ Direct array found for ${reportType}:`, responseData.length, 'items');
+      return responseData;
+    }
+    
+    // If it's an object, try to find the array inside
+    if (typeof responseData === 'object' && responseData !== null) {
+      console.log(`🔎 Searching for array in object for ${reportType}:`, Object.keys(responseData));
+      
+      // Check for common array keys based on report type
+      const possibleKeys = {
+        'payments': ['payments', 'data', 'records'],
+        'tenants': ['tenants', 'data', 'records'],
+        'properties': ['properties', 'data', 'records'],
+        'complaints': ['complaints', 'data', 'records'],
+        'water': ['waterBills', 'bills', 'data', 'records'],
+        'sms': ['messages', 'sms', 'data', 'records'],
+        'revenue': ['revenue', 'data', 'records']
+      };
+      
+      const keysToCheck = possibleKeys[reportType] || ['data', 'records'];
+      
+      for (const key of keysToCheck) {
+        if (Array.isArray(responseData[key])) {
+          console.log(`✅ Found array in key '${key}' for ${reportType}:`, responseData[key].length, 'items');
+          return responseData[key];
+        }
+      }
+      
+      console.warn(`⚠️ No array found in expected keys for ${reportType}. Available keys:`, Object.keys(responseData));
+    }
+    
+    return [];
+  };
+
   // Fetch company settings from admin settings
   useEffect(() => {
     const fetchCompanyInfo = async () => {
@@ -77,19 +124,6 @@ const AgentReports = () => {
     
     fetchAgentProperties();
   }, []);
-
-  // Debug function to check API structure
-  const debugAPIStructure = () => {
-    console.log('🔍 Checking API structure...');
-    const modules = Object.keys(API);
-    console.log('Available API modules:', modules);
-    
-    modules.forEach(module => {
-      console.log(`API.${module}:`, Object.keys(API[module] || {}));
-    });
-    
-    return modules;
-  };
 
   // Safe API call wrapper
   const safeAPICall = async (apiFunction, fallbackData = []) => {
@@ -158,6 +192,11 @@ const AgentReports = () => {
 
   // Helper to calculate revenue from payments
   const calculateRevenue = (payments) => {
+    if (!Array.isArray(payments)) {
+      console.warn('⚠️ calculateRevenue received non-array:', payments);
+      return [];
+    }
+    
     const revenueByMonth = payments.reduce((acc, payment) => {
       const month = payment.payment_month || 
                    payment.created_at?.substring(0, 7) || 
@@ -206,37 +245,28 @@ const AgentReports = () => {
         ...filters
       };
 
-      // Debug current API structure
-      debugAPIStructure();
-
       switch (activeReport) {
         case 'tenants':
-          // Use agent assigned tenants endpoint
           response = await directAPICall('/agent-properties/my-tenants', 'GET', params);
           break;
           
         case 'payments':
-          // Use payments endpoint - backend should filter by agent
           response = await safeAPICall(() => API.payments.getPayments(params));
           break;
           
         case 'properties':
-          // Use agent assigned properties endpoint
           response = await safeAPICall(() => API.properties.getAgentProperties());
           break;
           
         case 'complaints':
-          // Use agent assigned complaints endpoint
           response = await directAPICall('/agent-properties/my-complaints', 'GET', params);
           break;
           
         case 'water':
-          // Use water bills endpoint
           response = await directAPICall('/water-bills', 'GET', params);
           break;
           
         case 'sms':
-          // Use SMS history endpoint
           response = await safeAPICall(() => API.billing.getSMSHistory(params));
           break;
           
@@ -244,7 +274,8 @@ const AgentReports = () => {
           // Calculate revenue from payments data
           const paymentsResponse = await safeAPICall(() => API.payments.getPayments(params));
           if (paymentsResponse.data?.success) {
-            const revenueData = calculateRevenue(paymentsResponse.data.data || []);
+            const paymentsArray = extractDataArray(paymentsResponse, 'payments');
+            const revenueData = calculateRevenue(paymentsArray);
             response = { data: { success: true, data: revenueData } };
           } else {
             response = { data: { success: false, data: [] } };
@@ -255,11 +286,13 @@ const AgentReports = () => {
           response = { data: { success: true, data: [] } };
       }
 
-      console.log('📦 Final response for', activeReport, ':', response);
+      console.log('📦 Raw response for', activeReport, ':', response);
 
       if (response?.data?.success) {
-        setData(response.data.data || []);
-        console.log(`✅ Loaded ${response.data.data?.length || 0} records for ${activeReport} report`);
+        // Extract array from response using helper function
+        const extractedData = extractDataArray(response, activeReport);
+        setData(extractedData);
+        console.log(`✅ Loaded ${extractedData.length} records for ${activeReport} report`);
       } else {
         console.warn('❌ Report fetch failed:', response?.data?.message || 'Unknown error');
         setData([]);
@@ -282,7 +315,7 @@ const AgentReports = () => {
   }, [activeReport, filters]);
 
   const handleExport = async (format) => {
-    if (data.length === 0) {
+    if (!Array.isArray(data) || data.length === 0) {
       alert('No data to export. Please wait for data to load or check if the report has any records.');
       return;
     }
@@ -411,7 +444,7 @@ const AgentReports = () => {
       );
     }
 
-    if (!data || data.length === 0) {
+    if (!Array.isArray(data) || data.length === 0) {
       return (
         <div className="text-center py-12">
           <div className="text-gray-400 mb-2">
@@ -582,13 +615,19 @@ const AgentReports = () => {
   };
 
   const getReportStats = () => {
+    // Safety check: ensure data is an array
+    if (!Array.isArray(data)) {
+      console.warn('⚠️ getReportStats: data is not an array:', data);
+      return { count: 0, totalAmount: 0 };
+    }
+    
     const count = data.length;
     let totalAmount = 0;
     
     if (activeReport === 'payments' || activeReport === 'revenue') {
-      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.amount || item.total_revenue) || 0), 0);
     } else if (activeReport === 'tenants') {
-      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.rent_amount) || 0), 0);
+      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.rent_amount || item.monthly_rent) || 0), 0);
     }
     
     return { count, totalAmount };
@@ -616,9 +655,9 @@ const AgentReports = () => {
         <div className="flex gap-3 mt-4 md:mt-0">
           <button
             onClick={() => handleExport('pdf')}
-            disabled={data.length === 0 || loading}
+            disabled={!Array.isArray(data) || data.length === 0 || loading}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-              data.length === 0 || loading
+              !Array.isArray(data) || data.length === 0 || loading
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
                 : 'bg-red-600 text-white hover:bg-red-700'
             }`}
@@ -628,9 +667,9 @@ const AgentReports = () => {
           </button>
           <button
             onClick={() => handleExport('excel')}
-            disabled={data.length === 0 || loading}
+            disabled={!Array.isArray(data) || data.length === 0 || loading}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-              data.length === 0 || loading
+              !Array.isArray(data) || data.length === 0 || loading
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
                 : 'bg-green-600 text-white hover:bg-green-700'
             }`}
@@ -711,10 +750,10 @@ const AgentReports = () => {
         <div className="border-t border-gray-200 px-6 py-4 bg-gray-50">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-500">
-              {data.length} records • Export to PDF or Excel
+              {Array.isArray(data) ? data.length : 0} records • Export to PDF or Excel
             </div>
             <div className="text-xs text-gray-400">
-              Showing first {Math.min(data.length, 10)} of {data.length} records
+              Showing first {Math.min(Array.isArray(data) ? data.length : 0, 10)} of {Array.isArray(data) ? data.length : 0} records
             </div>
           </div>
         </div>

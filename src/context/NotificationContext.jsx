@@ -12,7 +12,7 @@ export const useNotification = () => {
 };
 
 export const NotificationProvider = ({ children }) => {
-  const { user: authUser, token } = useAuth();
+  const { user, token } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -23,8 +23,8 @@ export const NotificationProvider = ({ children }) => {
 
   const isMountedRef = useRef(true);
   const pollingRef = useRef(null);
-  const backoffRef = useRef(30000); 
-  const MAX_BACKOFF = 5 * 60 * 1000;
+  const backoffRef = useRef(30000); // Start polling every 30s
+  const MAX_BACKOFF = 5 * 60 * 1000; 
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -34,152 +34,113 @@ export const NotificationProvider = ({ children }) => {
     };
   }, []);
 
-  const isAuthenticated = useCallback(() => !!authUser && !!token, [authUser, token]);
+  const isAuthenticated = useCallback(() => !!user && !!token, [user, token]);
+  
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // Safe fetch wrapper with retry logic for network errors
-  const safeFetch = useCallback(async (fetchFn, retries = 3, delay = 2000) => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const response = await fetchFn();
-        if (response?.data) return response.data;
-        throw new Error('Invalid response format');
-      } catch (err) {
-        // If it's a 429 (Rate Limit), do NOT retry immediately (let polling handle it via backoff)
-        if (err.response?.status === 429) {
-          throw err; 
-        }
-        if (attempt < retries) {
-          console.warn(`Retrying (${attempt + 1}/${retries})...`);
-          await wait(delay);
-          delay *= 2;
-        } else {
-          throw err;
-        }
+  // Helper to handle 429s centrally
+  const handleFetch = useCallback(async (apiCall) => {
+    try {
+      const response = await apiCall();
+      return { success: true, data: response.data };
+    } catch (err) {
+      if (err.response?.status === 429) {
+        console.warn('⚠️ Rate limit hit (429). Backing off.');
+        // Double backoff on 429
+        backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF);
+        return { success: false, status: 429 };
       }
+      return { success: false, error: err };
     }
   }, []);
 
-  const fetchNotifications = useCallback(async ({ page = 1, limit = 20, type, is_read } = {}) => {
-    if (!isAuthenticated()) return [];
+  // Fetch list ONLY
+  const fetchNotifications = useCallback(async (params = {}) => {
+    if (!isAuthenticated()) return;
     setLoading(true);
-    try {
-      const data = await safeFetch(() => notificationAPI.getNotifications(limit, (page - 1) * limit, type, is_read));
-      if (!data.success) throw new Error(data.message || 'Failed to fetch notifications');
+    
+    const result = await handleFetch(() => notificationAPI.getNotifications({
+      limit: params.limit || 20,
+      page: params.page || 1,
+      type: params.type,
+      is_read: params.is_read
+    }));
 
-      const newNotifications = data.data?.notifications || [];
-      const paginationData = data.data?.pagination || { currentPage: page, totalPages: 1, totalCount: newNotifications.length, hasNext: false, hasPrev: false };
-
-      if (isMountedRef.current) {
-        setNotifications(newNotifications); // Only set new ones to avoid merge complexity
-        setPagination(paginationData);
-      }
-
-      return newNotifications;
-    } catch (err) {
-      console.error('❌ Error fetching notifications:', err);
-      // Don't set generic error for 429 as polling handles it, but set for others
-      if (err.response?.status !== 429) {
-        setError(err.response?.data?.message || err.message || 'Failed to fetch notifications');
-      }
-      throw err; // Allow poll to catch this
-    } finally {
+    if (isMountedRef.current) {
       setLoading(false);
+      if (result.success) {
+        setNotifications(result.data.data?.notifications || []);
+        setPagination(result.data.data?.pagination || {});
+        // Reset backoff on success
+        backoffRef.current = 30000;
+      } else if (result.status !== 429) {
+        setError(result.error?.response?.data?.message || 'Failed to fetch notifications');
+      }
     }
-    }, [isAuthenticated, safeFetch]); // <--- REMOVED 'notifications' DEP
+  }, [isAuthenticated, handleFetch]);
 
+  // Fetch count ONLY
   const fetchUnreadCount = useCallback(async () => {
-    if (!isAuthenticated()) { 
-      if (isMountedRef.current) setUnreadCount(0); 
-      return 0; 
+    if (!isAuthenticated()) return;
+    
+    const result = await handleFetch(() => notificationAPI.getUnreadCount());
+    
+    if (isMountedRef.current && result.success) {
+      setUnreadCount(result.data.data?.unreadCount || 0);
     }
-    try {
-      const data = await safeFetch(() => notificationAPI.getUnreadCount());
-      const newCount = data.success ? data.data?.unreadCount || 0 : 0;
-      if (isMountedRef.current) setUnreadCount(newCount);
-      return newCount;
-    } catch (err) {
-      console.error('❌ Error fetching unread count:', err);
-      // If 429, don't spam console, just reset to 0 to prevent UI freeze or leave as is
-      if (err.response?.status === 429) return;
-      if (isMountedRef.current) setUnreadCount(0);
-      throw err;
-    }
-  }, [isAuthenticated, safeFetch]); // <--- REMOVED 'notifications' DEP
+  }, [isAuthenticated, handleFetch]);
 
+  // SEQUENTIAL Refresh: List -> Wait 2.5s -> Count
   const refreshNotifications = useCallback(async () => {
     if (!isAuthenticated()) return;
-    try {
-      await Promise.all([fetchNotifications({ page: 1 }), fetchUnreadCount()]);
-      backoffRef.current = 30000; // reset backoff on success
-    } catch (err) {
-      backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF);
-      console.warn(`⚠️ Polling error (increasing backoff to ${backoffRef.current}ms):`, err.message);
-    }
-  }, [fetchNotifications, fetchUnreadCount, isAuthenticated]); // <--- REMOVED 'notifications' DEP
 
-  const clearError = useCallback(() => { if (isMountedRef.current) setError(null); }, []);
+    // 1. Fetch notifications
+    await fetchNotifications({ page: 1 });
+    
+    // 2. Wait 2500ms to clear the 2000ms rate limit window
+    await wait(2500);
 
+    // 3. Fetch count
+    await fetchUnreadCount();
+
+  }, [isAuthenticated, fetchNotifications, fetchUnreadCount]);
+
+  // Context Actions
   const markAsRead = async (id) => {
-    try {
-      const response = await notificationAPI.markAsRead(id);
-      if (response.data.success) {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-        setUnreadCount(prev => Math.max(0, prev - 1));
-      }
-    } catch (err) {
-      setError('Failed to mark as read');
-    }
+    await notificationAPI.markAsRead(id);
+    // Optimistic update
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    setUnreadCount(prev => Math.max(0, prev - 1));
   };
 
   const markAllAsRead = async () => {
-    try {
-      const response = await notificationAPI.markAllAsRead();
-      if (response.data.success) {
-        setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
-        setUnreadCount(0);
-      }
-    } catch (err) {
-      setError('Failed to mark all as read');
-    }
+    await notificationAPI.markAllAsRead();
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    setUnreadCount(0);
   };
 
   const deleteNotification = async (id) => {
-    try {
-      const response = await notificationAPI.deleteNotification(id);
-      if (response.data.success) {
-        setNotifications(prev => {
-          const deleted = prev.find(n => n.id === id);
-          return prev.filter(n => n.id !== id);
-        });
-        if (deleted && !deleted.is_read) setUnreadCount(prev => Math.max(0, prev - 1));
-      }
-    } catch (err) {
-      setError('Failed to delete notification');
-    }
+    await notificationAPI.deleteNotification(id);
+    setNotifications(prev => {
+      const deleted = prev.find(n => n.id === id);
+      if (deleted && !deleted.is_read) setUnreadCount(prev => Math.max(0, prev - 1));
+      return prev.filter(n => n.id !== id);
+    });
   };
 
   const clearReadNotifications = async () => {
-    try {
-      const response = await notificationAPI.clearReadNotifications();
-      if (response.data.success) {
-        setNotifications(prev => prev.filter(n => !n.is_read));
-      }
-    } catch (err) {
-      setError('Failed to clear read notifications');
-    }
+    await notificationAPI.clearReadNotifications();
+    setNotifications(prev => prev.filter(n => !n.is_read));
   };
 
   const createBroadcastNotification = async (data) => {
-    try {
-      const response = await notificationAPI.createBroadcastNotification(data);
-      return response.data;
-    } catch (err) {
-      throw new Error(err.response?.data?.message || 'Broadcast failed');
-    }
+    const response = await notificationAPI.createBroadcastNotification(data);
+    return response.data;
   };
 
-  // --- POLLING LOGIC ---
+  const clearError = () => setError(null);
+
+  // Polling Effect
   useEffect(() => {
     if (!isAuthenticated()) {
       if (pollingRef.current) clearTimeout(pollingRef.current);
@@ -187,45 +148,23 @@ export const NotificationProvider = ({ children }) => {
     }
 
     const poll = async () => {
-      if (!isMountedRef.current || !isAuthenticated()) return;
-      try {
-        await refreshNotifications();
-      } catch (err) {
-        // Only log error for debugging, don't crash the loop
-        // backoff is already adjusted in refreshNotifications
-      } finally {
-        // Always reschedule
-        if (isMountedRef.current && isAuthenticated()) {
-          pollingRef.current = setTimeout(poll, backoffRef.current);
-        }
-      }
+      if (!isMountedRef.current) return;
+      await refreshNotifications();
+      // Schedule next poll based on dynamic backoff
+      pollingRef.current = setTimeout(poll, backoffRef.current);
     };
 
     poll();
 
-    return () => { 
-      if (pollingRef.current) clearTimeout(pollingRef.current); 
-    };
-  }, [isAuthenticated, refreshNotifications]); // <--- REF DEPS REMOVED 'notifications' to break loop
+    return () => { if (pollingRef.current) clearTimeout(pollingRef.current); };
+  }, [isAuthenticated, refreshNotifications]);
 
   const value = React.useMemo(() => ({
-    notifications,
-    loading,
-    error,
-    unreadCount,
-    pagination,
-    fetchNotifications,
-    fetchUnreadCount,
-    refreshNotifications,
-    clearError,
-    hasUnread: unreadCount > 0,
-    hasNotifications: notifications.length > 0,
-    markAsRead,
-    markAllAsRead,
-    deleteNotification,
-    clearReadNotifications,
-    createBroadcastNotification,
-  }), [notifications, loading, error, unreadCount, pagination, fetchNotifications, fetchUnreadCount, refreshNotifications, markAsRead, markAllAsRead, deleteNotification, clearReadNotifications, createBroadcastNotification]);
+    notifications, loading, error, unreadCount, pagination,
+    fetchNotifications, fetchUnreadCount, refreshNotifications,
+    markAsRead, markAllAsRead, deleteNotification, 
+    clearReadNotifications, createBroadcastNotification, clearError
+  }), [notifications, loading, error, unreadCount, pagination, refreshNotifications]);
 
   return (
     <NotificationContext.Provider value={value}>
