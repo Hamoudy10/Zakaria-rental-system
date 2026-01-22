@@ -1,9 +1,11 @@
+// backend/controllers/notificationController.js
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
+const SMSService = require('../services/smsService');
 
 // Rate limiting to prevent excessive API calls
 const userRequestTimestamps = new Map();
-const RATE_LIMIT_WINDOW = 2000; // 2 seconds between similar requests
+const RATE_LIMIT_WINDOW = 2000;
 
 const checkRateLimit = (userId, endpoint) => {
   const now = Date.now();
@@ -18,14 +20,12 @@ const checkRateLimit = (userId, endpoint) => {
   return true;
 };
 
-// Get user notifications with pagination and filters - FIXED VERSION
+// Get user notifications with pagination and filters
 const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
     
-    // Rate limiting check
     if (!checkRateLimit(userId, 'getNotifications')) {
-      console.log(`⏰ Rate limit exceeded for user ${userId} on getNotifications`);
       return res.status(429).json({
         success: false,
         message: 'Too many requests. Please wait a moment.'
@@ -34,23 +34,26 @@ const getNotifications = async (req, res) => {
 
     const { 
       limit = 20, 
-      offset = 0, 
+      page = 1,
+      offset,
       type, 
-      is_read
+      is_read,
+      start_date,
+      end_date
     } = req.query;
 
-    console.log(`🔍 Fetching notifications for user: ${userId}`, {
-      limit, offset, type, is_read
-    });
+    const limitNum = parseInt(limit);
+    // Support both page and offset for flexibility
+    const offsetNum = offset !== undefined ? parseInt(offset) : (parseInt(page) - 1) * limitNum;
 
-    // Build base query
+    console.log(`🔍 Fetching notifications for user: ${userId}`, { limit: limitNum, offset: offsetNum, type, is_read });
+
     let query = `SELECT * FROM notifications WHERE user_id = $1`;
     let countQuery = `SELECT COUNT(*) FROM notifications WHERE user_id = $1`;
     
     const queryParams = [userId];
     const countParams = [userId];
 
-    // Add filters
     if (type) {
       query += ` AND type = $${queryParams.length + 1}`;
       countQuery += ` AND type = $${countParams.length + 1}`;
@@ -58,22 +61,30 @@ const getNotifications = async (req, res) => {
       countParams.push(type);
     }
 
-    if (is_read !== undefined) {
+    if (is_read !== undefined && is_read !== '') {
       query += ` AND is_read = $${queryParams.length + 1}`;
       countQuery += ` AND is_read = $${countParams.length + 1}`;
-      queryParams.push(is_read === 'true');
-      countParams.push(is_read === 'true');
+      queryParams.push(is_read === 'true' || is_read === true);
+      countParams.push(is_read === 'true' || is_read === true);
     }
 
-    // Add ordering and pagination
+    if (start_date) {
+      query += ` AND created_at >= $${queryParams.length + 1}`;
+      countQuery += ` AND created_at >= $${countParams.length + 1}`;
+      queryParams.push(new Date(start_date));
+      countParams.push(new Date(start_date));
+    }
+
+    if (end_date) {
+      query += ` AND created_at <= $${queryParams.length + 1}`;
+      countQuery += ` AND created_at <= $${countParams.length + 1}`;
+      queryParams.push(new Date(end_date));
+      countParams.push(new Date(end_date));
+    }
+
     query += ` ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
-    const limitNum = parseInt(limit);
-    const offsetNum = parseInt(offset);
     queryParams.push(limitNum, offsetNum);
 
-    console.log('📊 Final query params:', queryParams);
-
-    // Execute queries
     const [notificationsResult, countResult] = await Promise.all([
       pool.query(query, queryParams),
       pool.query(countQuery, countParams)
@@ -122,11 +133,8 @@ const createNotification = async (req, res) => {
       related_entity_id 
     } = req.body;
 
-    console.log('📨 Creating notification:', { 
-      userId, title, type, related_entity_type, related_entity_id 
-    });
+    console.log('📨 Creating notification:', { userId, title, type });
 
-    // Validate required fields
     if (!title || !message || !type) {
       return res.status(400).json({
         success: false,
@@ -134,7 +142,6 @@ const createNotification = async (req, res) => {
       });
     }
 
-    // If userId is not provided and user is admin, it's a broadcast notification
     if (!userId && req.user.role !== 'admin') {
       return res.status(400).json({
         success: false,
@@ -145,7 +152,6 @@ const createNotification = async (req, res) => {
     let notification;
 
     if (userId) {
-      // Create single notification
       notification = await NotificationService.createNotification({
         userId,
         title,
@@ -155,7 +161,6 @@ const createNotification = async (req, res) => {
         relatedEntityId: related_entity_id
       });
     } else {
-      // Create broadcast notification for all users (admin only)
       const allUsers = await pool.query('SELECT id FROM users WHERE is_active = true');
       const notificationsData = allUsers.rows.map(user => ({
         userId: user.id,
@@ -167,7 +172,7 @@ const createNotification = async (req, res) => {
       }));
 
       const results = await NotificationService.createBulkNotifications(notificationsData);
-      notification = results[0]; // Return first one as sample
+      notification = results[0];
     }
 
     console.log('✅ Notification created successfully');
@@ -228,7 +233,6 @@ const markAllAsRead = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Rate limiting check
     if (!checkRateLimit(userId, 'markAllAsRead')) {
       return res.status(429).json({
         success: false,
@@ -266,7 +270,6 @@ const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Rate limiting check
     if (!checkRateLimit(userId, 'getUnreadCount')) {
       return res.status(429).json({
         success: false,
@@ -274,11 +277,7 @@ const getUnreadCount = async (req, res) => {
       });
     }
 
-    console.log(`🔢 Getting unread count for user: ${userId}`);
-
     const unreadCount = await NotificationService.getUnreadCount(userId);
-
-    console.log(`✅ Unread count: ${unreadCount} for user: ${userId}`);
 
     res.json({
       success: true,
@@ -303,7 +302,6 @@ const getNotificationStats = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Rate limiting check
     if (!checkRateLimit(userId, 'getNotificationStats')) {
       return res.status(429).json({
         success: false,
@@ -311,21 +309,16 @@ const getNotificationStats = async (req, res) => {
       });
     }
 
-    console.log(`📊 Getting notification stats for user: ${userId}`);
-
-    // Get total notifications count
     const totalQuery = await pool.query(
       'SELECT COUNT(*) FROM notifications WHERE user_id = $1',
       [userId]
     );
 
-    // Get unread count
     const unreadQuery = await pool.query(
       'SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = false',
       [userId]
     );
 
-    // Get notifications by type
     const typeQuery = await pool.query(
       `SELECT type, COUNT(*) as count 
        FROM notifications 
@@ -335,7 +328,6 @@ const getNotificationStats = async (req, res) => {
       [userId]
     );
 
-    // Get recent activity (last 7 days)
     const recentQuery = await pool.query(
       `SELECT COUNT(*) as recent_count 
        FROM notifications 
@@ -352,8 +344,6 @@ const getNotificationStats = async (req, res) => {
       }, {}),
       recent: parseInt(recentQuery.rows[0].recent_count)
     };
-
-    console.log(`✅ Notification stats retrieved for user: ${userId}`);
 
     res.json({
       success: true,
@@ -378,7 +368,6 @@ const deleteNotification = async (req, res) => {
 
     console.log(`🗑️ Deleting notification: ${id} for user: ${userId}`);
 
-    // Verify the notification belongs to the user
     const verifyQuery = await pool.query(
       'SELECT id FROM notifications WHERE id = $1 AND user_id = $2',
       [id, userId]
@@ -391,7 +380,6 @@ const deleteNotification = async (req, res) => {
       });
     }
 
-    // Delete the notification
     const deleteQuery = await pool.query(
       'DELETE FROM notifications WHERE id = $1 RETURNING *',
       [id]
@@ -422,7 +410,6 @@ const clearReadNotifications = async (req, res) => {
 
     console.log(`🧹 Clearing all read notifications for user: ${userId}`);
 
-    // Get count before deletion for response
     const countQuery = await pool.query(
       'SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = true',
       [userId]
@@ -430,7 +417,6 @@ const clearReadNotifications = async (req, res) => {
 
     const countBefore = parseInt(countQuery.rows[0].count);
 
-    // Delete all read notifications
     const deleteQuery = await pool.query(
       'DELETE FROM notifications WHERE user_id = $1 AND is_read = true RETURNING *',
       [userId]
@@ -487,8 +473,6 @@ const getNotificationsByType = async (req, res) => {
     const totalCount = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(totalCount / limit);
 
-    console.log(`✅ Found ${notificationsResult.rows.length} ${type} notifications`);
-
     res.json({
       success: true,
       data: {
@@ -526,7 +510,6 @@ const createBroadcastNotification = async (req, res) => {
 
     console.log('📢 Creating broadcast notification:', { title, type, target_roles });
 
-    // Validate required fields
     if (!title || !message) {
       return res.status(400).json({
         success: false,
@@ -534,7 +517,6 @@ const createBroadcastNotification = async (req, res) => {
       });
     }
 
-    // Check if user is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
@@ -542,7 +524,6 @@ const createBroadcastNotification = async (req, res) => {
       });
     }
 
-    // Build user query based on target roles
     let userQuery = 'SELECT id FROM users WHERE is_active = true';
     const userParams = [];
 
@@ -561,7 +542,6 @@ const createBroadcastNotification = async (req, res) => {
       });
     }
 
-    // Create notifications for all target users
     const notificationsData = users.map(user => ({
       userId: user.id,
       title,
@@ -588,6 +568,127 @@ const createBroadcastNotification = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error creating broadcast notification',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Send Bulk SMS to property tenants
+const sendBulkSMS = async (req, res) => {
+  try {
+    const { propertyId, message, messageType = 'announcement' } = req.body;
+    const userId = req.user.id;
+
+    console.log('📱 Sending bulk SMS:', { propertyId, messageType, userId });
+
+    if (!propertyId || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: propertyId, message'
+      });
+    }
+
+    if (message.length > 160) {
+      return res.status(400).json({
+        success: false,
+        message: 'SMS message cannot exceed 160 characters'
+      });
+    }
+
+    // Verify user has access to this property (admin or assigned agent)
+    let accessQuery;
+    if (req.user.role === 'admin') {
+      accessQuery = await pool.query('SELECT id, name FROM properties WHERE id = $1', [propertyId]);
+    } else {
+      accessQuery = await pool.query(
+        `SELECT p.id, p.name FROM properties p
+         JOIN agent_property_assignments apa ON p.id = apa.property_id
+         WHERE p.id = $1 AND apa.agent_id = $2 AND apa.is_active = true`,
+        [propertyId, userId]
+      );
+    }
+
+    if (accessQuery.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied to this property'
+      });
+    }
+
+    const property = accessQuery.rows[0];
+
+    // Get all active tenants in the property
+    const tenantsQuery = await pool.query(
+      `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, pu.unit_code
+       FROM tenants t
+       JOIN tenant_allocations ta ON t.id = ta.tenant_id
+       JOIN property_units pu ON ta.unit_id = pu.id
+       WHERE pu.property_id = $1 AND ta.is_active = true AND t.phone_number IS NOT NULL`,
+      [propertyId]
+    );
+
+    const tenants = tenantsQuery.rows;
+
+    if (tenants.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No tenants with phone numbers found in this property'
+      });
+    }
+
+    console.log(`📤 Sending SMS to ${tenants.length} tenants in ${property.name}`);
+
+    // Send SMS to each tenant
+    const results = {
+      total: tenants.length,
+      sent: 0,
+      failed: 0,
+      errors: []
+    };
+
+    for (const tenant of tenants) {
+      try {
+        const smsResult = await SMSService.sendSMS(tenant.phone_number, message);
+        if (smsResult.success) {
+          results.sent++;
+        } else {
+          results.failed++;
+          results.errors.push({
+            tenant: `${tenant.first_name} ${tenant.last_name}`,
+            unit: tenant.unit_code,
+            error: smsResult.error
+          });
+        }
+      } catch (smsError) {
+        results.failed++;
+        results.errors.push({
+          tenant: `${tenant.first_name} ${tenant.last_name}`,
+          unit: tenant.unit_code,
+          error: smsError.message
+        });
+      }
+    }
+
+    // Log the bulk SMS action
+    await pool.query(
+      `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [`BULK_${propertyId}`, message, messageType, results.sent > 0 ? 'sent' : 'failed', userId]
+    );
+
+    console.log(`✅ Bulk SMS complete: ${results.sent} sent, ${results.failed} failed`);
+
+    res.json({
+      success: true,
+      message: `SMS sent to ${results.sent} of ${results.total} tenants`,
+      data: results
+    });
+
+  } catch (error) {
+    console.error('❌ Send bulk SMS error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error sending bulk SMS',
       error: error.message
     });
   }
@@ -628,5 +729,6 @@ module.exports = {
   clearReadNotifications,
   getNotificationsByType,
   createBroadcastNotification,
+  sendBulkSMS,
   healthCheck
 };

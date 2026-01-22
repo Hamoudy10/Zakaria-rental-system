@@ -1,195 +1,119 @@
 // src/components/NotificationManagement.jsx
-import React, { useState, useEffect } from 'react';
-import agentService from '../services/AgentService';
+import React, { useState } from 'react';
+import { useProperty } from '../context/PropertyContext';
+import { notificationAPI } from '../services/api';
+import { Send, MessageSquare, AlertTriangle, Info } from 'lucide-react';
 
 const NotificationManagement = () => {
-  const [properties, setProperties] = useState([]);
+  const { properties, loading: propsLoading } = useProperty();
   const [selectedProperty, setSelectedProperty] = useState('');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('announcement');
-  const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
 
-  useEffect(() => {
-    fetchAssignedProperties();
-  }, []);
-
-  const fetchAssignedProperties = async () => {
-    try {
-      setLoading(true);
-      const response = await agentService.getAssignedProperties();
-      const propertiesData = response.data?.data || response.data || [];
-      setProperties(Array.isArray(propertiesData) ? propertiesData : []);
-    } catch (err) {
-      console.error('Error fetching properties:', err);
-      alert('Failed to load assigned properties.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const sendNotification = async () => {
-    if (!selectedProperty) {
-      alert('Please select a property');
-      return;
-    }
-    if (!message.trim()) {
-      alert('Please enter a message');
-      return;
-    }
+    if (!selectedProperty || !message.trim()) return;
 
     try {
       setSending(true);
-      await agentService.sendBulkSMS({
+      const response = await notificationAPI.sendBulkSMS({
         propertyId: selectedProperty,
         message: message.trim(),
         messageType: messageType
       });
-      alert('Notification sent successfully!');
-      setMessage('');
-      setSelectedProperty('');
+      if (response.data.success) {
+        alert('Bulk SMS queued successfully!');
+        setMessage('');
+      }
     } catch (err) {
-      console.error('Error sending notification:', err);
-      alert('Failed to send notification. Please try again.');
+      alert('Error: ' + (err.response?.data?.message || 'Failed to send'));
     } finally {
       setSending(false);
     }
   };
 
-  const getTenantCount = (propertyId) => {
-    const property = properties.find(p => p.id === propertyId);
-    return property ? (property.occupied_units || 0) : 0;
-  };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
+  const templates = [
+    { title: 'Rent Reminder', type: 'payment', msg: 'Dear tenant, a friendly reminder that rent is due. Please settle via Paybill to avoid penalties.' },
+    { title: 'Water Interruption', type: 'maintenance', msg: 'Notice: Scheduled maintenance will result in water interruption tomorrow from 10am to 2pm.' },
+  ];
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="text-center sm:text-left">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Send Notifications</h1>
-        <p className="text-gray-600 text-sm mt-1">Send SMS announcements and notices to tenants in your assigned properties</p>
-        {properties.length > 0 && (
-          <p className="text-sm text-blue-600 mt-1">
-            You have {properties.length} assigned properties
-          </p>
-        )}
-      </div>
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="bg-white p-6 rounded-2xl border shadow-sm space-y-6">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <MessageSquare className="text-blue-600" /> Property Bulk Messaging
+        </h1>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <div className="space-y-4">
-          {/* Property Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select Property
-            </label>
-            <select
-              value={selectedProperty}
-              onChange={(e) => setSelectedProperty(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">Choose a property...</option>
-              {properties.map(property => (
-                <option key={property.id} value={property.id}>
-                  {property.name} ({property.occupied_units || 0} tenants)
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Message Type */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Message Type
-            </label>
-            <select
-              value={messageType}
-              onChange={(e) => setMessageType(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="announcement">General Announcement</option>
-              <option value="maintenance">Maintenance Notice</option>
-              <option value="payment">Payment Reminder</option>
-              <option value="emergency">Emergency Alert</option>
-            </select>
-          </div>
-
-          {/* Message Input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Message Content
-            </label>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              rows="6"
-              className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 resize-vertical"
-              placeholder="Type your message here... (Maximum 160 characters for SMS)"
-              maxLength={160}
-            />
-            <div className="text-right text-sm text-gray-500 mt-1">
-              {message.length}/160 characters
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">Target Property</label>
+              <select 
+                value={selectedProperty} 
+                onChange={e => setSelectedProperty(e.target.value)}
+                className="w-full p-3 border rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select Property...</option>
+                {properties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.total_units} units)</option>
+                ))}
+              </select>
             </div>
-          </div>
 
-          {/* Preview */}
-          {message && (
-            <div className="bg-gray-50 p-4 rounded-md">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Preview:</h4>
-              <div className="text-sm text-gray-600 bg-white p-3 rounded border">
-                {message}
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">Category</label>
+              <div className="grid grid-cols-2 gap-2">
+                {['announcement', 'payment', 'maintenance', 'emergency'].map(t => (
+                  <button 
+                    key={t}
+                    onClick={() => setMessageType(t)}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold uppercase transition-all border ${messageType === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-200'}`}
+                  >
+                    {t}
+                  </button>
+                ))}
               </div>
-              {selectedProperty && (
-                <p className="text-xs text-gray-500 mt-2">
-                  This message will be sent to {getTenantCount(selectedProperty)} tenants at the selected property.
-                </p>
-              )}
             </div>
-          )}
-
-          {/* Send Button */}
-          <div className="flex justify-end">
-            <button
-              onClick={sendNotification}
-              disabled={sending || !selectedProperty || !message.trim()}
-              className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {sending ? 'Sending...' : 'Send Notification'}
-            </button>
           </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">SMS Content</label>
+              <textarea 
+                value={message}
+                onChange={e => setMessage(e.target.value)}
+                maxLength={160}
+                rows={5}
+                placeholder="Write your message here..."
+                className="w-full p-4 border rounded-xl bg-gray-50 resize-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex justify-between mt-1 text-[10px] font-bold text-gray-400">
+                <span>MAX 160 CHARACTERS</span>
+                <span>{message.length} / 160</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-4 border-t flex justify-end">
+          <button 
+            disabled={sending || !selectedProperty || !message}
+            onClick={sendNotification}
+            className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 disabled:bg-gray-300 transition-all shadow-lg shadow-blue-200"
+          >
+            {sending ? 'Processing...' : <><Send size={18} /> Send Bulk SMS</>}
+          </button>
         </div>
       </div>
 
-      {/* Recent Notifications (if available) */}
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Message Templates</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div 
-            className="border border-gray-200 rounded-lg p-4 cursor-pointer hover:bg-gray-50"
-            onClick={() => {
-              setMessageType('payment');
-              setMessage('Dear tenant, this is a friendly reminder that your rent payment is due. Please clear your balance to avoid late fees.');
-            }}
-          >
-            <h4 className="font-medium text-gray-900">Payment Reminder</h4>
-            <p className="text-sm text-gray-600 mt-1">Standard rent payment reminder</p>
+      {/* Templates */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {templates.map((tpl, i) => (
+          <div key={i} onClick={() => { setMessage(tpl.msg); setMessageType(tpl.type); }} className="bg-white p-4 rounded-xl border border-dashed border-gray-300 cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
+            <h4 className="font-bold text-blue-600 text-sm mb-1">{tpl.title}</h4>
+            <p className="text-xs text-gray-500 line-clamp-1">{tpl.msg}</p>
           </div>
-          <div 
-            className="border border-gray-200 rounded-lg p-4 cursor-pointer hover:bg-gray-50"
-            onClick={() => {
-              setMessageType('maintenance');
-              setMessage('Important maintenance notice: There will be scheduled water interruption tomorrow from 9 AM to 3 PM for system upgrades.');
-            }}
-          >
-            <h4 className="font-medium text-gray-900">Maintenance Notice</h4>
-            <p className="text-sm text-gray-600 mt-1">For planned maintenance alerts</p>
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );

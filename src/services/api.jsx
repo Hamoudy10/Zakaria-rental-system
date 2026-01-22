@@ -94,68 +94,40 @@ export const mpesaUtils = {
 
 // FIXED: Enhanced Notification API with all endpoints
 export const notificationAPI = {
-  // FIXED: Get notifications with proper parameter handling
-  getNotifications: (limit = 20, offset = 0, type, is_read) => {
-    const params = new URLSearchParams();
-    params.append('limit', limit.toString());
-    params.append('offset', offset.toString());
-    
-    if (type) params.append('type', type);
-    if (is_read !== undefined) params.append('is_read', is_read.toString());
-    
-    return api.get(`/notifications?${params.toString()}`);
-  },
+  // Get user personal notifications
+  getNotifications: (params) => api.get('/notifications', { params }),
 
-  // FIXED: Get unread notification count
+  // Get unread notification count
   getUnreadCount: () => api.get('/notifications/unread-count'),
 
-  // FIXED: Get notification statistics
+  // Get notification statistics
   getNotificationStats: () => api.get('/notifications/stats'),
 
-  // FIXED: Get notifications by type
-  getNotificationsByType: (type, page = 1, limit = 20) => {
-    const params = new URLSearchParams();
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    
-    return api.get(`/notifications/type/${type}?${params.toString()}`);
-  },
+  // Mark specific notification as read
+  markAsRead: (id) => api.put(`/notifications/${id}/read`),
 
-  // FIXED: Mark notification as read
-  markAsRead: (notificationId) => api.put(`/notifications/${notificationId}/read`),
-
-  // FIXED: Mark all notifications as read
+  // Mark all user notifications as read
   markAllAsRead: () => api.put('/notifications/read-all'),
 
-  // FIXED: Create notification
-  createNotification: (notificationData) => api.post('/notifications', notificationData),
+  // Create single notification
+  createNotification: (data) => api.post('/notifications', data),
 
-  // FIXED: Create broadcast notification (admin only)
-  createBroadcastNotification: (broadcastData) => api.post('/notifications/broadcast', broadcastData),
+  // Create role-based broadcast (In-app)
+  createBroadcastNotification: (data) => api.post('/notifications/broadcast', data),
 
-  // FIXED: Delete notification
-  deleteNotification: (notificationId) => api.delete(`/notifications/${notificationId}`),
+  // Delete single notification
+  deleteNotification: (id) => api.delete(`/notifications/${id}`),
 
-  // FIXED: Clear all read notifications
+  // Clear all read notifications
   clearReadNotifications: () => api.delete('/notifications/clear-read'),
 
+  // Admin/Agent: Send Bulk SMS to properties
+  sendBulkSMS: (data) => api.post('/notifications/bulk-sms', data),
+
   // Admin endpoints
-  getAdminNotifications: (page = 1, limit = 50, filters = {}) => {
-    const params = { page, limit, ...filters };
-    return api.get('/notifications/admin/all', { params });
-  },
+  getAdminNotifications: (params) => api.get('/notifications/admin/all', { params }),
 
-  getAdminNotificationStats: (start_date, end_date) => {
-    const params = {};
-    if (start_date) params.start_date = start_date;
-    if (end_date) params.end_date = end_date;
-    return api.get('/notifications/admin/stats/overview', { params });
-  },
-
-  clearUserNotifications: (userId) => api.delete(`/notifications/admin/clear-all/${userId}`),
-
-  // Health check
-  healthCheck: () => api.get('/notifications/health')
+  clearUserNotifications: (userId) => api.delete(`/notifications/admin/clear-all/${userId}`)
 };
 
 // Enhanced Payment API with salary payments and paybill integration
