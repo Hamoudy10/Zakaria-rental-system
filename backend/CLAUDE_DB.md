@@ -501,3 +501,55 @@ PERFORMANCE NOTE:
 The recent fixes and features implemented for the chat system, tenant record viewing, and admin report functionality were all handled at the application layer (frontend state management and backend controller logic).
 
 No database migrations, schema alterations, or changes to table structures were required to resolve these issues. The existing schema correctly supported the required logic once the application code was fixed.
+
+---
+
+## 4. `/backend/claude_db.md` — Add this at the end:
+
+```markdown
+UPDATE 16.0 - PAYMENT QUERIES & CARRY-FORWARD LOGIC
+
+PAYMENT LISTING QUERY (getAllPayments):
+```sql
+SELECT rp.*, 
+  COALESCE(t.first_name, u.first_name) as first_name,
+  COALESCE(t.last_name, u.last_name) as last_name,
+  p.name as property_name, pu.unit_code
+FROM rent_payments rp
+LEFT JOIN tenants t ON rp.tenant_id = t.id
+LEFT JOIN users u ON rp.tenant_id = u.id
+JOIN property_units pu ON rp.unit_id = pu.id
+JOIN properties p ON pu.property_id = p.id
+WHERE [dynamic filters]
+ORDER BY [sortBy] [sortOrder]
+LIMIT $x OFFSET $y
+-- Get all allocations to calculate expected rent
+SELECT lease_start_date, lease_end_date, monthly_rent
+FROM tenant_allocations WHERE tenant_id = $1
+
+-- JS calculates: months × monthly_rent = totalExpected
+-- totalPaid = SUM of completed payments
+-- balance = totalExpected - totalPaid
+INSERT INTO rent_payments (
+  tenant_id, unit_id, amount, payment_month, status,
+  is_advance_payment, original_payment_id, ...
+) VALUES (
+  $1, $2, 
+  $3,  -- allocationAmount (NOT total remaining)
+  $4,  -- future month YYYY-MM-01
+  'completed', true, $5, ...
+)
+CARRY-FORWARD LOOP LOGIC:
+
+Start with remainingAmount = carryForwardAmount
+For each future month (month + 1, + 2, ...):
+Calculate: needed = monthlyRent - alreadyPaidForThatMonth
+Allocate: toAllocate = MIN(remaining, needed)
+Insert payment record with toAllocate
+Decrement: remaining -= toAllocate
+Stop when remaining <= 0 or safety limit (36 months)
+DATA INTEGRITY:
+
+rent_payments.is_advance_payment = true for carry-forwards
+rent_payments.original_payment_id links to source payment
+rent_payments.payment_method = 'carry_forward' or 'paybill'

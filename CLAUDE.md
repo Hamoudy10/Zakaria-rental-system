@@ -341,3 +341,48 @@ SOLUTIONS IMPLEMENTED:
 3.  **Frontend API Fix:** Updated `apiHelper.js` to use the same smart endpoints (e.g., `/api/agent-properties/my-tenants`) for both Admin and Agent roles, relying on the backend to handle data scoping.
 
 FILES MODIFIED: `/src/pages/AdminDashboard.jsx`, `/backend/controllers/agentPropertyController.js`, `/src/utils/apiHelper.js`.
+UPDATE 16.0 - PAYMENT MANAGEMENT SYSTEM OVERHAUL
+
+PROBLEMS RESOLVED:
+1. `Cannot read properties of undefined (reading 'totalCount')` crash in PaymentManagement.jsx
+2. Duplicate `getAllPayments` function in controller causing wrong response format
+3. Duplicate `GET /` routes in paymentRoutes.js (only first was used)
+4. `recordCarryForward()` logic bugs (wrong amount, early return)
+5. Missing routes for paybill, reminders, payment summary endpoints
+6. Route order conflicts (`/:id` catching `/tenant/:tenantId`)
+7. Frontend/backend response structure mismatch
+
+SOLUTIONS IMPLEMENTED:
+
+FRONTEND:
+- Added optional chaining throughout PaymentManagement.jsx (`pagination?.totalCount`)
+- Fixed PaymentContext.jsx to expose `pagination` in context value
+- Standardized all API response handling to use `response.data.data` pattern
+
+BACKEND CONTROLLER:
+- Removed duplicate `getAllPayments` function (kept enhanced version with filters/sort/search)
+- Fixed `recordCarryForward()` to insert correct `allocationAmount` instead of total `amount`
+- Removed early `return` in carry-forward loop that prevented multiple future month allocations
+- Standardized all responses to `{ success, data: { ... } }` format
+- Added safe tenant/user COALESCE joins for backward compatibility
+
+BACKEND ROUTES:
+- Removed duplicate route definitions
+- Reordered routes: specific paths (`/history/:tenantId`) before generic (`/:id`)
+- Wired all controller functions to proper endpoints
+- Added missing routes: `/paybill`, `/unit/:unitCode/status`, `/summary/:tenantId/:unitId`, `/future/:tenantId/:unitId`, `/manual`, `/send-reminders`, `/test-sms`, `/mpesa/test-config`
+
+FILES MODIFIED:
+- `/src/components/PaymentManagement.jsx`
+- `/src/context/PaymentContext.jsx`
+- `/backend/controllers/paymentController.js`
+- `/backend/routes/paymentRoutes.js`
+
+TESTING CONFIRMED:
+✅ PaymentManagement loads without crash
+✅ Pagination displays correctly
+✅ Tenant history modal fetches and displays data
+✅ All payment CRUD operations functional
+✅ Carry-forward allocates to multiple future months correctly
+
+PRODUCTION STATUS: Payment system fully operational and synchronized.

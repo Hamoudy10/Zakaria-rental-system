@@ -625,3 +625,18 @@ SOLUTION IMPLEMENTED:
 -   This makes the agent-scoped endpoints "admin-aware," allowing them to serve filtered data to agents and complete data to admins, which simplifies the frontend logic.
 
 FILE MODIFIED: `/backend/controllers/agentPropertyController.js`.
+UPDATE 16.0 - PAYMENT CONTROLLER & ROUTES OVERHAUL
+
+CONTROLLER FIXES (paymentController.js):
+
+1. DUPLICATE FUNCTION REMOVED:
+   - Had two `getAllPayments` definitions; second overwrote first
+   - Kept enhanced version with filters, search, sort, pagination
+
+2. CARRY-FORWARD BUG FIXED:
+   ```javascript
+   // BEFORE (wrong): inserted total amount to each future month
+   amount,
+   
+   // AFTER (correct): inserts only what's needed for that month
+   allocationAmount,
