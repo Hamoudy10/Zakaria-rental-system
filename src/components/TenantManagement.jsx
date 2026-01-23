@@ -1,17 +1,24 @@
+// src/components/TenantManagement.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { API } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useProperty } from '../context/PropertyContext';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable'; // extends jsPDF with autoTable
 
 const TenantManagement = () => {
   const { user } = useAuth();
-  const [tenants, setTenants] = useState([]);
   const { properties: assignedProperties, loading: propertiesLoading } = useProperty();
+
+  const [tenants, setTenants] = useState([]);
+  const [availableUnits, setAvailableUnits] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const [error, setError] = useState(null);
+
   const [showForm, setShowForm] = useState(false);
   const [editingTenant, setEditingTenant] = useState(null);
-  const [availableUnits, setAvailableUnits] = useState([]);
+
   const [pagination, setPagination] = useState({
     currentPage: 1,
     totalPages: 1,
@@ -19,11 +26,10 @@ const TenantManagement = () => {
     limit: 10
   });
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // New states for viewing tenant details
+
+  // View modal state
   const [showViewModal, setShowViewModal] = useState(false);
   const [selectedTenantData, setSelectedTenantData] = useState(null);
-  const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -45,49 +51,51 @@ const TenantManagement = () => {
   const [uploading, setUploading] = useState(false);
   const [formErrors, setFormErrors] = useState({});
 
-  // Fetch tenants
-  const fetchTenants = useCallback(async (page = 1, search = '') => {
-    try {
-      setLoading(true);
-      setError(null);
-      console.log('🔍 Fetching tenants...', { page, search });
-      
-      const response = await API.tenants.getTenants({
-        page,
-        limit: pagination.limit,
-        search
-      });
-      
-      console.log('📦 Tenants Response:', response.data);
-      
-      if (response.data.success) {
-        const tenantsData = response.data.data?.tenants || response.data.data || [];
-        const paginationData = response.data.data?.pagination || {
-          currentPage: 1,
-          totalPages: 1,
-          totalCount: 0,
-          limit: 10
-        };
+  // Fetch tenants list (uses getTenants; monthly_rent etc come from DB t.*)
+  const fetchTenants = useCallback(
+    async (page = 1, search = '') => {
+      try {
+        setLoading(true);
+        setError(null);
+        console.log('🔍 Fetching tenants...', { page, search });
         
-        setTenants(Array.isArray(tenantsData) ? tenantsData : []);
-        setPagination(paginationData);
+        const response = await API.tenants.getTenants({
+          page,
+          limit: pagination.limit,
+          search
+        });
+        
+        console.log('📦 Tenants Response:', response.data);
+        
+        if (response.data.success) {
+          const tenantsData = response.data.data?.tenants || response.data.data || [];
+          const paginationData = response.data.data?.pagination || {
+            currentPage: 1,
+            totalPages: 1,
+            totalCount: 0,
+            limit: 10
+          };
+          
+          setTenants(Array.isArray(tenantsData) ? tenantsData : []);
+          setPagination(paginationData);
+        }
+      } catch (err) {
+        const errorMsg = err.response?.data?.message || err.message || 'Unknown error';
+        setError('Failed to load tenants: ' + errorMsg);
+        console.error('❌ Error fetching tenants:', err);
+        setTenants([]);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      const errorMsg = err.response?.data?.message || err.message || 'Unknown error';
-      setError('Failed to load tenants: ' + errorMsg);
-      console.error('❌ Error fetching tenants:', err);
-      setTenants([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [pagination.limit]);
+    },
+    [pagination.limit]
+  );
 
-  // Fetch tenant details by ID
+  // Fetch full tenant details for view modal
   const fetchTenantDetails = async (tenantId) => {
     try {
       setLoadingDetails(true);
       const response = await API.tenants.getTenant(tenantId);
-      
       if (response.data.success) {
         setSelectedTenantData(response.data.data);
         setShowViewModal(true);
@@ -100,77 +108,74 @@ const TenantManagement = () => {
     }
   };
 
-  // Handle view tenant details
   const handleViewDetails = async (tenant) => {
     await fetchTenantDetails(tenant.id);
   };
 
-  // Close view modal
   const handleCloseViewModal = () => {
     setShowViewModal(false);
     setSelectedTenantData(null);
   };
 
-  //fetch available units
-const fetchAvailableUnits = useCallback(async (tenantId = null) => {
-    try {
-      console.log('🔍 Fetching available units...', tenantId ? `for tenant ${tenantId}` : '');
-      
-      // For agents, we need to fetch units from their assigned properties
-      let allUnits = [];
-      
-      if (user?.role === 'admin') {
-        // Admin can see all available units + current tenant's unit if editing
-        const response = await API.tenants.getAvailableUnits(
-          tenantId ? { tenant_id: tenantId } : {}
+  // Fetch available units; include current unit when editing (Option B)
+  const fetchAvailableUnits = useCallback(
+    async (currentUnitId = null) => {
+      try {
+        console.log(
+          '🔍 Fetching available units...',
+          currentUnitId ? `including current unit ${currentUnitId}` : ''
         );
-        if (response.data.success) {
-          allUnits = response.data.data || [];
-        }
-      } else {
-        // Agent - fetch units from assigned properties
-        for (const property of assignedProperties) {
-          try {
-            const response = await API.properties.getPropertyUnits(property.id);
-            if (response.data.success) {
-              const propertyUnits = response.data.data || [];
-              
-              // When editing a tenant, include their current unit even if occupied
-              const availableUnitsInProperty = propertyUnits
-                .filter(unit => {
-                  // Always show active units
-                  if (!unit.is_active) return false;
-                  
-                  // When editing a specific tenant, include their current unit
-                  if (tenantId && unit.id === editingTenant?.unit_id) {
-                    return true; // Include current unit even if occupied
-                  }
-                  
-                  // Otherwise, only show unoccupied units
-                  return unit.is_occupied === false;
-                })
-                .map(unit => ({
-                  ...unit,
-                  property_name: property.name || 'Unknown Property',
-                  property_code: property.property_code || ''
-                }));
-              
-              allUnits = [...allUnits, ...availableUnitsInProperty];
+        
+        let allUnits = [];
+        
+        if (user?.role === 'admin') {
+          const response = await API.tenants.getAvailableUnits(
+            currentUnitId ? { current_unit_id: currentUnitId } : {}
+          );
+          if (response.data.success) {
+            allUnits = response.data.data || [];
+          }
+        } else {
+          // Agent: from assigned properties only
+          for (const property of assignedProperties) {
+            try {
+              const response = await API.properties.getPropertyUnits(property.id);
+              if (response.data.success) {
+                const propertyUnits = response.data.data || [];
+                
+                const availableUnitsInProperty = propertyUnits
+                  .filter(unit => {
+                    if (!unit.is_active) return false;
+                    // Include current unit even if occupied
+                    if (currentUnitId && unit.id === currentUnitId) {
+                      return true;
+                    }
+                    // Otherwise only unoccupied
+                    return unit.is_occupied === false;
+                  })
+                  .map(unit => ({
+                    ...unit,
+                    property_name: property.name || 'Unknown Property',
+                    property_code: property.property_code || ''
+                  }));
+                
+                allUnits = [...allUnits, ...availableUnitsInProperty];
+              }
+            } catch (err) {
+              console.error(`Error fetching units for property ${property.id}:`, err);
             }
-          } catch (err) {
-            console.error(`Error fetching units for property ${property.id}:`, err);
           }
         }
+        
+        console.log('✅ Available Units (currentUnitId:', currentUnitId, '):', allUnits);
+        setAvailableUnits(Array.isArray(allUnits) ? allUnits : []);
+      } catch (err) {
+        console.error('❌ Error fetching available units:', err);
+        setAvailableUnits([]);
       }
-      
-      console.log('✅ Available Units (editing tenant:', tenantId, '):', allUnits);
-      setAvailableUnits(Array.isArray(allUnits) ? allUnits : []);
-      
-    } catch (err) {
-      console.error('❌ Error fetching available units:', err);
-      setAvailableUnits([]);
-    }
-  }, [assignedProperties, user?.role, editingTenant?.unit_id]);
+    },
+    [assignedProperties, user?.role]
+  );
 
   // Initial load
   useEffect(() => {
@@ -187,16 +192,16 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     return () => {
       console.log('🧹 TenantManagement unmounting');
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Refresh available units when assigned properties change
+  // Refresh units when assigned properties change
   useEffect(() => {
     if (assignedProperties.length > 0) {
       fetchAvailableUnits();
     }
   }, [assignedProperties, fetchAvailableUnits]);
 
-  // Handle form input changes
+  // Form handlers
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
@@ -204,7 +209,6 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
       [name]: value
     }));
     
-    // Clear error for this field
     if (formErrors[name]) {
       setFormErrors(prev => ({
         ...prev,
@@ -213,7 +217,6 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     }
   };
 
-  // Handle unit selection change
   const handleUnitChange = (e) => {
     const unitId = e.target.value;
     setFormData(prev => ({
@@ -221,7 +224,6 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
       unit_id: unitId
     }));
     
-    // Auto-fill rent amount if unit is selected
     if (unitId) {
       const selectedUnit = availableUnits.find(unit => unit.id === unitId);
       if (selectedUnit && selectedUnit.rent_amount) {
@@ -232,7 +234,6 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
       }
     }
     
-    // Clear unit error
     if (formErrors.unit_id) {
       setFormErrors(prev => ({
         ...prev,
@@ -241,45 +242,34 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     }
   };
 
-  // Format phone for display (convert 254 to 0)
   const formatPhoneForDisplay = (phone) => {
     if (!phone) return '';
     return phone.replace(/^254/, '0');
   };
 
-  // Format phone for backend (convert 0 to 254)
   const formatPhoneForBackend = (phone) => {
     if (!phone) return '';
-    // Remove all non-digit characters
     const digits = phone.replace(/\D/g, '');
-    // If starts with 0, replace with 254
     if (digits.startsWith('0')) {
       return '254' + digits.substring(1);
     }
-    // If doesn't start with 254, add it
     if (!digits.startsWith('254')) {
       return '254' + digits;
     }
     return digits;
   };
 
-  // Handle ID image uploads
   const handleImageUpload = async (tenantId) => {
     if (!idFrontImage && !idBackImage) return;
 
     try {
       setUploading(true);
-      const formData = new FormData();
-      if (idFrontImage) {
-        formData.append('id_front_image', idFrontImage);
-      }
-      if (idBackImage) {
-        formData.append('id_back_image', idBackImage);
-      }
+      const formDataUpload = new FormData();
+      if (idFrontImage) formDataUpload.append('id_front_image', idFrontImage);
+      if (idBackImage) formDataUpload.append('id_back_image', idBackImage);
 
-      await API.tenants.uploadIDImages(tenantId, formData);
+      await API.tenants.uploadIDImages(tenantId, formDataUpload);
       
-      // Reset image states
       setIdFrontImage(null);
       setIdBackImage(null);
     } catch (err) {
@@ -290,27 +280,24 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     }
   };
 
-  // Validate form
   const validateForm = () => {
     const errors = {};
     
-    // Required fields for all tenants
     if (!formData.national_id.trim()) errors.national_id = 'National ID is required';
     if (!formData.first_name.trim()) errors.first_name = 'First name is required';
     if (!formData.last_name.trim()) errors.last_name = 'Last name is required';
     if (!formData.phone_number.trim()) errors.phone_number = 'Phone number is required';
     
-    // Unit allocation is REQUIRED
-    if (!editingTenant && !formData.unit_id) {
-  errors.unit_id = 'Unit allocation is required';
-}
-    // Required if unit is allocated
+    // Unit must be selected (new + edit)
+    if (!formData.unit_id) {
+      errors.unit_id = 'Unit allocation is required';
+    }
+
     if (formData.unit_id) {
       if (!formData.lease_start_date) errors.lease_start_date = 'Lease start date is required';
       if (!formData.monthly_rent) errors.monthly_rent = 'Monthly rent is required';
     }
     
-    // Phone format validation
     const phoneRegex = /^(?:254|\+254|0)?(7\d{8})$/;
     const phoneDigits = formData.phone_number.replace(/\D/g, '');
     if (formData.phone_number && !phoneRegex.test(phoneDigits)) {
@@ -326,11 +313,9 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     return Object.keys(errors).length === 0;
   };
 
-  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Validate form
     if (!validateForm()) {
       setError('Please fix the form errors');
       return;
@@ -342,42 +327,32 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
       
       let response;
 
-      // Format data for backend
       const formattedData = {
         ...formData,
-        // Format phone numbers to 254 format for backend
         phone_number: formatPhoneForBackend(formData.phone_number),
-        emergency_contact_phone: formData.emergency_contact_phone 
+        emergency_contact_phone: formData.emergency_contact_phone
           ? formatPhoneForBackend(formData.emergency_contact_phone)
           : '',
-        // Convert numeric fields
         monthly_rent: parseFloat(formData.monthly_rent) || 0,
         security_deposit: parseFloat(formData.security_deposit) || 0
       };
 
       if (editingTenant) {
-        // Update existing tenant
         response = await API.tenants.updateTenant(editingTenant.id, formattedData);
-        
-        // Upload ID images if provided
         if (idFrontImage || idBackImage) {
           await handleImageUpload(editingTenant.id);
         }
       } else {
-        // Create new tenant
         response = await API.tenants.createTenant(formattedData);
-        
-        // Upload ID images if provided
         if ((idFrontImage || idBackImage) && response.data.data?.id) {
           await handleImageUpload(response.data.data.id);
         }
       }
 
       if (response.data.success) {
-        // Reset form and refresh data
         resetForm();
         await fetchTenants();
-        await fetchAvailableUnits(); // Refresh available units after allocation
+        await fetchAvailableUnits();
         alert(response.data.message || 'Tenant saved successfully!');
       }
     } catch (err) {
@@ -389,12 +364,14 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     }
   };
 
-  // Edit tenant
   const handleEdit = (tenant) => {
-
     setEditingTenant(tenant);
-    // Pass tenant ID to get available units including current unit
-  fetchAvailableUnits(tenant.id);
+
+    const currentUnitId = tenant.unit_id || tenant.current_allocation?.unit_id || '';
+
+    // Ensure current unit appears even if occupied
+    fetchAvailableUnits(currentUnitId);
+
     setFormData({
       national_id: tenant.national_id || '',
       first_name: tenant.first_name || '',
@@ -403,19 +380,27 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
       phone_number: formatPhoneForDisplay(tenant.phone_number) || '',
       emergency_contact_name: tenant.emergency_contact_name || '',
       emergency_contact_phone: formatPhoneForDisplay(tenant.emergency_contact_phone) || '',
-      unit_id: tenant.current_allocation?.unit_id || '',
-      lease_start_date: tenant.current_allocation?.lease_start_date ? tenant.current_allocation.lease_start_date.split('T')[0] : '',
-      lease_end_date: tenant.current_allocation?.lease_end_date ? tenant.current_allocation.lease_end_date.split('T')[0] : '',
-      monthly_rent: tenant.current_allocation?.monthly_rent?.toString() || '',
-      security_deposit: tenant.current_allocation?.security_deposit?.toString() || ''
+      unit_id: currentUnitId,
+      lease_start_date: tenant.lease_start_date
+        ? tenant.lease_start_date.toString().split('T')[0]
+        : tenant.current_allocation?.lease_start_date
+        ? tenant.current_allocation.lease_start_date.split('T')[0]
+        : '',
+      lease_end_date: tenant.lease_end_date
+        ? tenant.lease_end_date.toString().split('T')[0]
+        : tenant.current_allocation?.lease_end_date
+        ? tenant.current_allocation.lease_end_date.split('T')[0]
+        : '',
+      monthly_rent:
+        (tenant.monthly_rent ?? tenant.current_allocation?.monthly_rent)?.toString() || '',
+      security_deposit:
+        (tenant.security_deposit ?? tenant.current_allocation?.security_deposit)?.toString() || ''
     });
     
-    // Clear any previous errors
     setFormErrors({});
     setShowForm(true);
   };
 
-  // Delete tenant
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this tenant? This action cannot be undone.')) {
       try {
@@ -423,7 +408,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
         if (response.data.success) {
           alert(response.data.message);
           await fetchTenants();
-          await fetchAvailableUnits(); // Refresh available units after deletion
+          await fetchAvailableUnits();
         }
       } catch (err) {
         setError('Failed to delete tenant: ' + (err.response?.data?.message || err.message));
@@ -431,7 +416,6 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     }
   };
 
-  // Reset form
   const resetForm = () => {
     setFormData({
       national_id: '',
@@ -455,13 +439,11 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     setFormErrors({});
   };
 
-  // Handle search
   const handleSearch = async (e) => {
     e.preventDefault();
     await fetchTenants(1, searchTerm);
   };
 
-  // Format currency
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-KE', {
       style: 'currency',
@@ -470,13 +452,186 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     }).format(amount || 0);
   };
 
-  // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-KE');
   };
 
-  // Early return for non-authenticated users
+  // Load image as data URL for PDF
+  const loadImageAsDataURL = async (url) => {
+    if (!url) return null;
+    try {
+      const res = await fetch(url, { mode: 'cors' });
+      const blob = await res.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.error('❌ Failed to load image for PDF:', url, err);
+      return null;
+    }
+  };
+
+  // Export tenant as PDF from view modal
+  const handleExportTenantPDF = async () => {
+    if (!selectedTenantData) return;
+
+    try {
+      const tenant = selectedTenantData;
+      const doc = new jsPDF('p', 'mm', 'a4');
+      let y = 20;
+
+      // Simple placeholder logo box
+      doc.setDrawColor(0);
+      doc.rect(14, 10, 20, 10);
+      doc.setFontSize(8);
+      doc.text('LOGO', 24, 17, { align: 'center' });
+
+      // Header
+      doc.setFontSize(16);
+      doc.text('Zakaria Housing Agency Limited', 105, y, { align: 'center' });
+      y += 8;
+      doc.setFontSize(12);
+      doc.text('Tenant Information', 105, y, { align: 'center' });
+      y += 10;
+      doc.setFontSize(10);
+      doc.text(`Generated on: ${new Date().toLocaleString('en-KE')}`, 105, y, { align: 'center' });
+      y += 10;
+
+      // Personal Info
+      doc.setFontSize(12);
+      doc.text('Personal Information', 14, y);
+      y += 6;
+      doc.setFontSize(10);
+      doc.text(`Full Name: ${tenant.first_name || ''} ${tenant.last_name || ''}`.trim(), 14, y); y += 6;
+      doc.text(`National ID: ${tenant.national_id || 'N/A'}`, 14, y); y += 6;
+      doc.text(`Phone: ${formatPhoneForDisplay(tenant.phone_number) || 'N/A'}`, 14, y); y += 6;
+      doc.text(`Email: ${tenant.email || 'N/A'}`, 14, y); y += 6;
+      doc.text(`Status: ${tenant.is_active ? 'Active' : 'Inactive'}`, 14, y); y += 6;
+      doc.text(`Registration Date: ${formatDate(tenant.created_at)}`, 14, y); y += 10;
+
+      // Emergency Contact
+      if (tenant.emergency_contact_name || tenant.emergency_contact_phone) {
+        doc.setFontSize(12);
+        doc.text('Emergency Contact', 14, y);
+        y += 6;
+        doc.setFontSize(10);
+        doc.text(`Name: ${tenant.emergency_contact_name || 'N/A'}`, 14, y); y += 6;
+        doc.text(
+          `Phone: ${formatPhoneForDisplay(tenant.emergency_contact_phone) || 'N/A'}`,
+          14,
+          y
+        );
+        y += 10;
+      }
+
+      // Unit & Lease
+      doc.setFontSize(12);
+      doc.text('Unit & Lease Information', 14, y);
+      y += 6;
+      doc.setFontSize(10);
+      doc.text(`Property: ${tenant.property_name || 'N/A'}`, 14, y); y += 6;
+      doc.text(`Unit Code: ${tenant.unit_code || 'N/A'}`, 14, y); y += 6;
+      doc.text(`Monthly Rent: ${formatCurrency(tenant.monthly_rent || 0)}`, 14, y); y += 6;
+      doc.text(
+        `Security Deposit: ${formatCurrency(tenant.security_deposit || 0)}`,
+        14,
+        y
+      );
+      y += 6;
+      doc.text(`Lease Start: ${formatDate(tenant.lease_start_date)}`, 14, y); y += 6;
+      doc.text(
+        `Lease End: ${
+          tenant.lease_end_date ? formatDate(tenant.lease_end_date) : 'Month-to-Month'
+        }`,
+        14,
+        y
+      );
+      y += 10;
+
+      // Payment History
+      if (tenant.paymentHistory && tenant.paymentHistory.length > 0) {
+        const tableRows = tenant.paymentHistory.slice(0, 6).map((payment) => [
+          new Date(payment.payment_month).toLocaleDateString('en-KE', {
+            month: 'short',
+            year: 'numeric'
+          }),
+          `KES ${Number(payment.amount || 0).toLocaleString()}`,
+          payment.status || 'N/A',
+          formatDate(payment.created_at)
+        ]);
+
+        doc.setFontSize(12);
+        doc.text('Recent Payment History', 14, y);
+        y += 4;
+
+        doc.autoTable({
+          startY: y,
+          head: [['Month', 'Amount', 'Status', 'Date']],
+          body: tableRows,
+          styles: { fontSize: 8 },
+          theme: 'grid'
+        });
+
+        const finalY = doc.lastAutoTable.finalY || y + 20;
+        y = finalY + 8;
+      }
+
+      // ID Images
+      doc.setFontSize(12);
+      doc.text('ID Documents', 14, y);
+      y += 4;
+
+      const frontUrl = tenant.id_front_image;
+      const backUrl = tenant.id_back_image;
+
+      const maxImageWidth = 80;
+      const maxImageHeight = 50;
+
+      if (frontUrl || backUrl) {
+        const startX = 14;
+
+        if (frontUrl) {
+          const frontDataUrl = await loadImageAsDataURL(frontUrl);
+          if (frontDataUrl) {
+            let imgY = y + 2;
+            doc.setFontSize(9);
+            doc.text('ID Front', startX, imgY);
+            imgY += 2;
+            doc.addImage(frontDataUrl, 'JPEG', startX, imgY, maxImageWidth, maxImageHeight);
+          }
+        }
+
+        if (backUrl) {
+          const backDataUrl = await loadImageAsDataURL(backUrl);
+          if (backDataUrl) {
+            const backX = startX + maxImageWidth + 10;
+            let backY = y + 2;
+            doc.setFontSize(9);
+            doc.text('ID Back', backX, backY);
+            backY += 2;
+            doc.addImage(backDataUrl, 'JPEG', backX, backY, maxImageWidth, maxImageHeight);
+          }
+        }
+      } else {
+        doc.setFontSize(9);
+        doc.text('No ID images uploaded.', 14, y + 4);
+      }
+
+      const safeName =
+        `${tenant.first_name || ''}${tenant.last_name || ''}`.replace(/\s+/g, '').trim() ||
+        'Tenant';
+      const fileName = `Tenant_${safeName}_Information.pdf`;
+      doc.save(fileName);
+    } catch (err) {
+      console.error('❌ Error exporting tenant PDF:', err);
+      alert('Failed to export PDF. Check console for details.');
+    }
+  };
+
   if (!user) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -485,6 +640,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
     );
   }
 
+  // JSX rendering starts here
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -725,7 +881,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
                         <p className="mt-1 text-sm text-red-600">{formErrors.unit_id}</p>
                       )}
                       <p className="text-xs text-gray-500 mt-1">
-                        Units from your assigned properties: {availableUnits.length} unoccupied units available
+                        Units from your assigned properties: {availableUnits.length} units available (includes current unit if editing)
                       </p>
                     </div>
                   </div>
@@ -891,7 +1047,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
                 </button>
               </div>
 
-              {/* Tenant Profile Section */}
+              {/* Personal Info */}
               <div className="mb-8">
                 <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                   <span className="mr-2">👤</span> Personal Information
@@ -940,7 +1096,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
                 </div>
               </div>
 
-              {/* Emergency Contact Section */}
+              {/* Emergency Contact */}
               {(selectedTenantData.emergency_contact_name || selectedTenantData.emergency_contact_phone) && (
                 <div className="mb-8">
                   <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
@@ -963,7 +1119,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
                 </div>
               )}
 
-              {/* Unit & Lease Information */}
+              {/* Unit & Lease */}
               {selectedTenantData.unit_code && (
                 <div className="mb-8">
                   <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
@@ -1058,7 +1214,7 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
                 </div>
               )}
 
-              {/* ID Documents Section */}
+              {/* ID Documents */}
               <div className="mb-6">
                 <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                   <span className="mr-2">🆔</span> ID Documents
@@ -1129,6 +1285,12 @@ const fetchAvailableUnits = useCallback(async (tenantId = null) => {
                   className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
                 >
                   Close
+                </button>
+                <button
+                  onClick={handleExportTenantPDF}
+                  className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+                >
+                  Export PDF
                 </button>
                 <button
                   onClick={() => {
