@@ -1,24 +1,31 @@
+// backend/routes/waterBills.js
 const express = require('express');
 const router = express.Router();
 const waterBillController = require('../controllers/waterBillController');
-const { protect, requireAgent } = require('../middleware/authMiddleware');
+const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 
+console.log('🔄 Loading WATER BILLS routes...');
 
+// Apply auth middleware to all routes
+router.use(authMiddleware);
 
-// Water bill CRUD operations
-router.post('/', requireAgent, waterBillController.createWaterBill);
-router.get('/', requireAgent, waterBillController.listWaterBills);
-router.get('/:id', requireAgent, waterBillController.getWaterBill);
-router.delete('/:id', requireAgent, waterBillController.deleteWaterBill);
+// ========================================
+// WATER BILL ROUTES
+// ========================================
+// IMPORTANT: Specific routes BEFORE generic /:id route
 
-// NEW ENDPOINT: Check missing water bills
-router.get('/missing-tenants', requireAgent, waterBillController.checkMissingWaterBills);
+// Check missing water bills for a specific month
+router.get('/missing-tenants', requireRole(['agent', 'admin']), waterBillController.checkMissingWaterBills);
 
-// NEW: water balance for tenant (agent-scoped)
-router.get(
-  '/water-bills/balance/:tenantId',
-  requireRole(['agent','admin']),
-  waterBillController.getTenantWaterBalance
-);
+// Get water balance for a specific tenant
+router.get('/balance/:tenantId', requireRole(['agent', 'admin']), waterBillController.getTenantWaterBalance);
+
+// Standard CRUD operations
+router.post('/', requireRole(['agent', 'admin']), waterBillController.createWaterBill);
+router.get('/', requireRole(['agent', 'admin']), waterBillController.listWaterBills);
+router.get('/:id', requireRole(['agent', 'admin']), waterBillController.getWaterBill);
+router.delete('/:id', requireRole(['agent', 'admin']), waterBillController.deleteWaterBill);
+
+console.log('✅ WATER BILLS ROUTES LOADED');
 
 module.exports = router;
