@@ -522,8 +522,10 @@ const triggerAgentBillingSMS = async (req, res) => {
 // Add to cronController.js
 // Add this function to your cronController.js file
 // Place it BEFORE the module.exports at the bottom
-
 const getSMSHistory = async (req, res) => {
+  console.log('📥 getSMSHistory called with query params:', req.query);
+  console.log('🔐 User:', req.user.id, 'Role:', req.user.role);
+  
   try {
     const { status, start_date, end_date, property_id, page = 1, limit = 50 } = req.query;
     const userId = req.user.id;
@@ -560,7 +562,7 @@ const getSMSHistory = async (req, res) => {
     if (userRole !== 'admin') {
       query += ` AND p.id IN (
         SELECT property_id FROM agent_property_assignments 
-        WHERE agent_id = $${params.length + 1} AND is_active = true
+        WHERE agent_id = $${params.length + 1}::uuid AND is_active = true
       )`;
       params.push(userId);
     }
@@ -572,7 +574,8 @@ const getSMSHistory = async (req, res) => {
     }
     
     if (property_id) {
-      query += ` AND p.id = $${params.length + 1}`;
+      // ✅ FIX: Cast property_id to UUID explicitly
+      query += ` AND p.id = $${params.length + 1}::uuid`;
       params.push(property_id);
     }
     
@@ -586,16 +589,26 @@ const getSMSHistory = async (req, res) => {
       params.push(end_date);
     }
     
+    console.log('🔍 Final query:', query);
+    console.log('📊 Query params:', params);
+    
     // Get total count for pagination
     const countQuery = query.replace(/SELECT.*FROM/, 'SELECT COUNT(*) FROM');
+    console.log('📊 Count query:', countQuery);
+    
     const countResult = await pool.query(countQuery, params);
     const totalCount = parseInt(countResult.rows[0].count);
+    
+    console.log('✅ Total count:', totalCount);
     
     // Add pagination
     query += ` ORDER BY sq.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
     
+    console.log('📋 Executing main query with pagination...');
     const result = await pool.query(query, params);
+    
+    console.log('✅ Query successful, rows:', result.rows.length);
     
     res.json({
       success: true,
@@ -610,6 +623,15 @@ const getSMSHistory = async (req, res) => {
     
   } catch (error) {
     console.error('❌ Error getting SMS history:', error);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
+      position: error.position
+    });
+    
     res.status(500).json({
       success: false,
       message: 'Failed to get SMS history',
