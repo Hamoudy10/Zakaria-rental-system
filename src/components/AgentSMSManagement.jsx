@@ -52,7 +52,7 @@ const AgentSMSManagement = () => {
   
   const fetchAgentProperties = async () => {
     try {
-      const response = await API.properties.getAssignedProperties();
+     const response = await API.properties.getAgentProperties();
       if (response.data.success) {
         setProperties(response.data.data);
       }

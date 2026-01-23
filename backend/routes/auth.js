@@ -1,10 +1,11 @@
-// routes/auth.js - UPDATED WORKING VERSION
+// routes/auth.js - UPDATED WITH PROFILE IMAGE UPLOAD
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
-const authMiddleware = require('../middleware/authMiddleware').authMiddleware; // Fixed import
+const authMiddleware = require('../middleware/authMiddleware').authMiddleware;
+const { uploadProfileImage, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
 
 console.log('✅ AUTH ROUTES LOADED');
 
@@ -21,6 +22,7 @@ router.get('/verify-token', authMiddleware, (req, res) => {
       email: req.user.email,
       role: req.user.role,
       phone_number: req.user.phone_number,
+      profile_image: req.user.profile_image,
       created_at: req.user.created_at
     }
   });
@@ -47,7 +49,7 @@ const register = async (req, res) => {
     const query = `
       INSERT INTO users (national_id, first_name, last_name, email, phone_number, password_hash, role)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id, national_id, first_name, last_name, email, phone_number, role, created_at
+      RETURNING id, national_id, first_name, last_name, email, phone_number, role, profile_image, created_at
     `;
     
     const result = await db.query(query, [
@@ -77,7 +79,8 @@ const register = async (req, res) => {
         last_name: user.last_name,
         email: user.email,
         phone_number: user.phone_number,
-        role: user.role
+        role: user.role,
+        profile_image: user.profile_image
       }
     });
   } catch (error) {
@@ -111,7 +114,7 @@ const login = async (req, res) => {
     }
     
     const query = `
-      SELECT id, national_id, first_name, last_name, email, phone_number, password_hash, role, is_active
+      SELECT id, national_id, first_name, last_name, email, phone_number, password_hash, role, profile_image, is_active, created_at
       FROM users 
       WHERE email = $1 AND is_active = true
     `;
@@ -159,7 +162,10 @@ const login = async (req, res) => {
         last_name: user.last_name,
         email: user.email,
         phone_number: user.phone_number,
-        role: user.role
+        role: user.role,
+        profile_image: user.profile_image,
+        is_active: user.is_active,
+        created_at: user.created_at
       }
     });
   } catch (error) {
@@ -176,8 +182,21 @@ const getProfile = async (req, res) => {
   try {
     console.log('👤 GetProfile endpoint called for user:', req.user.id);
     
-    // User is already attached to req by authMiddleware
-    const user = req.user;
+    // Fetch fresh user data from database to include profile_image
+    const result = await db.query(
+      `SELECT id, national_id, first_name, last_name, email, phone_number, role, profile_image, is_active, created_at, updated_at
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    const user = result.rows[0];
     
     res.json({
       success: true,
@@ -189,6 +208,7 @@ const getProfile = async (req, res) => {
         email: user.email,
         phone_number: user.phone_number,
         role: user.role,
+        profile_image: user.profile_image,
         is_active: user.is_active,
         created_at: user.created_at,
         updated_at: user.updated_at
@@ -203,6 +223,152 @@ const getProfile = async (req, res) => {
   }
 };
 
+// Update user profile (with optional image upload)
+const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    console.log('📝 Updating profile for user:', userId);
+    console.log('📁 Uploaded file:', req.file);
+    console.log('📄 Body data:', req.body);
+
+    const { first_name, last_name, email, phone_number } = req.body;
+    
+    // Get current user data (to check for existing profile image)
+    const currentUser = await db.query(
+      'SELECT profile_image FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    const oldProfileImage = currentUser.rows[0]?.profile_image;
+    
+    // Determine new profile image URL
+    let profileImageUrl = oldProfileImage; // Keep existing by default
+    
+    if (req.file && req.file.path) {
+      profileImageUrl = req.file.path; // New Cloudinary URL
+      
+      // Delete old image from Cloudinary if it exists
+      if (oldProfileImage) {
+        await deleteCloudinaryImage(oldProfileImage);
+      }
+    }
+
+    // Build dynamic update query
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (first_name !== undefined) {
+      updates.push(`first_name = $${paramCount++}`);
+      values.push(first_name);
+    }
+    if (last_name !== undefined) {
+      updates.push(`last_name = $${paramCount++}`);
+      values.push(last_name);
+    }
+    if (email !== undefined) {
+      updates.push(`email = $${paramCount++}`);
+      values.push(email);
+    }
+    if (phone_number !== undefined) {
+      updates.push(`phone_number = $${paramCount++}`);
+      values.push(phone_number);
+    }
+    if (profileImageUrl !== oldProfileImage) {
+      updates.push(`profile_image = $${paramCount++}`);
+      values.push(profileImageUrl);
+    }
+
+    // Always update updated_at
+    updates.push(`updated_at = NOW()`);
+    
+    // Add user ID as final parameter
+    values.push(userId);
+
+    const query = `
+      UPDATE users 
+      SET ${updates.join(', ')}
+      WHERE id = $${paramCount}
+      RETURNING id, national_id, first_name, last_name, email, phone_number, role, profile_image, is_active, created_at, updated_at
+    `;
+
+    console.log('🔄 Update query:', query);
+    console.log('🔄 Values:', values);
+
+    const result = await db.query(query, values);
+    const updatedUser = result.rows[0];
+
+    console.log('✅ Profile updated successfully:', updatedUser);
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: updatedUser
+    });
+
+  } catch (error) {
+    console.error('❌ Update profile error:', error);
+    
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already in use by another account'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error updating profile: ' + error.message
+    });
+  }
+};
+
+// Delete profile image
+const deleteProfileImage = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    console.log('🗑️ Deleting profile image for user:', userId);
+
+    // Get current profile image
+    const currentUser = await db.query(
+      'SELECT profile_image FROM users WHERE id = $1',
+      [userId]
+    );
+
+    const currentImage = currentUser.rows[0]?.profile_image;
+
+    if (!currentImage) {
+      return res.status(400).json({
+        success: false,
+        message: 'No profile image to delete'
+      });
+    }
+
+    // Delete from Cloudinary
+    await deleteCloudinaryImage(currentImage);
+
+    // Update database
+    const result = await db.query(
+      `UPDATE users SET profile_image = NULL, updated_at = NOW() WHERE id = $1
+       RETURNING id, national_id, first_name, last_name, email, phone_number, role, profile_image, is_active, created_at, updated_at`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Profile image deleted successfully',
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('❌ Delete profile image error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error deleting profile image: ' + error.message
+    });
+  }
+};
+
 // Debug login endpoint (for testing only)
 router.post('/debug-login', async (req, res) => {
   try {
@@ -210,9 +376,8 @@ router.post('/debug-login', async (req, res) => {
     
     console.log('🔍 DEBUG: Login attempt for:', email);
     
-    // Find user
     const userResult = await db.query(
-      'SELECT id, email, password_hash, first_name, last_name, role FROM users WHERE email = $1 AND is_active = true',
+      'SELECT id, email, password_hash, first_name, last_name, role, profile_image FROM users WHERE email = $1 AND is_active = true',
       [email]
     );
     
@@ -224,9 +389,7 @@ router.post('/debug-login', async (req, res) => {
     }
     
     const user = userResult.rows[0];
-    console.log('🔍 DEBUG: User found:', user);
     
-    // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     
     if (!isPasswordValid) {
@@ -236,7 +399,6 @@ router.post('/debug-login', async (req, res) => {
       });
     }
     
-    // Generate token
     const testToken = jwt.sign(
       { 
         id: user.id, 
@@ -247,8 +409,6 @@ router.post('/debug-login', async (req, res) => {
       { expiresIn: '1h' }
     );
     
-    console.log('🔍 DEBUG: Generated token payload:', jwt.decode(testToken));
-    
     res.json({
       success: true,
       token: testToken,
@@ -258,7 +418,8 @@ router.post('/debug-login', async (req, res) => {
         email: user.email,
         first_name: user.first_name,
         last_name: user.last_name,
-        role: user.role
+        role: user.role,
+        profile_image: user.profile_image
       }
     });
     
@@ -275,6 +436,12 @@ router.post('/debug-login', async (req, res) => {
 router.post('/register', register);
 router.post('/login', login);
 router.get('/profile', authMiddleware, getProfile);
+
+// Profile update with optional image upload
+router.put('/profile', authMiddleware, uploadProfileImage, updateProfile);
+
+// Delete profile image
+router.delete('/profile/image', authMiddleware, deleteProfileImage);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

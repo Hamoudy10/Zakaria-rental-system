@@ -1,11 +1,10 @@
 // src/pages/AdminDashboard.jsx
 import React, { useState, useEffect, Suspense, lazy } from 'react'
-import api from '../services/api' // Add this import
+import api from '../services/api'
 
 // Lazy load admin components
 const UserManagement = lazy(() => import('../components/UserManagement'))
 const PropertyManagement = lazy(() => import('../components/PropertyManagement'))
-const SalaryPayment = lazy(() => import('../components/SalaryPayment'))
 const SystemSettings = lazy(() => import('../components/SystemSettings'))
 const TenantAllocation = lazy(() => import('../components/TenantAllocation'))
 const PaymentManagement = lazy(() => import('../components/PaymentManagement'))
@@ -13,7 +12,10 @@ const ComplaintManagement = lazy(() => import('../components/ComplaintManagement
 const UnitManagement = lazy(() => import('../components/UnitManagement'))
 const AgentAllocation = lazy(() => import('../components/AgentAllocation'))
 
-// ✅ NEW: reuse the AgentReports component for admin reports UI
+// ✅ NEW: Admin Tenant Browser component
+const AdminTenantBrowser = lazy(() => import('../components/AdminTenantBrowser'))
+
+// ✅ Reuse the AgentReports component for admin reports UI
 const AgentReports = lazy(() => import('../components/AgentReports'))
 
 // Loading spinner
@@ -56,10 +58,10 @@ const AdminDashboard = () => {
     { id: 'users', name: 'User Management', shortName: 'Users' },
     { id: 'properties', name: 'Properties', shortName: 'Properties' },
     { id: 'units', name: 'Unit Management', shortName: 'Units' },
+    { id: 'tenants', name: 'Tenant Browser', shortName: 'Tenants' }, // ✅ NEW: Tenant Browser tab
     { id: 'allocations', name: 'Tenant Allocation', shortName: 'Allocations' },
     { id: 'agentAllocation', name: 'Agent Allocation', shortName: 'Agents' },
     { id: 'payments', name: 'Payment Management', shortName: 'Payments' },
-    { id: 'salaries', name: 'Salary Payments', shortName: 'Salaries' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
     { id: 'reports', name: 'Reports', shortName: 'Reports' },
     { id: 'settings', name: 'System Settings', shortName: 'Settings' },
@@ -85,6 +87,12 @@ const AdminDashboard = () => {
             <UnitManagement />
           </Suspense>
         )
+      case 'tenants': // ✅ NEW: Tenant Browser case
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AdminTenantBrowser />
+          </Suspense>
+        )
       case 'allocations':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
@@ -103,12 +111,6 @@ const AdminDashboard = () => {
             <PaymentManagement />
           </Suspense>
         )
-      case 'salaries':
-        return (
-          <Suspense fallback={<TabLoadingSpinner />}>
-            <SalaryPayment />
-          </Suspense>
-        )
       case 'complaints':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
@@ -116,7 +118,6 @@ const AdminDashboard = () => {
           </Suspense>
         )
       case 'reports':
-        // ✅ Use the same Reports UI as AgentDashboard
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
             <AgentReports />
@@ -131,11 +132,11 @@ const AdminDashboard = () => {
       case 'overview':
       default:
         return (
-          <DashboardOverview
-            setActiveTab={setActiveTab}
-            adminStats={adminStats}
-            recentActivities={recentActivities}
-            topProperties={topProperties}
+          <DashboardOverview 
+            setActiveTab={setActiveTab} 
+            adminStats={adminStats} 
+            recentActivities={recentActivities} 
+            topProperties={topProperties} 
           />
         )
     }
