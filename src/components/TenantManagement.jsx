@@ -401,21 +401,6 @@ const TenantManagement = () => {
     setShowForm(true);
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this tenant? This action cannot be undone.')) {
-      try {
-        const response = await API.tenants.deleteTenant(id);
-        if (response.data.success) {
-          alert(response.data.message);
-          await fetchTenants();
-          await fetchAvailableUnits();
-        }
-      } catch (err) {
-        setError('Failed to delete tenant: ' + (err.response?.data?.message || err.message));
-      }
-    }
-  };
-
   const resetForm = () => {
     setFormData({
       national_id: '',
@@ -1421,12 +1406,7 @@ const TenantManagement = () => {
                           >
                             Edit
                           </button>
-                          <button
-                            onClick={() => handleDelete(tenant.id)}
-                            className="text-red-600 hover:text-red-900 font-medium text-sm"
-                          >
-                            Delete
-                          </button>
+                          {/* Delete button removed - Only admin can delete tenants via Tenant Allocation tab */}
                         </div>
                       </td>
                     </tr>

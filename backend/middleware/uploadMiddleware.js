@@ -23,33 +23,55 @@ cloudinary.config({
 });
 
 // ============================================
-// 2. CONFIGURE CLOUDINARY STORAGE WITH LIMITS
+// 2. CONFIGURE CLOUDINARY STORAGE FOR ID IMAGES
 // ============================================
-const storage = new CloudinaryStorage({
+const idImageStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: async (req, file) => {
     console.log(`📤 Uploading ${file.fieldname} for tenant:`, req.params.id);
     console.log(`   Original name: ${file.originalname}`);
     console.log(`   MIME type: ${file.mimetype}`);
-    console.log(`   Size: ${(file.size / 1024).toFixed(2)} KB`);
     
     return {
       folder: 'zakaria_rental/id_images',
       public_id: `${req.params.id}-${Date.now()}-${file.fieldname}`,
       resource_type: 'auto',
-      // Add transformation to optimize image size
       transformation: [
-        { width: 1500, height: 1500, crop: 'limit' }, // Limit max dimensions
-        { quality: 'auto:good', fetch_format: 'auto' } // Auto optimize
+        { width: 1500, height: 1500, crop: 'limit' },
+        { quality: 'auto:good', fetch_format: 'auto' }
       ]
     };
   },
 });
 
 // ============================================
-// 3. FILE FILTER (Validate file types)
+// 3. CONFIGURE CLOUDINARY STORAGE FOR PROFILE IMAGES
 // ============================================
-const fileFilter = (req, file, cb) => {
+const profileImageStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    // Get user ID from authenticated request
+    const userId = req.user?.id || 'unknown';
+    console.log(`📤 Uploading profile image for user:`, userId);
+    console.log(`   Original name: ${file.originalname}`);
+    console.log(`   MIME type: ${file.mimetype}`);
+    
+    return {
+      folder: 'zakaria_rental/profile_images',
+      public_id: `profile-${userId}-${Date.now()}`,
+      resource_type: 'auto',
+      transformation: [
+        { width: 500, height: 500, crop: 'fill', gravity: 'face' }, // Square crop, focus on face
+        { quality: 'auto:good', fetch_format: 'auto' }
+      ]
+    };
+  },
+});
+
+// ============================================
+// 4. FILE FILTER (Validate file types)
+// ============================================
+const imageFileFilter = (req, file, cb) => {
   const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
   
   if (allowedMimeTypes.includes(file.mimetype)) {
@@ -62,29 +84,40 @@ const fileFilter = (req, file, cb) => {
 };
 
 // ============================================
-// 4. CREATE MULTER INSTANCE WITH LIMITS
+// 5. CREATE MULTER INSTANCES
 // ============================================
-const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
+
+// For tenant ID images
+const idImageUpload = multer({
+  storage: idImageStorage,
+  fileFilter: imageFileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max per file
-    files: 2 // Maximum 2 files total
+    files: 2
+  }
+});
+
+// For user profile images
+const profileImageUpload = multer({
+  storage: profileImageStorage,
+  fileFilter: imageFileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max for profile images
+    files: 1
   }
 });
 
 // ============================================
-// 5. MIDDLEWARE WITH ERROR HANDLING
+// 6. MIDDLEWARE FOR ID IMAGES (EXISTING)
 // ============================================
 const uploadIDImages = (req, res, next) => {
-  const uploadFields = upload.fields([
+  const uploadFields = idImageUpload.fields([
     { name: 'id_front_image', maxCount: 1 },
     { name: 'id_back_image', maxCount: 1 }
   ]);
 
   uploadFields(req, res, (err) => {
     if (err instanceof multer.MulterError) {
-      // Multer-specific errors
       console.error('❌ Multer Error:', err);
       
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -106,7 +139,6 @@ const uploadIDImages = (req, res, next) => {
         message: `Upload error: ${err.message}`
       });
     } else if (err) {
-      // Other errors (file type, Cloudinary, etc.)
       console.error('❌ Upload Error:', err);
       return res.status(400).json({
         success: false,
@@ -114,10 +146,76 @@ const uploadIDImages = (req, res, next) => {
       });
     }
     
-    // Success - proceed to next middleware
-    console.log('✅ Upload middleware completed successfully');
+    console.log('✅ ID image upload middleware completed successfully');
     next();
   });
 };
 
-module.exports = { uploadIDImages };
+// ============================================
+// 7. MIDDLEWARE FOR PROFILE IMAGE (NEW)
+// ============================================
+const uploadProfileImage = (req, res, next) => {
+  const uploadSingle = profileImageUpload.single('profile_image');
+
+  uploadSingle(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      console.error('❌ Multer Error:', err);
+      
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          success: false,
+          message: 'File too large. Maximum size is 5MB for profile image.'
+        });
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: `Upload error: ${err.message}`
+      });
+    } else if (err) {
+      console.error('❌ Upload Error:', err);
+      return res.status(400).json({
+        success: false,
+        message: err.message || 'Failed to upload profile image'
+      });
+    }
+    
+    console.log('✅ Profile image upload middleware completed successfully');
+    if (req.file) {
+      console.log('📁 Uploaded file:', req.file.path);
+    }
+    next();
+  });
+};
+
+// ============================================
+// 8. UTILITY: DELETE IMAGE FROM CLOUDINARY
+// ============================================
+const deleteCloudinaryImage = async (imageUrl) => {
+  if (!imageUrl) return;
+  
+  try {
+    // Extract public_id from Cloudinary URL
+    const urlParts = imageUrl.split('/');
+    const uploadIndex = urlParts.findIndex(part => part === 'upload');
+    if (uploadIndex === -1) return;
+    
+    // Get everything after 'upload/v{version}/'
+    const pathAfterUpload = urlParts.slice(uploadIndex + 2).join('/');
+    // Remove file extension
+    const publicId = pathAfterUpload.replace(/\.[^/.]+$/, '');
+    
+    console.log(`🗑️ Deleting Cloudinary image: ${publicId}`);
+    const result = await cloudinary.uploader.destroy(publicId);
+    console.log('✅ Cloudinary delete result:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Error deleting Cloudinary image:', error);
+  }
+};
+
+module.exports = { 
+  uploadIDImages, 
+  uploadProfileImage,
+  deleteCloudinaryImage 
+};

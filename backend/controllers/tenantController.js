@@ -542,6 +542,7 @@ const updateTenant = async (req, res) => {
 };
 
 // Delete tenant with agent property validation
+// Delete tenant - ADMIN ONLY, must be unallocated
 const deleteTenant = async (req, res) => {
   const client = await pool.connect();
   
@@ -550,41 +551,21 @@ const deleteTenant = async (req, res) => {
 
     const { id } = req.params;
 
-    // Check if tenant exists with agent property validation
-    let tenantCheckQuery = `
-      SELECT t.id, t.first_name, t.last_name, p.id as property_id
-      FROM tenants t
-      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-      LEFT JOIN property_units pu ON ta.unit_id = pu.id
-      LEFT JOIN properties p ON pu.property_id = p.id
-      WHERE t.id = $1
-    `;
-    
-    const tenantCheckParams = [id];
-
-    // If user is agent, check if they're assigned to this tenant's property
-    if (req.user.role === 'agent') {
-      tenantCheckQuery += `
-        AND EXISTS (
-          SELECT 1 FROM agent_property_assignments apa 
-          WHERE apa.property_id = p.id 
-          AND apa.agent_id = $2 
-          AND apa.is_active = true
-        )
-      `;
-      tenantCheckParams.push(req.user.id);
-    }
-
-    const tenantCheck = await client.query(tenantCheckQuery, tenantCheckParams);
+    // Check if tenant exists
+    const tenantCheck = await client.query(
+      `SELECT id, first_name, last_name FROM tenants WHERE id = $1`,
+      [id]
+    );
 
     if (tenantCheck.rows.length === 0) {
-      return res.status(req.user.role === 'agent' ? 403 : 404).json({
+      await client.query('ROLLBACK');
+      return res.status(404).json({
         success: false,
-        message: req.user.role === 'agent' 
-          ? 'Tenant not found or you are not assigned to this property' 
-          : 'Tenant not found'
+        message: 'Tenant not found'
       });
     }
+
+    const tenant = tenantCheck.rows[0];
 
     // Check if tenant has active allocations
     const activeAllocations = await client.query(
@@ -593,25 +574,49 @@ const deleteTenant = async (req, res) => {
     );
 
     if (activeAllocations.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
-        message: 'Cannot delete tenant with active allocations. Please ask the admin to deallocate first.'
+        message: 'Cannot delete tenant with active allocation. Please deallocate the tenant first.'
       });
     }
 
-    // Delete tenant
+    // Delete related records first (to avoid foreign key constraints)
+    // Delete inactive allocations
+    await client.query('DELETE FROM tenant_allocations WHERE tenant_id = $1', [id]);
+    
+    // Delete rent payments
+    await client.query('DELETE FROM rent_payments WHERE tenant_id = $1', [id]);
+    
+    // Delete water bills
+    await client.query('DELETE FROM water_bills WHERE tenant_id = $1', [id]);
+    
+    // Delete complaints
+    await client.query('DELETE FROM complaints WHERE tenant_id = $1', [id]);
+
+    // Finally delete the tenant
     await client.query('DELETE FROM tenants WHERE id = $1', [id]);
 
     await client.query('COMMIT');
 
+    console.log(`✅ Tenant ${tenant.first_name} ${tenant.last_name} (ID: ${id}) deleted by admin ${req.user.id}`);
+
     res.json({
       success: true,
-      message: `Tenant ${tenantCheck.rows[0].first_name} ${tenantCheck.rows[0].last_name} deleted successfully`
+      message: `Tenant ${tenant.first_name} ${tenant.last_name} has been permanently deleted`
     });
 
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Delete tenant error:', error);
+    
+    // Handle foreign key constraint errors
+    if (error.code === '23503') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete tenant due to related records. Please contact system administrator.'
+      });
+    }
     
     res.status(500).json({
       success: false,

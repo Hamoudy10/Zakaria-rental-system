@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const tenantController = require('../controllers/tenantController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, requireRole } = require('../middleware/authMiddleware');
 const { uploadIDImages } = require('../middleware/uploadMiddleware');
 
 // All routes require authentication
@@ -23,7 +23,8 @@ router.post('/', tenantController.createTenant);
 router.put('/:id', tenantController.updateTenant);
 
 // Route to delete a tenant
-router.delete('/:id', tenantController.deleteTenant);
+// Route to delete a tenant (ADMIN ONLY - tenants must be unallocated)
+router.delete('/:id', requireRole(['admin']), tenantController.deleteTenant);
 
 // ✅ SINGLE ROUTE for ID image upload (using multer middleware)
 router.post('/:id/upload-id', uploadIDImages, tenantController.uploadIDImages);

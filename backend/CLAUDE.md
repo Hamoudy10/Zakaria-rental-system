@@ -1,642 +1,178 @@
-BACKEND ARCHITECTURE & CONVENTIONS - SUMMARY
+# BACKEND ARCHITECTURE - EXPRESS/NODE.JS
 
-EXPRESS APPLICATION STRUCTURE:
-Standard MVC Pattern with Services Layer:
-- Controllers: Handle HTTP requests/responses
-- Services: Contain business logic, database operations
-- Models: Database schema (implicit via SQL)
+## TECH STACK
+Express 4.22 | PostgreSQL (pg pool) | JWT | bcryptjs | Socket.io | node-cron | Cloudinary
 
-DEPENDENCIES:
-- express: Web framework
-- pg + pool: PostgreSQL connection pooling
-- jsonwebtoken: JWT authentication (HS256)
-- bcryptjs: Password hashing (10 rounds)
-- socket.io: Real-time communication
-- node-cron: Task scheduling
-- dotenv: Environment configuration
-- helmet + cors: Security middleware
+## ARCHITECTURE
+```
+Routes → Middleware → Controllers → Services → Database (pg pool)
+```
 
-NEW CORE MODULES IMPLEMENTED:
+## AUTHENTICATION
 
-1. Cron Service (/backend/services/cronService.js):
-   - Automated monthly billing on configurable day (default: 28th at 9:00 AM)
-   - Generates bills for all active tenants
-   - Sends SMS via queue system with rate limiting
-   - Skips tenants with advance payments
-   - Logs billing runs to billing_runs table
+### Middleware Pattern
+```javascript
+// authMiddleware.js
+const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
+router.get('/admin-only', authMiddleware, requireRole(['admin']), handler);
+router.get('/agent-or-admin', authMiddleware, requireRole(['agent', 'admin']), handler);
+```
 
-2. Billing Service (/backend/services/billingService.js):
-   Key Methods:
-   - calculateTenantBill(): Computes rent + water + arrears
-   - generateMonthlyBills(): Creates bills for all tenants
-   - allocatePayment(): Splits payment: arrears → water → rent → advance
-   - updateArrearsBalance(): Updates outstanding balances
+### JWT Flow
+1. Extract from `Authorization: Bearer <token>`
+2. Verify with `jsonwebtoken.verify()`
+3. Attach `req.user = { id, role, ... }`
 
-   Bill Calculation:
-   Total Due = Rent Due + Water Due + Arrears Due
-   Rent Due = Monthly Rent - Rent Paid (current month)
-   Water Due = Water Bill Amount - Water Paid (current month)
-   Arrears Due = Previous Arrears - Arrears Paid
-
-3. Enhanced Payment Controller:
-   Payment Allocation Logic:
-   - First Priority: Pay off arrears (oldest debts first)
-   - Second Priority: Pay current water bill
-   - Third Priority: Pay current month's rent
-   - Remainder: Mark as advance payment for future months
-
-4. Admin Settings Controller (/backend/controllers/adminSettingsController.js):
-   Features:
-   - Validation: Billing day (1-28), paybill number (5-10 digits)
-   - Automatic Cron Restart: When billing day changes
-   - Grouped Settings: Billing, SMS, M-Pesa, fees, general categories
-   - Default Initialization: Auto-creates settings on server start
-
-   Key Settings:
-   - billing_day: Day of month for auto-billing (1-28)
-   - paybill_number: Business paybill for SMS instructions
-   - company_name: For SMS signature
-   - sms_billing_template: Customizable message template
-   - late_fee_percentage: Default late penalty (0-50%)
-   - grace_period_days: Grace period before late fee (0-30 days)
-
-CONTROLLER PATTERNS:
-Standard Controller Structure:
-- Async/Await with try-catch blocks
-- Transaction management for multi-step operations
-- Input validation before database operations
-- Consistent response format: { success, data, message }
-- Proper error logging with context
-
-Example Controller Pattern:
-const createProperty = async (req, res) => {
+## CONTROLLER PATTERN
+```javascript
+const handler = async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    if (!req.body.property_code) {
-      return res.status(400).json({ success: false, message: 'Property code required' });
-    }
-    const result = await client.query(`INSERT INTO properties (...) VALUES (...) RETURNING *`, [values]);
+    // Business logic
     await client.query('COMMIT');
-    res.status(201).json({ success: true, message: 'Property created', data: result.rows[0] });
+    res.json({ success: true, data: result, message: 'Done' });
   } catch (error) {
     await client.query('ROLLBACK');
-    if (error.code === '23505') {
-      return res.status(400).json({ success: false, message: 'Property code already exists' });
-    }
-    console.error('Create property error:', error);
-    res.status(500).json({ success: false, message: 'Server error creating property' });
+    console.error('Error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   } finally {
     client.release();
   }
 };
+```
 
-AUTHENTICATION MIDDLEWARE:
-JWT Verification Flow (middleware/authMiddleware.js):
-- Extract token from Authorization: Bearer <token> header
-- Verify with jsonwebtoken.verify()
-- Attach user to req.user for downstream use
-- Role-based access control in route handlers
+## AGENT DATA ISOLATION
 
-Protected Route Example:
-const { protect, adminOnly } = require('../middleware/authMiddleware');
-router.post('/', protect, adminOnly, createProperty);
-router.get('/:id', protect, getProperty);
+### Pattern (All Agent Queries)
+```sql
+WHERE property_id IN (
+  SELECT property_id FROM agent_property_assignments 
+  WHERE agent_id = $1 AND is_active = true
+)
+```
 
-DATABASE OPERATIONS:
-Connection Pooling (config/database.js):
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+### Admin-Aware Endpoints
+```javascript
+// Controller logic
+if (req.user.role === 'admin') {
+  // Skip agent filter, return all data
+} else {
+  // Apply agent_property_assignments filter
+}
+```
+
+## KEY SERVICES
+
+### billingService.js
+- `calculateTenantBill()`: Rent + Water + Arrears
+- `allocatePayment()`: Arrears → Water → Rent → Advance
+- `generateMonthlyBills()`: Bulk billing
+
+### cronService.js
+- Monthly billing (configurable day, default 28th at 9:00 AM)
+- SMS queue processing with rate limiting
+- Skip tenants with advance payments
+
+### smsService.js
+- Celcom SMS provider integration
+- Queue-based retry (max 3 attempts)
+
+## CLOUDINARY UPLOAD
+
+### Middleware (uploadMiddleware.js)
+```javascript
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: { folder: 'zakaria_rental/id_images' }
 });
+// Returns file.path = Cloudinary URL
+```
 
-Query Patterns:
-- Use parameterized queries ($1, $2) to prevent SQL injection
-- Return specific columns, not SELECT *
-- Use joins for related data (properties + units + images)
-- Implement soft deletes (is_active flag)
+### Controller
+```javascript
+const imageUrl = req.files['id_front_image'][0].path; // Cloudinary URL
+await pool.query('UPDATE tenants SET id_front_image = $1', [imageUrl]);
+```
 
-MPESA INTEGRATION PATTERNS:
-Payment Processing Flow:
-1. Initiate: Client → POST /api/payments/mpesa with phone/amount
-2. Callback: Safaricom → POST /api/payments/mpesa/callback
-3. Confirmation: Update rent_payments + mpesa_transactions
-4. Notification: Send SMS/email confirmation
-
-Transaction States: pending → processing → completed/failed
-
-BILLING & ARREARS SYSTEM:
-Payment Allocation Algorithm:
-const allocatePayment = (amount, rentDue, waterDue, arrearsDue) => {
+## PAYMENT ALLOCATION LOGIC
+```javascript
+const allocatePayment = (amount, arrearsDue, waterDue, rentDue) => {
   let remaining = amount;
-  const allocation = { rent: 0, water: 0, arrears: 0, advance: 0 };
+  const allocation = { arrears: 0, water: 0, rent: 0, advance: 0 };
+  
   allocation.arrears = Math.min(remaining, arrearsDue);
   remaining -= allocation.arrears;
+  
   allocation.water = Math.min(remaining, waterDue);
   remaining -= allocation.water;
+  
   allocation.rent = Math.min(remaining, rentDue);
   remaining -= allocation.rent;
+  
   allocation.advance = remaining;
   return allocation;
 };
-
-CHAT MODULE BACKEND PATTERNS:
-Controller-Service Pattern:
-HTTP Request → chatController.js (REST API) → chatService.js (Socket.io + Business Logic) → Database
-
-Socket.io Room Architecture:
-socket.on('connection', async (socket) => {
-  socket.join(`user_${socket.userId}`);
-  const convs = await db.query('SELECT conversation_id FROM chat_participants...');
-  convs.rows.forEach(row => { socket.join(`conversation_${row.conversation_id}`); });
-});
-
-Real-time Message Broadcasting:
-io.to(`conversation_${conversationId}`).emit('new_message', { message, conversationId });
-io.to(`user_${participant.user_id}`).emit('chat_notification', { type: 'new_message', conversationId, message, unreadCount: 1 });
-
-NOTIFICATIONS SYSTEM BACKEND PATTERNS:
-Controller-Service Pattern:
-HTTP Request → notificationController.js (Rate Limiting + Validation) → NotificationService.js (Business Logic) → Database
-
-Rate Limiting Implementation:
-const userRequestTimestamps = new Map();
-const RATE_LIMIT_WINDOW = 2000;
-const checkRateLimit = (userId, endpoint) => {
-  const key = `${userId}-${endpoint}`;
-  const lastRequest = userRequestTimestamps.get(key);
-  if (lastRequest && (Date.now() - lastRequest) < RATE_LIMIT_WINDOW) { return false; }
-  userRequestTimestamps.set(key, Date.now());
-  return true;
-};
-
-WATER BILL INTEGRATION (/backend/controllers/waterBillController.js):
-Purpose: Enhanced water bill management with SMS integration
-Key Methods:
-- checkMissingWaterBills(): Identifies tenants without water bills
-- createWaterBill(): Creates water bills with tenant name resolution
-- listWaterBills(): Lists water bills with tenant/property info
-- Agent property filtering for all operations
-
-Water Bill SMS Integration:
-- Pre-flight checking: Warns agents about tenants missing water bills
-- Graceful handling: Tenants without water bills get KSh 0 in SMS
-- Agent warnings: Clear indication of which tenants lack water bills
-
-Water Bills Routes (/backend/routes/waterBills.js):
-API Endpoints:
-- GET /api/water-bills/missing-tenants - Check tenants without water bills
-- POST /api/water-bills - Create water bill
-- GET /api/water-bills - List water bills
-- GET /api/water-bills/:id - Get specific water bill
-- DELETE /api/water-bills/:id - Delete water bill
-
-AGENT SMS MANAGEMENT SYSTEM:
-Purpose: Agent-scoped SMS management with property filtering
-Key Features:
-- Agent-triggered billing SMS with water bill verification
-- Agent-scoped failed SMS viewing and retry
-- Property filtering via agent_property_assignments table
-- Missing water bill warning system
-
-Endpoints Created:
-- POST /api/cron/agent/trigger-billing - Trigger billing SMS for agent's properties
-- GET  /api/cron/agent/failed-sms - View failed SMS (agent filtered)
-- POST /api/cron/agent/retry-sms - Retry failed SMS (agent filtered)
-
-Agent Workflow:
-1. Agent inputs water bills via /api/water-bills
-2. Agent triggers billing SMS via /api/cron/agent/trigger-billing
-3. System checks for missing water bills and warns agent
-4. Agent confirms to proceed (water=0 for missing bills)
-5. System queues SMS for all tenants in agent's properties
-6. Agent monitors failed SMS via filtered endpoints
-7. Agent retries failed SMS for their properties only
-
-DATABASE INTEGRATION - SMS Queue Table Schema:
-- id (uuid): Primary key
-- recipient_phone (varchar): Formatted phone (254XXXXXXXXX)
-- message (text): SMS message content
-- message_type (varchar): 'bill_notification', 'payment_confirmation'
-- status (varchar): 'pending', 'sent', 'failed'
-- billing_month (varchar): Month in YYYY-MM format
-- attempts (integer): Number of retry attempts (max 3)
-- error_message (text): Last error message
-- created_at (timestamp): When SMS was queued
-- agent_id (uuid): Reference to users.id (who triggered)
-
-Key Query for Agent SMS Management:
-SELECT sq.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name
-FROM sms_queue sq
-LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
-LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-LEFT JOIN property_units pu ON ta.unit_id = pu.id
-LEFT JOIN properties p ON pu.property_id = p.id
-WHERE sq.status = 'failed' AND sq.message_type = 'bill_notification' 
-  AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true);
-
-AGENT REPORTS SYSTEM - ENDPOINT STATUS:
-
-✅ WORKING ENDPOINTS:
-1. Properties: GET /api/properties/agent/assigned - Returns agent's assigned properties
-2. Agent Properties Redirects: 
-   - GET /api/agents/tenants/payments → Redirects to /api/agent-properties/my-tenants
-   - GET /api/agents/complaints → Redirects to /api/agent-properties/my-complaints
-
-❓ ENDPOINTS TO VERIFY/CREATE:
-1. Agent Tenants: GET /api/agent-properties/my-tenants (needs implementation)
-2. Agent Payments: GET /api/agent-properties/my-payments (needs implementation)
-3. Revenue Report: GET /api/agent-properties/revenue-summary (needs implementation)
-4. Water Bills with Agent Filtering: GET /api/water-bills (needs agent filtering)
-5. SMS History with Agent Filtering: GET /api/cron/sms-history (needs agent filtering)
-
-REQUIRED BACKEND UPDATES:
-1. Create Agent Reports Controller: agentReportsController.js with 7 report functions
-2. Add Agent Reports Routes: agentReports.js routes file
-3. Update Existing Endpoints: Add agent filtering to water bills and SMS history
-
-AGENT FILTERING PATTERN:
-All agent report endpoints should follow:
-SELECT ... FROM ... WHERE property_id IN (
- SELECT property_id FROM agent_property_assignments 
- WHERE agent_id = $1 AND is_active = true
-)
-
-ERROR HANDLING STRATEGY:
-HTTP Status Codes:
-- 200: Success
-- 201: Created
-- 400: Bad request (validation errors)
-- 401: Unauthorized (invalid/missing token)
-- 403: Forbidden (insufficient permissions)
-- 404: Not found
-- 409: Conflict (duplicate data)
-- 500: Server error
-
-Error Response Format:
-{ "success": false, "message": "Human-readable error", "error": "Technical details in development only" }
-
-DATA INTEGRITY RULES:
-Billing Integrity:
-- No duplicate billing: One bill per tenant per month
-- Water bill validation: Must exist before billing can proceed
-- Advance payment detection: Skip SMS if advance covers total due
-- Arrears calculation: Auto-updates after each payment
-
-Payment Allocation Rules:
-- Sum validation: allocated_to_rent + allocated_to_water + allocated_to_arrears = amount
-- Negative prevention: Allocation amounts cannot be negative
-- Consistency: Allocation must match payment type
-
-PERFORMANCE OPTIMIZATIONS:
-New Indexes for Billing:
-- CREATE INDEX idx_tenant_allocations_arrears ON tenant_allocations(arrears_balance) WHERE arrears_balance > 0;
-- CREATE INDEX idx_water_bills_tenant_month ON water_bills(tenant_id, bill_month);
-- CREATE INDEX idx_billing_runs_month_date ON billing_runs(month DESC, run_date DESC);
-
-DEBUGGING & TROUBLESHOOTING:
-Common Issues:
-1. 404 Route Not Found: /api/cron/agent/trigger-billing
-   Solution: Verify cronRoutes.js is loaded in server.js
-
-2. SQL Column Error: column p.is_active does not exist
-   Root Cause: properties table doesn't have is_active column
-   Solution: Removed references to p.is_active, kept only apa.is_active (agent_property_assignments)
-
-3. Agent Data Isolation Issues
-   Cause: Missing agent_property_assignments joins in queries
-   Solution: All agent queries must include property filtering via agent_property_assignments table
-
-API ENDPOINT SPECIFICATIONS (UPDATE 6.0):
-
-Unit Creation Endpoint (POST /api/properties/:id/units):
-Expected Request Body:
-{
-  "unit_number": "01",
-  "unit_type": "studio",
-  "rent_amount": 10000,
-  "deposit_amount": 10000,
-  "description": "Unit description",
-  "features": {}  // Empty object, not array
-}
-
-Backend Processing:
-- Unit Code Generation: unit_code = property_code + "-" + unit_number
-- Example: Property "MJ" + Unit "01" = "MJ-01"
-- Features Storage: Stored as JSONB object in database
-- Defaults: is_occupied = false, is_active = true
-
-Property Units Endpoint (GET /api/properties/:id/units):
-Response Format:
-{
-  "success": true,
-  "data": [
-    {
-      "id": "uuid",
-      "unit_code": "MJ-01",
-      "unit_number": "01",
-      "unit_type": "studio",
-      "rent_amount": "10000.00",
-      "deposit_amount": "10000.00",
-      "is_occupied": false,
-      "features": {},
-      "created_at": "2026-01-15T13:34:13.185Z"
-    }
-  ]
-}
-
-Important Backend Rules:
-- Unit Code Uniqueness: Enforced at database level (UNIQUE constraint)
-- Property Validation: Unit must belong to existing property
-- Data Type Enforcement: rent_amount/deposit_amount stored as NUMERIC
-- Feature Format: Stored as JSONB, accepts any valid JSON object
-
-UPDATE 8.0 - PRODUCTION DEPLOYMENT & ROUTE LOADING FIXES:
-
-SERVER LOADING PATTERNS ENHANCED:
-1. Fixed File Path Resolution: Loading './routes/tenant' instead of './routes/tenants'
-2. Fixed Error Message Typos: "unavialable" → "unavailable"
-3. Added Debug Logging for route loading failures
-
-TENANTS ROUTE FILE UPDATED (tenants.js):
-1. Removed multer dependency to avoid production issues
-2. Simplified ID Upload Route: Accepts base64/URLs instead of file uploads
-3. Added proper database pool import
-
-CRON CONTROLLER FIXES:
-Added missing getSMSHistory function to prevent route loading failure:
-const getSMSHistory = async (req, res) => {
-  try {
-    // Query logic for SMS history
-    const result = await pool.query(...);
-    res.json({ success: true, data: result.rows, pagination: {...} });
-  } catch (error) {
-    console.error('Error fetching SMS history:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch SMS history' });
-  }
-};
-
-PRODUCTION DEPLOYMENT CONCERNS ADDRESSED:
-1. Package Dependencies: Multer added to package.json for Render deployment
-2. File Uploads in Production: Simplified to accept URLs/base64 until multer is configured
-3. Environment-Specific Configuration: Check for process.env.NODE_ENV === 'production'
-
-EXPECTED LOADING SEQUENCE AFTER FIXES:
-✅ Default admin settings initialized
-✅ Loaded Auth routes
-✅ Loaded Users routes
-✅ Loaded Properties routes
-✅ Loaded Payments routes
-✅ Loaded Complaints routes
-✅ Loaded Admin routes
-✅ Loaded Cron routes
-✅ Loaded Water Bills routes
-✅ Loaded Tenants routes  // No more placeholder
-✅ Loaded Agents routes
-✅ Loaded Salary Payments routes
-✅ Loaded Agent Permissions routes
-✅ Loaded Chat routes
-✅ Loaded Agent Properties routes
-✅ Loaded Reports routes
-✅ Loaded Notifications routes
-✅ Loaded Units routes
-✅ Loaded Allocations routes
-
-MIGRATION RECOMMENDATION FOR FILE UPLOADS:
-For production file uploads without multer dependency issues:
-1. Use cloud storage (AWS S3, Google Cloud Storage)
-2. Accept pre-signed URLs from frontend
-3. Store only file URLs in database
-4. Avoid server-side file handling for scalability
-
-LAST UPDATED: After Update 8.0 - All route loading issues resolved, production-ready backend.
-UPDATE 9.0 - MULTER FILE UPLOAD IMPLEMENTATION:
-
-MULTER MIDDLEWARE CREATED (/backend/middleware/uploadMiddleware.js):
-- File storage: Local filesystem in 'uploads/id_images/' directory
-- File naming: tenantId-timestamp-random.extension (prevents collisions)
-- File validation: Only accepts .jpeg, .jpg, .png images
-- Size limit: 5MB per file
-- Middleware: uploadIDImages handles two fields (id_front_image, id_back_image)
-
-ROUTES FIXED (/backend/routes/tenants.js):
-- Removed duplicate POST /:id/upload-id route (was causing 400 errors)
-- Single route now: router.post('/:id/upload-id', uploadIDImages, tenantController.uploadIDImages)
-- Eliminated base64 handling route that conflicted with FormData route
-
-TENANT CONTROLLER UPDATED (/backend/controllers/tenantController.js):
-- uploadIDImages function now processes req.files (from Multer) instead of req.body
-- Stores relative file paths in database: '/uploads/id_images/filename'
-- Added error handling with file cleanup on failure
-- Returns image URLs in API response
-
-STATIC FILE SERVING (server.js):
-- Added: app.use('/uploads', express.static('uploads'));
-- Images accessible at: https://zakaria-rental-system.onrender.com/uploads/id_images/filename
-
-FILE UPLOAD FLOW:
-1. Frontend → POST /api/tenants/:id/upload-id with FormData
-2. Multer middleware → Validates & saves files to uploads/id_images/
-3. Controller → Updates database with file paths
-4. Response → Returns image URLs for frontend display
-
-ERROR HANDLING ENHANCEMENTS:
-- File type validation at middleware level
-- Size limit enforcement (5MB)
-- Database transaction safety
-- File cleanup on tenant not found or server errors
-
-PRODUCTION DEPLOYMENT NOTES:
-⚠️ CURRENT: Local file storage works for development/testing
-⚠️ RECOMMENDED: Cloud storage (AWS S3) for production scalability
-⚠️ FILE SYSTEM: Render/Heroku have ephemeral filesystems - files lost on redeploy
-
-DATABASE STORAGE FORMAT:
-- id_front_image: VARCHAR storing path like '/uploads/id_images/tenant-uuid-1234567890.jpg'
-- id_back_image: VARCHAR storing similar path format
-- NOT storing base64 strings anymore
-
-SECURITY MEASURES:
-- File extension validation
-- MIME type checking
-- Size limiting
-- Unique filenames to prevent overwrites
-UPDATE 10.0 - CLOUDINARY FILE UPLOAD IMPLEMENTATION
-
-MIDDLEWARE REDESIGN (/backend/middleware/uploadMiddleware.js):
--   REPLACED: Local `multer.diskStorage` with `CloudinaryStorage` from `multer-storage-cloudinary`.
--   CONFIGURATION: Cloudinary SDK configured using environment variables.
--   UPLOAD FLOW: Files are held in memory and streamed directly to Cloudinary, avoiding Render's ephemeral disk.
--   PARAMETERS: Files are organized in the `zakaria_rental/id_images/` folder with unique public IDs.
--   RESULT: The middleware attaches file objects to `req.files` containing Cloudinary's response data (including `.path` which is the image URL).
-
-CONTROLLER UPDATE (/backend/controllers/tenantController.js):
--   The `uploadIDImages` function now processes `req.files[fieldname][0].path` (the Cloudinary secure URL) instead of a local file path.
--   Database update query stores the full Cloudinary URL (e.g., `https://res.cloudinary.com/...`).
--   Removed all filesystem cleanup logic (e.g., `fs.unlinkSync`) as Cloudinary manages storage.
--   API response returns the Cloudinary URLs for frontend use.
-
-ENVIRONMENT VARIABLES (Render Dashboard):
--   `CLOUDINARY_CLOUD_NAME`
--   `CLOUDINARY_API_KEY`
--   `CLOUDINARY_API_SECRET`
-
-DEPENDENCIES (package.json):
--   ADDED: `"cloudinary": "^2.5.1"`
--   ADDED: `"multer-storage-cloudinary": "^5.0.0"`
-
-PRODUCTION NOTES:
--   The free tier includes 25 credits/month. Monitor usage in the Cloudinary console.
--   Credentials are securely managed via environment variables.
--   The system is now decoupled from the host server's filesystem, enabling true scalability.
-UPDATE 11.0 - ALLOCATIONS ROUTE FIXES & DATA INTEGRITY
-
-CRITICAL BUG FIXES IN /backend/routes/allocations.js:
-
-1. FOREIGN KEY CONSTRAINT VIOLATION (Notifications):
-   - ISSUE: PUT route tried to create notifications for tenants using 'tenant_allocations.tenant_id'
-   - CAUSE: 'notifications.user_id' foreign key references 'users.id', but tenants are in separate 'tenants' table
-   - FIX: Changed notification 'user_id' from 'currentAllocation.tenant_id' to 'req.user.id' (admin/agent performing action)
-
-2. SQL COLUMN NOT FOUND ERROR:
-   - ISSUE: Error: "column 'updated_at' of relation 'tenant_allocations' does not exist"
-   - CAUSE: Update query included 'updated_at = CURRENT_TIMESTAMP' but column doesn't exist
-   - FIX: Removed 'updated_at' assignment from the UPDATE statement in PUT route
-
-3. DATA CONSISTENCY ISSUE:
-   - SYMPTOM: 'properties.available_units' count incorrect after deallocation
-   - ROOT CAUSE: Cached count drifted from actual unoccupied unit count
-   - SOLUTION: Provided recalculation query and recommended permanent fix using COUNT() instead of increment/decrement
-
-UPDATED CODE SECTIONS:
-- PUT /api/allocations/:id route (lines ~220-280):
-  * Fixed notification INSERT queries (2 locations)
-  * Removed 'updated_at = CURRENT_TIMESTAMP' from UPDATE query
-  * Added tenant/unit details to notification messages for better context
-
-- DELETE /api/allocations/:id route:
-  * Fixed JOIN from 'LEFT JOIN users tenant' to 'LEFT JOIN tenants tenant'
-  * Ensures correct reference to tenants table
-
-ARCHITECTURAL LESSONS:
-1. Notification System Boundaries: Notifications can only target Users table entries, not all system entities
-2. Schema Awareness: Code must align with actual database schema; assumptions about columns lead to runtime errors
-3. State Synchronization: Cached counts (available_units) require reconciliation mechanisms
-
-PREVENTION RECOMMENDATIONS:
-1. Add database migration checks during server startup
-2. Consider database triggers or views for derived fields like 'available_units'
-3. Implement data validation endpoints to check for inconsistencies
-
-TESTING VALIDATED:
-✅ PUT /api/allocations/:id with {is_active: false} - Successfully deallocates tenant
-✅ Notification created for admin user, not tenant
-✅ No SQL errors about missing columns
-✅ Unit occupancy correctly toggled in property_units table
-UPDATE 12.0 - ALLOCATIONS ROUTE CRITICAL BUG FIXES & DATA INTEGRITY
-
-CRITICAL BUGS FIXED IN /backend/routes/allocations.js:
-
-1. MAIN GET ROUTE SQL FIX:
-   - BUG: "WHERE ta.id = $1" in list endpoint (line ~13)
-   - FIX: Changed to "WHERE 1=1" to allow parameterized filtering
-   - IMPACT: Resolved 500 Internal Server Error when loading allocations
-
-2. MISSING COLUMN REFERENCE:
-   - BUG: Selecting "tenant.email as tenant_email" (non-existent column)
-   - FIX: Removed email column from SELECT clause
-   - IMPACT: Database query no longer fails due to missing column
-
-3. GET BY ID ROUTE FIX:
-   - BUG: "WHERE 1=1" in single allocation endpoint (line ~83)
-   - FIX: Changed to "WHERE ta.id = $1" for proper ID filtering
-   - IMPACT: Single allocation retrieval now works correctly
-
-4. POST ROUTE TENANT VALIDATION:
-   - BUG: Checking users table for tenant existence
-   - FIX: Changed to query tenants table directly
-   - IMPACT: Allocation creation now validates against correct table
-
-ENHANCEMENTS IMPLEMENTED:
-
-1. NULL-SAFE DATA HANDLING:
-   - Added COALESCE(tenant.first_name, 'Unknown') as tenant_first_name
-   - Added COALESCE(tenant.last_name, 'Tenant') as tenant_last_name
-   - Added computed tenant_full_name field for frontend convenience
-
-2. COMPREHENSIVE DATA RETURNS:
-   - Returns: tenant_first_name, tenant_last_name, tenant_full_name
-   - Returns: tenant_phone, tenant_national_id
-   - Returns: unit_code, unit_number, unit_type, property_name
-
-3. PROPERTY UNIT RECALCULATION:
-   - Updated all occupancy changes to use accurate COUNT() queries
-   - Replaced increment/decrement logic with precise recalculations
-   - Ensures properties.available_units stays synchronized
-
-4. IMPROVED LOGGING:
-   - Added detailed console logs for allocation operations
-   - Logs tenant names and unit details for debugging
-   - Better error messages with specific context
-
-DATABASE SCHEMA ALIGNMENT:
-- Confirmed: tenant_allocations.tenant_id references tenants.id (not users.id)
-- All JOIN operations now correctly reference tenants table
-- Notification system updated to avoid foreign key violations
-
-KEY CODE CHANGES:
-
-1. Line ~13: WHERE 1=1 instead of WHERE ta.id = $1
-2. Lines ~15-18: Removed tenant.email, added national_id
-3. Lines ~125-129: Tenant validation from tenants table, not users
-4. Lines ~180-185: Property unit recalculation for accuracy
-5. Throughout: Added COALESCE() for null-safe data return
-
-DEPLOYMENT NOTES:
-- Backend server restart required after changes
-- No database migration needed (schema unchanged)
-- Compatible with existing frontend after component updates
-
-PRODUCTION READY: Allocations system now stable with proper tenant data retrieval and display.
-
-UPDATE 13.0 - CHAT SOCKET EMISSION FIX
-
-PROBLEM RESOLVED: Clients were receiving duplicate `new_message` events for every message sent.
-
-ROOT CAUSE: The `sendMessage` function in `chatController.js` was emitting the same `new_message` event twice: once to the conversation-specific room and again in a loop to each participant's user-specific room.
-
-SOLUTION IMPLEMENTED:
--   The redundant loop emitting `new_message` to user rooms was **removed**.
--   The code now relies on the single, more efficient emission to the conversation room (`io.to('conversation_...')`).
--   The separate `chat_notification` event, which is intended for push notifications and does not affect the message list, was preserved. This change eliminates the double-counting issue on the frontend.
-
-FILE MODIFIED: `/backend/controllers/chatController.js`.
-
----
-UPDATE 15.0 - ADMIN-AWARE AGENT ENDPOINTS
-
-PROBLEM RESOLVED: Admins could not use the new, unified reports UI because agent-scoped API endpoints were strictly filtering data by the logged-in user's ID.
-
-SOLUTION IMPLEMENTED:
--   **Conditional Filtering:** The controllers in `agentPropertyController.js` (e.g., `getMyProperties`, `getMyTenants`, `getMyComplaints`) were updated.
--   **Admin Override Logic:** A check for `req.user.role === 'admin'` was added.
-    -   If the user is an **agent**, the `WHERE agent_id = $1` clause is applied to the SQL query.
-    -   If the user is an **admin**, this clause is skipped, causing the query to return all records from the table.
--   This makes the agent-scoped endpoints "admin-aware," allowing them to serve filtered data to agents and complete data to admins, which simplifies the frontend logic.
-
-FILE MODIFIED: `/backend/controllers/agentPropertyController.js`.
-UPDATE 16.0 - PAYMENT CONTROLLER & ROUTES OVERHAUL
-
-CONTROLLER FIXES (paymentController.js):
-
-1. DUPLICATE FUNCTION REMOVED:
-   - Had two `getAllPayments` definitions; second overwrote first
-   - Kept enhanced version with filters, search, sort, pagination
-
-2. CARRY-FORWARD BUG FIXED:
-   ```javascript
-   // BEFORE (wrong): inserted total amount to each future month
-   amount,
-   
-   // AFTER (correct): inserts only what's needed for that month
-   allocationAmount,
+```
+
+## CARRY-FORWARD LOGIC
+```javascript
+// For each future month until remaining exhausted:
+const allocationAmount = Math.min(remaining, monthlyRent - alreadyPaid);
+// Insert with is_advance_payment = true, original_payment_id = sourceId
+remaining -= allocationAmount;
+```
+
+## ROUTE ORDER (CRITICAL)
+```javascript
+// ✅ CORRECT - specific before generic
+router.get('/balance/:tenantId', getBalance);
+router.get('/:id', getById);
+
+// ❌ WRONG - generic catches all
+router.get('/:id', getById);
+router.get('/balance/:tenantId', getBalance); // Never reached
+```
+
+## KEY ROUTES
+
+| Route | Purpose |
+|-------|---------|
+| `/api/tenants/:id/upload-id` | Cloudinary ID upload |
+| `/api/allocations` | Tenant-unit CRUD |
+| `/api/payments` | Payment CRUD with allocation |
+| `/api/agent-properties/my-tenants` | Agent-scoped tenants |
+| `/api/agent-properties/water-bills/balance/:tenantId` | Water balance |
+| `/api/cron/agent/trigger-billing` | Agent SMS trigger |
+
+## RECENT FIXES
+
+| Issue | Solution |
+|-------|----------|
+| Duplicate messages | Removed redundant socket emission loop |
+| SMS History 500 | Build count query separately, add `::uuid` cast |
+| Notification FK error | Use `req.user.id` not `tenant_id` |
+| Allocation 500 | Fixed WHERE clause, removed `updated_at` column |
+| Carry-forward bug | Insert `allocationAmount` not total `amount` |
+
+## ERROR HANDLING
+```javascript
+// HTTP Status Codes
+200 // Success
+201 // Created
+400 // Bad request / validation
+401 // Unauthorized
+403 // Forbidden (role)
+404 // Not found
+500 // Server error
+
+// Response Format
+{ success: false, message: 'Human-readable error' }
+```
+
+## ENVIRONMENT VARIABLES
+```
+DATABASE_URL, JWT_SECRET, FRONTEND_URL
+CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+```

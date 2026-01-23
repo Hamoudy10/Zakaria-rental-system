@@ -50,7 +50,6 @@ export const AuthProvider = ({ children }) => {
     setError(null);
 
     try {
-      // IMPORTANT: clear any previous session first
       clearToken();
       setUser(null);
 
@@ -96,7 +95,6 @@ export const AuthProvider = ({ children }) => {
     setLoading(true);
 
     try {
-      // Force axios to use stored token BEFORE any API call
       applyToken(storedToken);
 
       const response = await authAPI.getProfile();
@@ -112,6 +110,41 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     }
   }, [applyToken, clearToken]);
+
+  /* -------------------- UPDATE PROFILE -------------------- */
+
+  const updateUserProfile = useCallback(async (profileData) => {
+    try {
+      console.log('📝 Updating user profile...');
+      const response = await authAPI.updateProfile(profileData);
+      
+      if (response.data.success && response.data.user) {
+        setUser(response.data.user);
+        console.log('✅ Profile updated:', response.data.user);
+        return response.data;
+      }
+      
+      return response.data;
+    } catch (err) {
+      console.error('❌ Profile update error:', err);
+      throw err;
+    }
+  }, []);
+
+  /* -------------------- REFRESH USER DATA -------------------- */
+
+  const refreshUser = useCallback(async () => {
+    try {
+      const response = await authAPI.getProfile();
+      const currentUser = response.data?.user || response.data;
+      setUser(currentUser);
+      console.log('🔄 User data refreshed:', currentUser);
+      return currentUser;
+    } catch (err) {
+      console.error('❌ Failed to refresh user:', err);
+      throw err;
+    }
+  }, []);
 
   /* -------------------- INIT -------------------- */
 
@@ -131,6 +164,8 @@ export const AuthProvider = ({ children }) => {
     logout,
     setUser,
     setToken,
+    updateUserProfile,
+    refreshUser,
     clearError: () => setError(null),
   }), [
     user,
@@ -139,7 +174,9 @@ export const AuthProvider = ({ children }) => {
     error,
     isAuthenticated,
     login,
-    logout
+    logout,
+    updateUserProfile,
+    refreshUser
   ]);
 
   return (

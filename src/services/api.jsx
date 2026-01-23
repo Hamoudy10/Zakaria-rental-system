@@ -212,6 +212,8 @@ export const paybillAPI = {
   getStats: (period = '30days') => api.get('/payments/paybill/stats', { params: { period } })
 };
 
+// In your api.jsx, update the authAPI object:
+
 // Auth API
 export const authAPI = {
   login: (credentials) => api.post('/auth/login', credentials),
@@ -219,7 +221,20 @@ export const authAPI = {
   logout: () => api.post('/auth/logout'),
   refreshToken: () => api.post('/auth/refresh'),
   getProfile: () => api.get('/auth/profile'),
-  updateProfile: (updates) => api.put('/auth/profile', updates),
+  
+  // Updated: Profile update with FormData support for image upload
+  updateProfile: (formData) => {
+    // Check if formData is FormData instance (has file) or regular object
+    const isFormData = formData instanceof FormData;
+    
+    return api.put('/auth/profile', formData, {
+      headers: isFormData ? { 'Content-Type': 'multipart/form-data' } : {}
+    });
+  },
+  
+  // New: Delete profile image
+  deleteProfileImage: () => api.delete('/auth/profile/image'),
+  
   changePassword: (passwordData) => api.put('/auth/change-password', passwordData),
 };
 
