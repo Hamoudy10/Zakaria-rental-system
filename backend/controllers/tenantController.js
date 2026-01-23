@@ -12,6 +12,11 @@ const getTenants = async (req, res) => {
         t.*,
         COUNT(*) OVER() as total_count,
         ta.unit_id,
+        ta.monthly_rent,
+        ta.security_deposit,
+        ta.lease_start_date,
+        ta.lease_end_date,
+        ta.arrears_balance,
         pu.unit_code,
         pu.unit_number,
         p.name as property_name,
@@ -95,7 +100,6 @@ const getTenants = async (req, res) => {
     });
   }
 };
-
 // Get tenant by ID with agent data isolation
 const getTenant = async (req, res) => {
   try {
