@@ -533,7 +533,63 @@ const getSMSHistory = async (req, res) => {
     
     const offset = (page - 1) * limit;
     
-    let query = `
+    // Build WHERE clause and params separately
+    let whereConditions = ['1=1'];
+    const params = [];
+    
+    // Add agent property filtering for non-admin users
+    if (userRole !== 'admin') {
+      whereConditions.push(`p.id IN (
+        SELECT property_id FROM agent_property_assignments 
+        WHERE agent_id = $${params.length + 1}::uuid AND is_active = true
+      )`);
+      params.push(userId);
+    }
+    
+    // Add filters
+    if (status) {
+      whereConditions.push(`sq.status = $${params.length + 1}`);
+      params.push(status);
+    }
+    
+    if (property_id) {
+      whereConditions.push(`p.id = $${params.length + 1}::uuid`);
+      params.push(property_id);
+    }
+    
+    if (start_date) {
+      whereConditions.push(`sq.created_at >= $${params.length + 1}`);
+      params.push(start_date);
+    }
+    
+    if (end_date) {
+      whereConditions.push(`sq.created_at <= $${params.length + 1}`);
+      params.push(end_date);
+    }
+    
+    const whereClause = 'WHERE ' + whereConditions.join(' AND ');
+    
+    // Count query - built separately to avoid regex issues
+    const countQuery = `
+      SELECT COUNT(DISTINCT sq.id) as count
+      FROM sms_queue sq
+      LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
+      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      ${whereClause}
+    `;
+    
+    console.log('📊 Count query:', countQuery);
+    console.log('📊 Query params:', params);
+    
+    const countResult = await pool.query(countQuery, params);
+    const totalCount = parseInt(countResult.rows[0].count);
+    
+    console.log('✅ Total count:', totalCount);
+    
+    // Main query with all columns
+    const mainQuery = `
       SELECT 
         sq.id,
         sq.recipient_phone,
@@ -553,60 +609,19 @@ const getSMSHistory = async (req, res) => {
       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
-      WHERE 1=1
+      ${whereClause}
+      ORDER BY sq.created_at DESC 
+      LIMIT $${params.length + 1} 
+      OFFSET $${params.length + 2}
     `;
     
-    const params = [];
+    console.log('🔍 Main query:', mainQuery);
     
-    // Add agent property filtering for non-admin users
-    if (userRole !== 'admin') {
-      query += ` AND p.id IN (
-        SELECT property_id FROM agent_property_assignments 
-        WHERE agent_id = $${params.length + 1}::uuid AND is_active = true
-      )`;
-      params.push(userId);
-    }
-    
-    // Add filters
-    if (status) {
-      query += ` AND sq.status = $${params.length + 1}`;
-      params.push(status);
-    }
-    
-    if (property_id) {
-      // ✅ FIX: Cast property_id to UUID explicitly
-      query += ` AND p.id = $${params.length + 1}::uuid`;
-      params.push(property_id);
-    }
-    
-    if (start_date) {
-      query += ` AND sq.created_at >= $${params.length + 1}`;
-      params.push(start_date);
-    }
-    
-    if (end_date) {
-      query += ` AND sq.created_at <= $${params.length + 1}`;
-      params.push(end_date);
-    }
-    
-    console.log('🔍 Final query:', query);
-    console.log('📊 Query params:', params);
-    
-    // Get total count for pagination
-    const countQuery = query.replace(/SELECT.*FROM/, 'SELECT COUNT(*) FROM');
-    console.log('📊 Count query:', countQuery);
-    
-    const countResult = await pool.query(countQuery, params);
-    const totalCount = parseInt(countResult.rows[0].count);
-    
-    console.log('✅ Total count:', totalCount);
-    
-    // Add pagination
-    query += ` ORDER BY sq.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
+    // Add pagination params
+    const paginationParams = [...params, limit, offset];
     
     console.log('📋 Executing main query with pagination...');
-    const result = await pool.query(query, params);
+    const result = await pool.query(mainQuery, paginationParams);
     
     console.log('✅ Query successful, rows:', result.rows.length);
     
