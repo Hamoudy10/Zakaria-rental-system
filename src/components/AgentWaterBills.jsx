@@ -1,37 +1,57 @@
 // src/components/AgentWaterBills.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import agentService from '../services/AgentService';
 
 const AgentWaterBills = () => {
   const [properties, setProperties] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState(null);
-  const [form, setForm] = useState({
-    propertyId: '',
-    unitId: '',
-    tenantId: '',
-    tenantName: '', 
-    amount: '',
-    billMonth: '', // YYYY-MM
-    notes: ''
-  });
+  const [allTenants, setAllTenants] = useState([]);
+  const [propertyTenants, setPropertyTenants] = useState([]);
   const [recentBills, setRecentBills] = useState([]);
 
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  const [form, setForm] = useState({
+    propertyId: '',
+    tenantId: '',
+    tenantName: '',
+    unitId: '',
+    amount: '',
+    notes: ''
+  });
+
+  const [waterBalance, setWaterBalance] = useState({
+    loading: false,
+    arrears: 0,
+    advance: 0
+  });
+
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+
+  // Load properties, tenants, and recent bills on mount
   useEffect(() => {
-    // Load assigned properties and recent water bills
     const load = async () => {
       try {
-        const p = await agentService.getAssignedProperties().catch(err => { 
-          console.error('getAssignedProperties error', err); 
-          return null; 
+        // Assigned properties
+        const p = await agentService.getAssignedProperties().catch(err => {
+          console.error('getAssignedProperties error', err);
+          return null;
         });
         const propertiesData = p?.data?.data || p?.data || [];
         setProperties(Array.isArray(propertiesData) ? propertiesData : []);
 
-        // Load recent water bills
-        const b = await agentService.listWaterBills({ limit: 10 }).catch(err => { 
-          console.error('listWaterBills error', err); 
-          return null; 
+        // All tenants for this agent
+        const t = await agentService.getTenantsWithPaymentStatus().catch(err => {
+          console.error('getTenantsWithPaymentStatus error', err);
+          return null;
+        });
+        const tenantsData = t?.data?.data || t?.data || [];
+        setAllTenants(Array.isArray(tenantsData) ? tenantsData : []);
+
+        // Recent water bills
+        const b = await agentService.listWaterBills({ limit: 10 }).catch(err => {
+          console.error('listWaterBills error', err);
+          return null;
         });
         const billsData = b?.data?.data || b?.data || [];
         setRecentBills(Array.isArray(billsData) ? billsData : []);
@@ -42,61 +62,136 @@ const AgentWaterBills = () => {
     load();
   }, []);
 
-  const update = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  // Filter tenants when property changes
+  const handlePropertyChange = (e) => {
+    const propertyId = e.target.value;
+    update('propertyId', propertyId);
+
+    const filtered = Array.isArray(allTenants)
+      ? allTenants.filter(t => t.property_id === propertyId)
+      : [];
+
+    setPropertyTenants(filtered);
+
+    // Reset tenant & unit on property change
+    setForm(prev => ({
+      ...prev,
+      tenantId: '',
+      tenantName: '',
+      unitId: ''
+    }));
+    setWaterBalance({ loading: false, arrears: 0, advance: 0 });
+  };
+
+  const selectedTenant = useMemo(
+    () => propertyTenants.find(t => t.id === form.tenantId) || null,
+    [propertyTenants, form.tenantId]
+  );
+
+  const selectedUnitCode = selectedTenant?.unit_code || '';
+
+  // Fetch real water balance from backend
+  const updateWaterBalanceForTenant = async (tenantId) => {
+    if (!tenantId) {
+      setWaterBalance({ loading: false, arrears: 0, advance: 0 });
+      return;
+    }
+    setWaterBalance({ loading: true, arrears: 0, advance: 0 });
+    try {
+      const res = await agentService.getWaterBalance(tenantId);
+      if (res?.data?.success) {
+        const { arrears = 0, advance = 0 } = res.data.data || {};
+        setWaterBalance({
+          loading: false,
+          arrears: parseFloat(arrears) || 0,
+          advance: parseFloat(advance) || 0
+        });
+      } else {
+        setWaterBalance({ loading: false, arrears: 0, advance: 0 });
+      }
+    } catch (err) {
+      console.error('getWaterBalance error', err);
+      setWaterBalance({ loading: false, arrears: 0, advance: 0 });
+    }
+  };
+
+  const handleTenantChange = (e) => {
+    const tenantId = e.target.value;
+    const tenant = propertyTenants.find(t => t.id === tenantId) || null;
+
+    setForm(prev => ({
+      ...prev,
+      tenantId,
+      tenantName: tenant ? `${tenant.first_name || ''} ${tenant.last_name || ''}`.trim() : '',
+      unitId: tenant?.unit_id || ''
+    }));
+
+    updateWaterBalanceForTenant(tenantId);
+  };
 
   const submit = async (e) => {
     e?.preventDefault();
     setMessage(null);
 
-    if (!form.tenantName || !form.propertyId || !form.amount || !form.billMonth) {
-      setMessage({ type: 'error', text: 'Please fill required fields' });
+    if (!form.propertyId || !form.tenantId || !form.amount) {
+      setMessage({ type: 'error', text: 'Please select property, tenant, and enter amount' });
       return;
     }
 
     setLoading(true);
     try {
+      // Use current month in YYYY-MM, backend will append "-01"
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const billMonth = `${yyyy}-${mm}`;
+
       const payload = {
         tenantId: form.tenantId || null,
         tenantName: form.tenantName || null,
-        unitId: form.unitId || null,
+        unitId: form.unitId || null,  // UUID
         propertyId: form.propertyId,
         amount: parseFloat(form.amount),
-        billMonth: form.billMonth,
+        billMonth,                     // backend will store as YYYY-MM-01
         notes: form.notes || null
       };
 
       const res = await agentService.createWaterBill(payload);
       if (res?.data?.success) {
         setMessage({ type: 'success', text: 'Water bill saved successfully' });
-        // Refresh list
+        // Refresh recent list
         const b = await agentService.listWaterBills({ limit: 10 });
         const billsData = b?.data?.data || b?.data || [];
         setRecentBills(Array.isArray(billsData) ? billsData : []);
-        // Clear form
+        // Reset form
         setForm({
           propertyId: '',
-          unitId: '',
           tenantId: '',
           tenantName: '',
+          unitId: '',
           amount: '',
-          billMonth: '',
           notes: ''
         });
+        setPropertyTenants([]);
+        setWaterBalance({ loading: false, arrears: 0, advance: 0 });
       } else {
         setMessage({ type: 'error', text: res?.data?.message || 'Failed to save water bill' });
       }
     } catch (err) {
       console.error(err);
-      setMessage({ type: 'error', text: err?.response?.data?.message || err.message || 'Error saving water bill' });
+      setMessage({
+        type: 'error',
+        text: err?.response?.data?.message || err.message || 'Error saving water bill'
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  // Format date for display
   const formatMonth = (monthStr) => {
     if (!monthStr) return '';
-    const date = new Date(monthStr + '-01');
+    const date = new Date(monthStr); // bill_month is a DATE (e.g., "2026-01-01")
+    if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
   };
 
@@ -123,7 +218,7 @@ const AgentWaterBills = () => {
             </label>
             <select
               value={form.propertyId}
-              onChange={e => update('propertyId', e.target.value)}
+              onChange={handlePropertyChange}
               className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               required
             >
@@ -134,35 +229,50 @@ const AgentWaterBills = () => {
             </select>
           </div>
 
-          {/* Tenant (free-text full name) */}
+          {/* Tenant */}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
               Tenant Full Name <span className="text-red-500">*</span>
             </label>
-            <input
-              type="text"
-              value={form.tenantName || ''}
-              onChange={e => update('tenantName', e.target.value)}
-              className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="e.g. John Doe"
+            <select
+              value={form.tenantId}
+              onChange={handleTenantChange}
+              disabled={!form.propertyId || propertyTenants.length === 0}
+              className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
               required
-            />
+            >
+              <option value="">
+                {form.propertyId
+                  ? propertyTenants.length === 0
+                    ? 'No tenants found for this property'
+                    : 'Select tenant'
+                  : 'Select property first'}
+              </option>
+              {propertyTenants.map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.first_name} {t.last_name} ({t.unit_code || 'No unit'})
+                </option>
+              ))}
+            </select>
             <p className="text-xs text-gray-400 mt-1">
-              Enter tenant's full name as it appears in the system
+              Open the list and type to jump to a tenant.
             </p>
           </div>
 
-          {/* Unit (optional) */}
+          {/* Unit (auto-filled) */}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
-              Unit (Optional)
+              Unit (Optional, auto-filled)
             </label>
             <input 
-              value={form.unitId} 
-              onChange={e => update('unitId', e.target.value)} 
-              className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-              placeholder="Unit code (optional)" 
+              value={selectedUnitCode}
+              readOnly
+              className="w-full px-3 py-2 text-sm border rounded bg-gray-50 text-gray-700"
+              placeholder="Auto-filled from tenant"
             />
+            <p className="text-xs text-gray-400 mt-1">
+              This is the unit where the selected tenant currently stays.
+            </p>
           </div>
 
           {/* Amount */}
@@ -181,18 +291,19 @@ const AgentWaterBills = () => {
             />
           </div>
 
-          {/* Month */}
+          {/* Water Balance (Arrears / Advance) */}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
-              Bill Month <span className="text-red-500">*</span>
+              Water Balance (Arrears / Advance)
             </label>
-            <input
-              type="month"
-              value={form.billMonth}
-              onChange={e => update('billMonth', e.target.value)}
-              className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
+            <div className="w-full px-3 py-2 text-sm border rounded bg-gray-50 text-gray-700">
+              {waterBalance.loading
+                ? 'Checking...'
+                : `Arrears: KSh ${waterBalance.arrears.toLocaleString()} • Advance: KSh ${waterBalance.advance.toLocaleString()}`}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              Calculated from total water bills vs payments allocated to water.
+            </p>
           </div>
 
           {/* Notes */}
@@ -215,7 +326,11 @@ const AgentWaterBills = () => {
       <div className="p-4 bg-white rounded-b-md flex items-center justify-between border-t">
         <div>
           {message && (
-            <div className={`px-3 py-2 rounded text-sm ${message.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+            <div className={`px-3 py-2 rounded text-sm ${
+              message.type === 'success'
+                ? 'bg-green-50 text-green-800'
+                : 'bg-red-50 text-red-800'
+            }`}>
               {message.text}
             </div>
           )}
@@ -239,6 +354,7 @@ const AgentWaterBills = () => {
                 setRecentBills(Array.isArray(billsData) ? billsData : []);
                 setMessage({ type: 'success', text: 'Water bills list refreshed' });
               } catch (err) {
+                console.error('refresh list error', err);
                 setMessage({ type: 'error', text: 'Failed to refresh water bills' });
               } finally {
                 setLoading(false);
@@ -309,7 +425,7 @@ const AgentWaterBills = () => {
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-gray-400">
-                    {new Date(bill.created_at).toLocaleDateString('en-GB')}
+                    {bill.created_at ? new Date(bill.created_at).toLocaleDateString('en-GB') : ''}
                   </div>
                   <div className="text-xs text-gray-300 mt-1">
                     by {bill.agent_first} {bill.agent_last}

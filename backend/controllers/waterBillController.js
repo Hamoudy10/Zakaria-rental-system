@@ -293,10 +293,94 @@ const deleteWaterBill = async (req, res) => {
   }
 };
 
+// backend/controllers/waterBillController.js
+const getTenantWaterBalance = async (req, res) => {
+  try {
+    const agentId = req.user.id;
+    const userRole = req.user.role;
+    const { tenantId } = req.params;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'tenantId is required'
+      });
+    }
+
+    // 1) Total water billed for this tenant (from water_bills)
+    let billedQuery = `
+      SELECT COALESCE(SUM(wb.amount), 0) AS total_billed
+      FROM water_bills wb
+      WHERE wb.tenant_id = $1
+    `;
+    let billedParams = [tenantId];
+
+    if (userRole !== 'admin') {
+      billedParams.push(agentId);
+      billedQuery += `
+        AND wb.property_id IN (
+          SELECT property_id 
+          FROM agent_property_assignments 
+          WHERE agent_id = $2 AND is_active = true
+        )
+      `;
+    }
+
+    const billedRes = await db.query(billedQuery, billedParams);
+    const totalBilled = parseFloat(billedRes.rows[0]?.total_billed || 0);
+
+    // 2) Total water paid (from rent_payments.allocated_to_water)
+    let paidQuery = `
+      SELECT COALESCE(SUM(rp.allocated_to_water), 0) AS total_paid
+      FROM rent_payments rp
+      WHERE rp.tenant_id = $1
+        AND rp.status = 'completed'
+    `;
+    let paidParams = [tenantId];
+
+    if (userRole !== 'admin') {
+      paidParams.push(agentId);
+      paidQuery += `
+        AND rp.unit_id IN (
+          SELECT pu.id
+          FROM property_units pu
+          JOIN agent_property_assignments apa
+            ON pu.property_id = apa.property_id
+          WHERE apa.agent_id = $2 AND apa.is_active = true
+        )
+      `;
+    }
+
+    const paidRes = await db.query(paidQuery, paidParams);
+    const totalPaid = parseFloat(paidRes.rows[0]?.total_paid || 0);
+
+    const arrears = totalBilled > totalPaid ? totalBilled - totalPaid : 0;
+    const advance = totalPaid > totalBilled ? totalPaid - totalBilled : 0;
+
+    return res.json({
+      success: true,
+      data: {
+        total_billed: totalBilled,
+        total_paid: totalPaid,
+        arrears,
+        advance
+      }
+    });
+  } catch (err) {
+    console.error('❌ getTenantWaterBalance error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get tenant water balance',
+      error: err.message
+    });
+  }
+};
+
 module.exports = {
   createWaterBill,
   listWaterBills,
   getWaterBill,
   deleteWaterBill,
-  checkMissingWaterBills
+  checkMissingWaterBills,
+  getTenantWaterBalance
 };

@@ -66,6 +66,12 @@ const agentService = {
 
   deleteWaterBill: async (id) => {
     return await api.delete(`/agent-properties/water-bills/${id}`);
+  },
+
+  
+  // NEW: water balance for a tenant
+  getWaterBalance: async (tenantId) => {
+    return await api.get(`/agent-properties/water-bills/balance/${tenantId}`);
   }
 };
 
