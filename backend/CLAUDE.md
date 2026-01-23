@@ -176,3 +176,9 @@ router.get('/balance/:tenantId', getBalance); // Never reached
 DATABASE_URL, JWT_SECRET, FRONTEND_URL
 CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
 ```
+## USERS TABLE UPDATE
+
+### profile_image Column
+```sql
+profile_image VARCHAR(500) DEFAULT NULL
+-- Stores Cloudinary URL for user profile image

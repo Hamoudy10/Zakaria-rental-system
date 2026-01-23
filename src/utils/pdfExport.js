@@ -1,6 +1,6 @@
 // src/utils/pdfExport.js
 import jsPDF from 'jspdf';
-import 'jspdf-autotable'; // ← Just import it. It extends jsPDF automatically.
+import autoTable from 'jspdf-autotable';
 
 // Company branding
 const COMPANY_NAME = 'Zakaria Housing Agency Limited';
@@ -76,8 +76,8 @@ export const exportToPDF = (config) => {
     // Prepare table
     const { headers, rows } = prepareTableData(reportType, data);
 
-    // Use autoTable (it's guaranteed after import)
-    doc.autoTable({
+    // Use autoTable as a function (v5.x method)
+    autoTable(doc, {
       head: [headers],
       body: rows,
       startY: yPos,
@@ -90,56 +90,175 @@ export const exportToPDF = (config) => {
       },
       bodyStyles: { fontSize: 9 },
       alternateRowStyles: { fillColor: [248, 250, 252] },
-      theme: 'striped'
+      theme: 'striped',
+      didDrawPage: (data) => {
+        // Add page numbers
+        const pageCount = doc.internal.getNumberOfPages();
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text(
+          `Page ${data.pageNumber} of ${pageCount}`,
+          pageWidth / 2,
+          doc.internal.pageSize.getHeight() - 10,
+          { align: 'center' }
+        );
+      }
     });
 
-    // Footer
-    doc.setFontSize(8);
-    doc.setTextColor(150, 150, 150);
-    doc.text(`${companyInfo?.name || COMPANY_NAME} - Confidential Report`, pageWidth / 2, 285, { align: 'center' });
+    // Footer on last page
+    const finalY = doc.lastAutoTable?.finalY || yPos + 50;
+    
+    // Only add footer if there's space, otherwise it's handled by didDrawPage
+    if (finalY < 270) {
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `${companyInfo?.name || COMPANY_NAME} - Confidential Report`,
+        pageWidth / 2,
+        285,
+        { align: 'center' }
+      );
+    }
 
     doc.save(`${reportType}_report_${Date.now()}.pdf`);
+    
+    console.log('✅ PDF exported successfully');
+    return true;
 
   } catch (error) {
     console.error('PDF export failed:', error);
     alert(`Export failed: ${error.message}`);
+    return false;
   }
 };
 
 const prepareTableData = (reportType, data) => {
-  let headers = ['ID', 'Name', 'Date', 'Amount', 'Status'];
+  let headers = [];
   let rows = [];
 
   switch (reportType) {
+    case 'tenants':
+      headers = ['#', 'Tenant Name', 'Phone', 'Property', 'Unit', 'Rent (KSh)', 'Status'];
+      rows = data.map((item, index) => [
+        index + 1,
+        `${item.first_name || ''} ${item.last_name || ''}`.trim() || item.name || 'N/A',
+        item.phone_number || 'N/A',
+        item.property_name || 'N/A',
+        item.unit_code || 'N/A',
+        (parseFloat(item.rent_amount || item.monthly_rent) || 0).toLocaleString(),
+        item.is_active ? 'Active' : 'Inactive'
+      ]);
+      break;
+
     case 'payments':
-      headers = ['Payment ID', 'Tenant', 'Amount', 'Payment Month', 'Status', 'Date'];
-      rows = data.map(item => [
+      headers = ['#', 'Receipt No.', 'Tenant', 'Amount (KSh)', 'Month', 'Status', 'Date'];
+      rows = data.map((item, index) => [
+        index + 1,
         item.mpesa_receipt_number || item.id?.substring(0, 8) || 'N/A',
         item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
-        `KSh ${(item.amount || 0).toLocaleString()}`,
+        (parseFloat(item.amount) || 0).toLocaleString(),
         item.payment_month || 'N/A',
         item.status || 'Pending',
-        item.created_at ? new Date(item.created_at).toLocaleDateString() : new Date().toLocaleDateString()
+        item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'
+      ]);
+      break;
+
+    case 'properties':
+      headers = ['#', 'Code', 'Property Name', 'Address', 'Total Units', 'Occupied', 'Available'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.property_code || 'N/A',
+        item.name || 'N/A',
+        item.address || 'N/A',
+        item.total_units || item.unit_count || 0,
+        item.occupied_units || 0,
+        item.available_units || item.available_units_count || 0
+      ]);
+      break;
+
+    case 'complaints':
+      headers = ['#', 'Title', 'Property', 'Priority', 'Status', 'Raised By', 'Date'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.title || 'N/A',
+        item.property_name || 'N/A',
+        item.priority || 'Medium',
+        item.status || 'Open',
+        item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
+        item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'
+      ]);
+      break;
+
+    case 'water':
+      headers = ['#', 'Tenant', 'Property', 'Unit', 'Amount (KSh)', 'Bill Month', 'Status'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
+        item.property_name || 'N/A',
+        item.unit_code || 'N/A',
+        (parseFloat(item.amount) || 0).toLocaleString(),
+        item.bill_month || 'N/A',
+        item.status || 'Pending'
+      ]);
+      break;
+
+    case 'sms':
+      headers = ['#', 'Recipient', 'Message', 'Status', 'Attempts', 'Date'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.recipient_phone || item.phone_number || 'N/A',
+        (item.message || 'N/A').substring(0, 50) + (item.message?.length > 50 ? '...' : ''),
+        item.status || 'Pending',
+        item.attempts || 0,
+        item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'
+      ]);
+      break;
+
+    case 'revenue':
+      headers = ['#', 'Month', 'Total Revenue (KSh)', 'Payments', 'Properties', 'Tenants', 'Avg Payment'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.month || 'N/A',
+        (parseFloat(item.total_revenue) || 0).toLocaleString(),
+        item.payment_count || 0,
+        item.property_count || 0,
+        item.tenant_count || 0,
+        (parseFloat(item.average_payment) || 0).toLocaleString()
       ]);
       break;
 
     default:
+      headers = ['#', 'Name', 'Date', 'Amount (KSh)', 'Status'];
       rows = data.map((item, index) => [
         index + 1,
         item.name || item.first_name || item.tenant_name || 'N/A',
         item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A',
-        `KSh ${(item.amount || 0).toLocaleString()}`,
+        (parseFloat(item.amount) || 0).toLocaleString(),
         item.status || 'Active'
       ]);
   }
 
+  // Ensure all rows have the correct number of columns
   rows = rows.map(row => {
-    while (row.length < headers.length) row.push('N/A');
-    return row.slice(0, headers.length);
+    const paddedRow = [...row];
+    while (paddedRow.length < headers.length) {
+      paddedRow.push('N/A');
+    }
+    return paddedRow.slice(0, headers.length);
   });
 
   return { headers, rows };
 };
 
-// Optional: Expose for debugging
-export const checkAutoTable = () => !!jsPDF.API.autoTable;
+// Debug helper - can be called from browser console
+export const checkAutoTable = () => {
+  try {
+    const doc = new jsPDF();
+    autoTable(doc, { head: [['Test']], body: [['Test']] });
+    console.log('✅ autoTable is working correctly');
+    return true;
+  } catch (error) {
+    console.error('❌ autoTable check failed:', error);
+    return false;
+  }
+};

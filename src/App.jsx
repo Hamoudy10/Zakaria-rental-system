@@ -33,6 +33,75 @@ const LoadingSpinner = () => (
   </div>
 );
 
+// ============================================
+// REUSABLE USER AVATAR COMPONENT
+// ============================================
+const UserAvatar = ({ user, size = 'md', className = '' }) => {
+  const sizeClasses = {
+    sm: 'w-6 h-6 text-xs',
+    md: 'w-8 h-8 text-sm',
+    lg: 'w-10 h-10 text-base',
+    xl: 'w-12 h-12 text-lg'
+  };
+
+  const sizeClass = sizeClasses[size] || sizeClasses.md;
+  const initials = `${user?.first_name?.charAt(0) || ''}${user?.last_name?.charAt(0) || ''}`;
+
+  return (
+    <div className={`${sizeClass} bg-blue-800 rounded-full flex items-center justify-center text-white font-semibold overflow-hidden ${className}`}>
+      {user?.profile_image ? (
+        <img 
+          src={user.profile_image} 
+          alt={`${user.first_name} ${user.last_name}`}
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // Fallback to initials if image fails to load
+            e.target.style.display = 'none';
+            e.target.nextSibling.style.display = 'flex';
+          }}
+        />
+      ) : null}
+      <span 
+        className={`${user?.profile_image ? 'hidden' : 'flex'} items-center justify-center w-full h-full`}
+        style={{ display: user?.profile_image ? 'none' : 'flex' }}
+      >
+        {initials}
+      </span>
+    </div>
+  );
+};
+
+// Alternative simpler avatar component (if you prefer)
+const SimpleUserAvatar = ({ user, size = 'md', className = '' }) => {
+  const [imageError, setImageError] = useState(false);
+  
+  const sizeClasses = {
+    sm: 'w-6 h-6 text-xs',
+    md: 'w-8 h-8 text-sm',
+    lg: 'w-10 h-10 text-base',
+    xl: 'w-12 h-12 text-lg'
+  };
+
+  const sizeClass = sizeClasses[size] || sizeClasses.md;
+  const initials = `${user?.first_name?.charAt(0) || ''}${user?.last_name?.charAt(0) || ''}`;
+  const hasValidImage = user?.profile_image && !imageError;
+
+  return (
+    <div className={`${sizeClass} bg-blue-800 rounded-full flex items-center justify-center text-white font-semibold overflow-hidden ${className}`}>
+      {hasValidImage ? (
+        <img 
+          src={user.profile_image} 
+          alt={`${user.first_name} ${user.last_name}`}
+          className="w-full h-full object-cover"
+          onError={() => setImageError(true)}
+        />
+      ) : (
+        <span>{initials}</span>
+      )}
+    </div>
+  );
+};
+
 // Layout component with responsive design
 const Layout = ({ children }) => {
   const { user, logout } = useAuth()
@@ -137,9 +206,9 @@ const Layout = ({ children }) => {
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
                   className="flex items-center space-x-2 text-sm text-gray-700 hover:text-gray-900 focus:outline-none transition-colors duration-200 touch-target p-2 rounded-md hover:bg-gray-100"
                 >
-                  <div className="w-8 h-8 bg-blue-800 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-                    {user?.first_name?.charAt(0)}{user?.last_name?.charAt(0)}
-                  </div>
+                  {/* UPDATED: Profile Image with Fallback to Initials */}
+                  <SimpleUserAvatar user={user} size="md" />
+                  
                   {/* Show user name on medium screens and up */}
                   <span className="hidden md:block text-sm whitespace-nowrap">
                     {user?.first_name} {user?.last_name}
@@ -155,12 +224,18 @@ const Layout = ({ children }) => {
                     <div className="py-2">
                       {/* Mobile user info - only show on small screens */}
                       <div className="md:hidden px-4 py-2 border-b border-gray-100">
-                        <p className="text-sm font-medium text-gray-900">
-                          {user?.first_name} {user?.last_name}
-                        </p>
-                        <p className="text-xs text-gray-500 capitalize">
-                          {user?.role}
-                        </p>
+                        <div className="flex items-center space-x-3">
+                          {/* UPDATED: Profile Image in Dropdown */}
+                          <SimpleUserAvatar user={user} size="md" />
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">
+                              {user?.first_name} {user?.last_name}
+                            </p>
+                            <p className="text-xs text-gray-500 capitalize">
+                              {user?.role}
+                            </p>
+                          </div>
+                        </div>
                       </div>
                       
                       <Link 
@@ -240,7 +315,7 @@ const Layout = ({ children }) => {
           {/* Backdrop with blur effect */}
           <div 
             className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm transition-opacity duration-300" 
-            onClick={() => setSidebarOpen(true)}
+            onClick={() => setSidebarOpen(false)}
           />
           
           {/* Sidebar Panel */}
@@ -248,9 +323,8 @@ const Layout = ({ children }) => {
             {/* Sidebar Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
               <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-blue-800 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-                  {user?.first_name?.charAt(0)}{user?.last_name?.charAt(0)}
-                </div>
+                {/* UPDATED: Profile Image in Sidebar */}
+                <SimpleUserAvatar user={user} size="lg" />
                 <div>
                   <h2 className="text-sm font-semibold text-gray-900">
                     {user?.first_name} {user?.last_name}
