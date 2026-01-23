@@ -311,30 +311,30 @@ export const allocationAPI = {
     api.post(`/allocations/${id}/terminate`, terminationData),
 };
 
-//Replace the existing settingsAPI section with this:
-export const settingsAPI = {
-  // Get all settings (returns both array and grouped)
-  getSettings: () => api.get('/admin/settings'),
-  
-  // Get settings by category
-  getSettingsByCategory: (category) => api.get(`/admin/settings/category?category=${category}`),
-  
-  // Get single setting
-  getSettingByKey: (key) => api.get(`/admin/settings/${key}`),
-  
-  // Update single setting
-  updateSetting: (key, value) => api.put(`/admin/settings/${key}`, { value }),
-  
-  // Update multiple settings
-  updateMultipleSettings: (settings) => api.put('/admin/settings', settings),
-  
-  // Reset to defaults
-  resetToDefaults: () => api.post('/admin/settings/reset-defaults'),
-  
-  // Get billing configuration
-  getBillingConfig: () => api.get('/admin/settings/billing/config')
-};
+// Add to your settingsAPI in api.jsx:
 
+export const settingsAPI = {
+  // Existing methods...
+  getSettings: () => api.get('/admin/settings'),
+  getSettingsByCategory: (category) => api.get(`/admin/settings/category?category=${category}`),
+  getSettingByKey: (key) => api.get(`/admin/settings/${key}`),
+  updateSetting: (key, value) => api.put(`/admin/settings/${key}`, { value }),
+  updateMultipleSettings: (settings) => api.put('/admin/settings', settings),
+  resetToDefaults: () => api.post('/admin/settings/reset-defaults'),
+  getBillingConfig: () => api.get('/admin/settings/billing/config'),
+  
+  // NEW: Company info methods
+  getCompanyInfo: () => api.get('/admin/company-info'),
+  
+  updateCompanyInfo: (formData) => {
+    const isFormData = formData instanceof FormData;
+    return api.put('/admin/company-info', formData, {
+      headers: isFormData ? { 'Content-Type': 'multipart/form-data' } : {}
+    });
+  },
+  
+  deleteCompanyLogo: () => api.delete('/admin/company-logo'),
+};
 // Add this NEW billingAPI section (add it after settingsAPI):
 export const billingAPI = {
   // Trigger manual billing run

@@ -50,7 +50,6 @@ const idImageStorage = new CloudinaryStorage({
 const profileImageStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: async (req, file) => {
-    // Get user ID from authenticated request
     const userId = req.user?.id || 'unknown';
     console.log(`📤 Uploading profile image for user:`, userId);
     console.log(`   Original name: ${file.originalname}`);
@@ -61,7 +60,7 @@ const profileImageStorage = new CloudinaryStorage({
       public_id: `profile-${userId}-${Date.now()}`,
       resource_type: 'auto',
       transformation: [
-        { width: 500, height: 500, crop: 'fill', gravity: 'face' }, // Square crop, focus on face
+        { width: 500, height: 500, crop: 'fill', gravity: 'face' },
         { quality: 'auto:good', fetch_format: 'auto' }
       ]
     };
@@ -69,7 +68,29 @@ const profileImageStorage = new CloudinaryStorage({
 });
 
 // ============================================
-// 4. FILE FILTER (Validate file types)
+// 4. CONFIGURE CLOUDINARY STORAGE FOR COMPANY LOGO
+// ============================================
+const companyLogoStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    console.log(`📤 Uploading company logo`);
+    console.log(`   Original name: ${file.originalname}`);
+    console.log(`   MIME type: ${file.mimetype}`);
+    
+    return {
+      folder: 'zakaria_rental/company',
+      public_id: `company-logo-${Date.now()}`,
+      resource_type: 'auto',
+      transformation: [
+        { width: 300, height: 300, crop: 'limit' }, // Limit to max dimensions, preserve aspect ratio
+        { quality: 'auto:best', fetch_format: 'auto' }
+      ]
+    };
+  },
+});
+
+// ============================================
+// 5. FILE FILTER (Validate file types)
 // ============================================
 const imageFileFilter = (req, file, cb) => {
   const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
@@ -84,7 +105,7 @@ const imageFileFilter = (req, file, cb) => {
 };
 
 // ============================================
-// 5. CREATE MULTER INSTANCES
+// 6. CREATE MULTER INSTANCES
 // ============================================
 
 // For tenant ID images
@@ -107,8 +128,18 @@ const profileImageUpload = multer({
   }
 });
 
+// For company logo
+const companyLogoUpload = multer({
+  storage: companyLogoStorage,
+  fileFilter: imageFileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max for logo
+    files: 1
+  }
+});
+
 // ============================================
-// 6. MIDDLEWARE FOR ID IMAGES (EXISTING)
+// 7. MIDDLEWARE FOR ID IMAGES (EXISTING)
 // ============================================
 const uploadIDImages = (req, res, next) => {
   const uploadFields = idImageUpload.fields([
@@ -152,7 +183,7 @@ const uploadIDImages = (req, res, next) => {
 };
 
 // ============================================
-// 7. MIDDLEWARE FOR PROFILE IMAGE (NEW)
+// 8. MIDDLEWARE FOR PROFILE IMAGE
 // ============================================
 const uploadProfileImage = (req, res, next) => {
   const uploadSingle = profileImageUpload.single('profile_image');
@@ -189,7 +220,44 @@ const uploadProfileImage = (req, res, next) => {
 };
 
 // ============================================
-// 8. UTILITY: DELETE IMAGE FROM CLOUDINARY
+// 9. MIDDLEWARE FOR COMPANY LOGO
+// ============================================
+const uploadCompanyLogo = (req, res, next) => {
+  const uploadSingle = companyLogoUpload.single('company_logo');
+
+  uploadSingle(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      console.error('❌ Multer Error:', err);
+      
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          success: false,
+          message: 'File too large. Maximum size is 5MB for company logo.'
+        });
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: `Upload error: ${err.message}`
+      });
+    } else if (err) {
+      console.error('❌ Upload Error:', err);
+      return res.status(400).json({
+        success: false,
+        message: err.message || 'Failed to upload company logo'
+      });
+    }
+    
+    console.log('✅ Company logo upload middleware completed successfully');
+    if (req.file) {
+      console.log('📁 Uploaded logo:', req.file.path);
+    }
+    next();
+  });
+};
+
+// ============================================
+// 10. UTILITY: DELETE IMAGE FROM CLOUDINARY
 // ============================================
 const deleteCloudinaryImage = async (imageUrl) => {
   if (!imageUrl) return;
@@ -217,5 +285,6 @@ const deleteCloudinaryImage = async (imageUrl) => {
 module.exports = { 
   uploadIDImages, 
   uploadProfileImage,
+  uploadCompanyLogo,
   deleteCloudinaryImage 
 };

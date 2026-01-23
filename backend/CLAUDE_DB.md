@@ -205,3 +205,11 @@ CREATE INDEX idx_sms_queue_status ON sms_queue(status) WHERE status = 'failed';
 4. **features** is JSONB object `{}`, not array `[]`
 5. **tenant_allocations** has NO `updated_at` column
 6. Unit code generated: `{property_code}-{unit_number}`
+
+### Cloudinary Storage
+- Folder: `zakaria_rental/profile_images`
+- Naming: `profile-{userId}-{timestamp}`
+- Transformation: 500x500, face-focused crop
+## PROFILE IMAGE UPLOAD
+
+### Endpoint

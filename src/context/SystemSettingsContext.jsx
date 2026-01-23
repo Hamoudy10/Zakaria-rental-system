@@ -13,6 +13,13 @@ export const useSystemSettings = () => {
 
 export const SystemSettingsProvider = ({ children }) => {
   const [settings, setSettings] = useState([]);
+  const [companyInfo, setCompanyInfo] = useState({
+    name: 'Zakaria Housing Agency Limited',
+    email: '',
+    phone: '',
+    address: '',
+    logo: ''
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -22,13 +29,74 @@ export const SystemSettingsProvider = ({ children }) => {
     setError(null);
     try {
       const response = await API.settings.getSettings();
-      // The backend returns settings in response.data.settings
-      const settingsData = response.data.settings || [];
+      const settingsData = response.data.settings || response.data.data || [];
       setSettings(settingsData);
+      
+      // Also extract company info from settings
+      const companySettings = settingsData.filter(s => s.key.startsWith('company_'));
+      if (companySettings.length > 0) {
+        const info = {};
+        companySettings.forEach(s => {
+          const cleanKey = s.key.replace('company_', '');
+          info[cleanKey] = s.value || '';
+        });
+        setCompanyInfo(prev => ({ ...prev, ...info }));
+      }
     } catch (err) {
       console.error('Error fetching settings:', err);
       setError('Failed to fetch settings. Please check your connection.');
       setSettings([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch company info specifically
+  const fetchCompanyInfo = useCallback(async () => {
+    try {
+      const response = await API.settings.getCompanyInfo();
+      if (response.data.success) {
+        setCompanyInfo(response.data.data);
+      }
+      return response.data;
+    } catch (err) {
+      console.error('Error fetching company info:', err);
+      throw err;
+    }
+  }, []);
+
+  // Update company info (with optional logo)
+  const updateCompanyInfo = useCallback(async (formData) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await API.settings.updateCompanyInfo(formData);
+      if (response.data.success) {
+        setCompanyInfo(response.data.data);
+      }
+      return response.data;
+    } catch (err) {
+      console.error('Error updating company info:', err);
+      const errorMsg = err.response?.data?.message || 'Failed to update company info';
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Delete company logo
+  const deleteCompanyLogo = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await API.settings.deleteCompanyLogo();
+      if (response.data.success) {
+        setCompanyInfo(prev => ({ ...prev, logo: '' }));
+      }
+      return response.data;
+    } catch (err) {
+      console.error('Error deleting company logo:', err);
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -41,7 +109,6 @@ export const SystemSettingsProvider = ({ children }) => {
     try {
       await API.settings.updateSetting(settingKey, newValue);
       
-      // Update local state
       setSettings(prev => prev.map(setting => 
         setting.key === settingKey 
           ? { ...setting, value: newValue, updated_at: new Date().toISOString() }
@@ -66,7 +133,6 @@ export const SystemSettingsProvider = ({ children }) => {
     try {
       await API.settings.updateMultipleSettings(settingsUpdates);
       
-      // Update local state
       setSettings(prev => prev.map(setting => {
         if (settingsUpdates[setting.key] !== undefined) {
           return { 
@@ -95,7 +161,6 @@ export const SystemSettingsProvider = ({ children }) => {
     setError(null);
     try {
       await API.settings.resetToDefaults();
-      // Refresh settings after reset
       await fetchSettings();
       return { success: true, message: 'Settings reset to defaults' };
     } catch (err) {
@@ -115,42 +180,37 @@ export const SystemSettingsProvider = ({ children }) => {
   }, [settings]);
 
   // Get settings by category
- // Get settings by category
-const getSettingsByCategory = useCallback(() => {
-  // First, ensure settings is an array
-  if (!Array.isArray(settings)) return {};
-  
-  const categories = {
-    // Billing & Payments (includes SMS for billing notifications)
-    billing: settings.filter(s => 
-      s.key === 'billing_day' || 
-      s.key === 'paybill_number' || 
-      s.key === 'company_name' ||
-      s.key === 'late_fee_percentage' ||
-      s.key === 'grace_period_days' ||
-      s.key === 'auto_billing_enabled' ||
-      s.key === 'sms_enabled' ||
-      s.key === 'sms_billing_template'
-    ),
+  const getSettingsByCategory = useCallback(() => {
+    if (!Array.isArray(settings)) return {};
     
-    // M-Pesa Integration
-    mpesa: settings.filter(s => s.key.includes('mpesa_')),
+    const categories = {
+      company: settings.filter(s => s.key.startsWith('company_')),
+      billing: settings.filter(s => 
+        s.key === 'billing_day' || 
+        s.key === 'paybill_number' || 
+        s.key === 'late_fee_percentage' ||
+        s.key === 'grace_period_days' ||
+        s.key === 'auto_billing_enabled' ||
+        s.key === 'sms_enabled' ||
+        s.key === 'sms_billing_template'
+      ),
+      mpesa: settings.filter(s => s.key.includes('mpesa_')),
+      profile: [],
+      appearance: []
+    };
     
-    // Profile settings (empty - handled separately in component)
-    profile: [],
-    
-    // Appearance settings (empty - coming soon)
-    appearance: []
-  };
-  
-  return categories;
-}, [settings]);
+    return categories;
+  }, [settings]);
 
   const value = React.useMemo(() => ({
     settings,
+    companyInfo,
     loading,
     error,
     fetchSettings,
+    fetchCompanyInfo,
+    updateCompanyInfo,
+    deleteCompanyLogo,
     updateSetting,
     updateMultipleSettings,
     resetToDefaults,
@@ -159,9 +219,13 @@ const getSettingsByCategory = useCallback(() => {
     clearError: () => setError(null)
   }), [
     settings,
+    companyInfo,
     loading,
     error,
     fetchSettings,
+    fetchCompanyInfo,
+    updateCompanyInfo,
+    deleteCompanyLogo,
     updateSetting,
     updateMultipleSettings,
     resetToDefaults,
