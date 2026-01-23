@@ -51,22 +51,6 @@ router.get('/water-bills', requireRole(['agent','admin']), waterBillController.l
 router.get('/water-bills/:id', requireRole(['agent','admin']), waterBillController.getWaterBill);
 router.delete('/water-bills/:id', requireRole(['agent','admin']), waterBillController.deleteWaterBill);
 
-// e.g. in backend/routes/agentProperties.js or similar
-const { 
-  createWaterBill,
-  listWaterBills,
-  getWaterBill,
-  deleteWaterBill,
-  checkMissingWaterBills,
-  getTenantWaterBalance
-} = require('../controllers/waterBillController');
-const { protect } = require('../middleware/authMiddleware');
-
-// Existing
-router.post('/water-bills', protect, createWaterBill);
-router.get('/water-bills', protect, listWaterBills);
-// ...
-
 // NEW: water balance for tenant
 router.get('/water-bills/balance/:tenantId', protect, getTenantWaterBalance);
 
