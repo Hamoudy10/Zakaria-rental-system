@@ -22,7 +22,7 @@ const TenantDashboard = lazy(() => import('./pages/TenantDashboard'));
 const NotificationPage = lazy(() => import('./components/NotificationsPage'));
 const TenantPayment = lazy(() => import('./components/TenantPayment'));
 const ProfilePage = lazy(() => import('./components/ProfilePage'));
-const SystemSettings = lazy(() => import('./components/SystemSettings'));
+const SystemSettings = lazy(() => import('./components/SystemSettings.jsx'));
 const AgentManagement = lazy(() => import('./components/AgentManagement'));
 const ChatModule = lazy(() => import('./components/ChatModule'));
 
