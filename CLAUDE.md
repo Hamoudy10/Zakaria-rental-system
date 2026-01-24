@@ -116,3 +116,24 @@ Reusable avatar component with profile image + fallback to initials.
 - Folder: `zakaria_rental/profile_images`
 - Max size: 5MB
 - Formats: JPEG, PNG, WebP
+## PDF & EXCEL EXPORT WITH COMPANY BRANDING
+
+### Features
+- Company logo from Cloudinary displayed on documents
+- Company name, address, phone, email in header
+- Professional styling with blue theme
+- Automatic totals calculation
+- Page numbers (PDF)
+- 5-minute caching for company info
+
+### Files
+- `src/utils/pdfExport.js` - PDF generation with jsPDF + autoTable
+- `src/utils/excelExport.js` - Excel generation with ExcelJS
+
+### API Dependency
+- `GET /api/admin/company-info` - Fetches company branding
+
+### Cache Control
+```javascript
+import { clearCompanyInfoCache } from '../utils/pdfExport';
+clearCompanyInfoCache(); // Call when company info is updated
