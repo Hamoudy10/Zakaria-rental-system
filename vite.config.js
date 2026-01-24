@@ -13,7 +13,7 @@ export default defineConfig({
   },
   build: {
     // Increase chunk size warning limit
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 1600,
     rollupOptions: {
       output: {
         // Manual chunks for better caching and to avoid large initial bundles
