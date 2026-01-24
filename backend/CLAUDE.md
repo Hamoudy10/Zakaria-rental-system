@@ -182,3 +182,25 @@ CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
 ```sql
 profile_image VARCHAR(500) DEFAULT NULL
 -- Stores Cloudinary URL for user profile image
+
+---
+
+## Backend `backend/claude.md`
+
+```markdown
+## CORS CONFIGURATION FOR VERCEL
+
+### Required Origins
+```javascript
+const cors = require('cors');
+
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://zakaria-rental-system.vercel.app',  // Production (HTTPS required!)
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
