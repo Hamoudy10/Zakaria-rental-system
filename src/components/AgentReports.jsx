@@ -1,6 +1,6 @@
 // /src/components/AgentReports.jsx - FIXED DATA EXTRACTION & ERROR HANDLING
 import React, { useState, useEffect } from 'react';
-import { API } from '../services/api';
+import api, { API } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { 
   Users, CreditCard, TrendingUp, Building, 
@@ -91,13 +91,16 @@ const AgentReports = () => {
   useEffect(() => {
     const fetchCompanyInfo = async () => {
       try {
-        const response = await API.settings.getSettings();
-        if (response.data?.success) {
-          const settings = response.data.data;
-          const companyNameSetting = settings.find(s => s.setting_key === 'company_name');
-          if (companyNameSetting) {
-            setCompanyInfo(prev => ({ ...prev, name: companyNameSetting.setting_value }));
-          }
+        const response = await API.settings.getCompanyInfo();
+        if (response.data?.success && response.data?.data) {
+          const info = response.data.data;
+          setCompanyInfo({
+            name: info.name || 'Zakaria Housing Agency Limited',
+            logo: info.logo || null,
+            email: info.email || '',
+            phone: info.phone || '',
+            address: info.address || ''
+          });
         }
       } catch (error) {
         console.warn('Could not fetch company info:', error);
@@ -148,17 +151,25 @@ const AgentReports = () => {
   };
 
   // Direct API call with fetch for endpoints not in API service
+  // ✅ FIXED: Use same base URL pattern as api.jsx
   const directAPICall = async (endpoint, method = 'GET', params = {}) => {
     try {
-      const baseURL = import.meta.env.VITE_API_URL || 'https://zakaria-rental-system.onrender.com/api';
+      // ✅ FIXED: Always append /api to match api.jsx pattern
+      const baseURL = (import.meta.env.VITE_API_URL || 'https://zakaria-rental-system.onrender.com') + '/api';
       const token = localStorage.getItem('token');
       
       let url = `${baseURL}${endpoint}`;
       
       // Add query params for GET requests
       if (method === 'GET' && Object.keys(params).length > 0) {
-        const queryParams = new URLSearchParams(params).toString();
-        url = `${url}?${queryParams}`;
+        // Filter out empty params
+        const filteredParams = Object.fromEntries(
+          Object.entries(params).filter(([_, v]) => v !== '' && v !== null && v !== undefined)
+        );
+        if (Object.keys(filteredParams).length > 0) {
+          const queryParams = new URLSearchParams(filteredParams).toString();
+          url = `${url}?${queryParams}`;
+        }
       }
       
       const options = {
@@ -173,10 +184,11 @@ const AgentReports = () => {
         options.body = JSON.stringify(params);
       }
       
-      console.log(`🌐 ${method} ${url}`, params);
+      console.log(`🌐 ${method} ${url}`);
       const response = await fetch(url, options);
       const data = await response.json();
       
+      console.log(`📦 Response for ${endpoint}:`, data);
       return { data };
     } catch (error) {
       console.error(`❌ Direct API call failed for ${endpoint}:`, error);
@@ -232,6 +244,17 @@ const AgentReports = () => {
     }));
   };
 
+  // Build filter params object (only non-empty values)
+  const buildFilterParams = () => {
+    const params = {};
+    if (filters.startDate) params.startDate = filters.startDate;
+    if (filters.endDate) params.endDate = filters.endDate;
+    if (filters.propertyId) params.propertyId = filters.propertyId;
+    if (filters.status) params.status = filters.status;
+    if (filters.search) params.search = filters.search;
+    return params;
+  };
+
   // Fetch report data based on active report
   const fetchReportData = async () => {
     setLoading(true);
@@ -241,13 +264,18 @@ const AgentReports = () => {
       console.log('📥 Fetching report data for:', activeReport);
       
       let response;
-      const params = {
-        ...filters
-      };
+      const params = buildFilterParams();
 
       switch (activeReport) {
         case 'tenants':
-          response = await directAPICall('/agent-properties/my-tenants', 'GET', params);
+          // Use axios instance directly for consistency
+          try {
+            response = await api.get('/agent-properties/my-tenants', { params });
+            response = { data: response.data };
+          } catch (err) {
+            console.error('Tenants API error:', err);
+            response = { data: { success: false, message: err.response?.data?.message || err.message, data: [] } };
+          }
           break;
           
         case 'payments':
@@ -259,11 +287,25 @@ const AgentReports = () => {
           break;
           
         case 'complaints':
-          response = await directAPICall('/agent-properties/my-complaints', 'GET', params);
+          // Use axios instance directly for consistency
+          try {
+            response = await api.get('/agent-properties/my-complaints', { params });
+            response = { data: response.data };
+          } catch (err) {
+            console.error('Complaints API error:', err);
+            response = { data: { success: false, message: err.response?.data?.message || err.message, data: [] } };
+          }
           break;
           
         case 'water':
-          response = await directAPICall('/water-bills', 'GET', params);
+          // Use axios instance directly for consistency
+          try {
+            response = await api.get('/agent-properties/water-bills', { params });
+            response = { data: response.data };
+          } catch (err) {
+            console.error('Water bills API error:', err);
+            response = { data: { success: false, message: err.response?.data?.message || err.message, data: [] } };
+          }
           break;
           
         case 'sms':
@@ -312,7 +354,16 @@ const AgentReports = () => {
   // Fetch data when report type or filters change
   useEffect(() => {
     fetchReportData();
-  }, [activeReport, filters]);
+  }, [activeReport]);
+
+  // Debounced filter change handler
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchReportData();
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, [filters]);
 
   const handleExport = async (format) => {
     if (!Array.isArray(data) || data.length === 0) {
@@ -411,9 +462,10 @@ const AgentReports = () => {
           
           <button
             onClick={fetchReportData}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
           
@@ -491,21 +543,21 @@ const AgentReports = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
-                  <tr key={index}>
+                  <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.first_name || item.name} {item.last_name || ''}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.phone_number || 'N/A'}
+                      {item.phone_number?.replace(/^254/, '0') || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.property_name || item.name || 'N/A'}
+                      {item.property_name || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.unit_code || item.property_code || 'N/A'}
+                      {item.unit_code || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      KSh {(parseFloat(item.rent_amount) || 0).toLocaleString()}
+                      KSh {(parseFloat(item.rent_amount || item.monthly_rent) || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -515,6 +567,56 @@ const AgentReports = () => {
                       }`}>
                         {item.is_active ? 'Active' : (item.status || 'Inactive')}
                       </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case 'payments':
+        return (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Receipt</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Month</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {data.slice(0, 10).map((item, index) => (
+                  <tr key={item.id || index}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.mpesa_receipt_number || item.id?.substring(0, 8) || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      KSh {(parseFloat(item.amount) || 0).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.payment_month || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        item.status === 'completed' 
+                          ? 'bg-green-100 text-green-800'
+                          : item.status === 'pending'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {item.status || 'Pending'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
                     </td>
                   </tr>
                 ))}
@@ -539,7 +641,7 @@ const AgentReports = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
-                  <tr key={index}>
+                  <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.property_code || item.id?.substring(0, 8)}
                     </td>
@@ -564,6 +666,200 @@ const AgentReports = () => {
             </table>
           </div>
         );
+
+      case 'complaints':
+        return (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {data.slice(0, 10).map((item, index) => (
+                  <tr key={item.id || index}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.title || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.property_name || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.unit_code || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        item.priority === 'high' 
+                          ? 'bg-red-100 text-red-800'
+                          : item.priority === 'medium'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-green-100 text-green-800'
+                      }`}>
+                        {item.priority || 'Medium'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        item.status === 'resolved' 
+                          ? 'bg-green-100 text-green-800'
+                          : item.status === 'in_progress'
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {item.status || 'Open'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case 'water':
+        return (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bill Month</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {data.slice(0, 10).map((item, index) => (
+                  <tr key={item.id || index}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.property_name || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.unit_code || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      KSh {(parseFloat(item.amount) || 0).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.bill_month || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        item.status === 'paid' 
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {item.status || 'Pending'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case 'sms':
+        return (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Recipient</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {data.slice(0, 10).map((item, index) => (
+                  <tr key={item.id || index}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.recipient_phone?.replace(/^254/, '0') || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 max-w-xs truncate">
+                      {item.message || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.message_type || 'General'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        item.status === 'sent' 
+                          ? 'bg-green-100 text-green-800'
+                          : item.status === 'pending'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {item.status || 'Pending'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case 'revenue':
+        return (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Month</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Revenue</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payments</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Properties</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenants</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Payment</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {data.slice(0, 10).map((item, index) => (
+                  <tr key={index}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.month || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
+                      KSh {(parseFloat(item.total_revenue) || 0).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.payment_count || 0}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.property_count || 0}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.tenant_count || 0}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      KSh {(parseFloat(item.average_payment) || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
         
       default:
         // Generic table for other reports
@@ -581,7 +877,7 @@ const AgentReports = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
-                  <tr key={index}>
+                  <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.id?.substring(0, 8) || index + 1}
                     </td>
@@ -628,6 +924,8 @@ const AgentReports = () => {
       totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.amount || item.total_revenue) || 0), 0);
     } else if (activeReport === 'tenants') {
       totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.rent_amount || item.monthly_rent) || 0), 0);
+    } else if (activeReport === 'water') {
+      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     }
     
     return { count, totalAmount };
@@ -708,7 +1006,7 @@ const AgentReports = () => {
           <div className="text-2xl font-bold mt-1">{stats.count}</div>
           <div className="text-xs text-gray-400 mt-1">in this report</div>
         </div>
-        {(activeReport === 'payments' || activeReport === 'revenue' || activeReport === 'tenants') && (
+        {(activeReport === 'payments' || activeReport === 'revenue' || activeReport === 'tenants' || activeReport === 'water') && (
           <div className="bg-white p-4 rounded-lg border border-gray-200">
             <div className="text-sm text-gray-500">Total Amount</div>
             <div className="text-2xl font-bold mt-1 text-green-600">
