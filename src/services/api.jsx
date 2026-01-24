@@ -713,11 +713,6 @@ export const tenantAPI = {
   // Get available units for tenant allocation
   getAvailableUnits: () => api.get('/tenants/available-units'),
   
-  // Upload ID images
-  uploadIDImages: (id, formData) => api.post(`/tenants/${id}/upload-id`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-  
   // Search tenants
   searchTenants: (searchTerm) => api.get(`/tenants/search?q=${encodeURIComponent(searchTerm)}`),
   
@@ -873,8 +868,7 @@ export const API = {
   mockMpesa: mockMpesaAPI,
   paybill: paybillAPI, 
   billing: billingAPI, 
-  tenants: tenantAPI,
-  billing: billingAPI,           // Admin billing endpoints
+  tenants: tenantAPI,          // Admin billing endpoints
   agentSMS: agentSMSAPI,
    chatAPI,// NEW: Added paybill API
 };
