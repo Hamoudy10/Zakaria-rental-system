@@ -12,7 +12,7 @@ const app = express();
 
 // ==================== MIDDLEWARE ====================
 app.use(cors({
-  origin: "http://zakaria-rental-system.vercel.app" || "http://localhost:5173",
+  origin: "https://zakaria-rental-system.vercel.app" || "http://localhost:5173",
   credentials: true
 }));
 app.use(express.json());
