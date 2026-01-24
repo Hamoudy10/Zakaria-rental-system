@@ -137,3 +137,24 @@ const socket = io(API_BASE_URL, {
 socket.on('new_message', handleMessage);
 socket.on('chat_notification', handleNotification);
 ```
+
+---
+
+## Frontend `src/claude.md`
+
+```markdown
+## VERCEL DEPLOYMENT
+
+### Setup
+- Auto-deploys on `git push origin main`
+- Preview deployments for feature branches
+- Environment variables set in Vercel Dashboard
+
+### vercel.json (in project root)
+```json
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/" }],
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite"
+}

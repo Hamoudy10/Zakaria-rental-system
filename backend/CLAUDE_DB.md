@@ -213,3 +213,21 @@ CREATE INDEX idx_sms_queue_status ON sms_queue(status) WHERE status = 'failed';
 ## PROFILE IMAGE UPLOAD
 
 ### Endpoint
+
+---
+
+## Database `backend/claude_db.md`
+
+```markdown
+## ADMIN_SETTINGS TABLE (Company Info)
+
+### Structure
+```sql
+CREATE TABLE admin_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  setting_key VARCHAR(100) UNIQUE NOT NULL,
+  setting_value TEXT,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
