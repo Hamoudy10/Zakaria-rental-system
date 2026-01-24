@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useReport } from '../context/ReportContext';
+import { useAuth } from '../context/AuthContext';
 
 const ReportsManagement = () => {
+  const { user } = useAuth();
   const {
     reports,
     loading,
@@ -30,6 +32,7 @@ const ReportsManagement = () => {
     report_type: 'custom',
     filters: {}
   });
+  const [exporting, setExporting] = useState(false);
 
   // SAFE CHECK: Ensure data is always arrays
   const safeReports = Array.isArray(reports) ? reports : [];
@@ -80,11 +83,37 @@ const ReportsManagement = () => {
     }
   };
 
-  const handleExportReport = (format) => {
-    if (generatedReport) {
-      exportReport(generatedReport.id, format);
-    } else {
+  const handleExportReport = async (format) => {
+    if (!generatedReport) {
       alert('Please generate a report first');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      await exportReport(format, generatedReport.type || selectedReportType, reportParams);
+    } catch (error) {
+      console.error('Export error:', error);
+      alert(`Export failed: ${error.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleExportPreviousReport = async (report, format) => {
+    setExporting(true);
+    try {
+      // For previous reports, we need to re-generate or use stored data
+      await exportReport(format, report.type, {
+        period: report.period,
+        start_date: report.start_date,
+        end_date: report.end_date
+      });
+    } catch (error) {
+      console.error('Export error:', error);
+      alert(`Export failed: ${error.message}`);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -108,10 +137,10 @@ const ReportsManagement = () => {
   // Get report statistics
   const reportStats = getReportStats();
 
-  if (loading) {
+  if (loading && !exporting) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="text-gray-500 text-sm md:text-base">Generating report...</div>
+        <div className="text-gray-500 text-sm md:text-base">Loading reports...</div>
       </div>
     );
   }
@@ -121,7 +150,7 @@ const ReportsManagement = () => {
       {/* Header */}
       <div className="bg-white rounded-lg shadow-sm p-4 md:p-6">
         <h2 className="text-xl md:text-2xl font-bold text-gray-900">Reports & Analytics</h2>
-        <p className="text-sm md:text-base text-gray-600">Generate and export various business reports</p>
+        <p className="text-sm md:text-base text-gray-600">Generate and export various business reports with company branding</p>
       </div>
 
       {/* Error Message */}
@@ -134,6 +163,16 @@ const ReportsManagement = () => {
           >
             ×
           </button>
+        </div>
+      )}
+
+      {/* Exporting Overlay */}
+      {exporting && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 flex items-center space-x-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <span className="text-gray-700">Exporting report with company branding...</span>
+          </div>
         </div>
       )}
 
@@ -189,11 +228,12 @@ const ReportsManagement = () => {
                 <button
                   key={type.value}
                   onClick={() => setSelectedReportType(type.value)}
+                  disabled={loading}
                   className={`w-full text-left p-3 rounded-lg border-2 transition-colors min-h-[44px] touch-manipulation ${
                     selectedReportType === type.value
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-gray-200 hover:border-gray-300'
-                  }`}
+                  } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <div className="flex items-center space-x-3">
                     <span className="text-lg md:text-xl">{type.icon}</span>
@@ -275,27 +315,59 @@ const ReportsManagement = () => {
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleGenerateReport}
-                className="bg-blue-600 text-white px-4 py-3 rounded-md hover:bg-blue-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1"
+                disabled={loading}
+                className={`bg-blue-600 text-white px-4 py-3 rounded-md hover:bg-blue-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1 flex items-center justify-center gap-2 ${
+                  loading ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
-                Generate Report
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  'Generate Report'
+                )}
               </button>
+              
               {generatedReport && (
                 <div className="flex flex-col sm:flex-row gap-2 flex-1">
                   <button
                     onClick={() => handleExportReport('pdf')}
-                    className="bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1"
+                    disabled={exporting}
+                    className={`bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1 flex items-center justify-center gap-2 ${
+                      exporting ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
                   >
-                    Export PDF
+                    📄 Export PDF
                   </button>
                   <button
                     onClick={() => handleExportReport('excel')}
-                    className="bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1"
+                    disabled={exporting}
+                    className={`bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 text-sm md:text-base min-h-[44px] touch-manipulation transition-colors flex-1 flex items-center justify-center gap-2 ${
+                      exporting ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
                   >
-                    Export Excel
+                    📊 Export Excel
                   </button>
                 </div>
               )}
             </div>
+
+            {/* Export Info */}
+            {generatedReport && (
+              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-600">ℹ️</span>
+                  <p className="text-sm text-blue-800">
+                    Exports will include your company logo, name, and contact information in the header.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -354,6 +426,14 @@ const ReportsManagement = () => {
                 <div className="text-xs md:text-sm text-orange-800">Collection Rate</div>
               </div>
             )}
+            {generatedReport.summary?.totalRevenue !== undefined && (
+              <div className="bg-emerald-50 p-3 md:p-4 rounded-lg">
+                <div className="text-lg md:text-2xl font-bold text-emerald-600">
+                  {formatCurrency(generatedReport.summary.totalRevenue)}
+                </div>
+                <div className="text-xs md:text-sm text-emerald-800">Total Revenue</div>
+              </div>
+            )}
           </div>
 
           {/* Detailed Data */}
@@ -369,7 +449,7 @@ const ReportsManagement = () => {
                           {key.replace(/_/g, ' ')}
                         </td>
                         <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-xs md:text-sm text-gray-500">
-                          {typeof value === 'number' ? formatCurrency(value) : value}
+                          {typeof value === 'number' ? formatCurrency(value) : String(value)}
                         </td>
                       </tr>
                     ))}
@@ -426,16 +506,18 @@ const ReportsManagement = () => {
                   
                   <div className="flex space-x-2">
                     <button
-                      onClick={() => exportReport(report.id, 'pdf')}
-                      className="flex-1 bg-red-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-red-700 transition-colors min-h-[44px] touch-manipulation"
+                      onClick={() => handleExportPreviousReport(report, 'pdf')}
+                      disabled={exporting}
+                      className="flex-1 bg-red-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-red-700 transition-colors min-h-[44px] touch-manipulation disabled:opacity-50"
                     >
-                      Export PDF
+                      📄 PDF
                     </button>
                     <button
-                      onClick={() => exportReport(report.id, 'excel')}
-                      className="flex-1 bg-green-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-green-700 transition-colors min-h-[44px] touch-manipulation"
+                      onClick={() => handleExportPreviousReport(report, 'excel')}
+                      disabled={exporting}
+                      className="flex-1 bg-green-600 text-white py-2 px-3 rounded text-xs font-medium hover:bg-green-700 transition-colors min-h-[44px] touch-manipulation disabled:opacity-50"
                     >
-                      Export Excel
+                      📊 Excel
                     </button>
                   </div>
                 </div>
@@ -492,16 +574,18 @@ const ReportsManagement = () => {
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                         <button
-                          onClick={() => exportReport(report.id, 'pdf')}
-                          className="text-red-600 hover:text-red-900 whitespace-nowrap min-h-[44px] px-3 touch-manipulation"
+                          onClick={() => handleExportPreviousReport(report, 'pdf')}
+                          disabled={exporting}
+                          className="text-red-600 hover:text-red-900 whitespace-nowrap px-3 py-1 rounded hover:bg-red-50 transition-colors disabled:opacity-50"
                         >
-                          Export PDF
+                          📄 PDF
                         </button>
                         <button
-                          onClick={() => exportReport(report.id, 'excel')}
-                          className="text-green-600 hover:text-green-900 whitespace-nowrap min-h-[44px] px-3 touch-manipulation"
+                          onClick={() => handleExportPreviousReport(report, 'excel')}
+                          disabled={exporting}
+                          className="text-green-600 hover:text-green-900 whitespace-nowrap px-3 py-1 rounded hover:bg-green-50 transition-colors disabled:opacity-50"
                         >
-                          Export Excel
+                          📊 Excel
                         </button>
                       </td>
                     </tr>
