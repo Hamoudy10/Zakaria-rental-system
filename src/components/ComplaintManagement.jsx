@@ -1,14 +1,36 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { complaintAPI, propertyAPI, allocationAPI, settingsAPI } from '../services/api';
-// Import the export function from your utility file
-import { exportComplaintsToPDF } from '../utils/pdfExport';
 import { 
   X, Plus, Filter, FileText, CheckCircle2, Circle, Clock, 
   AlertTriangle, Building2, User, Home, MessageSquare, 
   ChevronDown, ChevronUp, Search, RefreshCw, Wrench,
   Calendar, ArrowRight, Check, Loader2, Edit3, Download
 } from 'lucide-react';
+
+// PDF libraries - install with: npm install jspdf jspdf-autotable
+let jsPDFClass = null;
+let autoTablePlugin = null;
+
+// Dynamic import to prevent build errors if not installed
+const loadPDFLibraries = async () => {
+  if (!jsPDFClass) {
+    try {
+      const jspdfModule = await import('jspdf');
+      jsPDFClass = jspdfModule.default || jspdfModule.jsPDF;
+      
+      // Import autoTable plugin
+      const autoTableModule = await import('jspdf-autotable');
+      autoTablePlugin = autoTableModule.default || autoTableModule;
+      
+      return true;
+    } catch (error) {
+      console.error('PDF libraries not installed. Run: npm install jspdf jspdf-autotable');
+      return false;
+    }
+  }
+  return true;
+};
 
 const COMPLAINT_CATEGORIES = [
   { id: 'plumbing', label: 'Plumbing', icon: '🔧' },
@@ -452,6 +474,241 @@ const ComplaintManagement = () => {
     });
   };
 
+  // Export to PDF
+  const handleExportPDF = async () => {
+    try {
+      setExportingPDF(true);
+      
+      // Load PDF libraries dynamically
+      const librariesLoaded = await loadPDFLibraries();
+      if (!librariesLoaded) {
+        setError('PDF export requires jspdf library. Please run: npm install jspdf jspdf-autotable');
+        setExportingPDF(false);
+        return;
+      }
+      
+      // Get company info for branding
+      let companyInfo = {
+        company_name: 'Zakaria Rental System',
+        company_address: '',
+        company_phone: '',
+        company_email: ''
+      };
+      
+      try {
+        const companyResponse = await settingsAPI.getCompanyInfo();
+        companyInfo = companyResponse.data?.data || companyResponse.data || companyInfo;
+      } catch (e) {
+        console.log('Using default company info');
+      }
+      
+      // Fetch steps for all complaints
+      const complaintsWithSteps = await Promise.all(
+        filteredComplaints.map(async (complaint) => {
+          try {
+            const stepsResponse = await complaintAPI.getComplaintSteps(complaint.id);
+            const steps = stepsResponse.data?.data || stepsResponse.data || [];
+            return { ...complaint, steps: Array.isArray(steps) ? steps : [] };
+          } catch (e) {
+            return { ...complaint, steps: [] };
+          }
+        })
+      );
+      
+      // Create PDF
+      const doc = new jsPDFClass('landscape', 'mm', 'a4');
+      
+      // FIX: Properly register autoTable plugin to doc instance
+      if (typeof autoTablePlugin === 'function') {
+        try {
+          autoTablePlugin(doc);
+        } catch (e) {
+          console.warn("Could not register autoTable plugin automatically:", e);
+        }
+      }
+      
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      
+      // Colors
+      const primaryColor = [37, 99, 235];
+      const textColor = [55, 65, 81];
+      
+      // Header
+      doc.setFillColor(...primaryColor);
+      doc.rect(0, 0, pageWidth, 25, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text(companyInfo.company_name || 'Zakaria Rental System', 14, 12);
+      
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      const details = [
+        companyInfo.company_address,
+        companyInfo.company_phone,
+        companyInfo.company_email
+      ].filter(Boolean).join(' | ');
+      doc.text(details, 14, 19);
+      
+      // Report title
+      doc.setTextColor(...textColor);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report', 14, 35);
+      
+      // Date and stats
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generated: ${formatDate(new Date())}`, 14, 42);
+      doc.text(`Total: ${complaintsWithSteps.length} | Open: ${stats.open} | In Progress: ${stats.in_progress} | Resolved: ${stats.resolved}`, 14, 48);
+      
+      // Prepare table data
+      const tableData = complaintsWithSteps.map(complaint => {
+        const stepsProgress = complaint.steps?.length > 0 
+          ? `${complaint.steps.filter(s => s.is_completed).length}/${complaint.steps.length}` 
+          : 'No steps';
+        
+        return [
+          `${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''}`.trim() || 'Unknown',
+          complaint.property_name || 'N/A',
+          complaint.unit_code || 'N/A',
+          getCategoryLabels(complaint),
+          complaint.title || 'N/A',
+          (complaint.status || 'open').replace('_', ' '),
+          stepsProgress,
+          formatDate(complaint.raised_at),
+          complaint.status === 'resolved' ? formatDate(complaint.resolved_at) : 'N/A'
+        ];
+      });
+      
+      // FIX: Use doc.autoTable safely if registered, else fall back to calling plugin directly
+      // Explicitly passing startY ensures it doesn't try to calculate from undefined previous state
+      if (doc.autoTable) {
+        doc.autoTable({
+          startY: 55,
+          head: [[ 'Tenant', 'Property', 'Unit', 'Categories', 'Title', 'Status', 'Steps', 'Date Raised', 'Date Resolved' ]],
+          body: tableData,
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          columnStyles: {
+            0: { cellWidth: 28 }, 1: { cellWidth: 28 }, 2: { cellWidth: 18 },
+            3: { cellWidth: 35 }, 4: { cellWidth: 40 }, 5: { cellWidth: 22 },
+            6: { cellWidth: 18 }, 7: { cellWidth: 28 }, 8: { cellWidth: 28 },
+          },
+          margin: { top: 55, bottom: 15 }
+        });
+      } else if (typeof autoTablePlugin === 'function') {
+        // Fallback for some bundle configurations
+        autoTablePlugin(doc, {
+          startY: 55,
+          head: [[ 'Tenant', 'Property', 'Unit', 'Categories', 'Title', 'Status', 'Steps', 'Date Raised', 'Date Resolved' ]],
+          body: tableData,
+          // ... same options ...
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          margin: { top: 55, bottom: 15 }
+        });
+      }
+      
+      // Add detailed steps section on new page if there are complaints with steps
+      const complaintsWithActualSteps = complaintsWithSteps.filter(c => c.steps && c.steps.length > 0);
+      
+      if (complaintsWithActualSteps.length > 0) {
+        doc.addPage();
+        
+        // Section header
+        doc.setFillColor(...primaryColor);
+        doc.rect(0, 0, pageWidth, 15, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Detailed Steps by Complaint', 14, 10);
+        
+        let yPos = 25;
+        
+        for (const complaint of complaintsWithActualSteps) {
+          if (yPos > pageHeight - 50) {
+            doc.addPage();
+            yPos = 20;
+          }
+          
+          // Complaint header
+          doc.setTextColor(...primaryColor);
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text(complaint.title || 'Untitled', 14, yPos);
+          
+          doc.setTextColor(...textColor);
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'normal');
+          yPos += 5;
+          doc.text(`Tenant: ${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''} | Unit: ${complaint.unit_code || 'N/A'} | Status: ${(complaint.status || 'open').replace('_', ' ')}`, 14, yPos);
+          
+          yPos += 7;
+          
+          // Steps
+          for (const step of (complaint.steps || []).sort((a, b) => a.step_order - b.step_order)) {
+            const checkbox = step.is_completed ? '[X]' : '[ ]';
+            const stepText = `${checkbox} Step ${step.step_order}: ${step.step_description}`;
+            
+            doc.setFont('helvetica', step.is_completed ? 'normal' : 'bold');
+            doc.setTextColor(step.is_completed ? 100 : 55, step.is_completed ? 100 : 65, step.is_completed ? 100 : 81);
+            
+            const lines = doc.splitTextToSize(stepText, pageWidth - 28);
+            for (const line of lines) {
+              if (yPos > pageHeight - 20) {
+                doc.addPage();
+                yPos = 20;
+              }
+              doc.text(line, 20, yPos);
+              yPos += 5;
+            }
+            
+            if (step.is_completed && step.completed_at) {
+              doc.setFontSize(7);
+              doc.setTextColor(100, 100, 100);
+              doc.text(`   Completed: ${formatDate(step.completed_at)}`, 20, yPos);
+              yPos += 4;
+              doc.setFontSize(8);
+            }
+          }
+          
+          yPos += 8;
+          
+          // Separator
+          doc.setDrawColor(229, 231, 235);
+          doc.line(14, yPos - 3, pageWidth - 14, yPos - 3);
+        }
+      }
+      
+      // Add page numbers
+      const totalPages = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' });
+        doc.text(companyInfo.company_name || 'Zakaria Rental System', 14, pageHeight - 5);
+      }
+      
+      // Save
+      const fileName = `complaints_report_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+      
+      setSuccessMessage('PDF exported successfully!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      console.error('Error exporting PDF:', err);
+      setError('Failed to export PDF');
+    } finally {
+      setExportingPDF(false);
+    }
+  };
+
   // Filter complaints
   const filteredComplaints = complaints.filter(complaint => {
     const matchesSearch = !filters.search || 
@@ -466,41 +723,6 @@ const ComplaintManagement = () => {
     
     return matchesSearch && matchesCategory;
   });
-
-  // Export to PDF - REFACTORED TO USE UTILITY
-  const handleExportPDF = async () => {
-    try {
-      setExportingPDF(true);
-      
-      // Fetch steps for all complaints to include in PDF
-      const complaintsWithSteps = await Promise.all(
-        filteredComplaints.map(async (complaint) => {
-          try {
-            const stepsResponse = await complaintAPI.getComplaintSteps(complaint.id);
-            const steps = stepsResponse.data?.data || stepsResponse.data || [];
-            return { ...complaint, steps: Array.isArray(steps) ? steps : [] };
-          } catch (e) {
-            return { ...complaint, steps: [] };
-          }
-        })
-      );
-      
-      // Call the utility function which handles company info and table generation
-      await exportComplaintsToPDF(complaintsWithSteps, {
-        title: isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report',
-        includeSteps: true,
-        filterStatus: filters.status || null
-      });
-      
-      setSuccessMessage('PDF exported successfully!');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      console.error('Error exporting PDF:', err);
-      setError('Failed to export PDF');
-    } finally {
-      setExportingPDF(false);
-    }
-  };
 
   // Get status badge styles
   const getStatusBadge = (status) => {
