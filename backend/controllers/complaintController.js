@@ -1,3 +1,4 @@
+// backend/controllers/complaintController.js
 const pool = require('../config/database');
 
 console.log('Complaint controller loaded successfully');
@@ -113,12 +114,23 @@ const createComplaint = async (req, res) => {
   }
 };
 
-// Update complaint
+// Update complaint - FIXED VERSION
 const updateComplaint = async (req, res) => {
   try {
     console.log('updateComplaint function called');
     const { id } = req.params;
-    const { status, response, title, description, priority } = req.body;
+    const { status, response, title, description, priority, categories } = req.body;
+    
+    // First check if complaint exists
+    const checkQuery = 'SELECT * FROM complaints WHERE id = $1';
+    const checkResult = await pool.query(checkQuery, [id]);
+    
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Complaint not found'
+      });
+    }
     
     let query;
     let values;
@@ -132,13 +144,33 @@ const updateComplaint = async (req, res) => {
       `;
       values = [title, description, priority, id, req.user.userId];
     } else {
+      // For admin/agent updates
       query = `
         UPDATE complaints 
-        SET status = $1, response = $2, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $3
+        SET 
+          status = $1, 
+          response = $2,
+          title = COALESCE($3, title),
+          description = COALESCE($4, description),
+          priority = COALESCE($5, priority),
+          categories = COALESCE($6::jsonb, categories),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $7
         RETURNING *
       `;
-      values = [status, response, id];
+      
+      // Convert categories array to JSONB
+      const categoriesJson = categories ? JSON.stringify(categories) : null;
+      
+      values = [
+        status, 
+        response, 
+        title, 
+        description, 
+        priority,
+        categoriesJson,
+        id
+      ];
     }
     
     const { rows } = await pool.query(query, values);
@@ -146,7 +178,7 @@ const updateComplaint = async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Complaint not found'
+        message: 'Complaint not found or you lack permission to update it'
       });
     }
     
@@ -159,7 +191,8 @@ const updateComplaint = async (req, res) => {
     console.error('Update complaint error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error updating complaint'
+      message: 'Server error updating complaint',
+      error: error.message
     });
   }
 };
@@ -194,8 +227,10 @@ const deleteComplaint = async (req, res) => {
 };
 
 // Explicitly export each function
-module.exports.getComplaints = getComplaints;
-module.exports.getComplaint = getComplaint;
-module.exports.createComplaint = createComplaint;
-module.exports.updateComplaint = updateComplaint;
-module.exports.deleteComplaint = deleteComplaint;
+module.exports = {
+  getComplaints,
+  getComplaint,
+  createComplaint,
+  updateComplaint,
+  deleteComplaint
+};
