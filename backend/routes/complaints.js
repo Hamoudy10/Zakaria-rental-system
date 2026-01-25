@@ -1,5 +1,5 @@
 // ============================================
-// UPDATED complaints.js ROUTES FILE
+// FIXED complaints.js ROUTES FILE
 // Replace your existing backend/routes/complaints.js with this
 // ============================================
 
@@ -12,7 +12,51 @@ const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 const protect = authMiddleware;
 const authorize = requireRole;
 
-console.log('Complaints routes loaded');
+console.log('✅ Complaints routes loaded');
+
+// ============================================
+// GET COMPLAINT STATISTICS (MUST come before /:id)
+// ============================================
+router.get('/stats/overview', protect, authorize(['admin', 'agent']), async (req, res) => {
+  try {
+    let whereClause = '';
+    const queryParams = [];
+    
+    if (req.user.role === 'agent') {
+      whereClause = `WHERE c.unit_id IN (
+        SELECT pu.id FROM property_units pu
+        WHERE pu.property_id IN (
+          SELECT property_id FROM agent_property_assignments 
+          WHERE agent_id = $1 AND is_active = true
+        )
+      )`;
+      queryParams.push(req.user.id);
+    }
+    
+    const statsResult = await pool.query(`
+      SELECT 
+        COUNT(*) as total_complaints,
+        COUNT(CASE WHEN status = 'open' THEN 1 END) as open_complaints,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_complaints,
+        COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved_complaints,
+        COUNT(CASE WHEN priority = 'high' THEN 1 END) as high_priority
+      FROM complaints c
+      ${whereClause}
+    `, queryParams);
+    
+    res.json({
+      success: true,
+      data: statsResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Error fetching complaint statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching complaint statistics',
+      error: error.message
+    });
+  }
+});
 
 // ============================================
 // GET ALL COMPLAINTS (with advanced filtering)
@@ -159,150 +203,6 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
 });
 
 // ============================================
-// GET COMPLAINT STATISTICS (MUST come before /:id)
-// ============================================
-router.get('/stats/overview', protect, authorize(['admin', 'agent']), async (req, res) => {
-  try {
-    let whereClause = '';
-    const queryParams = [];
-    
-    if (req.user.role === 'agent') {
-      whereClause = `WHERE c.unit_id IN (
-        SELECT pu.id FROM property_units pu
-        WHERE pu.property_id IN (
-          SELECT property_id FROM agent_property_assignments 
-          WHERE agent_id = $1 AND is_active = true
-        )
-      )`;
-      queryParams.push(req.user.id);
-    }
-    
-    const statsResult = await pool.query(`
-      SELECT 
-        COUNT(*) as total_complaints,
-        COUNT(CASE WHEN status = 'open' THEN 1 END) as open_complaints,
-        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_complaints,
-        COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved_complaints,
-        COUNT(CASE WHEN priority = 'high' THEN 1 END) as high_priority
-      FROM complaints c
-      ${whereClause}
-    `, queryParams);
-    
-    res.json({
-      success: true,
-      data: statsResult.rows[0]
-    });
-  } catch (error) {
-    console.error('Error fetching complaint statistics:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching complaint statistics',
-      error: error.message
-    });
-  }
-});
-
-// ============================================
-// GET COMPLAINT STEPS (MUST come before /:id)
-// ============================================
-router.get('/:id/steps', protect, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const result = await pool.query(`
-      SELECT 
-        cs.*,
-        u.first_name as completed_by_first_name,
-        u.last_name as completed_by_last_name,
-        creator.first_name as created_by_first_name,
-        creator.last_name as created_by_last_name
-      FROM complaint_steps cs
-      LEFT JOIN users u ON cs.completed_by = u.id
-      LEFT JOIN users creator ON cs.created_by = creator.id
-      WHERE cs.complaint_id = $1
-      ORDER BY cs.step_order ASC
-    `, [id]);
-    
-    res.json({
-      success: true,
-      data: result.rows
-    });
-  } catch (error) {
-    console.error('Error fetching complaint steps:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching complaint steps',
-      error: error.message
-    });
-  }
-});
-
-// ============================================
-// GET COMPLAINT BY ID (with steps)
-// ============================================
-router.get('/:id', protect, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Get complaint details
-    const complaintResult = await pool.query(`
-      SELECT 
-        c.*,
-        t.first_name as tenant_first_name,
-        t.last_name as tenant_last_name,
-        t.phone_number as tenant_phone,
-        p.name as property_name,
-        p.address as property_address,
-        pu.unit_number,
-        pu.unit_code,
-        agent.first_name as agent_first_name,
-        agent.last_name as agent_last_name
-      FROM complaints c
-      LEFT JOIN tenants t ON c.tenant_id = t.id
-      LEFT JOIN property_units pu ON c.unit_id = pu.id
-      LEFT JOIN properties p ON pu.property_id = p.id
-      LEFT JOIN users agent ON c.assigned_agent = agent.id
-      WHERE c.id = $1
-    `, [id]);
-    
-    if (complaintResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Complaint not found'
-      });
-    }
-
-    const complaint = complaintResult.rows[0];
-
-    // Get complaint steps
-    const stepsResult = await pool.query(`
-      SELECT 
-        cs.*,
-        u.first_name as completed_by_name
-      FROM complaint_steps cs
-      LEFT JOIN users u ON cs.completed_by = u.id
-      WHERE cs.complaint_id = $1
-      ORDER BY cs.step_order ASC
-    `, [id]);
-
-    res.json({
-      success: true,
-      data: {
-        ...complaint,
-        steps: stepsResult.rows
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching complaint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching complaint',
-      error: error.message
-    });
-  }
-});
-
-// ============================================
 // CREATE NEW COMPLAINT
 // ============================================
 router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, res) => {
@@ -400,7 +300,7 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
 });
 
 // ============================================
-// GET COMPLAINT STEPS
+// GET COMPLAINT STEPS (specific route before /:id)
 // ============================================
 router.get('/:id/steps', protect, async (req, res) => {
   try {
@@ -916,223 +816,6 @@ router.patch('/:id/assign', protect, authorize(['admin', 'agent']), async (req, 
 });
 
 // ============================================
-// GET COMPLAINT STATISTICS
-// ============================================
-router.get('/stats/overview', protect, authorize(['admin', 'agent']), async (req, res) => {
-  try {
-    let whereClause = '';
-    const queryParams = [];
-    
-    if (req.user.role === 'agent') {
-      whereClause = `WHERE c.unit_id IN (
-        SELECT pu.id FROM property_units pu
-        WHERE pu.property_id IN (
-          SELECT property_id FROM agent_property_assignments 
-          WHERE agent_id = $1 AND is_active = true
-        )
-      )`;
-      queryParams.push(req.user.id);
-    }
-    
-    const statsResult = await pool.query(`
-      SELECT 
-        COUNT(*) as total_complaints,
-        COUNT(CASE WHEN status = 'open' THEN 1 END) as open_complaints,
-        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_complaints,
-        COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved_complaints,
-        COUNT(CASE WHEN priority = 'high' THEN 1 END) as high_priority
-      FROM complaints c
-      ${whereClause}
-    `, queryParams);
-    
-    res.json({
-      success: true,
-      data: statsResult.rows[0]
-    });
-  } catch (error) {
-    console.error('Error fetching complaint statistics:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching complaint statistics',
-      error: error.message
-    });
-  }
-});
-
-// ============================================
-// UPDATE COMPLAINT (PUT)
-// ============================================
-router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req, res) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    const { id } = req.params;
-    const {
-      title,
-      description,
-      category,
-      categories,
-      priority,
-      assigned_agent,
-      status
-    } = req.body;
-    
-    console.log('📝 Updating complaint:', id, req.body);
-    
-    // Check if complaint exists
-    const complaintCheck = await client.query(
-      'SELECT * FROM complaints WHERE id = $1',
-      [id]
-    );
-    
-    if (complaintCheck.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Complaint not found'
-      });
-    }
-    
-    const complaint = complaintCheck.rows[0];
-    
-    // Authorization check - tenants can only update their own complaints
-    if (req.user.role === 'tenant' && complaint.tenant_id !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-    }
-    
-    // Tenants can only update certain fields
-    if (req.user.role === 'tenant') {
-      if (assigned_agent || status) {
-        return res.status(403).json({
-          success: false,
-          message: 'Tenants cannot assign agents or change status'
-        });
-      }
-    }
-    
-    // Prepare categories JSON if provided
-    let categoriesJson = null;
-    if (categories && Array.isArray(categories)) {
-      categoriesJson = JSON.stringify(categories);
-    }
-    
-    // Update the complaint
-    const updateResult = await client.query(
-      `UPDATE complaints 
-       SET title = COALESCE($1, title),
-           description = COALESCE($2, description),
-           category = COALESCE($3, category),
-           categories = COALESCE($4::jsonb, categories),
-           priority = COALESCE($5, priority),
-           assigned_agent = COALESCE($6, assigned_agent),
-           status = COALESCE($7, status),
-           updated_at = NOW()
-       WHERE id = $8
-       RETURNING *`,
-      [
-        title,
-        description,
-        category,
-        categoriesJson,
-        priority,
-        assigned_agent,
-        status,
-        id
-      ]
-    );
-
-    // Create update record
-    await client.query(
-      `INSERT INTO complaint_updates (
-        complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)`,
-      [
-        id,
-        req.user.id,
-        'Complaint details updated.',
-        'updated'
-      ]
-    );
-    
-    await client.query('COMMIT');
-    
-    console.log('✅ Complaint updated successfully');
-    
-    res.json({
-      success: true,
-      message: 'Complaint updated successfully',
-      data: updateResult.rows[0]
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error updating complaint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating complaint',
-      error: error.message
-    });
-  } finally {
-    client.release();
-  }
-});
-
-// ============================================
-// DELETE COMPLAINT
-// ============================================
-router.delete('/:id', protect, authorize(['admin']), async (req, res) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    const { id } = req.params;
-    
-    // Check if complaint exists
-    const complaintCheck = await client.query(
-      'SELECT id, title FROM complaints WHERE id = $1',
-      [id]
-    );
-    
-    if (complaintCheck.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Complaint not found'
-      });
-    }
-    
-    // Delete complaint steps first
-    await client.query('DELETE FROM complaint_steps WHERE complaint_id = $1', [id]);
-    
-    // Delete complaint updates
-    await client.query('DELETE FROM complaint_updates WHERE complaint_id = $1', [id]);
-    
-    // Delete the complaint
-    await client.query('DELETE FROM complaints WHERE id = $1', [id]);
-    
-    await client.query('COMMIT');
-    
-    res.json({
-      success: true,
-      message: `Complaint "${complaintCheck.rows[0].title}" deleted successfully`
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error deleting complaint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting complaint',
-      error: error.message
-    });
-  } finally {
-    client.release();
-  }
-});
-
-// ============================================
 // ADD COMPLAINT UPDATE/COMMENT
 // ============================================
 router.post('/:id/updates', protect, async (req, res) => {
@@ -1196,6 +879,256 @@ router.post('/:id/updates', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error adding complaint update',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// ============================================
+// UPDATE COMPLAINT (PUT /:id) - MAIN UPDATE ROUTE
+// ============================================
+router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      category,
+      categories,
+      priority,
+      assigned_agent,
+      status,
+      tenant_id,
+      unit_id
+    } = req.body;
+    
+    console.log('📝 PUT /:id - Updating complaint:', id);
+    console.log('📝 Request body:', req.body);
+    
+    // Check if complaint exists
+    const complaintCheck = await client.query(
+      'SELECT * FROM complaints WHERE id = $1',
+      [id]
+    );
+    
+    if (complaintCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'Complaint not found'
+      });
+    }
+    
+    const complaint = complaintCheck.rows[0];
+    
+    // Authorization check - tenants can only update their own complaints
+    if (req.user.role === 'tenant' && complaint.tenant_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+    
+    // Tenants can only update certain fields
+    if (req.user.role === 'tenant') {
+      if (assigned_agent || status) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({
+          success: false,
+          message: 'Tenants cannot assign agents or change status'
+        });
+      }
+    }
+    
+    // Prepare categories JSON if provided
+    let categoriesJson = null;
+    if (categories && Array.isArray(categories)) {
+      categoriesJson = JSON.stringify(categories);
+    }
+    
+    // Update the complaint
+    const updateResult = await client.query(
+      `UPDATE complaints 
+       SET title = COALESCE($1, title),
+           description = COALESCE($2, description),
+           category = COALESCE($3, category),
+           categories = COALESCE($4::jsonb, categories),
+           priority = COALESCE($5, priority),
+           assigned_agent = COALESCE($6, assigned_agent),
+           status = COALESCE($7, status),
+           tenant_id = COALESCE($8, tenant_id),
+           unit_id = COALESCE($9, unit_id),
+           updated_at = NOW()
+       WHERE id = $10
+       RETURNING *`,
+      [
+        title,
+        description,
+        category,
+        categoriesJson,
+        priority,
+        assigned_agent,
+        status,
+        tenant_id,
+        unit_id,
+        id
+      ]
+    );
+
+    // Create update record
+    await client.query(
+      `INSERT INTO complaint_updates (
+        complaint_id, updated_by, update_text, update_type
+      ) VALUES ($1, $2, $3, $4)`,
+      [
+        id,
+        req.user.id,
+        'Complaint details updated.',
+        'updated'
+      ]
+    );
+    
+    await client.query('COMMIT');
+    
+    console.log('✅ Complaint updated successfully');
+    
+    res.json({
+      success: true,
+      message: 'Complaint updated successfully',
+      data: updateResult.rows[0]
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error updating complaint:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating complaint',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// ============================================
+// GET COMPLAINT BY ID (must come after specific routes)
+// ============================================
+router.get('/:id', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log('📝 GET /:id - Fetching complaint:', id);
+    
+    // Get complaint details
+    const complaintResult = await pool.query(`
+      SELECT 
+        c.*,
+        t.first_name as tenant_first_name,
+        t.last_name as tenant_last_name,
+        t.phone_number as tenant_phone,
+        p.name as property_name,
+        p.address as property_address,
+        pu.unit_number,
+        pu.unit_code,
+        agent.first_name as agent_first_name,
+        agent.last_name as agent_last_name
+      FROM complaints c
+      LEFT JOIN tenants t ON c.tenant_id = t.id
+      LEFT JOIN property_units pu ON c.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN users agent ON c.assigned_agent = agent.id
+      WHERE c.id = $1
+    `, [id]);
+    
+    if (complaintResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Complaint not found'
+      });
+    }
+
+    const complaint = complaintResult.rows[0];
+
+    // Get complaint steps
+    const stepsResult = await pool.query(`
+      SELECT 
+        cs.*,
+        u.first_name as completed_by_name
+      FROM complaint_steps cs
+      LEFT JOIN users u ON cs.completed_by = u.id
+      WHERE cs.complaint_id = $1
+      ORDER BY cs.step_order ASC
+    `, [id]);
+
+    res.json({
+      success: true,
+      data: {
+        ...complaint,
+        steps: stepsResult.rows
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching complaint:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching complaint',
+      error: error.message
+    });
+  }
+});
+
+// ============================================
+// DELETE COMPLAINT (must come after specific routes)
+// ============================================
+router.delete('/:id', protect, authorize(['admin']), async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    
+    // Check if complaint exists
+    const complaintCheck = await client.query(
+      'SELECT id, title FROM complaints WHERE id = $1',
+      [id]
+    );
+    
+    if (complaintCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Complaint not found'
+      });
+    }
+    
+    // Delete complaint steps first
+    await client.query('DELETE FROM complaint_steps WHERE complaint_id = $1', [id]);
+    
+    // Delete complaint updates
+    await client.query('DELETE FROM complaint_updates WHERE complaint_id = $1', [id]);
+    
+    // Delete the complaint
+    await client.query('DELETE FROM complaints WHERE id = $1', [id]);
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: `Complaint "${complaintCheck.rows[0].title}" deleted successfully`
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting complaint:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting complaint',
       error: error.message
     });
   } finally {
