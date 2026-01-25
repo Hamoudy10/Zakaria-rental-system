@@ -187,3 +187,28 @@ const autoTable = autoTableModule.default;
 autoTable(doc, { startY: 55, head: [...], body: [...] }); // doc as first arg
 companyName = data.name || data.company_name || 'Default';
 companyLogo = data.logo || data.company_logo || null;
+## ADMIN DASHBOARD REDESIGN (v19)
+
+### New Endpoint
+- `GET /api/admin/dashboard/comprehensive-stats` - Detailed dashboard statistics
+
+### Database Schema Notes
+- `properties` table has NO `is_active` column
+- `complaints` uses `raised_at` (not `created_at`)
+- `tenant_allocations` uses `allocation_date` (not `created_at`)
+- `payment_status` enum: `pending`, `completed`, `failed`, `overdue` (no `processing`)
+- `unit_type` enum: `bedsitter`, `studio`, `one_bedroom`, `two_bedroom`, `three_bedroom`, `shop`, `hall`
+
+### Comprehensive Stats Response Structure
+``javascript
+{
+  property: { totalProperties, totalUnits, occupiedUnits, vacantUnits, occupancyRate },
+  tenant: { totalTenants, activeTenants, newThisMonth, tenantsWithArrears, totalArrears },
+  financial: { revenueThisMonth, revenueThisYear, expectedMonthlyRent, collectionRate, pendingPaymentsAmount, outstandingWater },
+  agent: { totalAgents, activeAgents, assignedProperties, unassignedProperties },
+  complaint: { openComplaints, inProgressComplaints, resolvedComplaints, resolvedThisMonth },
+  sms: { totalSent, sentToday, failedCount, pendingCount },
+  payment: { paymentsToday, amountToday, paymentsThisWeek, paymentsThisMonth, failedPayments, pendingPayments },
+  unitTypeBreakdown: [{ unitType, total, occupied, vacant }],
+  monthlyTrend: [{ month, revenue, paymentCount }]
+}

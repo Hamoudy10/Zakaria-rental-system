@@ -244,3 +244,22 @@ CREATE TABLE complaint_steps (
   created_at TIMESTAMP DEFAULT NOW(),
   UNIQUE(complaint_id, step_order)
 );
+
+---
+
+## Database `backend/claude_db.md` - Add this section:
+
+```markdown
+## SCHEMA CONSTRAINTS (v19)
+
+### Properties Table
+- NO `is_active` column exists
+- Columns: `id`, `property_code`, `name`, `address`, `county`, `town`, `description`, `total_units`, `available_units`, `created_by`, `created_at`, `updated_at`, `unit_type`
+
+### Enum Values
+```sql
+-- payment_status (NO 'processing' value)
+pending, completed, failed, overdue
+
+-- unit_type
+bedsitter, studio, one_bedroom, two_bedroom, three_bedroom, shop, hall

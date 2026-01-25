@@ -238,3 +238,32 @@ The backend `/api/admin/company-info` endpoint already works correctly. The fix 
 const autoTableModule = await import('jspdf-autotable');
 const autoTable = autoTableModule.default;
 autoTable(doc, { ...options }); // doc as first argument, NOT doc.autoTable()
+
+---
+
+## Backend `backend/claude.md` - Add this section:
+
+```markdown
+## ADMIN DASHBOARD CONTROLLER (v19)
+
+### File: controllers/dashboardController.js
+
+### Endpoints
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/admin/dashboard/stats` | Legacy stats (backward compatible) |
+| GET | `/admin/dashboard/comprehensive-stats` | Detailed dashboard data |
+| GET | `/admin/dashboard/recent-activities` | Last 10 system activities |
+| GET | `/admin/dashboard/top-properties` | Top 6 properties by revenue |
+
+### Schema Constraints
+- `properties` has NO `is_active` column - don't filter by it
+- Use `raised_at` for complaints (not `created_at`)
+- Use `allocation_date` for tenant_allocations (not `created_at`)
+- Use `sent_at` for SMS sent today count
+- Payment status enum: `pending`, `completed`, `failed`, `overdue`
+- Return `pendingPayments` (not `processingPayments`)
+
+### Route Registration (adminRoutes.js)
+```javascript
+router.get('/dashboard/comprehensive-stats', protect, adminOnly, dashboardController.getComprehensiveStats);
