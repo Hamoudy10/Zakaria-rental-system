@@ -34,6 +34,9 @@ try {
   throw new Error('adminSettingsController is required for billing system');
 }
 
+const dashboardRoutes = require('./routes/dashboard');
+app.use('/api/admin/dashboard', dashboardRoutes);
+
 // ============================
 // Admin Dashboard Routes
 // ============================
@@ -100,5 +103,6 @@ router.get('/settings/:key', protect, adminOnly, adminSettingsController.getSett
 
 // UPDATE single setting
 router.put('/settings/:key', protect, adminOnly, adminSettingsController.updateSettingByKey);
+
 
 module.exports = router;
