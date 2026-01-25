@@ -15,7 +15,7 @@ const getAdminStats = async (req, res) => {
     const totalRevenue = parseFloat(revenueResult.rows[0].total_revenue || 0);
     const monthlyGrowth = parseFloat(revenueResult.rows[0].monthly_revenue || 0);
 
-    const propResult = await pool.query(`SELECT COUNT(*) AS total_properties FROM properties WHERE is_active = true`);
+    const propResult = await pool.query(`SELECT COUNT(*) AS total_properties FROM properties`);
     const totalProperties = parseInt(propResult.rows[0].total_properties || 0);
 
     const agentResult = await pool.query(`
@@ -72,7 +72,7 @@ const getAdminStats = async (req, res) => {
       LEFT JOIN agent_property_assignments ap
         ON ap.property_id = p.id
         AND ap.is_active = true
-      WHERE ap.id IS NULL AND p.is_active = true
+      WHERE ap.id IS NULL
     `);
     const unassignedProperties = parseInt(unassignedResult.rows[0].unassigned_properties || 0);
 
@@ -108,7 +108,7 @@ const getComprehensiveStats = async (req, res) => {
     console.log('📊 Fetching comprehensive stats...');
     
     // ═══════════════════════════════════════════════════════════════
-    // PROPERTY STATISTICS
+    // PROPERTY STATISTICS (properties table has NO is_active column)
     // ═══════════════════════════════════════════════════════════════
     let propertyStats = { total_properties: 0, total_units: 0, occupied_units: 0, vacant_units: 0 };
     try {
@@ -120,7 +120,6 @@ const getComprehensiveStats = async (req, res) => {
           COUNT(DISTINCT CASE WHEN pu.is_occupied = false AND pu.is_active = true THEN pu.id END) as vacant_units
         FROM properties p
         LEFT JOIN property_units pu ON p.id = pu.property_id
-        WHERE p.is_active = true
       `);
       propertyStats = propertyStatsResult.rows[0] || propertyStats;
       console.log('✅ Property stats fetched');
@@ -254,7 +253,7 @@ const getComprehensiveStats = async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // AGENT STATISTICS
+    // AGENT STATISTICS (properties has NO is_active column)
     // ═══════════════════════════════════════════════════════════════
     let agentStats = { total_agents: 0, active_agents: 0 };
     let assignedPropertiesCount = 0;
@@ -280,8 +279,7 @@ const getComprehensiveStats = async (req, res) => {
       const unassignedPropertiesResult = await pool.query(`
         SELECT COUNT(*) as count
         FROM properties p
-        WHERE p.is_active = true
-        AND p.id NOT IN (
+        WHERE p.id NOT IN (
           SELECT DISTINCT property_id 
           FROM agent_property_assignments 
           WHERE is_active = true
@@ -341,7 +339,7 @@ const getComprehensiveStats = async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PAYMENT STATISTICS
+    // PAYMENT STATISTICS (only use valid enum values: pending, completed, failed, overdue)
     // ═══════════════════════════════════════════════════════════════
     let paymentStats = {
       payments_today: 0,
@@ -350,7 +348,7 @@ const getComprehensiveStats = async (req, res) => {
       amount_this_week: 0,
       payments_this_month: 0,
       failed_payments: 0,
-      processing_payments: 0
+      pending_payments: 0
     };
 
     try {
@@ -362,7 +360,7 @@ const getComprehensiveStats = async (req, res) => {
           COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed' THEN amount ELSE 0 END), 0) as amount_this_week,
           COUNT(CASE WHEN payment_month >= DATE_TRUNC('month', CURRENT_DATE) AND status = 'completed' THEN 1 END) as payments_this_month,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_payments,
-          COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_payments
+          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments
         FROM rent_payments
       `);
       paymentStats = paymentStatsResult.rows[0] || paymentStats;
@@ -372,23 +370,23 @@ const getComprehensiveStats = async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // UNIT TYPE BREAKDOWN
+    // UNIT TYPE BREAKDOWN (only use valid enum values)
     // ═══════════════════════════════════════════════════════════════
     let unitTypeBreakdown = [];
     try {
       const unitTypeBreakdownResult = await pool.query(`
         SELECT 
-          COALESCE(unit_type, 'unknown') as unit_type,
+          unit_type::text as unit_type,
           COUNT(*) as total,
           COUNT(CASE WHEN is_occupied = true THEN 1 END) as occupied,
           COUNT(CASE WHEN is_occupied = false THEN 1 END) as vacant
         FROM property_units
-        WHERE is_active = true
+        WHERE is_active = true AND unit_type IS NOT NULL
         GROUP BY unit_type
         ORDER BY COUNT(*) DESC
       `);
       unitTypeBreakdown = unitTypeBreakdownResult.rows.map(row => ({
-        unitType: row.unit_type || 'unknown',
+        unitType: row.unit_type || 'other',
         total: parseInt(row.total) || 0,
         occupied: parseInt(row.occupied) || 0,
         vacant: parseInt(row.vacant) || 0
@@ -485,7 +483,7 @@ const getComprehensiveStats = async (req, res) => {
           amountThisWeek: parseFloat(paymentStats.amount_this_week) || 0,
           paymentsThisMonth: parseInt(paymentStats.payments_this_month) || 0,
           failedPayments: parseInt(paymentStats.failed_payments) || 0,
-          processingPayments: parseInt(paymentStats.processing_payments) || 0
+          pendingPayments: parseInt(paymentStats.pending_payments) || 0
         },
         unitTypeBreakdown: unitTypeBreakdown,
         monthlyTrend: monthlyTrend,
@@ -606,6 +604,7 @@ const getRecentActivities = async (req, res) => {
 
 /**
  * Get top performing properties (by monthly revenue)
+ * Note: properties table has NO is_active column
  */
 const getTopProperties = async (req, res) => {
   try {
@@ -645,7 +644,6 @@ const getTopProperties = async (req, res) => {
         JOIN users u ON u.id = apa.agent_id
         WHERE apa.is_active = true
       ) agent_info ON agent_info.property_id = p.id
-      WHERE p.is_active = true
       ORDER BY revenue DESC
       LIMIT 6
     `);

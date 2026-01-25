@@ -376,7 +376,7 @@ const DashboardOverview = ({
                 {unitTypeBreakdown.map((type, index) => (
                   <div key={index} className="flex items-center justify-between text-sm">
                     <span className="text-gray-600 capitalize">
-                      {type.unitType?.replace(/_/g, ' ') || 'Unknown'}
+                      {type.unitType?.replace(/_/g, ' ') || 'Other'}
                     </span>
                     <div className="flex items-center gap-3">
                       <span className="text-green-600">{type.occupied} occupied</span>
@@ -389,7 +389,7 @@ const DashboardOverview = ({
           )}
         </div>
 
-        {/* Payment Statistics */}
+        {/* Payment Statistics - FIXED: Changed processingPayments to pendingPayments */}
         <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -419,9 +419,10 @@ const DashboardOverview = ({
               <p className="text-sm text-purple-600 font-medium">This Month</p>
               <p className="text-xl font-bold text-purple-900">{payment?.paymentsThisMonth || 0}</p>
             </div>
+            {/* FIXED: Changed from processingPayments to pendingPayments */}
             <div className="bg-yellow-50 rounded-lg p-3">
-              <p className="text-sm text-yellow-600 font-medium">Processing</p>
-              <p className="text-xl font-bold text-yellow-900">{payment?.processingPayments || 0}</p>
+              <p className="text-sm text-yellow-600 font-medium">Pending</p>
+              <p className="text-xl font-bold text-yellow-900">{payment?.pendingPayments || 0}</p>
             </div>
           </div>
 
