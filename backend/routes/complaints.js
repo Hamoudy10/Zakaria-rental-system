@@ -1,5 +1,5 @@
 // ============================================
-// FIXED complaints.js ROUTES FILE
+// FINAL FIXED complaints.js ROUTES FILE
 // Replace your existing backend/routes/complaints.js with this
 // ============================================
 
@@ -12,11 +12,13 @@ const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 const protect = authMiddleware;
 const authorize = requireRole;
 
-console.log('✅ Complaints routes loaded');
+console.log('✅ Complaints routes loaded - v3 FINAL with PATCH support');
 
 // ============================================
-// GET COMPLAINT STATISTICS (MUST come before /:id)
+// STATIC ROUTES FIRST (no :id parameter)
 // ============================================
+
+// GET /stats/overview - Statistics
 router.get('/stats/overview', protect, authorize(['admin', 'agent']), async (req, res) => {
   try {
     let whereClause = '';
@@ -58,9 +60,7 @@ router.get('/stats/overview', protect, authorize(['admin', 'agent']), async (req
   }
 });
 
-// ============================================
-// GET ALL COMPLAINTS (with advanced filtering)
-// ============================================
+// GET / - Get all complaints
 router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, res) => {
   try {
     console.log('Fetching all complaints...');
@@ -107,7 +107,6 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
       query += ` AND c.tenant_id = $${paramCount}`;
       queryParams.push(req.user.id);
     } else if (req.user.role === 'agent') {
-      // Agent can only see complaints from their assigned properties
       query += ` AND pu.property_id IN (
         SELECT property_id FROM agent_property_assignments 
         WHERE agent_id = $${++paramCount} AND is_active = true
@@ -115,7 +114,6 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
       queryParams.push(req.user.id);
     }
 
-    // Add filters
     if (status) {
       paramCount++;
       query += ` AND c.status = $${paramCount}`;
@@ -158,7 +156,6 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
       queryParams.push(end_date);
     }
 
-    // Ordering
     query += ` ORDER BY 
       CASE c.status 
         WHEN 'open' THEN 1
@@ -173,7 +170,6 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
       END,
       c.raised_at DESC`;
     
-    // Pagination
     const offset = (page - 1) * limit;
     paramCount++;
     query += ` LIMIT $${paramCount}`;
@@ -202,9 +198,7 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
   }
 });
 
-// ============================================
-// CREATE NEW COMPLAINT
-// ============================================
+// POST / - Create complaint
 router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -223,7 +217,6 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
     
     console.log('📝 Creating new complaint:', req.body);
     
-    // Validate required fields
     if (!unit_id || !title || !description) {
       return res.status(400).json({
         success: false,
@@ -231,7 +224,6 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
       });
     }
     
-    // Get tenant_id from the request or use the provided one
     const finalTenantId = req.user.role === 'tenant' ? req.user.id : tenant_id;
     
     if (!finalTenantId) {
@@ -241,12 +233,10 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
       });
     }
     
-    // Prepare categories as JSONB
     const categoriesJson = categories 
       ? JSON.stringify(categories) 
       : JSON.stringify([category]);
     
-    // Create the complaint
     const complaintResult = await client.query(
       `INSERT INTO complaints (
         tenant_id, unit_id, title, description, category, categories, priority, status
@@ -263,7 +253,6 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
       ]
     );
 
-    // Create initial complaint update
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
@@ -300,8 +289,10 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
 });
 
 // ============================================
-// GET COMPLAINT STEPS (specific route before /:id)
+// SPECIFIC PARAMETER ROUTES (must come before generic /:id)
 // ============================================
+
+// GET /:id/steps
 router.get('/:id/steps', protect, async (req, res) => {
   try {
     const { id } = req.params;
@@ -334,9 +325,7 @@ router.get('/:id/steps', protect, async (req, res) => {
   }
 });
 
-// ============================================
-// ADD COMPLAINT STEP
-// ============================================
+// POST /:id/steps
 router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -353,7 +342,6 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
       });
     }
     
-    // Check if complaint exists
     const complaintCheck = await client.query(
       'SELECT id, title FROM complaints WHERE id = $1',
       [id]
@@ -366,7 +354,6 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
       });
     }
     
-    // Get the next step order if not provided
     let finalStepOrder = step_order;
     if (!finalStepOrder) {
       const maxOrderResult = await client.query(
@@ -376,7 +363,6 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
       finalStepOrder = maxOrderResult.rows[0].next_order;
     }
     
-    // Insert the step
     const stepResult = await client.query(
       `INSERT INTO complaint_steps (
         complaint_id, step_order, step_description, created_by
@@ -385,7 +371,6 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
       [id, finalStepOrder, step_description, req.user.id]
     );
     
-    // Update complaint status to in_progress if it's open
     await client.query(
       `UPDATE complaints 
        SET status = 'in_progress', 
@@ -395,7 +380,6 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
       [id, req.user.id]
     );
     
-    // Add update record
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
@@ -423,9 +407,7 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
   }
 });
 
-// ============================================
-// ADD MULTIPLE STEPS (BULK)
-// ============================================
+// POST /:id/steps/bulk
 router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -442,7 +424,6 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
       });
     }
     
-    // Check if complaint exists
     const complaintCheck = await client.query(
       'SELECT id, title, tenant_id FROM complaints WHERE id = $1',
       [id]
@@ -472,7 +453,6 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
       }
     }
     
-    // Update complaint status to in_progress
     await client.query(
       `UPDATE complaints 
        SET status = 'in_progress', 
@@ -483,7 +463,6 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
       [id, req.user.id]
     );
     
-    // Add update record
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
@@ -491,7 +470,6 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
       [id, req.user.id, `${insertedSteps.length} servicing steps added. Work has begun.`, 'servicing_started']
     );
 
-    // Notify tenant
     await client.query(
       `INSERT INTO notifications (
         user_id, title, message, type, related_entity_type, related_entity_id
@@ -526,9 +504,7 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
   }
 });
 
-// ============================================
-// TOGGLE STEP COMPLETION
-// ============================================
+// PATCH /:complaintId/steps/:stepId - Toggle step completion
 router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -538,7 +514,6 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
     const { complaintId, stepId } = req.params;
     const { is_completed } = req.body;
     
-    // Update the step
     const updateResult = await client.query(
       `UPDATE complaint_steps 
        SET is_completed = $1,
@@ -556,7 +531,6 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
       });
     }
     
-    // Check if all steps are now completed
     const allStepsResult = await client.query(
       `SELECT 
         COUNT(*) as total,
@@ -569,7 +543,6 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
     const { total, completed } = allStepsResult.rows[0];
     const allCompleted = parseInt(total) > 0 && parseInt(total) === parseInt(completed);
     
-    // If all steps completed, mark complaint as resolved
     if (allCompleted) {
       await client.query(
         `UPDATE complaints 
@@ -580,13 +553,11 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
         [complaintId, req.user.id]
       );
       
-      // Get complaint for notification
       const complaintResult = await client.query(
         'SELECT title, tenant_id FROM complaints WHERE id = $1',
         [complaintId]
       );
       
-      // Add update record
       await client.query(
         `INSERT INTO complaint_updates (
           complaint_id, updated_by, update_text, update_type
@@ -594,7 +565,6 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
         [complaintId, req.user.id, 'All steps completed. Complaint resolved.', 'resolved']
       );
 
-      // Notify tenant
       if (complaintResult.rows.length > 0) {
         await client.query(
           `INSERT INTO notifications (
@@ -633,9 +603,7 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
   }
 });
 
-// ============================================
-// DELETE STEP
-// ============================================
+// DELETE /:complaintId/steps/:stepId
 router.delete('/:complaintId/steps/:stepId', protect, authorize(['admin']), async (req, res) => {
   try {
     const { complaintId, stepId } = req.params;
@@ -666,9 +634,7 @@ router.delete('/:complaintId/steps/:stepId', protect, authorize(['admin']), asyn
   }
 });
 
-// ============================================
-// UPDATE COMPLAINT STATUS
-// ============================================
+// PATCH /:id/status - Update status only
 router.patch('/:id/status', protect, authorize(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -718,7 +684,6 @@ router.patch('/:id/status', protect, authorize(['admin', 'agent']), async (req, 
       });
     }
     
-    // Add update record
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
@@ -746,9 +711,7 @@ router.patch('/:id/status', protect, authorize(['admin', 'agent']), async (req, 
   }
 });
 
-// ============================================
-// ASSIGN COMPLAINT
-// ============================================
+// PATCH /:id/assign - Assign to agent
 router.patch('/:id/assign', protect, authorize(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -765,7 +728,6 @@ router.patch('/:id/assign', protect, authorize(['admin', 'agent']), async (req, 
       });
     }
     
-    // Check if agent exists
     const agentCheck = await pool.query(
       'SELECT id, first_name, last_name FROM users WHERE id = $1 AND role IN ($2, $3)',
       [agent_id, 'agent', 'admin']
@@ -815,9 +777,7 @@ router.patch('/:id/assign', protect, authorize(['admin', 'agent']), async (req, 
   }
 });
 
-// ============================================
-// ADD COMPLAINT UPDATE/COMMENT
-// ============================================
+// POST /:id/updates - Add comment/update
 router.post('/:id/updates', protect, async (req, res) => {
   const client = await pool.connect();
   
@@ -834,7 +794,6 @@ router.post('/:id/updates', protect, async (req, res) => {
       });
     }
     
-    // Check if complaint exists
     const complaintCheck = await client.query(
       'SELECT id, tenant_id FROM complaints WHERE id = $1',
       [id]
@@ -849,7 +808,6 @@ router.post('/:id/updates', protect, async (req, res) => {
     
     const complaint = complaintCheck.rows[0];
     
-    // Authorization check
     if (req.user.role === 'tenant' && complaint.tenant_id !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -857,7 +815,6 @@ router.post('/:id/updates', protect, async (req, res) => {
       });
     }
     
-    // Create the update
     const updateResult = await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
@@ -887,9 +844,11 @@ router.post('/:id/updates', protect, async (req, res) => {
 });
 
 // ============================================
-// UPDATE COMPLAINT (PUT /:id) - MAIN UPDATE ROUTE
+// GENERIC /:id ROUTES (MUST COME LAST!)
 // ============================================
-router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req, res) => {
+
+// PATCH /:id - Update complaint (THIS IS WHAT FRONTEND CALLS)
+router.patch('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -908,7 +867,7 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
       unit_id
     } = req.body;
     
-    console.log('📝 PUT /:id - Updating complaint:', id);
+    console.log('📝 PATCH /:id - Updating complaint:', id);
     console.log('📝 Request body:', req.body);
     
     // Check if complaint exists
@@ -927,7 +886,7 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
     
     const complaint = complaintCheck.rows[0];
     
-    // Authorization check - tenants can only update their own complaints
+    // Authorization check
     if (req.user.role === 'tenant' && complaint.tenant_id !== req.user.id) {
       await client.query('ROLLBACK');
       return res.status(403).json({
@@ -936,7 +895,7 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
       });
     }
     
-    // Tenants can only update certain fields
+    // Tenants restrictions
     if (req.user.role === 'tenant') {
       if (assigned_agent || status) {
         await client.query('ROLLBACK');
@@ -947,7 +906,7 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
       }
     }
     
-    // Prepare categories JSON if provided
+    // Prepare categories JSON
     let categoriesJson = null;
     if (categories && Array.isArray(categories)) {
       categoriesJson = JSON.stringify(categories);
@@ -987,17 +946,12 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
       ) VALUES ($1, $2, $3, $4)`,
-      [
-        id,
-        req.user.id,
-        'Complaint details updated.',
-        'updated'
-      ]
+      [id, req.user.id, 'Complaint details updated.', 'updated']
     );
     
     await client.query('COMMIT');
     
-    console.log('✅ Complaint updated successfully');
+    console.log('✅ Complaint updated successfully via PATCH');
     
     res.json({
       success: true,
@@ -1017,16 +971,131 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
   }
 });
 
-// ============================================
-// GET COMPLAINT BY ID (must come after specific routes)
-// ============================================
+// PUT /:id - Also support PUT method
+router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      category,
+      categories,
+      priority,
+      assigned_agent,
+      status,
+      tenant_id,
+      unit_id
+    } = req.body;
+    
+    console.log('📝 PUT /:id - Updating complaint:', id);
+    console.log('📝 Request body:', req.body);
+    
+    const complaintCheck = await client.query(
+      'SELECT * FROM complaints WHERE id = $1',
+      [id]
+    );
+    
+    if (complaintCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'Complaint not found'
+      });
+    }
+    
+    const complaint = complaintCheck.rows[0];
+    
+    if (req.user.role === 'tenant' && complaint.tenant_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+    
+    if (req.user.role === 'tenant') {
+      if (assigned_agent || status) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({
+          success: false,
+          message: 'Tenants cannot assign agents or change status'
+        });
+      }
+    }
+    
+    let categoriesJson = null;
+    if (categories && Array.isArray(categories)) {
+      categoriesJson = JSON.stringify(categories);
+    }
+    
+    const updateResult = await client.query(
+      `UPDATE complaints 
+       SET title = COALESCE($1, title),
+           description = COALESCE($2, description),
+           category = COALESCE($3, category),
+           categories = COALESCE($4::jsonb, categories),
+           priority = COALESCE($5, priority),
+           assigned_agent = COALESCE($6, assigned_agent),
+           status = COALESCE($7, status),
+           tenant_id = COALESCE($8, tenant_id),
+           unit_id = COALESCE($9, unit_id),
+           updated_at = NOW()
+       WHERE id = $10
+       RETURNING *`,
+      [
+        title,
+        description,
+        category,
+        categoriesJson,
+        priority,
+        assigned_agent,
+        status,
+        tenant_id,
+        unit_id,
+        id
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO complaint_updates (
+        complaint_id, updated_by, update_text, update_type
+      ) VALUES ($1, $2, $3, $4)`,
+      [id, req.user.id, 'Complaint details updated.', 'updated']
+    );
+    
+    await client.query('COMMIT');
+    
+    console.log('✅ Complaint updated successfully via PUT');
+    
+    res.json({
+      success: true,
+      message: 'Complaint updated successfully',
+      data: updateResult.rows[0]
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error updating complaint:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating complaint',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /:id - Get single complaint (MUST BE AFTER ALL SPECIFIC ROUTES)
 router.get('/:id', protect, async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log('📝 GET /:id - Fetching complaint:', id);
     
-    // Get complaint details
     const complaintResult = await pool.query(`
       SELECT 
         c.*,
@@ -1056,7 +1125,6 @@ router.get('/:id', protect, async (req, res) => {
 
     const complaint = complaintResult.rows[0];
 
-    // Get complaint steps
     const stepsResult = await pool.query(`
       SELECT 
         cs.*,
@@ -1084,9 +1152,7 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-// ============================================
-// DELETE COMPLAINT (must come after specific routes)
-// ============================================
+// DELETE /:id - Delete complaint (MUST BE AFTER ALL SPECIFIC ROUTES)
 router.delete('/:id', protect, authorize(['admin']), async (req, res) => {
   const client = await pool.connect();
   
@@ -1095,7 +1161,6 @@ router.delete('/:id', protect, authorize(['admin']), async (req, res) => {
     
     const { id } = req.params;
     
-    // Check if complaint exists
     const complaintCheck = await client.query(
       'SELECT id, title FROM complaints WHERE id = $1',
       [id]
@@ -1108,13 +1173,8 @@ router.delete('/:id', protect, authorize(['admin']), async (req, res) => {
       });
     }
     
-    // Delete complaint steps first
     await client.query('DELETE FROM complaint_steps WHERE complaint_id = $1', [id]);
-    
-    // Delete complaint updates
     await client.query('DELETE FROM complaint_updates WHERE complaint_id = $1', [id]);
-    
-    // Delete the complaint
     await client.query('DELETE FROM complaints WHERE id = $1', [id]);
     
     await client.query('COMMIT');
