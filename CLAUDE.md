@@ -137,3 +137,32 @@ Reusable avatar component with profile image + fallback to initials.
 ```javascript
 import { clearCompanyInfoCache } from '../utils/pdfExport';
 clearCompanyInfoCache(); // Call when company info is updated
+## VERCEL DEPLOYMENT (Frontend)
+
+### Configuration
+- **URL:** https://zakaria-rental-system.vercel.app
+- **Framework:** Vite
+- **Auto-deploy:** On push to main branch
+
+### vercel.json
+```json
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/" }],
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite"
+}
+## COMPLAINT MANAGEMENT SYSTEM
+
+### Features
+- Multi-category complaints (JSONB storage)
+- Step-based servicing workflow
+- Progress tracking with checkable steps
+- PDF export with company branding
+- Edit complaint functionality
+
+### Database Tables
+- `complaints` - Main complaints table (added `categories` JSONB column)
+- `complaint_steps` - Resolution steps for each complaint
+
+### Workflow

@@ -231,3 +231,16 @@ CREATE TABLE admin_settings (
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
+## COMPLAINT_STEPS TABLE
+```sql
+CREATE TABLE complaint_steps (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  complaint_id UUID REFERENCES complaints(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL,
+  step_description TEXT NOT NULL,
+  is_completed BOOLEAN DEFAULT false,
+  completed_at TIMESTAMP,
+  completed_by UUID REFERENCES users(id),
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(complaint_id, step_order)
+);
