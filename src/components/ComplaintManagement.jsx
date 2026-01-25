@@ -7,6 +7,7 @@ import {
   ChevronDown, ChevronUp, Search, RefreshCw, Wrench,
   Calendar, ArrowRight, Check, Loader2, Edit3, Download
 } from 'lucide-react';
+
 // PDF libraries - install with: npm install jspdf jspdf-autotable
 let jsPDFClass = null;
 let autoTablePlugin = null;
@@ -172,14 +173,10 @@ const ComplaintManagement = () => {
       const units = Array.isArray(unitsData) ? unitsData : [];
       const unitIds = units.map(u => u.id);
       
-      console.log('Units for property:', propertyId, units);
-      
       // Get all active allocations
       const allocResponse = await allocationAPI.getAllocations({ is_active: true });
       const allocationsData = allocResponse.data?.data || allocResponse.data || [];
       const allocations = Array.isArray(allocationsData) ? allocationsData : [];
-      
-      console.log('All allocations:', allocations);
       
       // Filter allocations that belong to units in this property
       const tenantsWithUnits = allocations
@@ -207,7 +204,6 @@ const ComplaintManagement = () => {
           };
         });
       
-      console.log('Tenants found for property:', propertyId, tenantsWithUnits);
       setTenants(tenantsWithUnits);
     } catch (err) {
       console.error('Error fetching tenants:', err);
@@ -447,15 +443,11 @@ const ComplaintManagement = () => {
       };
       
       // Only include categories if your backend supports it
-      // (JSONB column must exist)
       if (editForm.categories.length > 0) {
         updateData.categories = editForm.categories;
       }
       
-      console.log('Updating complaint:', selectedComplaint.id, updateData);
-      
-      const response = await complaintAPI.updateComplaint(selectedComplaint.id, updateData);
-      console.log('Update response:', response);
+      await complaintAPI.updateComplaint(selectedComplaint.id, updateData);
       
       setSuccessMessage('Complaint updated successfully!');
       setShowEditModal(false);
@@ -465,12 +457,7 @@ const ComplaintManagement = () => {
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       console.error('Error updating complaint:', err);
-      console.error('Error details:', err.response?.data);
-      
-      // More specific error message
-      const errorMessage = err.response?.data?.message || 
-                           err.response?.data?.error ||
-                           (err.response?.status === 404 ? 'Complaint update endpoint not found. Please check backend routes.' : 'Failed to update complaint');
+      const errorMessage = err.response?.data?.message || 'Failed to update complaint';
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -515,7 +502,7 @@ const ComplaintManagement = () => {
         console.log('Using default company info');
       }
       
-      // Fetch steps for all complaints to include in PDF
+      // Fetch steps for all complaints
       const complaintsWithSteps = await Promise.all(
         filteredComplaints.map(async (complaint) => {
           try {
@@ -531,10 +518,15 @@ const ComplaintManagement = () => {
       // Create PDF
       const doc = new jsPDFClass('landscape', 'mm', 'a4');
       
-      // Apply autoTable plugin if it's a function
+      // FIX: Properly register autoTable plugin to doc instance
       if (typeof autoTablePlugin === 'function') {
-        autoTablePlugin(doc);
+        try {
+          autoTablePlugin(doc);
+        } catch (e) {
+          console.warn("Could not register autoTable plugin automatically:", e);
+        }
       }
+      
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       
@@ -591,49 +583,36 @@ const ComplaintManagement = () => {
         ];
       });
       
-      // Create table using autoTable
-      // Handle both plugin styles (method on doc or standalone function)
-      const autoTable = doc.autoTable ? doc.autoTable.bind(doc) : (options) => autoTablePlugin(doc, options);
-      
-      autoTable({
-        startY: 55,
-        head: [[
-          'Tenant',
-          'Property',
-          'Unit',
-          'Categories',
-          'Title',
-          'Status',
-          'Steps',
-          'Date Raised',
-          'Date Resolved'
-        ]],
-        body: tableData,
-        styles: {
-          fontSize: 8,
-          cellPadding: 3,
-        },
-        headStyles: {
-          fillColor: primaryColor,
-          textColor: [255, 255, 255],
-          fontStyle: 'bold',
-        },
-        alternateRowStyles: {
-          fillColor: [249, 250, 251]
-        },
-        columnStyles: {
-          0: { cellWidth: 28 },
-          1: { cellWidth: 28 },
-          2: { cellWidth: 18 },
-          3: { cellWidth: 35 },
-          4: { cellWidth: 40 },
-          5: { cellWidth: 22 },
-          6: { cellWidth: 18 },
-          7: { cellWidth: 28 },
-          8: { cellWidth: 28 },
-        },
-        margin: { top: 55, bottom: 15 }
-      });
+      // FIX: Use doc.autoTable safely if registered, else fall back to calling plugin directly
+      // Explicitly passing startY ensures it doesn't try to calculate from undefined previous state
+      if (doc.autoTable) {
+        doc.autoTable({
+          startY: 55,
+          head: [[ 'Tenant', 'Property', 'Unit', 'Categories', 'Title', 'Status', 'Steps', 'Date Raised', 'Date Resolved' ]],
+          body: tableData,
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          columnStyles: {
+            0: { cellWidth: 28 }, 1: { cellWidth: 28 }, 2: { cellWidth: 18 },
+            3: { cellWidth: 35 }, 4: { cellWidth: 40 }, 5: { cellWidth: 22 },
+            6: { cellWidth: 18 }, 7: { cellWidth: 28 }, 8: { cellWidth: 28 },
+          },
+          margin: { top: 55, bottom: 15 }
+        });
+      } else if (typeof autoTablePlugin === 'function') {
+        // Fallback for some bundle configurations
+        autoTablePlugin(doc, {
+          startY: 55,
+          head: [[ 'Tenant', 'Property', 'Unit', 'Categories', 'Title', 'Status', 'Steps', 'Date Raised', 'Date Resolved' ]],
+          body: tableData,
+          // ... same options ...
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          margin: { top: 55, bottom: 15 }
+        });
+      }
       
       // Add detailed steps section on new page if there are complaints with steps
       const complaintsWithActualSteps = complaintsWithSteps.filter(c => c.steps && c.steps.length > 0);
