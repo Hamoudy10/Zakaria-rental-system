@@ -751,6 +751,41 @@ const updateUnit = async (req, res) => {
   }
 };
 
+// Add these to propertyController.js
+const uploadPropertyImages = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ success: false, message: 'No images uploaded' });
+    }
+
+    const imagePromises = req.files.map(file => {
+      return pool.query(
+        'INSERT INTO property_images (property_id, image_url, uploaded_at) VALUES ($1, $2, NOW()) RETURNING *',
+        [id, file.path] // file.path is the Cloudinary URL from your middleware
+      );
+    });
+
+    await Promise.all(imagePromises);
+    res.json({ success: true, message: 'Images uploaded successfully' });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ success: false, message: 'Server error uploading images' });
+  }
+};
+
+const deletePropertyImage = async (req, res) => {
+  try {
+    const { id, imageId } = req.params;
+    // 1. Delete from database
+    await pool.query('DELETE FROM property_images WHERE id = $1 AND property_id = $2', [imageId, id]);
+    // Note: To delete from Cloudinary, you'd call your deleteCloudinaryImage utility here
+    res.json({ success: true, message: 'Image deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+};
+
 module.exports = {
   getProperties,
   getProperty,
@@ -760,5 +795,7 @@ module.exports = {
   getUnitByCode,
   createUnit,
   getAgentProperties,
-  updateUnit
+  updateUnit,
+  uploadPropertyImages,
+  deletePropertyImage
 };
