@@ -82,7 +82,7 @@ const companyLogoStorage = new CloudinaryStorage({
       public_id: `company-logo-${Date.now()}`,
       resource_type: 'auto',
       transformation: [
-        { width: 300, height: 300, crop: 'limit' }, // Limit to max dimensions, preserve aspect ratio
+        { width: 300, height: 300, crop: 'limit' },
         { quality: 'auto:best', fetch_format: 'auto' }
       ]
     };
@@ -90,7 +90,30 @@ const companyLogoStorage = new CloudinaryStorage({
 });
 
 // ============================================
-// 5. FILE FILTER (Validate file types)
+// 5. CONFIGURE CLOUDINARY STORAGE FOR PROPERTY IMAGES
+// ============================================
+const propertyImageStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    const propertyId = req.params.id || 'unknown';
+    console.log(`📤 Uploading property image for property:`, propertyId);
+    console.log(`   Original name: ${file.originalname}`);
+    console.log(`   MIME type: ${file.mimetype}`);
+    
+    return {
+      folder: `zakaria_rental/property_images/${propertyId}`,
+      public_id: `property-${propertyId}-${Date.now()}`,
+      resource_type: 'auto',
+      transformation: [
+        { width: 1920, height: 1080, crop: 'limit' },
+        { quality: 'auto:good', fetch_format: 'auto' }
+      ]
+    };
+  },
+});
+
+// ============================================
+// 6. FILE FILTER (Validate file types)
 // ============================================
 const imageFileFilter = (req, file, cb) => {
   const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
@@ -105,7 +128,7 @@ const imageFileFilter = (req, file, cb) => {
 };
 
 // ============================================
-// 6. CREATE MULTER INSTANCES
+// 7. CREATE MULTER INSTANCES
 // ============================================
 
 // For tenant ID images
@@ -138,8 +161,18 @@ const companyLogoUpload = multer({
   }
 });
 
+// For property images (multiple)
+const propertyImageUpload = multer({
+  storage: propertyImageStorage,
+  fileFilter: imageFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB max per file
+    files: 20 // Allow up to 20 images at once
+  }
+});
+
 // ============================================
-// 7. MIDDLEWARE FOR ID IMAGES (EXISTING)
+// 8. MIDDLEWARE FOR ID IMAGES (EXISTING)
 // ============================================
 const uploadIDImages = (req, res, next) => {
   const uploadFields = idImageUpload.fields([
@@ -183,7 +216,7 @@ const uploadIDImages = (req, res, next) => {
 };
 
 // ============================================
-// 8. MIDDLEWARE FOR PROFILE IMAGE
+// 9. MIDDLEWARE FOR PROFILE IMAGE
 // ============================================
 const uploadProfileImage = (req, res, next) => {
   const uploadSingle = profileImageUpload.single('profile_image');
@@ -220,7 +253,7 @@ const uploadProfileImage = (req, res, next) => {
 };
 
 // ============================================
-// 9. MIDDLEWARE FOR COMPANY LOGO
+// 10. MIDDLEWARE FOR COMPANY LOGO
 // ============================================
 const uploadCompanyLogo = (req, res, next) => {
   const uploadSingle = companyLogoUpload.single('company_logo');
@@ -257,7 +290,54 @@ const uploadCompanyLogo = (req, res, next) => {
 };
 
 // ============================================
-// 10. UTILITY: DELETE IMAGE FROM CLOUDINARY
+// 11. MIDDLEWARE FOR PROPERTY IMAGES (NEW)
+// ============================================
+const uploadPropertyImages = (req, res, next) => {
+  const uploadArray = propertyImageUpload.array('property_images', 20);
+
+  uploadArray(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      console.error('❌ Multer Error:', err);
+      
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          success: false,
+          message: 'File too large. Maximum size is 10MB per image.'
+        });
+      }
+      
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          success: false,
+          message: 'Too many files. Maximum 20 images allowed per upload.'
+        });
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: `Upload error: ${err.message}`
+      });
+    } else if (err) {
+      console.error('❌ Upload Error:', err);
+      return res.status(400).json({
+        success: false,
+        message: err.message || 'Failed to upload property images'
+      });
+    }
+    
+    console.log('✅ Property images upload middleware completed successfully');
+    if (req.files && req.files.length > 0) {
+      console.log(`📁 Uploaded ${req.files.length} property image(s)`);
+      req.files.forEach((file, index) => {
+        console.log(`   ${index + 1}. ${file.path}`);
+      });
+    }
+    next();
+  });
+};
+
+// ============================================
+// 12. UTILITY: DELETE IMAGE FROM CLOUDINARY
 // ============================================
 const deleteCloudinaryImage = async (imageUrl) => {
   if (!imageUrl) return;
@@ -286,5 +366,6 @@ module.exports = {
   uploadIDImages, 
   uploadProfileImage,
   uploadCompanyLogo,
+  uploadPropertyImages,
   deleteCloudinaryImage 
 };
