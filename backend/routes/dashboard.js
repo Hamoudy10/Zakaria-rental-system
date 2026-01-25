@@ -10,7 +10,7 @@ const {
 
 // Admin dashboard routes
 router.get('/stats', getAdminStats);
-router.get('/comprehensive-stats', getComprehensiveStats); // NEW endpoint
+router.get('/comprehensive-stats', getComprehensiveStats);
 router.get('/recent-activities', getRecentActivities);
 router.get('/top-properties', getTopProperties);
 
