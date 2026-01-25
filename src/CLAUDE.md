@@ -158,3 +158,19 @@ socket.on('chat_notification', handleNotification);
   "outputDirectory": "dist",
   "framework": "vite"
 }
+## COMPLAINT MANAGEMENT
+
+### Component: ComplaintManagement.jsx
+- Create/Edit complaint modals
+- Property → Tenant → Unit cascading selection
+- Multi-category selection (JSONB array)
+- Start Servicing modal (add resolution steps)
+- PDF export with dynamic jsPDF import
+
+### PDF Export Pattern
+```javascript
+const jsPDFModule = await import('jspdf');
+const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default;
+await import('jspdf-autotable');
+const doc = new jsPDF('landscape', 'mm', 'a4');
+doc.autoTable({...});

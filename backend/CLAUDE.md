@@ -204,3 +204,15 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+---
+
+### For BACKEND backend/claude.md - Add this section:
+
+```markdown
+## COMPLAINT STEPS ENDPOINTS
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/complaints/:id/steps` | Get all steps |
+| POST | `/complaints/:id/steps` | Add single step |
+| PATCH | `/complaints/:id/steps/:stepId` | Toggle completion |
