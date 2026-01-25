@@ -166,3 +166,24 @@ clearCompanyInfoCache(); // Call when company info is updated
 - `complaint_steps` - Resolution steps for each complaint
 
 ### Workflow
+
+### PDF Export
+- Uses jsPDF + jspdf-autotable (dynamic import)
+- Requires: `npm install jspdf jspdf-autotable`
+## COMPLAINT PDF EXPORT (v18)
+
+### Features
+- Company branding (name, address, phone, email, logo)
+- Logo loaded from Cloudinary and embedded in PDF
+- Complaints table with all details
+- Detailed steps section on separate page
+- Page numbers and footer on all pages
+
+### Key Fix: jspdf-autotable v5.x Dynamic Import
+``javascript
+// CORRECT way to use with dynamic imports:
+const autoTableModule = await import('jspdf-autotable');
+const autoTable = autoTableModule.default;
+autoTable(doc, { startY: 55, head: [...], body: [...] }); // doc as first arg
+companyName = data.name || data.company_name || 'Default';
+companyLogo = data.logo || data.company_logo || null;

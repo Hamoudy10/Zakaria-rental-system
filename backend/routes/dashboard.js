@@ -1,15 +1,17 @@
 // routes/dashboard.js
-const express = require('express')
-const router = express.Router()
+const express = require('express');
+const router = express.Router();
 const {
   getAdminStats,
+  getComprehensiveStats,
   getRecentActivities,
   getTopProperties
-} = require('../controllers/dashboardController')
+} = require('../controllers/dashboardController');
 
 // Admin dashboard routes
-router.get('/stats', getAdminStats)
-router.get('/recent-activities', getRecentActivities)
-router.get('/top-properties', getTopProperties)
+router.get('/stats', getAdminStats);
+router.get('/comprehensive-stats', getComprehensiveStats); // NEW endpoint
+router.get('/recent-activities', getRecentActivities);
+router.get('/top-properties', getTopProperties);
 
-module.exports = router
+module.exports = router;

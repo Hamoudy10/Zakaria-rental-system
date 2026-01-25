@@ -216,3 +216,25 @@ app.use(cors({
 | GET | `/complaints/:id/steps` | Get all steps |
 | POST | `/complaints/:id/steps` | Add single step |
 | PATCH | `/complaints/:id/steps/:stepId` | Toggle completion |
+
+---
+
+## For Backend `backend/claude.md` - No changes needed
+
+The backend `/api/admin/company-info` endpoint already works correctly. The fix was on the frontend mapping.
+
+---
+
+## Quick Reference - Copy this to any relevant file:
+
+```markdown
+## JSPDF-AUTOTABLE v5.x FIX
+
+### Problem
+`doc.autoTable is not a function` with dynamic imports
+
+### Solution
+```javascript
+const autoTableModule = await import('jspdf-autotable');
+const autoTable = autoTableModule.default;
+autoTable(doc, { ...options }); // doc as first argument, NOT doc.autoTable()
