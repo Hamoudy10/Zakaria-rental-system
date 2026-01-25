@@ -360,13 +360,11 @@ export const billingAPI = {
 // ============================================
 
 // Replace your existing complaintAPI with this updated version:
-
 export const complaintAPI = {
-  // Existing endpoints
   getComplaints: (params = {}) => api.get('/complaints', { params }),
   getComplaint: (id) => api.get(`/complaints/${id}`),
   createComplaint: (complaintData) => api.post('/complaints', complaintData),
-  updateComplaint: (id, updates) => api.put(`/complaints/${id}`, updates),
+  updateComplaint: (id, updates) => api.patch(`/complaints/${id}`, updates),  // Changed to PATCH
   assignComplaint: (id, agentId) => api.patch(`/complaints/${id}/assign`, { agent_id: agentId }),
   updateComplaintStatus: (id, status) => api.patch(`/complaints/${id}/status`, { status }),
   addComplaintUpdate: (id, updateData) => api.post(`/complaints/${id}/updates`, updateData),
@@ -374,27 +372,15 @@ export const complaintAPI = {
   getAgentComplaints: (agentId) => api.get(`/complaints/agent/${agentId}`),
   getComplaintUpdates: (complaintId) => api.get(`/complaints/${complaintId}/updates`),
   getComplaintStats: () => api.get('/complaints/stats/overview'),
-  
-  // NEW: Complaint Steps endpoints
-  getComplaintSteps: (complaintId) => api.get(`/complaints/${complaintId}/steps`),
-  
-  addComplaintStep: (complaintId, stepData) => api.post(`/complaints/${complaintId}/steps`, stepData),
-  
-  addMultipleSteps: (complaintId, steps) => api.post(`/complaints/${complaintId}/steps/bulk`, { steps }),
-  
-  toggleComplaintStep: (complaintId, stepId, isCompleted) => 
-    api.patch(`/complaints/${complaintId}/steps/${stepId}`, { is_completed: isCompleted }),
-  
-  deleteComplaintStep: (complaintId, stepId) => api.delete(`/complaints/${complaintId}/steps/${stepId}`),
-  
-  // NEW: Resolve complaint (auto-called when all steps complete)
+  addComplaintComment: (id, comment) => api.post(`/complaints/${id}/comments`, { comment }),
   resolveComplaint: (id, resolutionData) => api.post(`/complaints/${id}/resolve`, resolutionData),
   
-  // NEW: Export complaints to PDF
-  exportComplaintsPDF: (params = {}) => api.get('/complaints/export/pdf', { 
-    params,
-    responseType: 'blob' 
-  }),
+  // NEW: Steps endpoints
+  getComplaintSteps: (complaintId) => api.get(`/complaints/${complaintId}/steps`),
+  addComplaintStep: (complaintId, stepData) => api.post(`/complaints/${complaintId}/steps`, stepData),
+  toggleComplaintStep: (complaintId, stepId, isCompleted) => 
+    api.patch(`/complaints/${complaintId}/steps/${stepId}`, { is_completed: isCompleted }),
+  deleteComplaintStep: (complaintId, stepId) => api.delete(`/complaints/${complaintId}/steps/${stepId}`),
 };
 
 // Report API

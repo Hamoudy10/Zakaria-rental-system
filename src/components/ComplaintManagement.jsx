@@ -7,8 +7,29 @@ import {
   ChevronDown, ChevronUp, Search, RefreshCw, Wrench,
   Calendar, ArrowRight, Check, Loader2, Edit3, Download
 } from 'lucide-react';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+// PDF libraries - install with: npm install jspdf jspdf-autotable
+let jsPDFClass = null;
+let autoTablePlugin = null;
+
+// Dynamic import to prevent build errors if not installed
+const loadPDFLibraries = async () => {
+  if (!jsPDFClass) {
+    try {
+      const jspdfModule = await import('jspdf');
+      jsPDFClass = jspdfModule.default || jspdfModule.jsPDF;
+      
+      // Import autoTable plugin
+      const autoTableModule = await import('jspdf-autotable');
+      autoTablePlugin = autoTableModule.default || autoTableModule;
+      
+      return true;
+    } catch (error) {
+      console.error('PDF libraries not installed. Run: npm install jspdf jspdf-autotable');
+      return false;
+    }
+  }
+  return true;
+};
 
 const COMPLAINT_CATEGORIES = [
   { id: 'plumbing', label: 'Plumbing', icon: '🔧' },
@@ -135,7 +156,7 @@ const ComplaintManagement = () => {
     }
   }, [isAgent]);
 
-  // Fetch tenants by property using allocations API
+  // Fetch tenants by property using allocations
   const fetchTenantsByProperty = async (propertyId) => {
     if (!propertyId) {
       setTenants([]);
@@ -145,42 +166,46 @@ const ComplaintManagement = () => {
     try {
       setLoadingTenants(true);
       
-      // Get all active allocations and filter by property
-      const response = await allocationAPI.getAllocations({ is_active: true });
-      const allocationsData = response.data?.data || response.data || [];
+      // First, get the units for this property to know which unit_ids belong to it
+      const unitsResponse = await propertyAPI.getPropertyUnits(propertyId);
+      const unitsData = unitsResponse.data?.data || unitsResponse.data || [];
+      const units = Array.isArray(unitsData) ? unitsData : [];
+      const unitIds = units.map(u => u.id);
+      
+      console.log('Units for property:', propertyId, units);
+      
+      // Get all active allocations
+      const allocResponse = await allocationAPI.getAllocations({ is_active: true });
+      const allocationsData = allocResponse.data?.data || allocResponse.data || [];
       const allocations = Array.isArray(allocationsData) ? allocationsData : [];
       
-      // Filter allocations for this property and extract tenant info
-      const tenantsWithUnits = [];
+      console.log('All allocations:', allocations);
       
-      for (const allocation of allocations) {
-        // Check if this allocation belongs to the selected property
-        const allocationPropertyId = allocation.property_id || allocation.unit?.property_id;
-        
-        if (allocationPropertyId === propertyId && allocation.is_active) {
-          // Extract tenant name from various possible fields
-          const tenantName = allocation.tenant_full_name || 
-            allocation.tenant_name ||
-            `${allocation.tenant_first_name || allocation.tenant?.first_name || ''} ${allocation.tenant_last_name || allocation.tenant?.last_name || ''}`.trim() ||
-            'Unknown Tenant';
+      // Filter allocations that belong to units in this property
+      const tenantsWithUnits = allocations
+        .filter(allocation => {
+          // Check if this allocation's unit belongs to the selected property
+          const belongsToProperty = unitIds.includes(allocation.unit_id) || 
+                                    allocation.property_id === propertyId ||
+                                    allocation.unit?.property_id === propertyId;
+          return belongsToProperty && allocation.is_active !== false;
+        })
+        .map(allocation => {
+          // Build tenant name from various possible fields
+          const tenantFirstName = allocation.tenant_first_name || allocation.tenant?.first_name || '';
+          const tenantLastName = allocation.tenant_last_name || allocation.tenant?.last_name || '';
+          const tenantFullName = allocation.tenant_full_name || `${tenantFirstName} ${tenantLastName}`.trim();
           
-          // Extract tenant ID
-          const tenantId = allocation.tenant_id || allocation.tenant?.id;
+          // Find the unit info
+          const unitInfo = units.find(u => u.id === allocation.unit_id);
           
-          // Extract unit info
-          const unitId = allocation.unit_id || allocation.unit?.id;
-          const unitCode = allocation.unit_code || allocation.unit?.unit_code || 'Unknown Unit';
-          
-          if (tenantId && unitId) {
-            tenantsWithUnits.push({
-              tenant_id: tenantId,
-              tenant_name: tenantName,
-              unit_id: unitId,
-              unit_code: unitCode
-            });
-          }
-        }
-      }
+          return {
+            tenant_id: allocation.tenant_id,
+            tenant_name: tenantFullName || 'Unknown Tenant',
+            unit_id: allocation.unit_id,
+            unit_code: allocation.unit_code || unitInfo?.unit_code || allocation.unit?.unit_code || 'Unknown Unit'
+          };
+        });
       
       console.log('Tenants found for property:', propertyId, tenantsWithUnits);
       setTenants(tenantsWithUnits);
@@ -390,7 +415,7 @@ const ComplaintManagement = () => {
     }
   };
 
-  // Open edit modal
+  // Open Edit Modal
   const openEditModal = (complaint) => {
     setSelectedComplaint(complaint);
     setEditForm({
@@ -402,7 +427,7 @@ const ComplaintManagement = () => {
     setShowEditModal(true);
   };
 
-  // Handle edit complaint
+  // Handle Edit Complaint
   const handleEditComplaint = async (e) => {
     e.preventDefault();
     
@@ -413,13 +438,24 @@ const ComplaintManagement = () => {
 
     try {
       setLoading(true);
-      await complaintAPI.updateComplaint(selectedComplaint.id, {
+      
+      const updateData = {
         title: editForm.title,
         description: editForm.description,
         category: editForm.categories[0],
-        categories: editForm.categories,
         priority: editForm.priority
-      });
+      };
+      
+      // Only include categories if your backend supports it
+      // (JSONB column must exist)
+      if (editForm.categories.length > 0) {
+        updateData.categories = editForm.categories;
+      }
+      
+      console.log('Updating complaint:', selectedComplaint.id, updateData);
+      
+      const response = await complaintAPI.updateComplaint(selectedComplaint.id, updateData);
+      console.log('Update response:', response);
       
       setSuccessMessage('Complaint updated successfully!');
       setShowEditModal(false);
@@ -429,13 +465,19 @@ const ComplaintManagement = () => {
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       console.error('Error updating complaint:', err);
-      setError(err.response?.data?.message || 'Failed to update complaint');
+      console.error('Error details:', err.response?.data);
+      
+      // More specific error message
+      const errorMessage = err.response?.data?.message || 
+                           err.response?.data?.error ||
+                           (err.response?.status === 404 ? 'Complaint update endpoint not found. Please check backend routes.' : 'Failed to update complaint');
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  // Toggle category for edit form
+  // Toggle edit category selection
   const toggleEditCategory = (categoryId) => {
     setEditForm(prev => {
       const categories = prev.categories.includes(categoryId)
@@ -450,6 +492,14 @@ const ComplaintManagement = () => {
     try {
       setExportingPDF(true);
       
+      // Load PDF libraries dynamically
+      const librariesLoaded = await loadPDFLibraries();
+      if (!librariesLoaded) {
+        setError('PDF export requires jspdf library. Please run: npm install jspdf jspdf-autotable');
+        setExportingPDF(false);
+        return;
+      }
+      
       // Get company info for branding
       let companyInfo = {
         company_name: 'Zakaria Rental System',
@@ -459,43 +509,38 @@ const ComplaintManagement = () => {
       };
       
       try {
-        const response = await settingsAPI.getCompanyInfo();
-        companyInfo = response.data?.data || response.data || companyInfo;
-      } catch (err) {
+        const companyResponse = await settingsAPI.getCompanyInfo();
+        companyInfo = companyResponse.data?.data || companyResponse.data || companyInfo;
+      } catch (e) {
         console.log('Using default company info');
       }
       
-      // Use filtered complaints
-      const complaintsToExport = filteredComplaints;
-      
-      if (complaintsToExport.length === 0) {
-        setError('No complaints to export');
-        setExportingPDF(false);
-        return;
-      }
-
-      // Fetch steps for each complaint
+      // Fetch steps for all complaints to include in PDF
       const complaintsWithSteps = await Promise.all(
-        complaintsToExport.map(async (complaint) => {
+        filteredComplaints.map(async (complaint) => {
           try {
             const stepsResponse = await complaintAPI.getComplaintSteps(complaint.id);
             const steps = stepsResponse.data?.data || stepsResponse.data || [];
             return { ...complaint, steps: Array.isArray(steps) ? steps : [] };
-          } catch (err) {
+          } catch (e) {
             return { ...complaint, steps: [] };
           }
         })
       );
       
       // Create PDF
-      const doc = new jsPDF('landscape', 'mm', 'a4');
+      const doc = new jsPDFClass('landscape', 'mm', 'a4');
+      
+      // Apply autoTable plugin if it's a function
+      if (typeof autoTablePlugin === 'function') {
+        autoTablePlugin(doc);
+      }
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       
       // Colors
       const primaryColor = [37, 99, 235];
       const textColor = [55, 65, 81];
-      const lightGray = [243, 244, 246];
       
       // Header
       doc.setFillColor(...primaryColor);
@@ -513,56 +558,44 @@ const ComplaintManagement = () => {
         companyInfo.company_phone,
         companyInfo.company_email
       ].filter(Boolean).join(' | ');
-      if (details) doc.text(details, 14, 19);
+      doc.text(details, 14, 19);
       
       // Report title
-      const title = isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report';
       doc.setTextColor(...textColor);
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text(title, 14, 35);
+      doc.text(isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report', 14, 35);
       
       // Date and stats
       doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
       doc.text(`Generated: ${formatDate(new Date())}`, 14, 42);
-      doc.text(`Total Complaints: ${complaintsWithSteps.length}`, 14, 48);
-      
-      const pdfStats = {
-        open: complaintsWithSteps.filter(c => c.status === 'open').length,
-        in_progress: complaintsWithSteps.filter(c => c.status === 'in_progress').length,
-        resolved: complaintsWithSteps.filter(c => c.status === 'resolved').length
-      };
-      doc.text(`Open: ${pdfStats.open} | In Progress: ${pdfStats.in_progress} | Resolved: ${pdfStats.resolved}`, pageWidth - 14, 42, { align: 'right' });
+      doc.text(`Total: ${complaintsWithSteps.length} | Open: ${stats.open} | In Progress: ${stats.in_progress} | Resolved: ${stats.resolved}`, 14, 48);
       
       // Prepare table data
       const tableData = complaintsWithSteps.map(complaint => {
-        const steps = complaint.steps || [];
-        const stepsProgress = steps.length === 0 
-          ? 'No steps' 
-          : `${steps.filter(s => s.is_completed).length}/${steps.length} completed`;
-        
-        const categories = (complaint.categories || [complaint.category])
-          .map(catId => {
-            const cat = COMPLAINT_CATEGORIES.find(c => c.id === catId);
-            return cat ? cat.label : catId;
-          }).join(', ');
+        const stepsProgress = complaint.steps?.length > 0 
+          ? `${complaint.steps.filter(s => s.is_completed).length}/${complaint.steps.length}` 
+          : 'No steps';
         
         return [
           `${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''}`.trim() || 'Unknown',
           complaint.property_name || 'N/A',
           complaint.unit_code || 'N/A',
-          categories,
+          getCategoryLabels(complaint),
           complaint.title || 'N/A',
-          complaint.status?.replace('_', ' ') || 'N/A',
+          (complaint.status || 'open').replace('_', ' '),
           stepsProgress,
           formatDate(complaint.raised_at),
           complaint.status === 'resolved' ? formatDate(complaint.resolved_at) : 'N/A'
         ];
       });
       
-      // Create main table
-      doc.autoTable({
+      // Create table using autoTable
+      // Handle both plugin styles (method on doc or standalone function)
+      const autoTable = doc.autoTable ? doc.autoTable.bind(doc) : (options) => autoTablePlugin(doc, options);
+      
+      autoTable({
         startY: 55,
         head: [[
           'Tenant',
@@ -571,7 +604,7 @@ const ComplaintManagement = () => {
           'Categories',
           'Title',
           'Status',
-          'Steps Progress',
+          'Steps',
           'Date Raised',
           'Date Resolved'
         ]],
@@ -579,14 +612,11 @@ const ComplaintManagement = () => {
         styles: {
           fontSize: 8,
           cellPadding: 3,
-          lineColor: [229, 231, 235],
-          lineWidth: 0.1,
         },
         headStyles: {
           fillColor: primaryColor,
           textColor: [255, 255, 255],
           fontStyle: 'bold',
-          halign: 'left'
         },
         alternateRowStyles: {
           fillColor: [249, 250, 251]
@@ -595,20 +625,20 @@ const ComplaintManagement = () => {
           0: { cellWidth: 28 },
           1: { cellWidth: 28 },
           2: { cellWidth: 18 },
-          3: { cellWidth: 32 },
+          3: { cellWidth: 35 },
           4: { cellWidth: 40 },
           5: { cellWidth: 22 },
-          6: { cellWidth: 25 },
+          6: { cellWidth: 18 },
           7: { cellWidth: 28 },
           8: { cellWidth: 28 },
         },
         margin: { top: 55, bottom: 15 }
       });
       
-      // Add detailed steps section for complaints with steps
-      const complaintsWithStepsData = complaintsWithSteps.filter(c => c.steps && c.steps.length > 0);
+      // Add detailed steps section on new page if there are complaints with steps
+      const complaintsWithActualSteps = complaintsWithSteps.filter(c => c.steps && c.steps.length > 0);
       
-      if (complaintsWithStepsData.length > 0) {
+      if (complaintsWithActualSteps.length > 0) {
         doc.addPage();
         
         // Section header
@@ -621,7 +651,7 @@ const ComplaintManagement = () => {
         
         let yPos = 25;
         
-        for (const complaint of complaintsWithStepsData) {
+        for (const complaint of complaintsWithActualSteps) {
           if (yPos > pageHeight - 50) {
             doc.addPage();
             yPos = 20;
@@ -631,19 +661,19 @@ const ComplaintManagement = () => {
           doc.setTextColor(...primaryColor);
           doc.setFontSize(10);
           doc.setFont('helvetica', 'bold');
-          doc.text(complaint.title, 14, yPos);
+          doc.text(complaint.title || 'Untitled', 14, yPos);
           
           doc.setTextColor(...textColor);
           doc.setFontSize(8);
           doc.setFont('helvetica', 'normal');
           yPos += 5;
-          doc.text(`Tenant: ${complaint.tenant_first_name} ${complaint.tenant_last_name} | Unit: ${complaint.unit_code} | Status: ${complaint.status?.replace('_', ' ')}`, 14, yPos);
+          doc.text(`Tenant: ${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''} | Unit: ${complaint.unit_code || 'N/A'} | Status: ${(complaint.status || 'open').replace('_', ' ')}`, 14, yPos);
           
           yPos += 7;
           
           // Steps
-          for (const step of complaint.steps.sort((a, b) => a.step_order - b.step_order)) {
-            const checkbox = step.is_completed ? '[✓]' : '[ ]';
+          for (const step of (complaint.steps || []).sort((a, b) => a.step_order - b.step_order)) {
+            const checkbox = step.is_completed ? '[X]' : '[ ]';
             const stepText = `${checkbox} Step ${step.step_order}: ${step.step_description}`;
             
             doc.setFont('helvetica', step.is_completed ? 'normal' : 'bold');
@@ -662,32 +692,31 @@ const ComplaintManagement = () => {
             if (step.is_completed && step.completed_at) {
               doc.setFontSize(7);
               doc.setTextColor(100, 100, 100);
-              doc.text(`Completed: ${formatDate(step.completed_at)}`, 25, yPos);
+              doc.text(`   Completed: ${formatDate(step.completed_at)}`, 20, yPos);
               yPos += 4;
               doc.setFontSize(8);
             }
           }
           
           yPos += 8;
+          
+          // Separator
           doc.setDrawColor(229, 231, 235);
           doc.line(14, yPos - 3, pageWidth - 14, yPos - 3);
         }
       }
       
-      // Add footer to all pages
+      // Add page numbers
       const totalPages = doc.internal.getNumberOfPages();
       for (let i = 1; i <= totalPages; i++) {
         doc.setPage(i);
-        doc.setFillColor(...lightGray);
-        doc.rect(0, pageHeight - 10, pageWidth, 10, 'F');
-        doc.setTextColor(...textColor);
         doc.setFontSize(8);
-        doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 4, { align: 'center' });
-        doc.text(companyInfo.company_name || 'Zakaria Rental System', 14, pageHeight - 4);
-        doc.text(formatDate(new Date()), pageWidth - 14, pageHeight - 4, { align: 'right' });
+        doc.setTextColor(150, 150, 150);
+        doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' });
+        doc.text(companyInfo.company_name || 'Zakaria Rental System', 14, pageHeight - 5);
       }
       
-      // Save the PDF
+      // Save
       const fileName = `complaints_report_${new Date().toISOString().split('T')[0]}.pdf`;
       doc.save(fileName);
       
@@ -794,7 +823,7 @@ const ComplaintManagement = () => {
             
             <button
               onClick={handleExportPDF}
-              disabled={exportingPDF}
+              disabled={exportingPDF || filteredComplaints.length === 0}
               className="inline-flex items-center px-4 py-2.5 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm border border-gray-300 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {exportingPDF ? (
@@ -1092,7 +1121,7 @@ const ComplaintManagement = () => {
                       </button>
                     )}
                     
-                    {complaint.status !== 'resolved' && (isAdmin || isAgent) && (
+                    {complaint.status !== 'resolved' && (
                       <button
                         onClick={() => openEditModal(complaint)}
                         className="inline-flex items-center px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium"
@@ -1407,12 +1436,26 @@ const ComplaintManagement = () => {
                   </span>
                 </div>
               </div>
-              <button
-                onClick={() => { setShowDetailsModal(false); setSelectedComplaint(null); }}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedComplaint.status !== 'resolved' && (
+                  <button
+                    onClick={() => {
+                      setShowDetailsModal(false);
+                      openEditModal(selectedComplaint);
+                    }}
+                    className="p-2 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
+                    title="Edit Complaint"
+                  >
+                    <Edit3 className="w-5 h-5" />
+                  </button>
+                )}
+                <button
+                  onClick={() => { setShowDetailsModal(false); setSelectedComplaint(null); }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
             </div>
             
             <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
@@ -1553,9 +1596,7 @@ const ComplaintManagement = () => {
             <div className="flex items-center justify-between p-6 border-b border-gray-200">
               <div>
                 <h2 className="text-xl font-semibold text-gray-900">Edit Complaint</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  {selectedComplaint.tenant_first_name} {selectedComplaint.tenant_last_name} - {selectedComplaint.unit_code}
-                </p>
+                <p className="text-sm text-gray-500 mt-1">Update complaint details</p>
               </div>
               <button
                 onClick={() => { setShowEditModal(false); setSelectedComplaint(null); }}
@@ -1567,6 +1608,32 @@ const ComplaintManagement = () => {
             
             <form onSubmit={handleEditComplaint} className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
               <div className="space-y-5">
+                {/* Complaint Info (Read-only) */}
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">Tenant:</span>
+                      <span className="ml-2 font-medium text-gray-900">
+                        {selectedComplaint.tenant_first_name} {selectedComplaint.tenant_last_name}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Unit:</span>
+                      <span className="ml-2 font-medium text-gray-900">{selectedComplaint.unit_code}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Property:</span>
+                      <span className="ml-2 font-medium text-gray-900">{selectedComplaint.property_name}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Status:</span>
+                      <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${getStatusBadge(selectedComplaint.status)}`}>
+                        {selectedComplaint.status?.replace('_', ' ')}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
                 {/* Title */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1666,12 +1733,12 @@ const ComplaintManagement = () => {
                   {loading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      Saving...
+                      Updating...
                     </>
                   ) : (
                     <>
                       <Check className="w-4 h-4 mr-2" />
-                      Save Changes
+                      Update Complaint
                     </>
                   )}
                 </button>
