@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { complaintAPI, propertyAPI, allocationAPI } from '../services/api';
+import { complaintAPI, propertyAPI, allocationAPI, settingsAPI } from '../services/api';
 import { 
   X, Plus, Filter, FileText, CheckCircle2, Circle, Clock, 
   AlertTriangle, Building2, User, Home, MessageSquare, 
   ChevronDown, ChevronUp, Search, RefreshCw, Wrench,
-  Calendar, ArrowRight, Check, Loader2
+  Calendar, ArrowRight, Check, Loader2, Edit3, Download
 } from 'lucide-react';
-
-// Import your existing PDF export utility
-// import { exportComplaintsToPDF } from '../utils/pdfExport';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 const COMPLAINT_CATEGORIES = [
   { id: 'plumbing', label: 'Plumbing', icon: '🔧' },
@@ -45,7 +44,17 @@ const ComplaintManagement = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showStepsModal, setShowStepsModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [selectedComplaint, setSelectedComplaint] = useState(null);
+  const [exportingPDF, setExportingPDF] = useState(false);
+
+  // Edit form state
+  const [editForm, setEditForm] = useState({
+    title: '',
+    description: '',
+    categories: [],
+    priority: 'medium'
+  });
 
   // Filter states
   const [filters, setFilters] = useState({
@@ -126,7 +135,7 @@ const ComplaintManagement = () => {
     }
   }, [isAgent]);
 
-  // Fetch tenants by property using allocations
+  // Fetch tenants by property using allocations API
   const fetchTenantsByProperty = async (propertyId) => {
     if (!propertyId) {
       setTenants([]);
@@ -136,46 +145,42 @@ const ComplaintManagement = () => {
     try {
       setLoadingTenants(true);
       
-      // First, get the units for this property to know which unit_ids belong to it
-      const unitsResponse = await propertyAPI.getPropertyUnits(propertyId);
-      const unitsData = unitsResponse.data?.data || unitsResponse.data || [];
-      const units = Array.isArray(unitsData) ? unitsData : [];
-      const unitIds = units.map(u => u.id);
-      
-      console.log('Units for property:', propertyId, units);
-      
-      // Get all active allocations
-      const allocResponse = await allocationAPI.getAllocations({ is_active: true });
-      const allocationsData = allocResponse.data?.data || allocResponse.data || [];
+      // Get all active allocations and filter by property
+      const response = await allocationAPI.getAllocations({ is_active: true });
+      const allocationsData = response.data?.data || response.data || [];
       const allocations = Array.isArray(allocationsData) ? allocationsData : [];
       
-      console.log('All allocations:', allocations);
+      // Filter allocations for this property and extract tenant info
+      const tenantsWithUnits = [];
       
-      // Filter allocations that belong to units in this property
-      const tenantsWithUnits = allocations
-        .filter(allocation => {
-          // Check if this allocation's unit belongs to the selected property
-          const belongsToProperty = unitIds.includes(allocation.unit_id) || 
-                                    allocation.property_id === propertyId ||
-                                    allocation.unit?.property_id === propertyId;
-          return belongsToProperty && allocation.is_active !== false;
-        })
-        .map(allocation => {
-          // Build tenant name from various possible fields
-          const tenantFirstName = allocation.tenant_first_name || allocation.tenant?.first_name || '';
-          const tenantLastName = allocation.tenant_last_name || allocation.tenant?.last_name || '';
-          const tenantFullName = allocation.tenant_full_name || `${tenantFirstName} ${tenantLastName}`.trim();
+      for (const allocation of allocations) {
+        // Check if this allocation belongs to the selected property
+        const allocationPropertyId = allocation.property_id || allocation.unit?.property_id;
+        
+        if (allocationPropertyId === propertyId && allocation.is_active) {
+          // Extract tenant name from various possible fields
+          const tenantName = allocation.tenant_full_name || 
+            allocation.tenant_name ||
+            `${allocation.tenant_first_name || allocation.tenant?.first_name || ''} ${allocation.tenant_last_name || allocation.tenant?.last_name || ''}`.trim() ||
+            'Unknown Tenant';
           
-          // Find the unit info
-          const unitInfo = units.find(u => u.id === allocation.unit_id);
+          // Extract tenant ID
+          const tenantId = allocation.tenant_id || allocation.tenant?.id;
           
-          return {
-            tenant_id: allocation.tenant_id,
-            tenant_name: tenantFullName || 'Unknown Tenant',
-            unit_id: allocation.unit_id,
-            unit_code: allocation.unit_code || unitInfo?.unit_code || allocation.unit?.unit_code || 'Unknown Unit'
-          };
-        });
+          // Extract unit info
+          const unitId = allocation.unit_id || allocation.unit?.id;
+          const unitCode = allocation.unit_code || allocation.unit?.unit_code || 'Unknown Unit';
+          
+          if (tenantId && unitId) {
+            tenantsWithUnits.push({
+              tenant_id: tenantId,
+              tenant_name: tenantName,
+              unit_id: unitId,
+              unit_code: unitCode
+            });
+          }
+        }
+      }
       
       console.log('Tenants found for property:', propertyId, tenantsWithUnits);
       setTenants(tenantsWithUnits);
@@ -385,20 +390,314 @@ const ComplaintManagement = () => {
     }
   };
 
+  // Open edit modal
+  const openEditModal = (complaint) => {
+    setSelectedComplaint(complaint);
+    setEditForm({
+      title: complaint.title || '',
+      description: complaint.description || '',
+      categories: complaint.categories || [complaint.category] || [],
+      priority: complaint.priority || 'medium'
+    });
+    setShowEditModal(true);
+  };
+
+  // Handle edit complaint
+  const handleEditComplaint = async (e) => {
+    e.preventDefault();
+    
+    if (!editForm.title || !editForm.description || editForm.categories.length === 0) {
+      setError('Please fill in all required fields');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await complaintAPI.updateComplaint(selectedComplaint.id, {
+        title: editForm.title,
+        description: editForm.description,
+        category: editForm.categories[0],
+        categories: editForm.categories,
+        priority: editForm.priority
+      });
+      
+      setSuccessMessage('Complaint updated successfully!');
+      setShowEditModal(false);
+      setSelectedComplaint(null);
+      fetchComplaints();
+      
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      console.error('Error updating complaint:', err);
+      setError(err.response?.data?.message || 'Failed to update complaint');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Toggle category for edit form
+  const toggleEditCategory = (categoryId) => {
+    setEditForm(prev => {
+      const categories = prev.categories.includes(categoryId)
+        ? prev.categories.filter(c => c !== categoryId)
+        : [...prev.categories, categoryId];
+      return { ...prev, categories };
+    });
+  };
+
   // Export to PDF
   const handleExportPDF = async () => {
     try {
-      // Filter complaints based on user role
-      const complaintsToExport = complaints;
+      setExportingPDF(true);
       
-      // You would call your existing pdfExport utility here
-      // await exportComplaintsToPDF(complaintsToExport);
+      // Get company info for branding
+      let companyInfo = {
+        company_name: 'Zakaria Rental System',
+        company_address: '',
+        company_phone: '',
+        company_email: ''
+      };
       
-      setSuccessMessage('PDF export started...');
+      try {
+        const response = await settingsAPI.getCompanyInfo();
+        companyInfo = response.data?.data || response.data || companyInfo;
+      } catch (err) {
+        console.log('Using default company info');
+      }
+      
+      // Use filtered complaints
+      const complaintsToExport = filteredComplaints;
+      
+      if (complaintsToExport.length === 0) {
+        setError('No complaints to export');
+        setExportingPDF(false);
+        return;
+      }
+
+      // Fetch steps for each complaint
+      const complaintsWithSteps = await Promise.all(
+        complaintsToExport.map(async (complaint) => {
+          try {
+            const stepsResponse = await complaintAPI.getComplaintSteps(complaint.id);
+            const steps = stepsResponse.data?.data || stepsResponse.data || [];
+            return { ...complaint, steps: Array.isArray(steps) ? steps : [] };
+          } catch (err) {
+            return { ...complaint, steps: [] };
+          }
+        })
+      );
+      
+      // Create PDF
+      const doc = new jsPDF('landscape', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      
+      // Colors
+      const primaryColor = [37, 99, 235];
+      const textColor = [55, 65, 81];
+      const lightGray = [243, 244, 246];
+      
+      // Header
+      doc.setFillColor(...primaryColor);
+      doc.rect(0, 0, pageWidth, 25, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text(companyInfo.company_name || 'Zakaria Rental System', 14, 12);
+      
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      const details = [
+        companyInfo.company_address,
+        companyInfo.company_phone,
+        companyInfo.company_email
+      ].filter(Boolean).join(' | ');
+      if (details) doc.text(details, 14, 19);
+      
+      // Report title
+      const title = isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report';
+      doc.setTextColor(...textColor);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(title, 14, 35);
+      
+      // Date and stats
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generated: ${formatDate(new Date())}`, 14, 42);
+      doc.text(`Total Complaints: ${complaintsWithSteps.length}`, 14, 48);
+      
+      const pdfStats = {
+        open: complaintsWithSteps.filter(c => c.status === 'open').length,
+        in_progress: complaintsWithSteps.filter(c => c.status === 'in_progress').length,
+        resolved: complaintsWithSteps.filter(c => c.status === 'resolved').length
+      };
+      doc.text(`Open: ${pdfStats.open} | In Progress: ${pdfStats.in_progress} | Resolved: ${pdfStats.resolved}`, pageWidth - 14, 42, { align: 'right' });
+      
+      // Prepare table data
+      const tableData = complaintsWithSteps.map(complaint => {
+        const steps = complaint.steps || [];
+        const stepsProgress = steps.length === 0 
+          ? 'No steps' 
+          : `${steps.filter(s => s.is_completed).length}/${steps.length} completed`;
+        
+        const categories = (complaint.categories || [complaint.category])
+          .map(catId => {
+            const cat = COMPLAINT_CATEGORIES.find(c => c.id === catId);
+            return cat ? cat.label : catId;
+          }).join(', ');
+        
+        return [
+          `${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''}`.trim() || 'Unknown',
+          complaint.property_name || 'N/A',
+          complaint.unit_code || 'N/A',
+          categories,
+          complaint.title || 'N/A',
+          complaint.status?.replace('_', ' ') || 'N/A',
+          stepsProgress,
+          formatDate(complaint.raised_at),
+          complaint.status === 'resolved' ? formatDate(complaint.resolved_at) : 'N/A'
+        ];
+      });
+      
+      // Create main table
+      doc.autoTable({
+        startY: 55,
+        head: [[
+          'Tenant',
+          'Property',
+          'Unit',
+          'Categories',
+          'Title',
+          'Status',
+          'Steps Progress',
+          'Date Raised',
+          'Date Resolved'
+        ]],
+        body: tableData,
+        styles: {
+          fontSize: 8,
+          cellPadding: 3,
+          lineColor: [229, 231, 235],
+          lineWidth: 0.1,
+        },
+        headStyles: {
+          fillColor: primaryColor,
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          halign: 'left'
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251]
+        },
+        columnStyles: {
+          0: { cellWidth: 28 },
+          1: { cellWidth: 28 },
+          2: { cellWidth: 18 },
+          3: { cellWidth: 32 },
+          4: { cellWidth: 40 },
+          5: { cellWidth: 22 },
+          6: { cellWidth: 25 },
+          7: { cellWidth: 28 },
+          8: { cellWidth: 28 },
+        },
+        margin: { top: 55, bottom: 15 }
+      });
+      
+      // Add detailed steps section for complaints with steps
+      const complaintsWithStepsData = complaintsWithSteps.filter(c => c.steps && c.steps.length > 0);
+      
+      if (complaintsWithStepsData.length > 0) {
+        doc.addPage();
+        
+        // Section header
+        doc.setFillColor(...primaryColor);
+        doc.rect(0, 0, pageWidth, 15, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Detailed Steps by Complaint', 14, 10);
+        
+        let yPos = 25;
+        
+        for (const complaint of complaintsWithStepsData) {
+          if (yPos > pageHeight - 50) {
+            doc.addPage();
+            yPos = 20;
+          }
+          
+          // Complaint header
+          doc.setTextColor(...primaryColor);
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text(complaint.title, 14, yPos);
+          
+          doc.setTextColor(...textColor);
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'normal');
+          yPos += 5;
+          doc.text(`Tenant: ${complaint.tenant_first_name} ${complaint.tenant_last_name} | Unit: ${complaint.unit_code} | Status: ${complaint.status?.replace('_', ' ')}`, 14, yPos);
+          
+          yPos += 7;
+          
+          // Steps
+          for (const step of complaint.steps.sort((a, b) => a.step_order - b.step_order)) {
+            const checkbox = step.is_completed ? '[✓]' : '[ ]';
+            const stepText = `${checkbox} Step ${step.step_order}: ${step.step_description}`;
+            
+            doc.setFont('helvetica', step.is_completed ? 'normal' : 'bold');
+            doc.setTextColor(step.is_completed ? 100 : 55, step.is_completed ? 100 : 65, step.is_completed ? 100 : 81);
+            
+            const lines = doc.splitTextToSize(stepText, pageWidth - 28);
+            for (const line of lines) {
+              if (yPos > pageHeight - 20) {
+                doc.addPage();
+                yPos = 20;
+              }
+              doc.text(line, 20, yPos);
+              yPos += 5;
+            }
+            
+            if (step.is_completed && step.completed_at) {
+              doc.setFontSize(7);
+              doc.setTextColor(100, 100, 100);
+              doc.text(`Completed: ${formatDate(step.completed_at)}`, 25, yPos);
+              yPos += 4;
+              doc.setFontSize(8);
+            }
+          }
+          
+          yPos += 8;
+          doc.setDrawColor(229, 231, 235);
+          doc.line(14, yPos - 3, pageWidth - 14, yPos - 3);
+        }
+      }
+      
+      // Add footer to all pages
+      const totalPages = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFillColor(...lightGray);
+        doc.rect(0, pageHeight - 10, pageWidth, 10, 'F');
+        doc.setTextColor(...textColor);
+        doc.setFontSize(8);
+        doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 4, { align: 'center' });
+        doc.text(companyInfo.company_name || 'Zakaria Rental System', 14, pageHeight - 4);
+        doc.text(formatDate(new Date()), pageWidth - 14, pageHeight - 4, { align: 'right' });
+      }
+      
+      // Save the PDF
+      const fileName = `complaints_report_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+      
+      setSuccessMessage('PDF exported successfully!');
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       console.error('Error exporting PDF:', err);
       setError('Failed to export PDF');
+    } finally {
+      setExportingPDF(false);
     }
   };
 
@@ -495,10 +794,20 @@ const ComplaintManagement = () => {
             
             <button
               onClick={handleExportPDF}
-              className="inline-flex items-center px-4 py-2.5 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm border border-gray-300 font-medium"
+              disabled={exportingPDF}
+              className="inline-flex items-center px-4 py-2.5 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm border border-gray-300 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <FileText className="w-5 h-5 mr-2" />
-              Export PDF
+              {exportingPDF ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-5 h-5 mr-2" />
+                  Export PDF
+                </>
+              )}
             </button>
             
             <button
@@ -780,6 +1089,16 @@ const ComplaintManagement = () => {
                       >
                         <Wrench className="w-4 h-4 mr-1.5" />
                         Start Servicing
+                      </button>
+                    )}
+                    
+                    {complaint.status !== 'resolved' && (isAdmin || isAgent) && (
+                      <button
+                        onClick={() => openEditModal(complaint)}
+                        className="inline-flex items-center px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium"
+                      >
+                        <Edit3 className="w-4 h-4 mr-1.5" />
+                        Edit
                       </button>
                     )}
                     
@@ -1223,6 +1542,141 @@ const ComplaintManagement = () => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Complaint Modal */}
+      {showEditModal && selectedComplaint && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Edit Complaint</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {selectedComplaint.tenant_first_name} {selectedComplaint.tenant_last_name} - {selectedComplaint.unit_code}
+                </p>
+              </div>
+              <button
+                onClick={() => { setShowEditModal(false); setSelectedComplaint(null); }}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleEditComplaint} className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+              <div className="space-y-5">
+                {/* Title */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Complaint Title <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.title}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, title: e.target.value }))}
+                    placeholder="Brief description of the issue"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+                
+                {/* Categories */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Categories <span className="text-red-500">*</span>
+                    <span className="text-gray-400 font-normal ml-1">(Select one or more)</span>
+                  </label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {COMPLAINT_CATEGORIES.map(category => (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() => toggleEditCategory(category.id)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                          editForm.categories.includes(category.id)
+                            ? 'bg-blue-50 border-blue-300 text-blue-700'
+                            : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span>{category.icon}</span>
+                        <span>{category.label}</span>
+                        {editForm.categories.includes(category.id) && (
+                          <Check className="w-4 h-4 ml-auto" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Priority */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                  <div className="flex gap-3">
+                    {['low', 'medium', 'high'].map(priority => (
+                      <button
+                        key={priority}
+                        type="button"
+                        onClick={() => setEditForm(prev => ({ ...prev, priority }))}
+                        className={`flex-1 py-2.5 rounded-lg border text-sm font-medium transition-colors capitalize ${
+                          editForm.priority === priority
+                            ? priority === 'high' ? 'bg-red-500 border-red-500 text-white' :
+                              priority === 'medium' ? 'bg-amber-500 border-amber-500 text-white' :
+                              'bg-blue-500 border-blue-500 text-white'
+                            : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {priority}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Description */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={editForm.description}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Provide detailed information about the complaint..."
+                    rows={4}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                    required
+                  />
+                </div>
+              </div>
+              
+              {/* Form Actions */}
+              <div className="flex gap-3 mt-6 pt-6 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => { setShowEditModal(false); setSelectedComplaint(null); }}
+                  className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4 mr-2" />
+                      Save Changes
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
