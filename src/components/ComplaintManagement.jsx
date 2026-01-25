@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { complaintAPI, propertyAPI } from '../services/api';
+import { complaintAPI, propertyAPI, allocationAPI } from '../services/api';
 import { 
   X, Plus, Filter, FileText, CheckCircle2, Circle, Clock, 
   AlertTriangle, Building2, User, Home, MessageSquare, 
@@ -126,7 +126,7 @@ const ComplaintManagement = () => {
     }
   }, [isAgent]);
 
-  // Fetch tenants by property
+  // Fetch tenants by property using allocations
   const fetchTenantsByProperty = async (propertyId) => {
     if (!propertyId) {
       setTenants([]);
@@ -135,21 +135,49 @@ const ComplaintManagement = () => {
     
     try {
       setLoadingTenants(true);
-      const response = await propertyAPI.getPropertyUnits(propertyId);
-      const units = response.data?.data || response.data || [];
       
-      // Extract tenants from allocated units
-      const tenantsWithUnits = [];
-      for (const unit of units) {
-        if (unit.is_occupied && unit.tenant_id) {
-          tenantsWithUnits.push({
-            tenant_id: unit.tenant_id,
-            tenant_name: unit.tenant_name || `${unit.tenant_first_name || ''} ${unit.tenant_last_name || ''}`.trim() || 'Unknown Tenant',
-            unit_id: unit.id,
-            unit_code: unit.unit_code
-          });
-        }
-      }
+      // First, get the units for this property to know which unit_ids belong to it
+      const unitsResponse = await propertyAPI.getPropertyUnits(propertyId);
+      const unitsData = unitsResponse.data?.data || unitsResponse.data || [];
+      const units = Array.isArray(unitsData) ? unitsData : [];
+      const unitIds = units.map(u => u.id);
+      
+      console.log('Units for property:', propertyId, units);
+      
+      // Get all active allocations
+      const allocResponse = await allocationAPI.getAllocations({ is_active: true });
+      const allocationsData = allocResponse.data?.data || allocResponse.data || [];
+      const allocations = Array.isArray(allocationsData) ? allocationsData : [];
+      
+      console.log('All allocations:', allocations);
+      
+      // Filter allocations that belong to units in this property
+      const tenantsWithUnits = allocations
+        .filter(allocation => {
+          // Check if this allocation's unit belongs to the selected property
+          const belongsToProperty = unitIds.includes(allocation.unit_id) || 
+                                    allocation.property_id === propertyId ||
+                                    allocation.unit?.property_id === propertyId;
+          return belongsToProperty && allocation.is_active !== false;
+        })
+        .map(allocation => {
+          // Build tenant name from various possible fields
+          const tenantFirstName = allocation.tenant_first_name || allocation.tenant?.first_name || '';
+          const tenantLastName = allocation.tenant_last_name || allocation.tenant?.last_name || '';
+          const tenantFullName = allocation.tenant_full_name || `${tenantFirstName} ${tenantLastName}`.trim();
+          
+          // Find the unit info
+          const unitInfo = units.find(u => u.id === allocation.unit_id);
+          
+          return {
+            tenant_id: allocation.tenant_id,
+            tenant_name: tenantFullName || 'Unknown Tenant',
+            unit_id: allocation.unit_id,
+            unit_code: allocation.unit_code || unitInfo?.unit_code || allocation.unit?.unit_code || 'Unknown Unit'
+          };
+        });
+      
+      console.log('Tenants found for property:', propertyId, tenantsWithUnits);
       setTenants(tenantsWithUnits);
     } catch (err) {
       console.error('Error fetching tenants:', err);
