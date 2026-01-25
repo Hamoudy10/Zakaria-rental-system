@@ -13,12 +13,28 @@ let adminSettingsController;
 try {
   dashboardController = require('../controllers/dashboardController');
   console.log('✅ Dashboard controller loaded successfully');
+  console.log('Dashboard controller methods:', Object.keys(dashboardController));
 } catch (err) {
   console.error('❌ Failed to load dashboardController:', err.message);
   dashboardController = {
     getAdminStats: async (req, res) => res.json({ 
       success: true, 
       data: { totalProperties: 0, occupancyRate: '0%', activeTenants: 0, totalRevenue: 0 } 
+    }),
+    getComprehensiveStats: async (req, res) => res.json({ 
+      success: true, 
+      data: {
+        property: { totalProperties: 0, totalUnits: 0, occupiedUnits: 0, vacantUnits: 0, occupancyRate: '0.0' },
+        tenant: { totalTenants: 0, activeTenants: 0, newThisMonth: 0, tenantsWithArrears: 0, totalArrears: 0 },
+        financial: { revenueThisMonth: 0, revenueThisYear: 0, expectedMonthlyRent: 0, collectionRate: '0.0', pendingPaymentsAmount: 0, pendingPaymentsCount: 0, outstandingWater: 0, totalRentCollected: 0, totalWaterCollected: 0, totalArrearsCollected: 0 },
+        agent: { totalAgents: 0, activeAgents: 0, assignedProperties: 0, unassignedProperties: 0 },
+        complaint: { openComplaints: 0, inProgressComplaints: 0, resolvedComplaints: 0, resolvedThisMonth: 0, totalComplaints: 0 },
+        sms: { totalSent: 0, sentToday: 0, failedCount: 0, pendingCount: 0 },
+        payment: { paymentsToday: 0, amountToday: 0, paymentsThisWeek: 0, amountThisWeek: 0, paymentsThisMonth: 0, failedPayments: 0, processingPayments: 0 },
+        unitTypeBreakdown: [],
+        monthlyTrend: [],
+        generatedAt: new Date().toISOString()
+      }
     }),
     getRecentActivities: async (req, res) => res.json({ success: true, data: [] }),
     getTopProperties: async (req, res) => res.json({ success: true, data: [] })
@@ -34,18 +50,24 @@ try {
   throw new Error('adminSettingsController is required for billing system');
 }
 
-const dashboardRoutes = require('./routes/dashboard');
-app.use('/api/admin/dashboard', dashboardRoutes);
-
 // ============================
 // Admin Dashboard Routes
 // ============================
 
+// Legacy stats endpoint (for backward compatibility)
 router.get('/dashboard/stats', protect, adminOnly, (req, res, next) => {
   if (dashboardController.getAdminStats) {
     return dashboardController.getAdminStats(req, res, next);
   }
   res.status(501).json({ success: false, message: 'Dashboard stats not available' });
+});
+
+// NEW: Comprehensive stats endpoint for redesigned dashboard
+router.get('/dashboard/comprehensive-stats', protect, adminOnly, (req, res, next) => {
+  if (dashboardController.getComprehensiveStats) {
+    return dashboardController.getComprehensiveStats(req, res, next);
+  }
+  res.status(501).json({ success: false, message: 'Comprehensive stats not available' });
 });
 
 router.get('/dashboard/recent-activities', protect, adminOnly, (req, res, next) => {
@@ -103,6 +125,5 @@ router.get('/settings/:key', protect, adminOnly, adminSettingsController.getSett
 
 // UPDATE single setting
 router.put('/settings/:key', protect, adminOnly, adminSettingsController.updateSettingByKey);
-
 
 module.exports = router;
