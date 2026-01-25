@@ -149,14 +149,14 @@ const getComprehensiveStats = async (req, res) => {
       console.error('Error fetching tenant stats:', e.message);
     }
 
-    // New allocations this month
+    // New allocations this month (using allocation_date instead of created_at)
     let newAllocationsCount = 0;
     try {
       const newAllocationsResult = await pool.query(`
         SELECT COUNT(*) as count
         FROM tenant_allocations
         WHERE is_active = true
-        AND created_at >= DATE_TRUNC('month', CURRENT_DATE)
+        AND allocation_date >= DATE_TRUNC('month', CURRENT_DATE)
       `);
       newAllocationsCount = parseInt(newAllocationsResult.rows[0]?.count) || 0;
     } catch (e) {
@@ -285,7 +285,7 @@ const getComprehensiveStats = async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // COMPLAINT STATISTICS
+    // COMPLAINT STATISTICS (using raised_at instead of created_at)
     // ═══════════════════════════════════════════════════════════════
     let complaintStats = {
       open_complaints: 0,
@@ -311,7 +311,7 @@ const getComprehensiveStats = async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // SMS STATISTICS
+    // SMS STATISTICS (using correct columns: created_at, sent_at)
     // ═══════════════════════════════════════════════════════════════
     let smsStats = { total_sent: 0, sent_today: 0, failed_count: 0, pending_count: 0 };
 
@@ -319,7 +319,7 @@ const getComprehensiveStats = async (req, res) => {
       const smsStatsResult = await pool.query(`
         SELECT 
           COUNT(CASE WHEN status = 'sent' THEN 1 END) as total_sent,
-          COUNT(CASE WHEN status = 'sent' AND created_at >= CURRENT_DATE THEN 1 END) as sent_today,
+          COUNT(CASE WHEN status = 'sent' AND DATE(sent_at) = CURRENT_DATE THEN 1 END) as sent_today,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count,
           COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count
         FROM sms_queue
@@ -330,7 +330,7 @@ const getComprehensiveStats = async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PAYMENT STATISTICS
+    // PAYMENT STATISTICS (using created_at which exists in rent_payments)
     // ═══════════════════════════════════════════════════════════════
     let paymentStats = {
       payments_today: 0,
@@ -345,8 +345,8 @@ const getComprehensiveStats = async (req, res) => {
     try {
       const paymentStatsResult = await pool.query(`
         SELECT 
-          COUNT(CASE WHEN created_at >= CURRENT_DATE AND status = 'completed' THEN 1 END) as payments_today,
-          COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE AND status = 'completed' THEN amount ELSE 0 END), 0) as amount_today,
+          COUNT(CASE WHEN DATE(created_at) = CURRENT_DATE AND status = 'completed' THEN 1 END) as payments_today,
+          COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE AND status = 'completed' THEN amount ELSE 0 END), 0) as amount_today,
           COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed' THEN 1 END) as payments_this_week,
           COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed' THEN amount ELSE 0 END), 0) as amount_this_week,
           COUNT(CASE WHEN payment_month >= DATE_TRUNC('month', CURRENT_DATE) AND status = 'completed' THEN 1 END) as payments_this_month,
@@ -373,7 +373,7 @@ const getComprehensiveStats = async (req, res) => {
         FROM property_units
         WHERE is_active = true
         GROUP BY unit_type
-        ORDER BY total DESC
+        ORDER BY COUNT(*) DESC
       `);
       unitTypeBreakdown = unitTypeBreakdownResult.rows.map(row => ({
         unitType: row.unit_type || 'unknown',
@@ -488,14 +488,13 @@ const getComprehensiveStats = async (req, res) => {
 
 /**
  * Get recent activities (last 10 actions)
- * Safe version that handles missing columns gracefully
+ * Uses correct column names: raised_at for complaints, allocation_date for allocations
  */
 const getRecentActivities = async (req, res) => {
   try {
-    // Build activities from multiple sources, handling potential missing columns
     const activities = [];
 
-    // 1. User registrations
+    // 1. User registrations (users table has created_at)
     try {
       const usersResult = await pool.query(`
         SELECT
@@ -505,20 +504,16 @@ const getRecentActivities = async (req, res) => {
           'registration' AS type,
           to_char(created_at, 'YYYY-MM-DD HH24:MI') AS time
         FROM users
+        WHERE created_at IS NOT NULL
         ORDER BY created_at DESC
         LIMIT 5
       `);
-      activities.push(...usersResult.rows.map(r => ({
-        ...r,
-        description: r.description,
-        type: 'registration',
-        time: r.time
-      })));
+      activities.push(...usersResult.rows);
     } catch (e) {
       console.error('Error fetching user activities:', e.message);
     }
 
-    // 2. Rent payments
+    // 2. Rent payments (rent_payments has created_at)
     try {
       const paymentsResult = await pool.query(`
         SELECT
@@ -527,69 +522,58 @@ const getRecentActivities = async (req, res) => {
           'payment' AS type,
           to_char(created_at, 'YYYY-MM-DD HH24:MI') AS time
         FROM rent_payments
-        WHERE status = 'completed'
+        WHERE status = 'completed' AND created_at IS NOT NULL
         ORDER BY created_at DESC
         LIMIT 5
       `);
-      activities.push(...paymentsResult.rows.map(r => ({
-        ...r,
-        type: 'payment',
-        time: r.time
-      })));
+      activities.push(...paymentsResult.rows);
     } catch (e) {
       console.error('Error fetching payment activities:', e.message);
     }
 
-    // 3. Complaints
+    // 3. Complaints (complaints uses raised_at, NOT created_at)
     try {
       const complaintsResult = await pool.query(`
         SELECT
-          COALESCE(raised_at, created_at) AS sort_time,
+          raised_at AS sort_time,
           'Complaint submitted: ' || COALESCE(LEFT(description, 40), 'No description') AS description,
           'complaint' AS type,
-          to_char(COALESCE(raised_at, created_at), 'YYYY-MM-DD HH24:MI') AS time
+          to_char(raised_at, 'YYYY-MM-DD HH24:MI') AS time
         FROM complaints
-        ORDER BY COALESCE(raised_at, created_at) DESC
+        WHERE raised_at IS NOT NULL
+        ORDER BY raised_at DESC
         LIMIT 5
       `);
-      activities.push(...complaintsResult.rows.map(r => ({
-        ...r,
-        type: 'complaint',
-        time: r.time
-      })));
+      activities.push(...complaintsResult.rows);
     } catch (e) {
       console.error('Error fetching complaint activities:', e.message);
     }
 
-    // 4. Tenant allocations (new move-ins)
+    // 4. Tenant allocations (tenant_allocations uses allocation_date, NOT created_at)
     try {
       const allocationsResult = await pool.query(`
         SELECT
-          ta.created_at AS sort_time,
+          ta.allocation_date AS sort_time,
           'New tenant allocated to unit ' || COALESCE(pu.unit_code, 'Unknown') AS description,
           'allocation' AS type,
-          to_char(ta.created_at, 'YYYY-MM-DD HH24:MI') AS time
+          to_char(ta.allocation_date, 'YYYY-MM-DD HH24:MI') AS time
         FROM tenant_allocations ta
         LEFT JOIN property_units pu ON pu.id = ta.unit_id
-        WHERE ta.is_active = true
-        ORDER BY ta.created_at DESC
+        WHERE ta.is_active = true AND ta.allocation_date IS NOT NULL
+        ORDER BY ta.allocation_date DESC
         LIMIT 5
       `);
-      activities.push(...allocationsResult.rows.map(r => ({
-        ...r,
-        type: 'allocation',
-        time: r.time
-      })));
+      activities.push(...allocationsResult.rows);
     } catch (e) {
       console.error('Error fetching allocation activities:', e.message);
     }
 
     // Sort all activities by time and take top 10
     const sortedActivities = activities
-      .filter(a => a.sort_time) // Remove any with null timestamps
+      .filter(a => a.sort_time)
       .sort((a, b) => new Date(b.sort_time) - new Date(a.sort_time))
       .slice(0, 10)
-      .map(({ sort_time, ...rest }) => rest); // Remove sort_time from output
+      .map(({ sort_time, user_name, ...rest }) => rest);
 
     res.json({
       success: true,
@@ -607,7 +591,6 @@ const getRecentActivities = async (req, res) => {
 
 /**
  * Get top performing properties (by monthly revenue)
- * Safe version that handles missing columns gracefully
  */
 const getTopProperties = async (req, res) => {
   try {
@@ -646,7 +629,6 @@ const getTopProperties = async (req, res) => {
         FROM agent_property_assignments apa
         JOIN users u ON u.id = apa.agent_id
         WHERE apa.is_active = true
-        ORDER BY apa.property_id, apa.created_at DESC
       ) agent_info ON agent_info.property_id = p.id
       WHERE p.is_active = true
       ORDER BY revenue DESC
