@@ -174,3 +174,55 @@ const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default;
 await import('jspdf-autotable');
 const doc = new jsPDF('landscape', 'mm', 'a4');
 doc.autoTable({...});
+
+---
+
+## For Frontend `src/claude.md` - Add this section:
+
+```markdown
+## COMPLAINT PDF EXPORT
+
+### File: ComplaintManagement.jsx
+
+### Dependencies
+- jspdf: ^3.0.4
+- jspdf-autotable: ^5.0.7
+
+### jspdf-autotable v5.x Usage (Dynamic Import)
+```javascript
+// Load libraries
+const jspdfModule = await import('jspdf');
+const jsPDF = jspdfModule.jsPDF || jspdfModule.default;
+
+const autoTableModule = await import('jspdf-autotable');
+const autoTable = autoTableModule.default;
+
+// Create doc and table
+const doc = new jsPDF('landscape', 'mm', 'a4');
+autoTable(doc, { startY: 55, head: [[...]], body: [...] }); // Pass doc as 1st arg
+
+---
+
+## For `src/utils/complaintPdfExport.js` - Add to relevant claude.md:
+
+```markdown
+## COMPLAINT PDF EXPORT UTILITY
+
+### File: src/utils/complaintPdfExport.js
+
+### Exported Functions
+| Function | Description |
+|----------|-------------|
+| `exportComplaintsToPDF(complaints, options)` | Export multiple complaints |
+| `exportSingleComplaintToPDF(complaint)` | Export single complaint detail |
+| `getCompanyInfo()` | Fetch company info with 5-min cache |
+| `clearCompanyInfoCache()` | Clear cache after settings update |
+
+### Options for exportComplaintsToPDF
+```javascript
+{
+  title: 'Complaints Report',
+  includeSteps: true,
+  filterStatus: null, // 'open', 'in_progress', 'resolved'
+  isAdmin: false
+}
