@@ -226,3 +226,20 @@ autoTable(doc, { startY: 55, head: [[...]], body: [...] }); // Pass doc as 1st a
   filterStatus: null, // 'open', 'in_progress', 'resolved'
   isAdmin: false
 }
+
+---
+
+## Frontend `src/claude.md` - Add this section:
+
+```markdown
+## ADMIN DASHBOARD OVERVIEW (v19)
+
+### Component: AdminDashboard.jsx
+- Fetches from `/admin/dashboard/comprehensive-stats`
+- Uses `pendingPayments` (NOT `processingPayments`)
+- Displays: Key Metrics, Financial Overview, Property Stats, Payment Activity, Agents, Complaints, SMS, Quick Actions, Monthly Trend, Recent Activities, Top Properties
+
+### Data Access Pattern
+```javascript
+const { property, tenant, financial, agent, complaint, sms, payment, unitTypeBreakdown, monthlyTrend } = stats;
+// All fields use optional chaining: payment?.pendingPayments || 0

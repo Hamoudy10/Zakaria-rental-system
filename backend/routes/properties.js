@@ -2,9 +2,8 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
 const { authMiddleware } = require('../middleware/authMiddleware');
-
-// Add this import at the top - IMPORTANT!
 const { protect, adminOnly, agentOnly } = require('../middleware/authMiddleware');
+const { uploadPropertyImages, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
 
 // GET ALL PROPERTIES (For admins) OR AGENT ASSIGNED PROPERTIES
 router.get('/', protect, async (req, res) => {
@@ -158,7 +157,7 @@ router.get('/:id', protect, async (req, res) => {
     const imagesResult = await pool.query(`
       SELECT * FROM property_images 
       WHERE property_id = $1 
-      ORDER BY uploaded_at DESC
+      ORDER BY display_order ASC, uploaded_at DESC
     `, [id]);
 
     res.json({ 
@@ -179,7 +178,326 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-// CREATE NEW PROPERTY (POST) - UPDATED WITH UNIT_TYPE
+// ==================== PROPERTY IMAGES ROUTES ====================
+
+// GET PROPERTY IMAGES
+router.get('/:id/images', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verify property exists
+    const propertyCheck = await pool.query(
+      'SELECT id, name FROM properties WHERE id = $1',
+      [id]
+    );
+    
+    if (propertyCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Property not found'
+      });
+    }
+    
+    // If user is agent, check if they're assigned to this property
+    if (req.user.role === 'agent') {
+      const assignmentCheck = await pool.query(
+        `SELECT 1 FROM agent_property_assignments 
+         WHERE property_id = $1 AND agent_id = $2 AND is_active = true`,
+        [id, req.user.id]
+      );
+      
+      if (assignmentCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You are not assigned to this property.'
+        });
+      }
+    }
+    
+    const result = await pool.query(`
+      SELECT pi.*, u.first_name || ' ' || u.last_name as uploaded_by_name
+      FROM property_images pi
+      LEFT JOIN users u ON pi.uploaded_by = u.id
+      WHERE pi.property_id = $1
+      ORDER BY pi.display_order ASC, pi.uploaded_at DESC
+    `, [id]);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error fetching property images:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching property images',
+      error: error.message
+    });
+  }
+});
+
+// UPLOAD PROPERTY IMAGES (Admin only)
+router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const { captions } = req.body; // Optional: array of captions for each image
+    
+    console.log(`📤 Uploading images for property ${id}`);
+    
+    // Verify property exists
+    const propertyCheck = await client.query(
+      'SELECT id, name FROM properties WHERE id = $1',
+      [id]
+    );
+    
+    if (propertyCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Property not found'
+      });
+    }
+    
+    // Check if any files were uploaded
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No images provided'
+      });
+    }
+    
+    // Get current max display_order
+    const maxOrderResult = await client.query(
+      'SELECT COALESCE(MAX(display_order), 0) as max_order FROM property_images WHERE property_id = $1',
+      [id]
+    );
+    let displayOrder = maxOrderResult.rows[0].max_order;
+    
+    // Parse captions if provided
+    let captionArray = [];
+    if (captions) {
+      try {
+        captionArray = typeof captions === 'string' ? JSON.parse(captions) : captions;
+      } catch (e) {
+        captionArray = [];
+      }
+    }
+    
+    // Insert each uploaded image
+    const insertedImages = [];
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      displayOrder++;
+      
+      const caption = captionArray[i] || null;
+      
+      const result = await client.query(
+        `INSERT INTO property_images (property_id, image_url, caption, display_order, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [id, file.path, caption, displayOrder, req.user.id]
+      );
+      
+      insertedImages.push(result.rows[0]);
+    }
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Successfully uploaded ${insertedImages.length} images for property ${id}`);
+    
+    res.status(201).json({
+      success: true,
+      message: `Successfully uploaded ${insertedImages.length} image(s)`,
+      data: insertedImages
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error uploading property images:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error uploading property images',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// UPDATE PROPERTY IMAGE (Caption, Display Order)
+router.patch('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
+  try {
+    const { id, imageId } = req.params;
+    const { caption, display_order } = req.body;
+    
+    // Verify image exists and belongs to this property
+    const imageCheck = await pool.query(
+      'SELECT * FROM property_images WHERE id = $1 AND property_id = $2',
+      [imageId, id]
+    );
+    
+    if (imageCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Image not found or does not belong to this property'
+      });
+    }
+    
+    // Build update query
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+    
+    if (caption !== undefined) {
+      updates.push(`caption = $${paramCount}`);
+      values.push(caption);
+      paramCount++;
+    }
+    
+    if (display_order !== undefined) {
+      updates.push(`display_order = $${paramCount}`);
+      values.push(display_order);
+      paramCount++;
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields to update'
+      });
+    }
+    
+    values.push(imageId);
+    
+    const result = await pool.query(
+      `UPDATE property_images SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
+      values
+    );
+    
+    res.json({
+      success: true,
+      message: 'Image updated successfully',
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('Error updating property image:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating property image',
+      error: error.message
+    });
+  }
+});
+
+// DELETE PROPERTY IMAGE (Admin only)
+router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id, imageId } = req.params;
+    
+    console.log(`🗑️ Deleting image ${imageId} from property ${id}`);
+    
+    // Verify image exists and belongs to this property
+    const imageCheck = await client.query(
+      'SELECT * FROM property_images WHERE id = $1 AND property_id = $2',
+      [imageId, id]
+    );
+    
+    if (imageCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Image not found or does not belong to this property'
+      });
+    }
+    
+    const imageUrl = imageCheck.rows[0].image_url;
+    
+    // Delete from database
+    await client.query('DELETE FROM property_images WHERE id = $1', [imageId]);
+    
+    // Delete from Cloudinary
+    await deleteCloudinaryImage(imageUrl);
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Successfully deleted image ${imageId}`);
+    
+    res.json({
+      success: true,
+      message: 'Image deleted successfully'
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error deleting property image:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting property image',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// REORDER PROPERTY IMAGES (Bulk update display_order)
+router.put('/:id/images/reorder', protect, adminOnly, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const { imageOrder } = req.body; // Array of { id, display_order }
+    
+    if (!Array.isArray(imageOrder) || imageOrder.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'imageOrder must be a non-empty array of { id, display_order }'
+      });
+    }
+    
+    // Update each image's display_order
+    for (const item of imageOrder) {
+      await client.query(
+        `UPDATE property_images 
+         SET display_order = $1 
+         WHERE id = $2 AND property_id = $3`,
+        [item.display_order, item.id, id]
+      );
+    }
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'Image order updated successfully'
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error reordering property images:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error reordering property images',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// ==================== END PROPERTY IMAGES ROUTES ====================
+
+// CREATE NEW PROPERTY (POST) - REMOVED UNIT_TYPE from property level
 router.post('/', protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
@@ -193,8 +511,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
       county, 
       town, 
       description, 
-      total_units,
-      unit_type = 'bedsitter' // Added unit_type with default
+      total_units
     } = req.body;
     
     console.log('📝 Creating new property with data:', req.body);
@@ -205,15 +522,6 @@ router.post('/', protect, adminOnly, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields: property_code, name, address, county, town, total_units'
-      });
-    }
-
-    // Validate unit_type
-    const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
-    if (!validUnitTypes.includes(unit_type)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
       });
     }
 
@@ -230,16 +538,16 @@ router.post('/', protect, adminOnly, async (req, res) => {
       });
     }
 
-    // Insert property - UPDATED WITH UNIT_TYPE
+    // Insert property - WITHOUT unit_type at property level
     const propertyResult = await client.query(
       `INSERT INTO properties 
-        (property_code, name, address, county, town, description, total_units, available_units, unit_type, created_by) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+        (property_code, name, address, county, town, description, total_units, available_units, created_by) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
        RETURNING *`,
-      [property_code, name, address, county, town, description, total_units, total_units, unit_type, req.user.id]
+      [property_code, name, address, county, town, description, total_units, total_units, req.user.id]
     );
 
-    // Create default units if total_units > 0 - UPDATED TO USE PROPERTY'S UNIT_TYPE
+    // Create default units if total_units > 0 - Default to 'bedsitter', can be changed per unit later
     if (total_units > 0) {
       for (let i = 1; i <= total_units; i++) {
         await client.query(
@@ -249,7 +557,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
           [
             propertyResult.rows[0].id,
             `${property_code}-UNIT-${i}`,
-            unit_type, // Use the property's unit_type instead of hardcoded 'residential'
+            'bedsitter', // Default unit type, editable per unit
             i.toString(),
             0, // default rent amount
             0, // default deposit amount
@@ -273,14 +581,6 @@ router.post('/', protect, adminOnly, async (req, res) => {
     await client.query('ROLLBACK');
     console.error('❌ Error creating property:', error);
     
-    // Handle invalid unit_type enum value
-    if (error.code === '22P02') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid unit_type value. Must be one of: bedsitter, studio, one_bedroom, two_bedroom, three_bedroom'
-      });
-    }
-    
     res.status(500).json({ 
       success: false, 
       message: 'Error creating property',
@@ -291,7 +591,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
   }
 });
 
-// UPDATE PROPERTY (PUT) - UPDATED WITH UNIT_TYPE
+// UPDATE PROPERTY (PUT) - REMOVED UNIT_TYPE from property level
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
@@ -302,13 +602,12 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
       county, 
       town, 
       description, 
-      total_units,
-      unit_type // Added unit_type
+      total_units
     } = req.body;
 
     // Check if property exists
     const propertyCheck = await pool.query(
-      'SELECT id, name FROM properties WHERE id = $1',
+      'SELECT id, name, property_code FROM properties WHERE id = $1',
       [id]
     );
     
@@ -317,17 +616,6 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
         success: false, 
         message: 'Property not found' 
       });
-    }
-
-    // Validate unit_type if provided
-    if (unit_type) {
-      const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
-      if (!validUnitTypes.includes(unit_type)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid unit_type. Must be one of: ${validUnitTypes.join(', ')}`
-        });
-      }
     }
 
     // Check if property code is being changed and if it already exists
@@ -345,7 +633,7 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
       }
     }
 
-    // UPDATED QUERY WITH UNIT_TYPE
+    // UPDATED QUERY WITHOUT UNIT_TYPE
     const result = await pool.query(
       `UPDATE properties 
        SET property_code = COALESCE($1, property_code),
@@ -355,11 +643,10 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
            town = COALESCE($5, town),
            description = COALESCE($6, description),
            total_units = COALESCE($7, total_units),
-           unit_type = COALESCE($8, unit_type),
            updated_at = NOW()
-       WHERE id = $9 
+       WHERE id = $8 
        RETURNING *`,
-      [property_code, name, address, county, town, description, total_units, unit_type, id]
+      [property_code, name, address, county, town, description, total_units, id]
     );
     
     res.json({ 
@@ -369,14 +656,6 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
     });
   } catch (error) {
     console.error('Error updating property:', error);
-    
-    // Handle invalid unit_type enum value
-    if (error.code === '22P02') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid unit_type value. Must be one of: bedsitter, studio, one_bedroom, two_bedroom, three_bedroom'
-      });
-    }
     
     res.status(500).json({ 
       success: false, 
@@ -441,16 +720,27 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
       });
     }
 
+    // Get property images for Cloudinary cleanup
+    const propertyImages = await client.query(
+      'SELECT image_url FROM property_images WHERE property_id = $1',
+      [id]
+    );
+
     // Delete property units first
     await client.query('DELETE FROM property_units WHERE property_id = $1', [id]);
     
-    // Delete property images
+    // Delete property images from database
     await client.query('DELETE FROM property_images WHERE property_id = $1', [id]);
     
     // Delete the property
     await client.query('DELETE FROM properties WHERE id = $1', [id]);
     
     await client.query('COMMIT');
+    
+    // Clean up Cloudinary images (after commit to avoid blocking)
+    for (const img of propertyImages.rows) {
+      await deleteCloudinaryImage(img.image_url);
+    }
     
     res.json({ 
       success: true, 
@@ -592,9 +882,9 @@ router.get('/:id/units', protect, async (req, res) => {
   }
 });
 
-// ==================== NEW UNIT MANAGEMENT ROUTES ====================
+// ==================== UNIT MANAGEMENT ROUTES ====================
 
-// CREATE NEW UNIT FOR A PROPERTY (POST) - THIS WAS MISSING!
+// CREATE NEW UNIT FOR A PROPERTY (POST)
 router.post('/:id/units', protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
@@ -639,7 +929,7 @@ router.post('/:id/units', protect, adminOnly, async (req, res) => {
     }
     
     // 3. Validate unit_type
-    const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+    const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom', 'shop', 'hall'];
     if (!validUnitTypes.includes(unit_type)) {
       return res.status(400).json({
         success: false,
@@ -772,7 +1062,7 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
     
     // 3. Validate unit_type if provided
     if (updates.unit_type) {
-      const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'];
+      const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom', 'shop', 'hall'];
       if (!validUnitTypes.includes(updates.unit_type)) {
         return res.status(400).json({
           success: false,

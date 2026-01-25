@@ -254,8 +254,7 @@ export const userAPI = {
     api.put('/users/notification-preferences', preferences),
 };
 
-// Property API
-// Property API - Updated with agent endpoints
+// Property API - Updated with image management endpoints
 export const propertyAPI = {
   // Basic property operations
   getProperties: (params = {}) => api.get('/properties', { params }),
@@ -286,7 +285,30 @@ export const propertyAPI = {
   getAgentProperties: () => api.get('/agent-properties/my-properties'),
   getAgentDashboardStats: () => api.get('/agent-properties/dashboard-stats'),
   getAgentAssignedTenants: () => api.get('/agent-properties/my-tenants'),
-  getAgentAssignedComplaints: () => api.get('/agent-properties/my-complaints')
+  getAgentAssignedComplaints: () => api.get('/agent-properties/my-complaints'),
+
+  // ==================== NEW: PROPERTY IMAGES ====================
+  // Get all images for a property
+  getPropertyImages: (propertyId) => api.get(`/properties/${propertyId}/images`),
+  
+  // Upload property images (accepts FormData with 'property_images' field)
+  uploadPropertyImages: (propertyId, formData) => {
+    return api.post(`/properties/${propertyId}/images`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
+  
+  // Update image caption or display order
+  updatePropertyImage: (propertyId, imageId, updates) => 
+    api.patch(`/properties/${propertyId}/images/${imageId}`, updates),
+  
+  // Delete a property image
+  deletePropertyImage: (propertyId, imageId) => 
+    api.delete(`/properties/${propertyId}/images/${imageId}`),
+  
+  // Reorder property images (bulk update)
+  reorderPropertyImages: (propertyId, imageOrder) => 
+    api.put(`/properties/${propertyId}/images/reorder`, { imageOrder }),
 };
 
 
