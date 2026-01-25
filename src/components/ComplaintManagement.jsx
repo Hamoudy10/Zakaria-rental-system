@@ -457,17 +457,45 @@ const ComplaintManagement = () => {
     return matchesSearch && matchesCategory;
   });
 
- // PDF Export Function - FIXED FOR jspdf-autotable v5.x
+ // PDF Export Function - WITH LOGO SUPPORT
 const handleExportPDF = async () => {
   try {
     setExportingPDF(true);
     setError(null);
+    
+    // Helper function to load image as base64
+    const loadImageAsBase64 = (url) => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          try {
+            const dataURL = canvas.toDataURL('image/png');
+            resolve(dataURL);
+          } catch (e) {
+            console.warn('Canvas toDataURL failed:', e);
+            resolve(null);
+          }
+        };
+        img.onerror = (e) => {
+          console.warn('Image load failed:', e);
+          resolve(null);
+        };
+        img.src = url;
+      });
+    };
     
     // Get company info
     let companyName = 'Zakaria Rental System';
     let companyAddress = '';
     let companyPhone = '';
     let companyEmail = '';
+    let companyLogo = null;
     
     try {
       const companyResponse = await settingsAPI.getCompanyInfo();
@@ -476,8 +504,16 @@ const handleExportPDF = async () => {
       companyAddress = data.address || data.company_address || '';
       companyPhone = data.phone || data.company_phone || '';
       companyEmail = data.email || data.company_email || '';
+      
+      // Load logo if available
+      const logoUrl = data.logo || data.company_logo;
+      if (logoUrl) {
+        console.log('Loading logo from:', logoUrl);
+        companyLogo = await loadImageAsBase64(logoUrl);
+        console.log('Logo loaded:', companyLogo ? 'Success' : 'Failed');
+      }
     } catch (e) {
-      console.warn('Using default company info');
+      console.warn('Using default company info:', e);
     }
     
     // Fetch steps for complaints
@@ -497,7 +533,7 @@ const handleExportPDF = async () => {
     const jspdfModule = await import('jspdf');
     const jsPDF = jspdfModule.jsPDF || jspdfModule.default;
     
-    // Load autoTable - get the default export function
+    // Load autoTable
     const autoTableModule = await import('jspdf-autotable');
     const autoTable = autoTableModule.default;
     
@@ -509,32 +545,55 @@ const handleExportPDF = async () => {
     const primaryColor = [37, 99, 235];
     const textColor = [55, 65, 81];
     
-    // Header
+    // Header background
     doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.rect(0, 0, pageWidth, 25, 'F');
+    doc.rect(0, 0, pageWidth, 28, 'F');
+    
+    // Add logo if available
+    let logoWidth = 0;
+    if (companyLogo) {
+      try {
+        // Logo dimensions - adjust as needed
+        const logoHeight = 20;
+        logoWidth = 20;
+        const logoX = 10;
+        const logoY = 4;
+        
+        doc.addImage(companyLogo, 'PNG', logoX, logoY, logoWidth, logoHeight);
+        console.log('Logo added to PDF');
+      } catch (e) {
+        console.warn('Failed to add logo to PDF:', e);
+        logoWidth = 0;
+      }
+    }
+    
+    // Company name - adjust position based on whether logo exists
+    const textStartX = logoWidth > 0 ? 35 : 14;
     
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text(companyName, 14, 12);
+    doc.text(companyName, textStartX, 12);
     
+    // Company details
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     const detailParts = [companyAddress, companyPhone, companyEmail].filter(Boolean);
     if (detailParts.length > 0) {
-      doc.text(detailParts.join(' | '), 14, 19);
+      doc.text(detailParts.join(' | '), textStartX, 19);
     }
     
-    // Title
+    // Report title
     doc.setTextColor(textColor[0], textColor[1], textColor[2]);
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.text(isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report', 14, 35);
+    doc.text(isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report', 14, 38);
     
+    // Generated date and stats
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Generated: ${formatDate(new Date())}`, 14, 42);
-    doc.text(`Total: ${complaintsWithSteps.length} | Open: ${stats.open} | In Progress: ${stats.in_progress} | Resolved: ${stats.resolved}`, 14, 48);
+    doc.text(`Generated: ${formatDate(new Date())}`, 14, 45);
+    doc.text(`Total: ${complaintsWithSteps.length} | Open: ${stats.open} | In Progress: ${stats.in_progress} | Resolved: ${stats.resolved}`, 14, 51);
     
     // Table data
     const tableData = complaintsWithSteps.map(complaint => {
@@ -555,9 +614,9 @@ const handleExportPDF = async () => {
       ];
     });
     
-    // Create table using autoTable function (v5.x style)
+    // Create table
     autoTable(doc, {
-      startY: 55,
+      startY: 58,
       head: [['Tenant', 'Property', 'Unit', 'Categories', 'Title', 'Status', 'Steps', 'Date Raised', 'Date Resolved']],
       body: tableData,
       styles: { fontSize: 8, cellPadding: 3 },
@@ -568,7 +627,7 @@ const handleExportPDF = async () => {
         3: { cellWidth: 35 }, 4: { cellWidth: 40 }, 5: { cellWidth: 22 },
         6: { cellWidth: 18 }, 7: { cellWidth: 28 }, 8: { cellWidth: 28 }
       },
-      margin: { top: 55, bottom: 15 }
+      margin: { top: 58, bottom: 15 }
     });
     
     // Steps detail page
@@ -577,19 +636,46 @@ const handleExportPDF = async () => {
     if (complaintsWithActualSteps.length > 0) {
       doc.addPage();
       
+      // Header for steps page
       doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.rect(0, 0, pageWidth, 15, 'F');
+      doc.rect(0, 0, pageWidth, 18, 'F');
+      
+      // Add logo to steps page header too
+      if (companyLogo) {
+        try {
+          doc.addImage(companyLogo, 'PNG', 10, 2, 14, 14);
+        } catch (e) {
+          console.warn('Failed to add logo to steps page:', e);
+        }
+      }
+      
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text('Detailed Steps by Complaint', 14, 10);
+      doc.text('Detailed Steps by Complaint', logoWidth > 0 ? 30 : 14, 12);
       
-      let yPos = 25;
+      let yPos = 28;
       
       for (const complaint of complaintsWithActualSteps) {
         if (yPos > pageHeight - 50) {
           doc.addPage();
-          yPos = 20;
+          
+          // Add header to new page
+          doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+          doc.rect(0, 0, pageWidth, 15, 'F');
+          
+          if (companyLogo) {
+            try {
+              doc.addImage(companyLogo, 'PNG', 10, 1, 12, 12);
+            } catch (e) {}
+          }
+          
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(12);
+          doc.setFont('helvetica', 'bold');
+          doc.text('Detailed Steps (continued)', logoWidth > 0 ? 28 : 14, 10);
+          
+          yPos = 25;
         }
         
         doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
@@ -638,14 +724,20 @@ const handleExportPDF = async () => {
       }
     }
     
-    // Page numbers
+    // Page numbers and footer
     const totalPages = doc.internal.getNumberOfPages();
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
+      
+      // Footer background
+      doc.setFillColor(245, 245, 245);
+      doc.rect(0, pageHeight - 10, pageWidth, 10, 'F');
+      
       doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
-      doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' });
-      doc.text(companyName, 14, pageHeight - 5);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 4, { align: 'center' });
+      doc.text(companyName, 14, pageHeight - 4);
+      doc.text(formatDate(new Date()), pageWidth - 14, pageHeight - 4, { align: 'right' });
     }
     
     doc.save(`complaints_report_${new Date().toISOString().split('T')[0]}.pdf`);
