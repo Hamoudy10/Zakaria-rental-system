@@ -1,3 +1,8 @@
+// ============================================
+// UPDATED ComplaintContext.jsx
+// Replace your existing src/context/ComplaintContext.jsx with this
+// ============================================
+
 import React, { createContext, useState, useContext, useCallback } from 'react';
 import { complaintAPI } from '../services/api';
 
@@ -18,16 +23,36 @@ export const ComplaintProvider = ({ children }) => {
   const [selectedComplaint, setSelectedComplaint] = useState(null);
 
   // Fetch all complaints
-  const fetchComplaints = useCallback(async () => {
+  const fetchComplaints = useCallback(async (params = {}) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await complaintAPI.getComplaints();
-      setComplaints(response.data.complaints || []);
+      const response = await complaintAPI.getComplaints(params);
+      const complaintsData = response.data?.data || response.data?.complaints || [];
+      setComplaints(Array.isArray(complaintsData) ? complaintsData : []);
+      return complaintsData;
     } catch (err) {
       console.error('Error fetching complaints:', err);
-      setError('Failed to fetch complaints');
+      setError(err.response?.data?.message || 'Failed to fetch complaints');
       setComplaints([]);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Get single complaint with steps
+  const getComplaint = useCallback(async (id) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await complaintAPI.getComplaint(id);
+      const complaint = response.data?.data || response.data;
+      return complaint;
+    } catch (err) {
+      console.error('Error fetching complaint:', err);
+      setError(err.response?.data?.message || 'Failed to fetch complaint');
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -38,28 +63,16 @@ export const ComplaintProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
-      const newComplaint = {
-        id: Math.random().toString(36).substr(2, 9),
-        ...complaintData,
-        status: 'open',
-        raised_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        tenant: {
-          id: complaintData.tenant_id,
-          first_name: 'Tenant',
-          last_name: 'User'
-        },
-        unit: {
-          id: complaintData.unit_id,
-          unit_code: 'UNIT001'
-        }
-      };
+      const response = await complaintAPI.createComplaint(complaintData);
+      const newComplaint = response.data?.data || response.data;
       
-      setComplaints(prev => [...prev, newComplaint]);
+      // Add to local state
+      setComplaints(prev => [newComplaint, ...prev]);
+      
       return newComplaint;
     } catch (err) {
       console.error('Error creating complaint:', err);
-      setError('Failed to create complaint');
+      setError(err.response?.data?.message || 'Failed to create complaint');
       throw err;
     } finally {
       setLoading(false);
@@ -71,12 +84,41 @@ export const ComplaintProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
+      const response = await complaintAPI.updateComplaint(complaintId, updates);
+      const updatedComplaint = response.data?.data || response.data;
+      
+      // Update local state
       setComplaints(prev => prev.map(complaint => 
-        complaint.id === complaintId ? { ...complaint, ...updates } : complaint
+        complaint.id === complaintId ? { ...complaint, ...updatedComplaint } : complaint
       ));
+      
+      return updatedComplaint;
     } catch (err) {
       console.error('Error updating complaint:', err);
-      setError('Failed to update complaint');
+      setError(err.response?.data?.message || 'Failed to update complaint');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Update complaint status
+  const updateComplaintStatus = useCallback(async (complaintId, status) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await complaintAPI.updateComplaintStatus(complaintId, status);
+      const updatedComplaint = response.data?.data || response.data;
+      
+      // Update local state
+      setComplaints(prev => prev.map(complaint => 
+        complaint.id === complaintId ? { ...complaint, status, ...updatedComplaint } : complaint
+      ));
+      
+      return updatedComplaint;
+    } catch (err) {
+      console.error('Error updating complaint status:', err);
+      setError(err.response?.data?.message || 'Failed to update complaint status');
       throw err;
     } finally {
       setLoading(false);
@@ -88,70 +130,142 @@ export const ComplaintProvider = ({ children }) => {
     setLoading(true);
     setError(null);
     try {
+      const response = await complaintAPI.assignComplaint(complaintId, agentId);
+      const updatedComplaint = response.data?.data || response.data;
+      
+      // Update local state
       setComplaints(prev => prev.map(complaint => 
         complaint.id === complaintId 
-          ? { 
-              ...complaint, 
-              assigned_agent: agentId,
-              status: 'in_progress',
-              acknowledged_at: new Date().toISOString()
-            } 
+          ? { ...complaint, assigned_agent: agentId, ...updatedComplaint } 
           : complaint
       ));
+      
+      return updatedComplaint;
     } catch (err) {
       console.error('Error assigning complaint:', err);
-      setError('Failed to assign complaint');
+      setError(err.response?.data?.message || 'Failed to assign complaint');
       throw err;
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Get complaint steps
+  const getComplaintSteps = useCallback(async (complaintId) => {
+    try {
+      const response = await complaintAPI.getComplaintSteps(complaintId);
+      return response.data?.data || response.data || [];
+    } catch (err) {
+      console.error('Error fetching complaint steps:', err);
+      throw err;
+    }
+  }, []);
+
+  // Add step to complaint
+  const addComplaintStep = useCallback(async (complaintId, stepData) => {
+    try {
+      const response = await complaintAPI.addComplaintStep(complaintId, stepData);
+      return response.data?.data || response.data;
+    } catch (err) {
+      console.error('Error adding complaint step:', err);
+      setError(err.response?.data?.message || 'Failed to add step');
+      throw err;
+    }
+  }, []);
+
+  // Add multiple steps to complaint
+  const addMultipleSteps = useCallback(async (complaintId, steps) => {
+    try {
+      const response = await complaintAPI.addMultipleSteps(complaintId, steps);
+      
+      // Update complaint status in local state
+      setComplaints(prev => prev.map(complaint => 
+        complaint.id === complaintId 
+          ? { ...complaint, status: 'in_progress' } 
+          : complaint
+      ));
+      
+      return response.data?.data || response.data;
+    } catch (err) {
+      console.error('Error adding complaint steps:', err);
+      setError(err.response?.data?.message || 'Failed to add steps');
+      throw err;
+    }
+  }, []);
+
+  // Toggle step completion
+  const toggleComplaintStep = useCallback(async (complaintId, stepId, isCompleted) => {
+    try {
+      const response = await complaintAPI.toggleComplaintStep(complaintId, stepId, isCompleted);
+      const result = response.data;
+      
+      // If all steps completed, update complaint status
+      if (result.allCompleted) {
+        setComplaints(prev => prev.map(complaint => 
+          complaint.id === complaintId 
+            ? { ...complaint, status: 'resolved' } 
+            : complaint
+        ));
+      }
+      
+      return result;
+    } catch (err) {
+      console.error('Error toggling step:', err);
+      setError(err.response?.data?.message || 'Failed to update step');
+      throw err;
+    }
+  }, []);
+
+  // Delete step
+  const deleteComplaintStep = useCallback(async (complaintId, stepId) => {
+    try {
+      await complaintAPI.deleteComplaintStep(complaintId, stepId);
+    } catch (err) {
+      console.error('Error deleting step:', err);
+      setError(err.response?.data?.message || 'Failed to delete step');
+      throw err;
+    }
+  }, []);
+
   // Resolve complaint
-  const resolveComplaint = useCallback(async (complaintId, resolutionData) => {
+  const resolveComplaint = useCallback(async (complaintId, resolutionData = {}) => {
     setLoading(true);
     setError(null);
     try {
+      const response = await complaintAPI.resolveComplaint(complaintId, resolutionData);
+      const updatedComplaint = response.data?.data || response.data;
+      
+      // Update local state
       setComplaints(prev => prev.map(complaint => 
         complaint.id === complaintId 
           ? { 
               ...complaint, 
               status: 'resolved',
               resolved_at: new Date().toISOString(),
-              ...resolutionData
+              ...updatedComplaint 
             } 
           : complaint
       ));
+      
+      return updatedComplaint;
     } catch (err) {
       console.error('Error resolving complaint:', err);
-      setError('Failed to resolve complaint');
+      setError(err.response?.data?.message || 'Failed to resolve complaint');
       throw err;
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Add complaint update
+  // Add complaint update/comment
   const addComplaintUpdate = useCallback(async (complaintId, updateData) => {
-    setLoading(true);
-    setError(null);
     try {
-      const newUpdate = {
-        id: Math.random().toString(36).substr(2, 9),
-        complaint_id: complaintId,
-        ...updateData,
-        created_at: new Date().toISOString()
-      };
-      
-      // In a real app, this would be a separate API call
-      // For now, we'll just update the local state
-      return newUpdate;
+      const response = await complaintAPI.addComplaintUpdate(complaintId, updateData);
+      return response.data?.data || response.data;
     } catch (err) {
       console.error('Error adding complaint update:', err);
-      setError('Failed to add complaint update');
+      setError(err.response?.data?.message || 'Failed to add update');
       throw err;
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -172,52 +286,78 @@ export const ComplaintProvider = ({ children }) => {
 
   // Get complaint statistics
   const getComplaintStats = useCallback(() => {
-    const openComplaints = complaints.filter(c => c.status === 'open').length;
-    const inProgressComplaints = complaints.filter(c => c.status === 'in_progress').length;
-    const resolvedComplaints = complaints.filter(c => c.status === 'resolved').length;
-    const highPriority = complaints.filter(c => c.priority === 'high').length;
+    const safeComplaints = Array.isArray(complaints) ? complaints : [];
     
     return {
-      total: complaints.length,
-      open: openComplaints,
-      inProgress: inProgressComplaints,
-      resolved: resolvedComplaints,
-      highPriority
+      total: safeComplaints.length,
+      open: safeComplaints.filter(c => c.status === 'open').length,
+      inProgress: safeComplaints.filter(c => c.status === 'in_progress').length,
+      resolved: safeComplaints.filter(c => c.status === 'resolved').length,
+      highPriority: safeComplaints.filter(c => c.priority === 'high').length
     };
   }, [complaints]);
 
+  // Clear error
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
   const value = React.useMemo(() => ({
+    // State
     complaints,
     loading,
     error,
     selectedComplaint,
     setSelectedComplaint,
+    
+    // CRUD Operations
     fetchComplaints,
+    getComplaint,
     createComplaint,
     updateComplaint,
+    updateComplaintStatus,
     assignComplaint,
     resolveComplaint,
     addComplaintUpdate,
+    
+    // Steps Operations
+    getComplaintSteps,
+    addComplaintStep,
+    addMultipleSteps,
+    toggleComplaintStep,
+    deleteComplaintStep,
+    
+    // Filter Functions
     getComplaintsByStatus,
     getComplaintsByPriority,
     getAgentComplaints,
     getComplaintStats,
-    clearError: () => setError(null)
+    
+    // Utilities
+    clearError
   }), [
     complaints,
     loading,
     error,
     selectedComplaint,
     fetchComplaints,
+    getComplaint,
     createComplaint,
     updateComplaint,
+    updateComplaintStatus,
     assignComplaint,
     resolveComplaint,
     addComplaintUpdate,
+    getComplaintSteps,
+    addComplaintStep,
+    addMultipleSteps,
+    toggleComplaintStep,
+    deleteComplaintStep,
     getComplaintsByStatus,
     getComplaintsByPriority,
     getAgentComplaints,
-    getComplaintStats
+    getComplaintStats,
+    clearError
   ]);
 
   return (
@@ -226,3 +366,5 @@ export const ComplaintProvider = ({ children }) => {
     </ComplaintContext.Provider>
   );
 };
+
+export default ComplaintContext;
