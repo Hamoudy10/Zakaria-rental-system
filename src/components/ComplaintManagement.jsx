@@ -457,208 +457,207 @@ const ComplaintManagement = () => {
     return matchesSearch && matchesCategory;
   });
 
-  // PDF Export Function - FIXED
-  const handleExportPDF = async () => {
+ // PDF Export Function - FIXED FOR jspdf-autotable v5.x
+const handleExportPDF = async () => {
+  try {
+    setExportingPDF(true);
+    setError(null);
+    
+    // Get company info
+    let companyName = 'Zakaria Rental System';
+    let companyAddress = '';
+    let companyPhone = '';
+    let companyEmail = '';
+    
     try {
-      setExportingPDF(true);
-      setError(null);
+      const companyResponse = await settingsAPI.getCompanyInfo();
+      const data = companyResponse.data?.data || companyResponse.data || {};
+      companyName = data.name || data.company_name || 'Zakaria Rental System';
+      companyAddress = data.address || data.company_address || '';
+      companyPhone = data.phone || data.company_phone || '';
+      companyEmail = data.email || data.company_email || '';
+    } catch (e) {
+      console.warn('Using default company info');
+    }
+    
+    // Fetch steps for complaints
+    const complaintsWithSteps = await Promise.all(
+      filteredComplaints.map(async (complaint) => {
+        try {
+          const stepsResponse = await complaintAPI.getComplaintSteps(complaint.id);
+          const steps = stepsResponse.data?.data || stepsResponse.data || [];
+          return { ...complaint, steps: Array.isArray(steps) ? steps : [] };
+        } catch (e) {
+          return { ...complaint, steps: [] };
+        }
+      })
+    );
+    
+    // Load jsPDF
+    const jspdfModule = await import('jspdf');
+    const jsPDF = jspdfModule.jsPDF || jspdfModule.default;
+    
+    // Load autoTable - get the default export function
+    const autoTableModule = await import('jspdf-autotable');
+    const autoTable = autoTableModule.default;
+    
+    // Create document
+    const doc = new jsPDF('landscape', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    
+    const primaryColor = [37, 99, 235];
+    const textColor = [55, 65, 81];
+    
+    // Header
+    doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    doc.rect(0, 0, pageWidth, 25, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text(companyName, 14, 12);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    const detailParts = [companyAddress, companyPhone, companyEmail].filter(Boolean);
+    if (detailParts.length > 0) {
+      doc.text(detailParts.join(' | '), 14, 19);
+    }
+    
+    // Title
+    doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report', 14, 35);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Generated: ${formatDate(new Date())}`, 14, 42);
+    doc.text(`Total: ${complaintsWithSteps.length} | Open: ${stats.open} | In Progress: ${stats.in_progress} | Resolved: ${stats.resolved}`, 14, 48);
+    
+    // Table data
+    const tableData = complaintsWithSteps.map(complaint => {
+      const stepsProgress = complaint.steps?.length > 0 
+        ? `${complaint.steps.filter(s => s.is_completed).length}/${complaint.steps.length}` 
+        : 'No steps';
       
-      // Get company info
-      let companyName = 'Zakaria Rental System';
-      let companyAddress = '';
-      let companyPhone = '';
-      let companyEmail = '';
+      return [
+        `${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''}`.trim() || 'Unknown',
+        complaint.property_name || 'N/A',
+        complaint.unit_code || 'N/A',
+        getCategoryLabels(complaint),
+        complaint.title || 'N/A',
+        (complaint.status || 'open').replace('_', ' '),
+        stepsProgress,
+        formatDate(complaint.raised_at),
+        complaint.status === 'resolved' ? formatDate(complaint.resolved_at) : 'N/A'
+      ];
+    });
+    
+    // Create table using autoTable function (v5.x style)
+    autoTable(doc, {
+      startY: 55,
+      head: [['Tenant', 'Property', 'Unit', 'Categories', 'Title', 'Status', 'Steps', 'Date Raised', 'Date Resolved']],
+      body: tableData,
+      styles: { fontSize: 8, cellPadding: 3 },
+      headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [249, 250, 251] },
+      columnStyles: {
+        0: { cellWidth: 28 }, 1: { cellWidth: 28 }, 2: { cellWidth: 18 },
+        3: { cellWidth: 35 }, 4: { cellWidth: 40 }, 5: { cellWidth: 22 },
+        6: { cellWidth: 18 }, 7: { cellWidth: 28 }, 8: { cellWidth: 28 }
+      },
+      margin: { top: 55, bottom: 15 }
+    });
+    
+    // Steps detail page
+    const complaintsWithActualSteps = complaintsWithSteps.filter(c => c.steps && c.steps.length > 0);
+    
+    if (complaintsWithActualSteps.length > 0) {
+      doc.addPage();
       
-      try {
-        const companyResponse = await settingsAPI.getCompanyInfo();
-        const data = companyResponse.data?.data || companyResponse.data || {};
-        // API returns: name, email, phone, address (without company_ prefix)
-        companyName = data.name || data.company_name || 'Zakaria Rental System';
-        companyAddress = data.address || data.company_address || '';
-        companyPhone = data.phone || data.company_phone || '';
-        companyEmail = data.email || data.company_email || '';
-      } catch (e) {
-        console.warn('Using default company info');
-      }
-      
-      // Fetch steps for complaints
-      const complaintsWithSteps = await Promise.all(
-        filteredComplaints.map(async (complaint) => {
-          try {
-            const stepsResponse = await complaintAPI.getComplaintSteps(complaint.id);
-            const steps = stepsResponse.data?.data || stepsResponse.data || [];
-            return { ...complaint, steps: Array.isArray(steps) ? steps : [] };
-          } catch (e) {
-            return { ...complaint, steps: [] };
-          }
-        })
-      );
-      
-      // Load jsPDF
-      const jspdfModule = await import('jspdf');
-      const jsPDF = jspdfModule.jsPDF || jspdfModule.default;
-      
-      // Import autoTable (just import, don't call)
-      await import('jspdf-autotable');
-      
-      // Create document
-      const doc = new jsPDF('landscape', 'mm', 'a4');
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      
-      const primaryColor = [37, 99, 235];
-      const textColor = [55, 65, 81];
-      
-      // Header
       doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.rect(0, 0, pageWidth, 25, 'F');
-      
+      doc.rect(0, 0, pageWidth, 15, 'F');
       doc.setTextColor(255, 255, 255);
-      doc.setFontSize(18);
-      doc.setFont('helvetica', 'bold');
-      doc.text(companyName, 14, 12);
-      
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      const detailParts = [companyAddress, companyPhone, companyEmail].filter(Boolean);
-      if (detailParts.length > 0) {
-        doc.text(detailParts.join(' | '), 14, 19);
-      }
-      
-      // Title
-      doc.setTextColor(textColor[0], textColor[1], textColor[2]);
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text(isAdmin ? 'All Properties Complaints Report' : 'My Properties Complaints Report', 14, 35);
+      doc.text('Detailed Steps by Complaint', 14, 10);
       
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Generated: ${formatDate(new Date())}`, 14, 42);
-      doc.text(`Total: ${complaintsWithSteps.length} | Open: ${stats.open} | In Progress: ${stats.in_progress} | Resolved: ${stats.resolved}`, 14, 48);
+      let yPos = 25;
       
-      // Table data
-      const tableData = complaintsWithSteps.map(complaint => {
-        const stepsProgress = complaint.steps?.length > 0 
-          ? `${complaint.steps.filter(s => s.is_completed).length}/${complaint.steps.length}` 
-          : 'No steps';
-        
-        return [
-          `${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''}`.trim() || 'Unknown',
-          complaint.property_name || 'N/A',
-          complaint.unit_code || 'N/A',
-          getCategoryLabels(complaint),
-          complaint.title || 'N/A',
-          (complaint.status || 'open').replace('_', ' '),
-          stepsProgress,
-          formatDate(complaint.raised_at),
-          complaint.status === 'resolved' ? formatDate(complaint.resolved_at) : 'N/A'
-        ];
-      });
-      
-      // Create table
-      doc.autoTable({
-        startY: 55,
-        head: [['Tenant', 'Property', 'Unit', 'Categories', 'Title', 'Status', 'Steps', 'Date Raised', 'Date Resolved']],
-        body: tableData,
-        styles: { fontSize: 8, cellPadding: 3 },
-        headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
-        alternateRowStyles: { fillColor: [249, 250, 251] },
-        columnStyles: {
-          0: { cellWidth: 28 }, 1: { cellWidth: 28 }, 2: { cellWidth: 18 },
-          3: { cellWidth: 35 }, 4: { cellWidth: 40 }, 5: { cellWidth: 22 },
-          6: { cellWidth: 18 }, 7: { cellWidth: 28 }, 8: { cellWidth: 28 }
-        },
-        margin: { top: 55, bottom: 15 }
-      });
-      
-      // Steps detail page
-      const complaintsWithActualSteps = complaintsWithSteps.filter(c => c.steps && c.steps.length > 0);
-      
-      if (complaintsWithActualSteps.length > 0) {
-        doc.addPage();
-        
-        doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-        doc.rect(0, 0, pageWidth, 15, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Detailed Steps by Complaint', 14, 10);
-        
-        let yPos = 25;
-        
-        for (const complaint of complaintsWithActualSteps) {
-          if (yPos > pageHeight - 50) {
-            doc.addPage();
-            yPos = 20;
-          }
-          
-          doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-          doc.setFontSize(10);
-          doc.setFont('helvetica', 'bold');
-          doc.text(complaint.title || 'Untitled', 14, yPos);
-          
-          doc.setTextColor(textColor[0], textColor[1], textColor[2]);
-          doc.setFontSize(8);
-          doc.setFont('helvetica', 'normal');
-          yPos += 5;
-          doc.text(`Tenant: ${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''} | Unit: ${complaint.unit_code || 'N/A'} | Status: ${(complaint.status || 'open').replace('_', ' ')}`, 14, yPos);
-          
-          yPos += 7;
-          
-          const sortedSteps = [...(complaint.steps || [])].sort((a, b) => a.step_order - b.step_order);
-          for (const step of sortedSteps) {
-            const checkbox = step.is_completed ? '[X]' : '[ ]';
-            const stepText = `${checkbox} Step ${step.step_order}: ${step.step_description}`;
-            
-            doc.setFont('helvetica', step.is_completed ? 'normal' : 'bold');
-            doc.setTextColor(step.is_completed ? 100 : 55, step.is_completed ? 100 : 65, step.is_completed ? 100 : 81);
-            
-            const lines = doc.splitTextToSize(stepText, pageWidth - 28);
-            for (const line of lines) {
-              if (yPos > pageHeight - 20) {
-                doc.addPage();
-                yPos = 20;
-              }
-              doc.text(line, 20, yPos);
-              yPos += 5;
-            }
-            
-            if (step.is_completed && step.completed_at) {
-              doc.setFontSize(7);
-              doc.setTextColor(100, 100, 100);
-              doc.text(`   Completed: ${formatDate(step.completed_at)}`, 20, yPos);
-              yPos += 4;
-              doc.setFontSize(8);
-            }
-          }
-          
-          yPos += 8;
-          doc.setDrawColor(229, 231, 235);
-          doc.line(14, yPos - 3, pageWidth - 14, yPos - 3);
+      for (const complaint of complaintsWithActualSteps) {
+        if (yPos > pageHeight - 50) {
+          doc.addPage();
+          yPos = 20;
         }
-      }
-      
-      // Page numbers
-      const totalPages = doc.internal.getNumberOfPages();
-      for (let i = 1; i <= totalPages; i++) {
-        doc.setPage(i);
+        
+        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text(complaint.title || 'Untitled', 14, yPos);
+        
+        doc.setTextColor(textColor[0], textColor[1], textColor[2]);
         doc.setFontSize(8);
-        doc.setTextColor(150, 150, 150);
-        doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' });
-        doc.text(companyName, 14, pageHeight - 5);
+        doc.setFont('helvetica', 'normal');
+        yPos += 5;
+        doc.text(`Tenant: ${complaint.tenant_first_name || ''} ${complaint.tenant_last_name || ''} | Unit: ${complaint.unit_code || 'N/A'} | Status: ${(complaint.status || 'open').replace('_', ' ')}`, 14, yPos);
+        
+        yPos += 7;
+        
+        const sortedSteps = [...(complaint.steps || [])].sort((a, b) => a.step_order - b.step_order);
+        for (const step of sortedSteps) {
+          const checkbox = step.is_completed ? '[X]' : '[ ]';
+          const stepText = `${checkbox} Step ${step.step_order}: ${step.step_description}`;
+          
+          doc.setFont('helvetica', step.is_completed ? 'normal' : 'bold');
+          doc.setTextColor(step.is_completed ? 100 : 55, step.is_completed ? 100 : 65, step.is_completed ? 100 : 81);
+          
+          const lines = doc.splitTextToSize(stepText, pageWidth - 28);
+          for (const line of lines) {
+            if (yPos > pageHeight - 20) {
+              doc.addPage();
+              yPos = 20;
+            }
+            doc.text(line, 20, yPos);
+            yPos += 5;
+          }
+          
+          if (step.is_completed && step.completed_at) {
+            doc.setFontSize(7);
+            doc.setTextColor(100, 100, 100);
+            doc.text(`   Completed: ${formatDate(step.completed_at)}`, 20, yPos);
+            yPos += 4;
+            doc.setFontSize(8);
+          }
+        }
+        
+        yPos += 8;
+        doc.setDrawColor(229, 231, 235);
+        doc.line(14, yPos - 3, pageWidth - 14, yPos - 3);
       }
-      
-      doc.save(`complaints_report_${new Date().toISOString().split('T')[0]}.pdf`);
-      setSuccessMessage('PDF exported successfully!');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      console.error('Error exporting PDF:', err);
-      setError('Failed to export PDF: ' + (err.message || 'Unknown error'));
-    } finally {
-      setExportingPDF(false);
     }
-  };
-
+    
+    // Page numbers
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' });
+      doc.text(companyName, 14, pageHeight - 5);
+    }
+    
+    doc.save(`complaints_report_${new Date().toISOString().split('T')[0]}.pdf`);
+    setSuccessMessage('PDF exported successfully!');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  } catch (err) {
+    console.error('Error exporting PDF:', err);
+    setError('Failed to export PDF: ' + (err.message || 'Unknown error'));
+  } finally {
+    setExportingPDF(false);
+  }
+};
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-6">
       {/* Header */}
