@@ -105,6 +105,8 @@ const getAdminStats = async (req, res) => {
  */
 const getComprehensiveStats = async (req, res) => {
   try {
+    console.log('📊 Fetching comprehensive stats...');
+    
     // ═══════════════════════════════════════════════════════════════
     // PROPERTY STATISTICS
     // ═══════════════════════════════════════════════════════════════
@@ -121,6 +123,7 @@ const getComprehensiveStats = async (req, res) => {
         WHERE p.is_active = true
       `);
       propertyStats = propertyStatsResult.rows[0] || propertyStats;
+      console.log('✅ Property stats fetched');
     } catch (e) {
       console.error('Error fetching property stats:', e.message);
     }
@@ -145,11 +148,12 @@ const getComprehensiveStats = async (req, res) => {
         LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id
       `);
       tenantStats = tenantStatsResult.rows[0] || tenantStats;
+      console.log('✅ Tenant stats fetched');
     } catch (e) {
       console.error('Error fetching tenant stats:', e.message);
     }
 
-    // New allocations this month (using allocation_date instead of created_at)
+    // New allocations this month (using allocation_date)
     let newAllocationsCount = 0;
     try {
       const newAllocationsResult = await pool.query(`
@@ -159,6 +163,7 @@ const getComprehensiveStats = async (req, res) => {
         AND allocation_date >= DATE_TRUNC('month', CURRENT_DATE)
       `);
       newAllocationsCount = parseInt(newAllocationsResult.rows[0]?.count) || 0;
+      console.log('✅ New allocations count fetched:', newAllocationsCount);
     } catch (e) {
       console.error('Error fetching new allocations:', e.message);
     }
@@ -203,6 +208,7 @@ const getComprehensiveStats = async (req, res) => {
         FROM rent_payments
       `);
       financialStats = financialStatsResult.rows[0] || financialStats;
+      console.log('✅ Financial stats fetched');
     } catch (e) {
       console.error('Error fetching financial stats:', e.message);
     }
@@ -216,6 +222,7 @@ const getComprehensiveStats = async (req, res) => {
         WHERE is_active = true
       `);
       expectedRent = parseFloat(expectedRentResult.rows[0]?.expected_rent) || 0;
+      console.log('✅ Expected rent fetched:', expectedRent);
     } catch (e) {
       console.error('Error fetching expected rent:', e.message);
     }
@@ -241,6 +248,7 @@ const getComprehensiveStats = async (req, res) => {
       const totalWaterBilled = parseFloat(waterBalanceResult.rows[0]?.total_billed) || 0;
       const totalWaterPaid = parseFloat(waterPaidResult.rows[0]?.total_paid) || 0;
       outstandingWater = Math.max(0, totalWaterBilled - totalWaterPaid);
+      console.log('✅ Water balance fetched');
     } catch (e) {
       console.error('Error fetching water balance:', e.message);
     }
@@ -280,12 +288,13 @@ const getComprehensiveStats = async (req, res) => {
         )
       `);
       unassignedPropertiesCount = parseInt(unassignedPropertiesResult.rows[0]?.count) || 0;
+      console.log('✅ Agent stats fetched');
     } catch (e) {
       console.error('Error fetching agent stats:', e.message);
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // COMPLAINT STATISTICS (using raised_at instead of created_at)
+    // COMPLAINT STATISTICS
     // ═══════════════════════════════════════════════════════════════
     let complaintStats = {
       open_complaints: 0,
@@ -306,12 +315,13 @@ const getComprehensiveStats = async (req, res) => {
         FROM complaints
       `);
       complaintStats = complaintStatsResult.rows[0] || complaintStats;
+      console.log('✅ Complaint stats fetched');
     } catch (e) {
       console.error('Error fetching complaint stats:', e.message);
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // SMS STATISTICS (using correct columns: created_at, sent_at)
+    // SMS STATISTICS
     // ═══════════════════════════════════════════════════════════════
     let smsStats = { total_sent: 0, sent_today: 0, failed_count: 0, pending_count: 0 };
 
@@ -325,12 +335,13 @@ const getComprehensiveStats = async (req, res) => {
         FROM sms_queue
       `);
       smsStats = smsStatsResult.rows[0] || smsStats;
+      console.log('✅ SMS stats fetched');
     } catch (e) {
       console.error('Error fetching SMS stats:', e.message);
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PAYMENT STATISTICS (using created_at which exists in rent_payments)
+    // PAYMENT STATISTICS
     // ═══════════════════════════════════════════════════════════════
     let paymentStats = {
       payments_today: 0,
@@ -355,6 +366,7 @@ const getComprehensiveStats = async (req, res) => {
         FROM rent_payments
       `);
       paymentStats = paymentStatsResult.rows[0] || paymentStats;
+      console.log('✅ Payment stats fetched');
     } catch (e) {
       console.error('Error fetching payment stats:', e.message);
     }
@@ -381,6 +393,7 @@ const getComprehensiveStats = async (req, res) => {
         occupied: parseInt(row.occupied) || 0,
         vacant: parseInt(row.vacant) || 0
       }));
+      console.log('✅ Unit type breakdown fetched');
     } catch (e) {
       console.error('Error fetching unit type breakdown:', e.message);
     }
@@ -407,6 +420,7 @@ const getComprehensiveStats = async (req, res) => {
         revenue: parseFloat(row.revenue) || 0,
         paymentCount: parseInt(row.payment_count) || 0
       }));
+      console.log('✅ Monthly trend fetched');
     } catch (e) {
       console.error('Error fetching monthly trend:', e.message);
     }
@@ -414,6 +428,8 @@ const getComprehensiveStats = async (req, res) => {
     // ═══════════════════════════════════════════════════════════════
     // RESPONSE
     // ═══════════════════════════════════════════════════════════════
+    console.log('📊 Comprehensive stats completed successfully');
+    
     res.json({
       success: true,
       data: {
@@ -488,13 +504,12 @@ const getComprehensiveStats = async (req, res) => {
 
 /**
  * Get recent activities (last 10 actions)
- * Uses correct column names: raised_at for complaints, allocation_date for allocations
  */
 const getRecentActivities = async (req, res) => {
   try {
     const activities = [];
 
-    // 1. User registrations (users table has created_at)
+    // 1. User registrations
     try {
       const usersResult = await pool.query(`
         SELECT
@@ -513,7 +528,7 @@ const getRecentActivities = async (req, res) => {
       console.error('Error fetching user activities:', e.message);
     }
 
-    // 2. Rent payments (rent_payments has created_at)
+    // 2. Rent payments
     try {
       const paymentsResult = await pool.query(`
         SELECT
@@ -531,7 +546,7 @@ const getRecentActivities = async (req, res) => {
       console.error('Error fetching payment activities:', e.message);
     }
 
-    // 3. Complaints (complaints uses raised_at, NOT created_at)
+    // 3. Complaints (using raised_at)
     try {
       const complaintsResult = await pool.query(`
         SELECT
@@ -549,7 +564,7 @@ const getRecentActivities = async (req, res) => {
       console.error('Error fetching complaint activities:', e.message);
     }
 
-    // 4. Tenant allocations (tenant_allocations uses allocation_date, NOT created_at)
+    // 4. Tenant allocations (using allocation_date)
     try {
       const allocationsResult = await pool.query(`
         SELECT
