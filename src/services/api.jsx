@@ -366,7 +366,7 @@ export const complaintAPI = {
   createComplaint: (complaintData) => api.post('/complaints', complaintData),
   updateComplaint: (id, updates) => api.patch(`/complaints/${id}`, updates),  // Changed to PATCH
   assignComplaint: (id, agentId) => api.patch(`/complaints/${id}/assign`, { agent_id: agentId }),
-  updateComplaintStatus: (id, status) => api.patch(`/complaints/${id}/status`, { status }),
+  updateComplaintStatus: (id, status) => api.put(`/complaints/${id}/status`, { status }),
   addComplaintUpdate: (id, updateData) => api.post(`/complaints/${id}/updates`, updateData),
   getTenantComplaints: (tenantId) => api.get(`/complaints/tenant/${tenantId}`),
   getAgentComplaints: (agentId) => api.get(`/complaints/agent/${agentId}`),
@@ -374,7 +374,7 @@ export const complaintAPI = {
   getComplaintStats: () => api.get('/complaints/stats/overview'),
   addComplaintComment: (id, comment) => api.post(`/complaints/${id}/comments`, { comment }),
   resolveComplaint: (id, resolutionData) => api.post(`/complaints/${id}/resolve`, resolutionData),
-  
+  deleteComplaint: (id) => api.delete(`/complaints/${id}`),
   // NEW: Steps endpoints
   getComplaintSteps: (complaintId) => api.get(`/complaints/${complaintId}/steps`),
   addComplaintStep: (complaintId, stepData) => api.post(`/complaints/${complaintId}/steps`, stepData),
