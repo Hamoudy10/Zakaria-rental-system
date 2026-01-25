@@ -8,6 +8,30 @@ import {
   Calendar, ArrowRight, Check, Loader2, Edit3, Download
 } from 'lucide-react';
 
+// PDF libraries - install with: npm install jspdf jspdf-autotable
+let jsPDFClass = null;
+let autoTablePlugin = null;
+
+// Dynamic import to prevent build errors if not installed
+const loadPDFLibraries = async () => {
+  if (!jsPDFClass) {
+    try {
+      const jspdfModule = await import('jspdf');
+      jsPDFClass = jspdfModule.default || jspdfModule.jsPDF;
+      
+      // Import autoTable plugin
+      const autoTableModule = await import('jspdf-autotable');
+      autoTablePlugin = autoTableModule.default || autoTableModule;
+      
+      return true;
+    } catch (error) {
+      console.error('PDF libraries not installed. Run: npm install jspdf jspdf-autotable');
+      return false;
+    }
+  }
+  return true;
+};
+
 const COMPLAINT_CATEGORIES = [
   { id: 'plumbing', label: 'Plumbing', icon: '🔧' },
   { id: 'electrical', label: 'Electrical', icon: '⚡' },
