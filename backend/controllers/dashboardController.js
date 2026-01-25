@@ -16,21 +16,21 @@ const getAdminStats = async (req, res) => {
     const monthlyGrowth = parseFloat(revenueResult.rows[0].monthly_revenue || 0);
 
     const propResult = await pool.query(`SELECT COUNT(*) AS total_properties FROM properties WHERE is_active = true`);
-    const totalProperties = parseInt(propResult.rows[0].total_properties);
+    const totalProperties = parseInt(propResult.rows[0].total_properties || 0);
 
     const agentResult = await pool.query(`
       SELECT COUNT(DISTINCT agent_id) AS assigned_agents
       FROM agent_property_assignments
       WHERE is_active = true
     `);
-    const assignedAgents = parseInt(agentResult.rows[0].assigned_agents);
+    const assignedAgents = parseInt(agentResult.rows[0].assigned_agents || 0);
 
     const tenantResult = await pool.query(`
       SELECT COUNT(*) AS active_tenants
       FROM tenant_allocations
       WHERE is_active = true
     `);
-    const activeTenants = parseInt(tenantResult.rows[0].active_tenants);
+    const activeTenants = parseInt(tenantResult.rows[0].active_tenants || 0);
 
     const unitResult = await pool.query(`
       SELECT COUNT(*) AS total_units,
@@ -38,8 +38,8 @@ const getAdminStats = async (req, res) => {
       FROM property_units
       WHERE is_active = true
     `);
-    const totalUnits = parseInt(unitResult.rows[0].total_units);
-    const occupiedUnits = parseInt(unitResult.rows[0].occupied_units);
+    const totalUnits = parseInt(unitResult.rows[0].total_units || 0);
+    const occupiedUnits = parseInt(unitResult.rows[0].occupied_units || 0);
     const occupancyRate = totalUnits > 0 ? `${Math.round((occupiedUnits / totalUnits) * 100)}%` : '0%';
 
     const complaintResult = await pool.query(`
@@ -47,7 +47,7 @@ const getAdminStats = async (req, res) => {
       FROM complaints
       WHERE status = 'open'
     `);
-    const pendingComplaints = parseInt(complaintResult.rows[0].pending_complaints);
+    const pendingComplaints = parseInt(complaintResult.rows[0].pending_complaints || 0);
 
     const pendingPaymentResult = await pool.query(`
       SELECT COUNT(*) AS pending_payments
@@ -64,7 +64,7 @@ const getAdminStats = async (req, res) => {
         HAVING COUNT(rp.id) = 0
       ) sub
     `);
-    const pendingPayments = parseInt(pendingPaymentResult.rows[0].pending_payments);
+    const pendingPayments = parseInt(pendingPaymentResult.rows[0].pending_payments || 0);
 
     const unassignedResult = await pool.query(`
       SELECT COUNT(*) AS unassigned_properties
@@ -74,7 +74,7 @@ const getAdminStats = async (req, res) => {
         AND ap.is_active = true
       WHERE ap.id IS NULL AND p.is_active = true
     `);
-    const unassignedProperties = parseInt(unassignedResult.rows[0].unassigned_properties);
+    const unassignedProperties = parseInt(unassignedResult.rows[0].unassigned_properties || 0);
 
     res.json({
       success: true,
@@ -108,18 +108,23 @@ const getComprehensiveStats = async (req, res) => {
     // ═══════════════════════════════════════════════════════════════
     // PROPERTY STATISTICS
     // ═══════════════════════════════════════════════════════════════
-    const propertyStatsResult = await pool.query(`
-      SELECT 
-        COUNT(DISTINCT p.id) as total_properties,
-        COUNT(DISTINCT pu.id) as total_units,
-        COUNT(DISTINCT CASE WHEN pu.is_occupied = true AND pu.is_active = true THEN pu.id END) as occupied_units,
-        COUNT(DISTINCT CASE WHEN pu.is_occupied = false AND pu.is_active = true THEN pu.id END) as vacant_units
-      FROM properties p
-      LEFT JOIN property_units pu ON p.id = pu.property_id
-      WHERE p.is_active = true
-    `);
+    let propertyStats = { total_properties: 0, total_units: 0, occupied_units: 0, vacant_units: 0 };
+    try {
+      const propertyStatsResult = await pool.query(`
+        SELECT 
+          COUNT(DISTINCT p.id) as total_properties,
+          COUNT(DISTINCT pu.id) as total_units,
+          COUNT(DISTINCT CASE WHEN pu.is_occupied = true AND pu.is_active = true THEN pu.id END) as occupied_units,
+          COUNT(DISTINCT CASE WHEN pu.is_occupied = false AND pu.is_active = true THEN pu.id END) as vacant_units
+        FROM properties p
+        LEFT JOIN property_units pu ON p.id = pu.property_id
+        WHERE p.is_active = true
+      `);
+      propertyStats = propertyStatsResult.rows[0] || propertyStats;
+    } catch (e) {
+      console.error('Error fetching property stats:', e.message);
+    }
 
-    const propertyStats = propertyStatsResult.rows[0];
     const totalUnits = parseInt(propertyStats.total_units) || 0;
     const occupiedUnits = parseInt(propertyStats.occupied_units) || 0;
     const vacantUnits = parseInt(propertyStats.vacant_units) || 0;
@@ -128,191 +133,283 @@ const getComprehensiveStats = async (req, res) => {
     // ═══════════════════════════════════════════════════════════════
     // TENANT STATISTICS
     // ═══════════════════════════════════════════════════════════════
-    const tenantStatsResult = await pool.query(`
-      SELECT 
-        COUNT(DISTINCT t.id) as total_tenants,
-        COUNT(DISTINCT CASE WHEN ta.is_active = true THEN t.id END) as active_tenants,
-        COUNT(DISTINCT CASE WHEN ta.arrears_balance > 0 AND ta.is_active = true THEN t.id END) as tenants_with_arrears,
-        COALESCE(SUM(CASE WHEN ta.is_active = true THEN ta.arrears_balance ELSE 0 END), 0) as total_arrears
-      FROM tenants t
-      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id
-    `);
-
-    const tenantStats = tenantStatsResult.rows[0];
+    let tenantStats = { total_tenants: 0, active_tenants: 0, tenants_with_arrears: 0, total_arrears: 0 };
+    try {
+      const tenantStatsResult = await pool.query(`
+        SELECT 
+          COUNT(DISTINCT t.id) as total_tenants,
+          COUNT(DISTINCT CASE WHEN ta.is_active = true THEN t.id END) as active_tenants,
+          COUNT(DISTINCT CASE WHEN COALESCE(ta.arrears_balance, 0) > 0 AND ta.is_active = true THEN t.id END) as tenants_with_arrears,
+          COALESCE(SUM(CASE WHEN ta.is_active = true THEN COALESCE(ta.arrears_balance, 0) ELSE 0 END), 0) as total_arrears
+        FROM tenants t
+        LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id
+      `);
+      tenantStats = tenantStatsResult.rows[0] || tenantStats;
+    } catch (e) {
+      console.error('Error fetching tenant stats:', e.message);
+    }
 
     // New allocations this month
-    const newAllocationsResult = await pool.query(`
-      SELECT COUNT(*) as count
-      FROM tenant_allocations
-      WHERE is_active = true
-      AND lease_start_date >= DATE_TRUNC('month', CURRENT_DATE)
-    `);
+    let newAllocationsCount = 0;
+    try {
+      const newAllocationsResult = await pool.query(`
+        SELECT COUNT(*) as count
+        FROM tenant_allocations
+        WHERE is_active = true
+        AND created_at >= DATE_TRUNC('month', CURRENT_DATE)
+      `);
+      newAllocationsCount = parseInt(newAllocationsResult.rows[0]?.count) || 0;
+    } catch (e) {
+      console.error('Error fetching new allocations:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // FINANCIAL STATISTICS
     // ═══════════════════════════════════════════════════════════════
-    const financialStatsResult = await pool.query(`
-      SELECT 
-        COALESCE(SUM(CASE 
-          WHEN payment_month >= DATE_TRUNC('month', CURRENT_DATE) 
-          AND status = 'completed' 
-          THEN amount ELSE 0 END), 0) as revenue_this_month,
-        COALESCE(SUM(CASE 
-          WHEN payment_month >= DATE_TRUNC('year', CURRENT_DATE) 
-          AND status = 'completed' 
-          THEN amount ELSE 0 END), 0) as revenue_this_year,
-        COALESCE(SUM(CASE 
-          WHEN status = 'pending' 
-          THEN amount ELSE 0 END), 0) as pending_amount,
-        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
-        COALESCE(SUM(CASE 
-          WHEN status = 'completed' 
-          THEN allocated_to_rent ELSE 0 END), 0) as total_rent_collected,
-        COALESCE(SUM(CASE 
-          WHEN status = 'completed' 
-          THEN allocated_to_water ELSE 0 END), 0) as total_water_collected,
-        COALESCE(SUM(CASE 
-          WHEN status = 'completed' 
-          THEN allocated_to_arrears ELSE 0 END), 0) as total_arrears_collected
-      FROM rent_payments
-    `);
-
-    const financialStats = financialStatsResult.rows[0];
+    let financialStats = {
+      revenue_this_month: 0,
+      revenue_this_year: 0,
+      pending_amount: 0,
+      pending_count: 0,
+      total_rent_collected: 0,
+      total_water_collected: 0,
+      total_arrears_collected: 0
+    };
+    
+    try {
+      const financialStatsResult = await pool.query(`
+        SELECT 
+          COALESCE(SUM(CASE 
+            WHEN payment_month >= DATE_TRUNC('month', CURRENT_DATE) 
+            AND status = 'completed' 
+            THEN amount ELSE 0 END), 0) as revenue_this_month,
+          COALESCE(SUM(CASE 
+            WHEN payment_month >= DATE_TRUNC('year', CURRENT_DATE) 
+            AND status = 'completed' 
+            THEN amount ELSE 0 END), 0) as revenue_this_year,
+          COALESCE(SUM(CASE 
+            WHEN status = 'pending' 
+            THEN amount ELSE 0 END), 0) as pending_amount,
+          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
+          COALESCE(SUM(CASE 
+            WHEN status = 'completed' 
+            THEN COALESCE(allocated_to_rent, 0) ELSE 0 END), 0) as total_rent_collected,
+          COALESCE(SUM(CASE 
+            WHEN status = 'completed' 
+            THEN COALESCE(allocated_to_water, 0) ELSE 0 END), 0) as total_water_collected,
+          COALESCE(SUM(CASE 
+            WHEN status = 'completed' 
+            THEN COALESCE(allocated_to_arrears, 0) ELSE 0 END), 0) as total_arrears_collected
+        FROM rent_payments
+      `);
+      financialStats = financialStatsResult.rows[0] || financialStats;
+    } catch (e) {
+      console.error('Error fetching financial stats:', e.message);
+    }
 
     // Expected monthly rent from active allocations
-    const expectedRentResult = await pool.query(`
-      SELECT COALESCE(SUM(monthly_rent), 0) as expected_rent
-      FROM tenant_allocations
-      WHERE is_active = true
-    `);
+    let expectedRent = 0;
+    try {
+      const expectedRentResult = await pool.query(`
+        SELECT COALESCE(SUM(monthly_rent), 0) as expected_rent
+        FROM tenant_allocations
+        WHERE is_active = true
+      `);
+      expectedRent = parseFloat(expectedRentResult.rows[0]?.expected_rent) || 0;
+    } catch (e) {
+      console.error('Error fetching expected rent:', e.message);
+    }
 
-    const expectedRent = parseFloat(expectedRentResult.rows[0].expected_rent) || 0;
     const collectedThisMonth = parseFloat(financialStats.revenue_this_month) || 0;
     const collectionRate = expectedRent > 0 
       ? ((collectedThisMonth / expectedRent) * 100).toFixed(1) 
       : '0.0';
 
     // Outstanding water bills calculation
-    const waterBalanceResult = await pool.query(`
-      SELECT 
-        COALESCE(SUM(wb.amount), 0) as total_billed
-      FROM water_bills wb
-      JOIN tenant_allocations ta ON wb.tenant_id = ta.tenant_id AND ta.is_active = true
-    `);
-
-    const waterPaidResult = await pool.query(`
-      SELECT COALESCE(SUM(allocated_to_water), 0) as total_paid
-      FROM rent_payments
-      WHERE status = 'completed'
-    `);
-
-    const totalWaterBilled = parseFloat(waterBalanceResult.rows[0].total_billed) || 0;
-    const totalWaterPaid = parseFloat(waterPaidResult.rows[0].total_paid) || 0;
-    const outstandingWater = Math.max(0, totalWaterBilled - totalWaterPaid);
+    let outstandingWater = 0;
+    try {
+      const waterBalanceResult = await pool.query(`
+        SELECT COALESCE(SUM(wb.amount), 0) as total_billed
+        FROM water_bills wb
+        JOIN tenant_allocations ta ON wb.tenant_id = ta.tenant_id AND ta.is_active = true
+      `);
+      const waterPaidResult = await pool.query(`
+        SELECT COALESCE(SUM(COALESCE(allocated_to_water, 0)), 0) as total_paid
+        FROM rent_payments
+        WHERE status = 'completed'
+      `);
+      const totalWaterBilled = parseFloat(waterBalanceResult.rows[0]?.total_billed) || 0;
+      const totalWaterPaid = parseFloat(waterPaidResult.rows[0]?.total_paid) || 0;
+      outstandingWater = Math.max(0, totalWaterBilled - totalWaterPaid);
+    } catch (e) {
+      console.error('Error fetching water balance:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // AGENT STATISTICS
     // ═══════════════════════════════════════════════════════════════
-    const agentStatsResult = await pool.query(`
-      SELECT 
-        COUNT(DISTINCT u.id) as total_agents,
-        COUNT(DISTINCT CASE WHEN u.is_active = true THEN u.id END) as active_agents
-      FROM users u
-      WHERE u.role = 'agent'
-    `);
+    let agentStats = { total_agents: 0, active_agents: 0 };
+    let assignedPropertiesCount = 0;
+    let unassignedPropertiesCount = 0;
 
-    const assignedPropertiesResult = await pool.query(`
-      SELECT COUNT(DISTINCT property_id) as count
-      FROM agent_property_assignments
-      WHERE is_active = true
-    `);
+    try {
+      const agentStatsResult = await pool.query(`
+        SELECT 
+          COUNT(DISTINCT u.id) as total_agents,
+          COUNT(DISTINCT CASE WHEN u.is_active = true THEN u.id END) as active_agents
+        FROM users u
+        WHERE u.role = 'agent'
+      `);
+      agentStats = agentStatsResult.rows[0] || agentStats;
 
-    const unassignedPropertiesResult = await pool.query(`
-      SELECT COUNT(*) as count
-      FROM properties p
-      WHERE p.is_active = true
-      AND p.id NOT IN (
-        SELECT DISTINCT property_id 
-        FROM agent_property_assignments 
+      const assignedPropertiesResult = await pool.query(`
+        SELECT COUNT(DISTINCT property_id) as count
+        FROM agent_property_assignments
         WHERE is_active = true
-      )
-    `);
+      `);
+      assignedPropertiesCount = parseInt(assignedPropertiesResult.rows[0]?.count) || 0;
+
+      const unassignedPropertiesResult = await pool.query(`
+        SELECT COUNT(*) as count
+        FROM properties p
+        WHERE p.is_active = true
+        AND p.id NOT IN (
+          SELECT DISTINCT property_id 
+          FROM agent_property_assignments 
+          WHERE is_active = true
+        )
+      `);
+      unassignedPropertiesCount = parseInt(unassignedPropertiesResult.rows[0]?.count) || 0;
+    } catch (e) {
+      console.error('Error fetching agent stats:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // COMPLAINT STATISTICS
     // ═══════════════════════════════════════════════════════════════
-    const complaintStatsResult = await pool.query(`
-      SELECT 
-        COUNT(*) FILTER (WHERE status = 'open') as open_complaints,
-        COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress_complaints,
-        COUNT(*) FILTER (WHERE status = 'resolved') as resolved_complaints,
-        COUNT(*) FILTER (WHERE status = 'resolved' AND resolved_at >= DATE_TRUNC('month', CURRENT_DATE)) as resolved_this_month,
-        COUNT(*) as total_complaints
-      FROM complaints
-    `);
+    let complaintStats = {
+      open_complaints: 0,
+      in_progress_complaints: 0,
+      resolved_complaints: 0,
+      resolved_this_month: 0,
+      total_complaints: 0
+    };
 
-    const complaintStats = complaintStatsResult.rows[0];
+    try {
+      const complaintStatsResult = await pool.query(`
+        SELECT 
+          COUNT(CASE WHEN status = 'open' THEN 1 END) as open_complaints,
+          COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_complaints,
+          COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved_complaints,
+          COUNT(CASE WHEN status = 'resolved' AND resolved_at >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 END) as resolved_this_month,
+          COUNT(*) as total_complaints
+        FROM complaints
+      `);
+      complaintStats = complaintStatsResult.rows[0] || complaintStats;
+    } catch (e) {
+      console.error('Error fetching complaint stats:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // SMS STATISTICS
     // ═══════════════════════════════════════════════════════════════
-    const smsStatsResult = await pool.query(`
-      SELECT 
-        COUNT(*) FILTER (WHERE status = 'sent') as total_sent,
-        COUNT(*) FILTER (WHERE status = 'sent' AND created_at >= CURRENT_DATE) as sent_today,
-        COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
-        COUNT(*) FILTER (WHERE status = 'pending') as pending_count
-      FROM sms_queue
-    `);
+    let smsStats = { total_sent: 0, sent_today: 0, failed_count: 0, pending_count: 0 };
 
-    const smsStats = smsStatsResult.rows[0];
+    try {
+      const smsStatsResult = await pool.query(`
+        SELECT 
+          COUNT(CASE WHEN status = 'sent' THEN 1 END) as total_sent,
+          COUNT(CASE WHEN status = 'sent' AND created_at >= CURRENT_DATE THEN 1 END) as sent_today,
+          COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count,
+          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count
+        FROM sms_queue
+      `);
+      smsStats = smsStatsResult.rows[0] || smsStats;
+    } catch (e) {
+      console.error('Error fetching SMS stats:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // PAYMENT STATISTICS
     // ═══════════════════════════════════════════════════════════════
-    const paymentStatsResult = await pool.query(`
-      SELECT 
-        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE AND status = 'completed') as payments_today,
-        COALESCE(SUM(amount) FILTER (WHERE created_at >= CURRENT_DATE AND status = 'completed'), 0) as amount_today,
-        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed') as payments_this_week,
-        COALESCE(SUM(amount) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed'), 0) as amount_this_week,
-        COUNT(*) FILTER (WHERE payment_month >= DATE_TRUNC('month', CURRENT_DATE) AND status = 'completed') as payments_this_month,
-        COUNT(*) FILTER (WHERE status = 'failed') as failed_payments,
-        COUNT(*) FILTER (WHERE status = 'processing') as processing_payments
-      FROM rent_payments
-    `);
+    let paymentStats = {
+      payments_today: 0,
+      amount_today: 0,
+      payments_this_week: 0,
+      amount_this_week: 0,
+      payments_this_month: 0,
+      failed_payments: 0,
+      processing_payments: 0
+    };
 
-    const paymentStats = paymentStatsResult.rows[0];
+    try {
+      const paymentStatsResult = await pool.query(`
+        SELECT 
+          COUNT(CASE WHEN created_at >= CURRENT_DATE AND status = 'completed' THEN 1 END) as payments_today,
+          COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE AND status = 'completed' THEN amount ELSE 0 END), 0) as amount_today,
+          COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed' THEN 1 END) as payments_this_week,
+          COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed' THEN amount ELSE 0 END), 0) as amount_this_week,
+          COUNT(CASE WHEN payment_month >= DATE_TRUNC('month', CURRENT_DATE) AND status = 'completed' THEN 1 END) as payments_this_month,
+          COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_payments,
+          COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_payments
+        FROM rent_payments
+      `);
+      paymentStats = paymentStatsResult.rows[0] || paymentStats;
+    } catch (e) {
+      console.error('Error fetching payment stats:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // UNIT TYPE BREAKDOWN
     // ═══════════════════════════════════════════════════════════════
-    const unitTypeBreakdownResult = await pool.query(`
-      SELECT 
-        unit_type,
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE is_occupied = true) as occupied,
-        COUNT(*) FILTER (WHERE is_occupied = false) as vacant
-      FROM property_units
-      WHERE is_active = true
-      GROUP BY unit_type
-      ORDER BY total DESC
-    `);
+    let unitTypeBreakdown = [];
+    try {
+      const unitTypeBreakdownResult = await pool.query(`
+        SELECT 
+          COALESCE(unit_type, 'unknown') as unit_type,
+          COUNT(*) as total,
+          COUNT(CASE WHEN is_occupied = true THEN 1 END) as occupied,
+          COUNT(CASE WHEN is_occupied = false THEN 1 END) as vacant
+        FROM property_units
+        WHERE is_active = true
+        GROUP BY unit_type
+        ORDER BY total DESC
+      `);
+      unitTypeBreakdown = unitTypeBreakdownResult.rows.map(row => ({
+        unitType: row.unit_type || 'unknown',
+        total: parseInt(row.total) || 0,
+        occupied: parseInt(row.occupied) || 0,
+        vacant: parseInt(row.vacant) || 0
+      }));
+    } catch (e) {
+      console.error('Error fetching unit type breakdown:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // MONTHLY TREND (Last 6 months)
     // ═══════════════════════════════════════════════════════════════
-    const monthlyTrendResult = await pool.query(`
-      SELECT 
-        TO_CHAR(payment_month, 'Mon YYYY') as month,
-        TO_CHAR(payment_month, 'YYYY-MM') as month_key,
-        COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as revenue,
-        COUNT(*) FILTER (WHERE status = 'completed') as payment_count
-      FROM rent_payments
-      WHERE payment_month >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'
-      GROUP BY payment_month
-      ORDER BY payment_month ASC
-    `);
+    let monthlyTrend = [];
+    try {
+      const monthlyTrendResult = await pool.query(`
+        SELECT 
+          TO_CHAR(payment_month, 'Mon YYYY') as month,
+          TO_CHAR(payment_month, 'YYYY-MM') as month_key,
+          COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as revenue,
+          COUNT(CASE WHEN status = 'completed' THEN 1 END) as payment_count
+        FROM rent_payments
+        WHERE payment_month >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'
+        GROUP BY payment_month
+        ORDER BY payment_month ASC
+      `);
+      monthlyTrend = monthlyTrendResult.rows.map(row => ({
+        month: row.month,
+        monthKey: row.month_key,
+        revenue: parseFloat(row.revenue) || 0,
+        paymentCount: parseInt(row.payment_count) || 0
+      }));
+    } catch (e) {
+      console.error('Error fetching monthly trend:', e.message);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // RESPONSE
@@ -330,7 +427,7 @@ const getComprehensiveStats = async (req, res) => {
         tenant: {
           totalTenants: parseInt(tenantStats.total_tenants) || 0,
           activeTenants: parseInt(tenantStats.active_tenants) || 0,
-          newThisMonth: parseInt(newAllocationsResult.rows[0].count) || 0,
+          newThisMonth: newAllocationsCount,
           tenantsWithArrears: parseInt(tenantStats.tenants_with_arrears) || 0,
           totalArrears: parseFloat(tenantStats.total_arrears) || 0
         },
@@ -347,10 +444,10 @@ const getComprehensiveStats = async (req, res) => {
           totalArrearsCollected: parseFloat(financialStats.total_arrears_collected) || 0
         },
         agent: {
-          totalAgents: parseInt(agentStatsResult.rows[0].total_agents) || 0,
-          activeAgents: parseInt(agentStatsResult.rows[0].active_agents) || 0,
-          assignedProperties: parseInt(assignedPropertiesResult.rows[0].count) || 0,
-          unassignedProperties: parseInt(unassignedPropertiesResult.rows[0].count) || 0
+          totalAgents: parseInt(agentStats.total_agents) || 0,
+          activeAgents: parseInt(agentStats.active_agents) || 0,
+          assignedProperties: assignedPropertiesCount,
+          unassignedProperties: unassignedPropertiesCount
         },
         complaint: {
           openComplaints: parseInt(complaintStats.open_complaints) || 0,
@@ -374,18 +471,8 @@ const getComprehensiveStats = async (req, res) => {
           failedPayments: parseInt(paymentStats.failed_payments) || 0,
           processingPayments: parseInt(paymentStats.processing_payments) || 0
         },
-        unitTypeBreakdown: unitTypeBreakdownResult.rows.map(row => ({
-          unitType: row.unit_type,
-          total: parseInt(row.total) || 0,
-          occupied: parseInt(row.occupied) || 0,
-          vacant: parseInt(row.vacant) || 0
-        })),
-        monthlyTrend: monthlyTrendResult.rows.map(row => ({
-          month: row.month,
-          monthKey: row.month_key,
-          revenue: parseFloat(row.revenue) || 0,
-          paymentCount: parseInt(row.payment_count) || 0
-        })),
+        unitTypeBreakdown: unitTypeBreakdown,
+        monthlyTrend: monthlyTrend,
         generatedAt: new Date().toISOString()
       }
     });
@@ -401,65 +488,112 @@ const getComprehensiveStats = async (req, res) => {
 
 /**
  * Get recent activities (last 10 actions)
+ * Safe version that handles missing columns gracefully
  */
 const getRecentActivities = async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT *
-      FROM (
-        -- User registrations
+    // Build activities from multiple sources, handling potential missing columns
+    const activities = [];
+
+    // 1. User registrations
+    try {
+      const usersResult = await pool.query(`
         SELECT
-          u.created_at AS sort_time,
-          u.first_name || ' ' || u.last_name AS user,
-          'User registered: ' || u.first_name || ' ' || u.last_name AS description,
+          created_at AS sort_time,
+          COALESCE(first_name || ' ' || last_name, email, 'Unknown User') AS user_name,
+          'User registered: ' || COALESCE(first_name || ' ' || last_name, email, 'Unknown') AS description,
           'registration' AS type,
-          to_char(u.created_at, 'YYYY-MM-DD HH24:MI') AS time
-        FROM users u
+          to_char(created_at, 'YYYY-MM-DD HH24:MI') AS time
+        FROM users
+        ORDER BY created_at DESC
+        LIMIT 5
+      `);
+      activities.push(...usersResult.rows.map(r => ({
+        ...r,
+        description: r.description,
+        type: 'registration',
+        time: r.time
+      })));
+    } catch (e) {
+      console.error('Error fetching user activities:', e.message);
+    }
 
-        UNION ALL
-
-        -- Rent payments
+    // 2. Rent payments
+    try {
+      const paymentsResult = await pool.query(`
         SELECT
-          rp.created_at AS sort_time,
-          'Tenant' AS user,
-          'Payment of KES ' || rp.amount || ' received' AS description,
+          created_at AS sort_time,
+          'Payment of KES ' || COALESCE(amount::text, '0') || ' received' AS description,
           'payment' AS type,
-          to_char(rp.created_at, 'YYYY-MM-DD HH24:MI') AS time
-        FROM rent_payments rp
-        WHERE rp.status = 'completed'
+          to_char(created_at, 'YYYY-MM-DD HH24:MI') AS time
+        FROM rent_payments
+        WHERE status = 'completed'
+        ORDER BY created_at DESC
+        LIMIT 5
+      `);
+      activities.push(...paymentsResult.rows.map(r => ({
+        ...r,
+        type: 'payment',
+        time: r.time
+      })));
+    } catch (e) {
+      console.error('Error fetching payment activities:', e.message);
+    }
 
-        UNION ALL
-
-        -- Complaints
+    // 3. Complaints
+    try {
+      const complaintsResult = await pool.query(`
         SELECT
-          c.raised_at AS sort_time,
-          'Tenant' AS user,
-          'Complaint submitted: ' || COALESCE(LEFT(c.description, 50), 'No description') AS description,
+          COALESCE(raised_at, created_at) AS sort_time,
+          'Complaint submitted: ' || COALESCE(LEFT(description, 40), 'No description') AS description,
           'complaint' AS type,
-          to_char(c.raised_at, 'YYYY-MM-DD HH24:MI') AS time
-        FROM complaints c
+          to_char(COALESCE(raised_at, created_at), 'YYYY-MM-DD HH24:MI') AS time
+        FROM complaints
+        ORDER BY COALESCE(raised_at, created_at) DESC
+        LIMIT 5
+      `);
+      activities.push(...complaintsResult.rows.map(r => ({
+        ...r,
+        type: 'complaint',
+        time: r.time
+      })));
+    } catch (e) {
+      console.error('Error fetching complaint activities:', e.message);
+    }
 
-        UNION ALL
-
-        -- Tenant allocations (new move-ins)
+    // 4. Tenant allocations (new move-ins)
+    try {
+      const allocationsResult = await pool.query(`
         SELECT
           ta.created_at AS sort_time,
-          t.first_name || ' ' || t.last_name AS user,
           'New tenant allocated to unit ' || COALESCE(pu.unit_code, 'Unknown') AS description,
           'allocation' AS type,
           to_char(ta.created_at, 'YYYY-MM-DD HH24:MI') AS time
         FROM tenant_allocations ta
-        JOIN tenants t ON t.id = ta.tenant_id
         LEFT JOIN property_units pu ON pu.id = ta.unit_id
         WHERE ta.is_active = true
-      ) activities
-      ORDER BY sort_time DESC
-      LIMIT 10
-    `);
+        ORDER BY ta.created_at DESC
+        LIMIT 5
+      `);
+      activities.push(...allocationsResult.rows.map(r => ({
+        ...r,
+        type: 'allocation',
+        time: r.time
+      })));
+    } catch (e) {
+      console.error('Error fetching allocation activities:', e.message);
+    }
+
+    // Sort all activities by time and take top 10
+    const sortedActivities = activities
+      .filter(a => a.sort_time) // Remove any with null timestamps
+      .sort((a, b) => new Date(b.sort_time) - new Date(a.sort_time))
+      .slice(0, 10)
+      .map(({ sort_time, ...rest }) => rest); // Remove sort_time from output
 
     res.json({
       success: true,
-      data: result.rows
+      data: sortedActivities
     });
   } catch (error) {
     console.error('Error fetching recent activities:', error);
@@ -473,7 +607,7 @@ const getRecentActivities = async (req, res) => {
 
 /**
  * Get top performing properties (by monthly revenue)
- * Handles multiple agents per property
+ * Safe version that handles missing columns gracefully
  */
 const getTopProperties = async (req, res) => {
   try {
@@ -481,46 +615,53 @@ const getTopProperties = async (req, res) => {
       SELECT
         p.id,
         p.name,
-        COALESCE(SUM(rp.amount), 0) AS revenue,
-        COUNT(DISTINCT pu.id) AS units,
-        COUNT(DISTINCT CASE WHEN pu.is_occupied = true THEN pu.id END) AS occupied_units,
-        COALESCE(
-          (
-            SELECT a.first_name || ' ' || a.last_name
-            FROM agent_property_assignments ap2
-            JOIN users a ON a.id = ap2.agent_id
-            WHERE ap2.property_id = p.id AND ap2.is_active = true
-            LIMIT 1
-          ),
-          'Unassigned'
-        ) AS agent,
-        COUNT(DISTINCT c.id) AS complaints
+        COALESCE(rev.total_revenue, 0) AS revenue,
+        COALESCE(unit_counts.total_units, 0) AS units,
+        COALESCE(unit_counts.occupied_units, 0) AS occupied_units,
+        COALESCE(agent_info.agent_name, 'Unassigned') AS agent
       FROM properties p
-      LEFT JOIN property_units pu ON pu.property_id = p.id AND pu.is_active = true
-      LEFT JOIN tenant_allocations ta ON ta.unit_id = pu.id AND ta.is_active = true
-      LEFT JOIN rent_payments rp
-        ON rp.tenant_id = ta.tenant_id
-        AND rp.unit_id = pu.id
-        AND rp.status = 'completed'
+      LEFT JOIN (
+        SELECT 
+          pu.property_id,
+          COUNT(*) AS total_units,
+          COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) AS occupied_units
+        FROM property_units pu
+        WHERE pu.is_active = true
+        GROUP BY pu.property_id
+      ) unit_counts ON unit_counts.property_id = p.id
+      LEFT JOIN (
+        SELECT 
+          pu.property_id,
+          SUM(rp.amount) AS total_revenue
+        FROM rent_payments rp
+        JOIN property_units pu ON pu.id = rp.unit_id
+        WHERE rp.status = 'completed'
         AND rp.payment_month >= DATE_TRUNC('month', CURRENT_DATE)
-      LEFT JOIN complaints c ON c.unit_id = pu.id
+        GROUP BY pu.property_id
+      ) rev ON rev.property_id = p.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (apa.property_id)
+          apa.property_id,
+          u.first_name || ' ' || u.last_name AS agent_name
+        FROM agent_property_assignments apa
+        JOIN users u ON u.id = apa.agent_id
+        WHERE apa.is_active = true
+        ORDER BY apa.property_id, apa.created_at DESC
+      ) agent_info ON agent_info.property_id = p.id
       WHERE p.is_active = true
-      GROUP BY p.id, p.name
       ORDER BY revenue DESC
       LIMIT 6
     `);
 
     const formatted = result.rows.map(r => ({
       id: r.id,
-      name: r.name,
-      revenue: `KES ${Number(r.revenue).toLocaleString()}`,
-      units: Number(r.units),
-      occupancy:
-        r.units > 0
-          ? `${Math.round((r.occupied_units / r.units) * 100)}%`
-          : '0%',
-      agent: r.agent,
-      complaints: Number(r.complaints)
+      name: r.name || 'Unknown Property',
+      revenue: `KES ${Number(r.revenue || 0).toLocaleString()}`,
+      units: Number(r.units) || 0,
+      occupancy: r.units > 0
+        ? `${Math.round((r.occupied_units / r.units) * 100)}%`
+        : '0%',
+      agent: r.agent || 'Unassigned'
     }));
 
     res.json({ success: true, data: formatted });
