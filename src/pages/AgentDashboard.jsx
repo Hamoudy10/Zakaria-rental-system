@@ -25,6 +25,17 @@ const AgentDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview')
   const { user } = useAuth(); // main user context
 
+  // Force re-render to show badge when window.expensePendingCount changes
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    // Simple interval to check for global state updates (since we aren't using a global store for this specific counter)
+    const interval = setInterval(() => {
+      if (window.expensePendingCount !== undefined) setTick(t => t + 1);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
   if (!user) return null; // avoid rendering if auth not ready
 
   // Simplified tabs focusing on core agent functions
@@ -114,13 +125,13 @@ const AgentDashboard = () => {
     <div className="min-h-screen bg-gray-50 mobile-optimized no-horizontal-scroll">
       <div className="responsive-container py-4">
         {/* Tab Navigation */}
-        <div className="border-b border-gray-200 mb-4">
+        <div className="border-b border-gray-200 mb-4 sticky top-0 bg-gray-50 z-10">
           <nav className="-mb-px flex space-x-1 xs:space-x-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex-shrink-0 py-2.5 px-2 xs:px-3 border-b-2 font-medium text-xs xs:text-sm touch-target transition-all duration-200 min-w-[70px] xs:min-w-[80px] text-center ${
+                className={`relative flex-shrink-0 py-2.5 px-2 xs:px-3 border-b-2 font-medium text-xs xs:text-sm touch-target transition-all duration-200 min-w-[70px] xs:min-w-[80px] text-center ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600 bg-blue-50'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-gray-50'
@@ -129,6 +140,13 @@ const AgentDashboard = () => {
               >
                 <span className="hidden sm:block">{tab.name}</span>
                 <span className="sm:hidden">{tab.shortName}</span>
+                
+                {/* Badge for Pending Expenses */}
+                {tab.id === 'expenses' && window.expensePendingCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[16px] animate-pulse">
+                    {window.expensePendingCount}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -148,7 +166,9 @@ const AgentDashboard = () => {
 // Agent Overview Component (Simplified)
 const AgentOverview = ({ setActiveTab, user }) => {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const [dashboardData, setDashboardData] = useState({
     stats: {},
     recentComplaints: [],
@@ -161,9 +181,13 @@ const AgentOverview = ({ setActiveTab, user }) => {
     fetchDashboardData();
   }, []);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       
       const [statsResponse, propertiesResponse, complaintsResponse, paymentsResponse] = await Promise.all([
@@ -180,6 +204,8 @@ const AgentOverview = ({ setActiveTab, user }) => {
         const expenseResponse = await expenseAPI.getStats();
         if (expenseResponse.data.success) {
           expenseStats = expenseResponse.data.data;
+          // Set global variable for tab badge
+          window.expensePendingCount = expenseStats.totals?.pending?.count || 0;
         }
       } catch (expenseErr) {
         console.log('Expense stats not available yet');
@@ -197,12 +223,19 @@ const AgentOverview = ({ setActiveTab, user }) => {
         paymentAlerts: pendingPayments,
         expenseStats
       });
+      
+      setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
       setError('Failed to load dashboard data. Please try again.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const handleRefresh = () => {
+    fetchDashboardData(true);
   };
 
   const getPriorityBadge = (priority) => {
@@ -260,17 +293,19 @@ const AgentOverview = ({ setActiveTab, user }) => {
     }).format(amount || 0);
   };
 
-  if (loading) return (
-    <div className="flex justify-center items-center h-64">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-    </div>
-  );
+  if (loading && !dashboardData.stats) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
 
   if (error) return (
     <div className="text-center py-8">
       <div className="text-red-600 mb-4">{error}</div>
       <button
-        onClick={fetchDashboardData}
+        onClick={() => fetchDashboardData()}
         className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
       >
         Retry
@@ -280,15 +315,39 @@ const AgentOverview = ({ setActiveTab, user }) => {
 
   return (
     <div className="space-y-4 md:space-y-6">
-      {/* Header */}
-      <div className="text-center sm:text-left">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Agent Dashboard</h1>
-        <p className="text-gray-600 text-sm mt-1">Welcome back, {user?.first_name}! Manage complaints and tenant communications</p>
-        {dashboardData.assignedProperties.length > 0 && (
-          <p className="text-sm text-blue-600 mt-1">
-            You are managing {dashboardData.assignedProperties.length} properties
+      {/* Header with Refresh Button */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="text-center sm:text-left">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Agent Dashboard</h1>
+          <p className="text-gray-600 text-sm mt-1">
+            Welcome back, {user?.first_name}! Manage complaints and tenant communications
+            {lastUpdated && (
+              <span className="ml-2 text-gray-400">
+                • Updated: {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
           </p>
-        )}
+          {dashboardData.assignedProperties.length > 0 && (
+            <p className="text-sm text-blue-600 mt-1">
+              You are managing {dashboardData.assignedProperties.length} properties
+            </p>
+          )}
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="flex items-center justify-center gap-2 px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50 self-start sm:self-auto shadow-sm"
+        >
+          <svg 
+            className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} 
+            fill="none" 
+            stroke="currentColor" 
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          {refreshing ? 'Refreshing...' : 'Refresh Data'}
+        </button>
       </div>
 
       {/* Stats Grid - Focused on core metrics */}
@@ -390,10 +449,15 @@ const AgentOverview = ({ setActiveTab, user }) => {
             </button>
             <button 
               onClick={() => setActiveTab('expenses')}
-              className="bg-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors touch-target active:bg-purple-800"
+              className="bg-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors touch-target active:bg-purple-800 relative"
             >
               <span className="text-sm sm:text-lg mb-1">📝</span>
               <span className="text-xs sm:text-sm text-center">Expenses</span>
+              {dashboardData.expenseStats?.totals?.pending?.count > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[16px]">
+                  {dashboardData.expenseStats.totals.pending.count}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab('water-bills')}
