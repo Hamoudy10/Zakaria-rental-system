@@ -287,7 +287,7 @@ export const propertyAPI = {
   getAgentAssignedTenants: () => api.get('/agent-properties/my-tenants'),
   getAgentAssignedComplaints: () => api.get('/agent-properties/my-complaints'),
 
-  // ==================== NEW: PROPERTY IMAGES ====================
+  // ==================== PROPERTY IMAGES ====================
   // Get all images for a property
   getPropertyImages: (propertyId) => api.get(`/properties/${propertyId}/images`),
   
@@ -309,6 +309,32 @@ export const propertyAPI = {
   // Reorder property images (bulk update)
   reorderPropertyImages: (propertyId, imageOrder) => 
     api.put(`/properties/${propertyId}/images/reorder`, { imageOrder }),
+
+  // ==================== UNIT IMAGES ====================
+  // Get all images for a unit
+  getUnitImages: (unitId) => api.get(`/units/${unitId}/images`),
+  
+  // Upload unit images (accepts FormData with 'unit_images' field)
+  uploadUnitImages: (unitId, formData) => {
+    return api.post(`/units/${unitId}/images`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
+  
+  // Update unit image caption or display order
+  updateUnitImage: (unitId, imageId, updates) => 
+    api.patch(`/units/${unitId}/images/${imageId}`, updates),
+  
+  // Delete a unit image
+  deleteUnitImage: (unitId, imageId) => 
+    api.delete(`/units/${unitId}/images/${imageId}`),
+  
+  // Reorder unit images (bulk update)
+  reorderUnitImages: (unitId, imageOrder) => 
+    api.put(`/units/${unitId}/images/reorder`, { imageOrder }),
+  
+  // Get image counts for multiple units
+  getUnitImageCounts: (unitIds) => api.post('/units/image-counts', { unitIds }),
 };
 
 
