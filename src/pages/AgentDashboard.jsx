@@ -11,6 +11,7 @@ const ProfilePage = lazy(() => import('../components/ProfilePage'));
 const TenantManagement = lazy(() => import('../components/TenantManagement'));
 const AgentSMSManagement = lazy(() => import('../components/AgentSMSManagement'));
 const AgentReports = lazy(() => import('../components/AgentReports'));
+const AgentPropertyShowcase = lazy(() => import('../components/AgentPropertyShowcase'));
 
 // Loading component for Suspense fallback
 const TabLoadingSpinner = () => (
@@ -28,6 +29,7 @@ const AgentDashboard = () => {
   // Simplified tabs focusing on core agent functions
   const tabs = [
     { id: 'overview', name: 'Overview', shortName: 'Overview' },
+    { id: 'showcase', name: 'Property Showcase', shortName: 'Showcase' },
     { id: 'tenant-management', name: 'Tenant Management', shortName: 'Tenants' },
     { id: 'smsManagement', name: 'SMS Management', shortName: 'SMS Mngmnt' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
@@ -40,6 +42,12 @@ const AgentDashboard = () => {
 
   const renderContent = () => {
     switch (activeTab) {
+      case 'showcase':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AgentPropertyShowcase />
+          </Suspense>
+        );
       case 'tenant-management':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
@@ -321,6 +329,13 @@ const AgentOverview = ({ setActiveTab, user }) => {
         <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
           <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Quick Actions</h3>
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
+            <button 
+              onClick={() => setActiveTab('showcase')}
+              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:from-blue-700 hover:to-purple-700 transition-all touch-target active:opacity-90"
+            >
+              <span className="text-sm sm:text-lg mb-1">🏘️</span>
+              <span className="text-xs sm:text-sm text-center">Showcase Properties</span>
+            </button>
             <button 
               onClick={() => setActiveTab('complaints')}
               className="bg-blue-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-blue-700 transition-colors touch-target active:bg-blue-800"

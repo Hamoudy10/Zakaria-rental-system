@@ -287,6 +287,10 @@ export const propertyAPI = {
   getAgentAssignedTenants: () => api.get('/agent-properties/my-tenants'),
   getAgentAssignedComplaints: () => api.get('/agent-properties/my-complaints'),
 
+  // SHOWCASE API (For Agents to show properties)
+  getShowcaseProperties: () => api.get('/properties/showcase/list'),
+  getShowcasePropertyDetails: (id) => api.get(`/properties/showcase/${id}`),
+
   // ==================== PROPERTY IMAGES ====================
   // Get all images for a property
   getPropertyImages: (propertyId) => api.get(`/properties/${propertyId}/images`),

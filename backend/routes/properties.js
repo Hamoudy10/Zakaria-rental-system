@@ -297,10 +297,10 @@ router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req,
       const caption = captionArray[i] || null;
       
       const result = await client.query(
-        `INSERT INTO property_images (property_id, image_url, caption, display_order, uploaded_by)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO property_images (property_id, image_url, image_type, caption, display_order, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [id, file.path, caption, displayOrder, req.user.id]
+        [id, file.path, 'gallery', caption, displayOrder, req.user.id]
       );
       
       insertedImages.push(result.rows[0]);
