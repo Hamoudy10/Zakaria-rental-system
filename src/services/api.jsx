@@ -909,6 +909,45 @@ export const chatAPI = {
   },
 };
 
+// ==================== EXPENSE API ====================
+export const expenseAPI = {
+  // Get expense categories
+  getCategories: () => api.get('/expenses/categories'),
+  
+  // Get all expenses (with filters)
+  getExpenses: (params = {}) => api.get('/expenses', { params }),
+  
+  // Get single expense
+  getExpense: (id) => api.get(`/expenses/${id}`),
+  
+  // Get expense statistics
+  getStats: (params = {}) => api.get('/expenses/stats', { params }),
+  
+  // Create expense
+  createExpense: (expenseData) => api.post('/expenses', expenseData),
+  
+  // Update expense
+  updateExpense: (id, updates) => api.put(`/expenses/${id}`, updates),
+  
+  // Update expense status (admin only)
+  updateExpenseStatus: (id, statusData) => api.patch(`/expenses/${id}/status`, statusData),
+  
+  // Bulk approve/reject (admin only)
+  bulkUpdateStatus: (data) => api.post('/expenses/bulk-approve', data),
+  
+  // Delete expense
+  deleteExpense: (id) => api.delete(`/expenses/${id}`),
+  
+  // Get net profit report (admin only)
+  getNetProfitReport: (params = {}) => api.get('/expenses/reports/net-profit', { params }),
+  
+  // Upload receipt image (uses existing file upload)
+  uploadReceipt: (formData) => api.post('/upload/image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+};
+
+
 // Export all APIs in a single object for easy importing
 export const API = {
   auth: authAPI,
@@ -920,6 +959,7 @@ export const API = {
   reports: reportAPI,
   notifications: notificationAPI,
   salary: salaryPaymentAPI,
+  expenses: expenseAPI,
   settings: settingsAPI,
   dashboard: dashboardAPI,
   files: fileAPI,

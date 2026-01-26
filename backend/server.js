@@ -7,6 +7,7 @@ const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { initializeDefaultSettings } = require('./controllers/adminSettingsController');
 const adminRoutes = require('./routes/adminRoutes');
+const expenseRoutes = require('./routes/expenses');
 
 const app = express();
 
@@ -164,6 +165,15 @@ try {
   console.log('✅ Loaded Properties routes');
 } catch (err) {
   console.error('❌ Failed to load Properties routes:', err.message);
+}
+
+try{
+  // Add this with your other route registrations
+  app.use('/api/expenses', expenseRoutes);
+
+  console.log('✅ Loaded expenses routes');
+}catch(err){
+  console.error('❌ Failed to load expenses routes:', err.message);
 }
 
 try {
