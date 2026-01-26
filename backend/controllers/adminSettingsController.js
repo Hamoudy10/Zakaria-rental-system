@@ -2,6 +2,58 @@ const pool = require('../config/database');
 const cronService = require('../services/cronService');
 
 /* ============================
+   GET PUBLIC COMPANY INFO (No Auth Required)
+   Used for Login page branding
+============================ */
+const getPublicCompanyInfo = async (req, res) => {
+  try {
+    const companyKeys = [
+      'company_name',
+      'company_logo'
+    ];
+
+    const placeholders = companyKeys.map((_, i) => `$${i + 1}`).join(',');
+    
+    const result = await pool.query(
+      `SELECT setting_key, setting_value 
+       FROM admin_settings 
+       WHERE setting_key IN (${placeholders})`,
+      companyKeys
+    );
+
+    const companyInfo = {
+      name: 'Zakaria Housing Agency Limited',
+      logo: null
+    };
+
+    result.rows.forEach(row => {
+      if (row.setting_key === 'company_name' && row.setting_value) {
+        companyInfo.name = row.setting_value;
+      }
+      if (row.setting_key === 'company_logo' && row.setting_value) {
+        companyInfo.logo = row.setting_value;
+      }
+    });
+
+    res.json({
+      success: true,
+      data: companyInfo
+    });
+
+  } catch (err) {
+    console.error('Get public company info error:', err);
+    // Return defaults on error instead of 500
+    res.json({
+      success: true,
+      data: {
+        name: 'Zakaria Housing Agency Limited',
+        logo: null
+      }
+    });
+  }
+};
+
+/* ============================
    GET ALL SETTINGS
 ============================ */
 const getAllSettings = async (req, res) => {
@@ -808,6 +860,7 @@ module.exports = {
   resetToDefaults,
   getBillingConfig,
   getCompanyInfo,
+  getPublicCompanyInfo,
   updateCompanyInfo,
   deleteCompanyLogo,
   initializeDefaultSettings
