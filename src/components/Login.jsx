@@ -26,7 +26,7 @@ const Login = () => {
   useEffect(() => {
     const fetchCompanyInfo = async () => {
       try {
-        const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://zakaria-rental-system.onrender.com'}/api/admin/company-info`);
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://zakaria-rental-system.onrender.com'}/api/admin/public/company-info`);
         const data = await response.json();
         
         if (data.success && data.data) {
