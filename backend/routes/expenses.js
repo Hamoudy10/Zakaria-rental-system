@@ -399,36 +399,39 @@ router.post('/', protect, async (req, res) => {
       }
     }
     
-    const result = await client.query(
-      `INSERT INTO expenses (
-        expense_date, amount, description, category, subcategory,
-        property_id, unit_id, complaint_id, recorded_by,
-        payment_method, receipt_number, receipt_image_url,
-        vendor_name, vendor_phone, notes, is_recurring, recurring_frequency,
-        status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-      RETURNING *`,
-      [
-        expense_date || new Date(),
-        parseFloat(amount),
-        description.trim(),
-        category,
-        subcategory || null,
-        property_id || null,
-        unit_id || null,
-        complaint_id || null,
-        req.user.id,
-        payment_method || 'cash',
-        receipt_number || null,
-        receipt_image_url || null,
-        vendor_name || null,
-        vendor_phone || null,
-        notes || null,
-        is_recurring || false,
-        recurring_frequency || null,
-        'pending' // Default status - requires admin approval
-      ]
-    );
+// In the CREATE EXPENSE route, update the INSERT query:
+
+const result = await client.query(
+  `INSERT INTO expenses (
+    expense_date, amount, description, category, subcategory,
+    property_id, unit_id, complaint_id, recorded_by,
+    payment_method, receipt_number, receipt_image_url,
+    vendor_name, vendor_phone, notes, is_recurring, recurring_frequency,
+    status, expense_type
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+  RETURNING *`,
+  [
+    expense_date || new Date(),
+    parseFloat(amount),
+    description.trim(),
+    category,
+    subcategory || null,
+    property_id || null,
+    unit_id || null,
+    complaint_id || null,
+    req.user.id,
+    payment_method || 'cash',
+    receipt_number || null,
+    receipt_image_url || null,
+    vendor_name || null,
+    vendor_phone || null,
+    notes || null,
+    is_recurring || false,
+    recurring_frequency || null,
+    'pending',
+    category // Use category as expense_type
+  ]
+);
     
     await client.query('COMMIT');
     
