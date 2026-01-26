@@ -212,3 +212,28 @@ companyLogo = data.logo || data.company_logo || null;
   unitTypeBreakdown: [{ unitType, total, occupied, vacant }],
   monthlyTrend: [{ month, revenue, paymentCount }]
 }
+## PROPERTY & UNIT IMAGE MANAGEMENT (v4.0 - Option A)
+
+### Overview
+Redesigned Property Management module with unified image architecture. Both property showcase photos and unit walkthrough photos are stored in a single `property_images` table, distinguished by the `unit_id` column.
+
+### Features Implemented
+| Feature | Description |
+|---------|-------------|
+| Simplified Property Form | Removed `unit_type` from property creation (types managed at unit level) |
+| Property Showcase Gallery | High-end Option C UI for building-level marketing photos |
+| Unit Walkthrough Gallery | Dedicated media curation for each individual unit |
+| Client-Side Segregation | Frontend filters images by `unit_id` (NULL = property, populated = unit) |
+
+### Database Schema (Option A - Single Table)
+``sql
+-- property_images table structure (handles BOTH property and unit images)
+id UUID PRIMARY KEY
+property_id UUID NOT NULL REFERENCES properties(id)
+unit_id UUID REFERENCES property_units(id) -- NULL = property image, NOT NULL = unit image
+image_url VARCHAR NOT NULL
+image_type VARCHAR DEFAULT 'general'
+caption VARCHAR
+display_order INTEGER DEFAULT 0
+uploaded_by UUID REFERENCES users(id)
+uploaded_at TIMESTAMP DEFAULT NOW()

@@ -243,3 +243,26 @@ autoTable(doc, { startY: 55, head: [[...]], body: [...] }); // Pass doc as 1st a
 ```javascript
 const { property, tenant, financial, agent, complaint, sms, payment, unitTypeBreakdown, monthlyTrend } = stats;
 // All fields use optional chaining: payment?.pendingPayments || 0
+
+---
+
+## For `src/claude.md` (Add at the end)
+
+```markdown
+## PROPERTY MANAGEMENT REDESIGN (v4.0)
+
+### Component: PropertyManagement.jsx
+- **Form Changes:** Removed `unit_type` field from property creation/edit modals
+- **Gallery System:** Added "Manage Showcase" button for property images
+- **Unit Media:** Added camera icon with count to each unit for walkthrough photos
+
+### Image Management Logic (Option A)
+```javascript
+// Client-side image segregation from single API response
+const allImages = property.images || [];
+
+// Property-level images (unit_id is NULL)
+const propertyImages = allImages.filter(img => !img.unit_id);
+
+// Unit-level images (unit_id matches)
+unit.images = allImages.filter(img => img.unit_id === unit.id);

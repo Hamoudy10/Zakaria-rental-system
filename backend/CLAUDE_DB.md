@@ -263,3 +263,27 @@ pending, completed, failed, overdue
 
 -- unit_type
 bedsitter, studio, one_bedroom, two_bedroom, three_bedroom, shop, hall
+
+---
+
+## For `backend/claude_db.md` (Add at the end)
+
+```markdown
+## PROPERTY_IMAGES TABLE (Option A - Unified Schema)
+
+### Purpose
+Single table architecture storing both property showcase images and unit walkthrough images.
+
+### Schema
+```sql
+CREATE TABLE property_images (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  unit_id UUID REFERENCES property_units(id) ON DELETE CASCADE, -- NULL = property, NOT NULL = unit
+  image_url VARCHAR(500) NOT NULL,
+  image_type VARCHAR(50) DEFAULT 'general', -- 'exterior', 'interior', 'amenity', etc.
+  caption VARCHAR(255),
+  display_order INTEGER DEFAULT 0,
+  uploaded_by UUID REFERENCES users(id),
+  uploaded_at TIMESTAMP DEFAULT NOW()
+);

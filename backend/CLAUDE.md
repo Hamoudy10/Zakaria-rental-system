@@ -267,3 +267,38 @@ autoTable(doc, { ...options }); // doc as first argument, NOT doc.autoTable()
 ### Route Registration (adminRoutes.js)
 ```javascript
 router.get('/dashboard/comprehensive-stats', protect, adminOnly, dashboardController.getComprehensiveStats);
+
+---
+
+## For `backend/claude.md` (Add at the end)
+
+```markdown
+## PROPERTY IMAGE MANAGEMENT (v4.0 - Option A)
+
+### Architecture
+Single `property_images` table stores both property and unit images. Differentiation is handled by the `unit_id` column:
+- `unit_id = NULL` → Property showcase image
+- `unit_id = UUID` → Unit walkthrough image
+
+### Routes (properties.js)
+
+#### Property Images
+```javascript
+// Upload property images
+router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req, res) => {
+  // INSERT INTO property_images (property_id, image_url, ...) 
+  // unit_id is NOT set (defaults to NULL)
+});
+
+// Delete property image
+router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
+  // DELETE FROM property_images WHERE id = $1 AND property_id = $2
+});
+
+zakaria_rental/
+├── property_images/
+│   └── {property_id}/
+│       └── image-{timestamp}.jpg
+└── unit_images/
+    └── {unit_id}/
+        └── image-{timestamp}.jpg
