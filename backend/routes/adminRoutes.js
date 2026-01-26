@@ -51,6 +51,15 @@ try {
 }
 
 // ============================
+// PUBLIC ROUTES (No Auth Required)
+// ============================
+
+console.log('Setting up public company info route');
+
+// GET public company info (for Login page branding) - NO AUTH REQUIRED
+router.get('/public/company-info', adminSettingsController.getPublicCompanyInfo);
+
+// ============================
 // Admin Dashboard Routes
 // ============================
 
@@ -85,12 +94,12 @@ router.get('/dashboard/top-properties', protect, adminOnly, (req, res, next) => 
 });
 
 // ============================
-// Company Info Routes (NEW)
+// Company Info Routes (Protected)
 // ============================
 
 console.log('Setting up company info routes');
 
-// GET company info
+// GET company info (authenticated users)
 router.get('/company-info', protect, requireAgent, adminSettingsController.getCompanyInfo);
 
 // UPDATE company info (with optional logo upload)
