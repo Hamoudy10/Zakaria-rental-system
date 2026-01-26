@@ -26,6 +26,21 @@ const PropertyManagement = () => {
     return Math.round((occupiedUnits / property.total_units) * 100)
   }
 
+  // Inject styles for animations
+  useEffect(() => {
+    const styleSheet = document.createElement("style");
+    styleSheet.innerText = `
+      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes scaleIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+      .gallery-modal-enter { animation: fadeIn 0.2s ease-out forwards; }
+      .gallery-content-enter { animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+      .scrollbar-hide::-webkit-scrollbar { display: none; }
+      .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    `;
+    document.head.appendChild(styleSheet);
+    return () => document.head.removeChild(styleSheet);
+  }, []);
+
   // Fetch property images
   const fetchPropertyImages = useCallback(async (propertyId) => {
     setIsLoadingImages(true)
@@ -144,24 +159,32 @@ const PropertyManagement = () => {
 
   // Image Gallery Modal Component
   const ImageGalleryModal = () => {
-    if (!showImageGallery || !selectedPropertyForImages) return null
+    if (!showImageGallery || !selectedPropertyForImages) return null;
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90 p-2">
-        <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[95vh] flex flex-col">
+      <div className="fixed inset-0 z-50 flex items-center justify-center gallery-modal-enter">
+        {/* Backdrop */}
+        <div 
+          className="absolute inset-0 bg-black/90 backdrop-blur-md"
+          onClick={() => setShowImageGallery(false)}
+        />
+
+        {/* Modal Content */}
+        <div className="relative w-full max-w-7xl h-[95vh] flex flex-col bg-gray-900 shadow-2xl rounded-xl overflow-hidden gallery-content-enter border border-gray-800 mx-4">
+          
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-200">
+          <div className="flex items-center justify-between px-6 py-4 bg-gray-900/50 backdrop-blur-sm border-b border-gray-800 z-10">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                {selectedPropertyForImages.name} - Gallery
+              <h2 className="text-xl font-bold text-white tracking-tight">
+                {selectedPropertyForImages.name}
               </h2>
-              <p className="text-sm text-gray-500">
-                {propertyImages.length} image{propertyImages.length !== 1 ? 's' : ''}
+              <p className="text-sm text-gray-400 mt-0.5">
+                Gallery • {propertyImages.length} photo{propertyImages.length !== 1 ? 's' : ''}
               </p>
             </div>
             <button
               onClick={() => setShowImageGallery(false)}
-              className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-all duration-200"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -169,145 +192,139 @@ const PropertyManagement = () => {
             </button>
           </div>
 
-          {/* Main Content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
+          {/* Main Stage */}
+          <div className="flex-1 relative flex items-center justify-center bg-black overflow-hidden group">
             {isLoadingImages ? (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+              <div className="flex flex-col items-center justify-center text-blue-500">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-current mb-4"></div>
+                <span className="text-gray-400 text-sm">Loading gallery...</span>
               </div>
             ) : propertyImages.length > 0 ? (
               <>
-                {/* Main Image Display */}
-                <div className="relative flex-1 bg-gray-900 flex items-center justify-center min-h-[300px]">
-                  <img
-                    src={propertyImages[currentImageIndex]?.image_url}
-                    alt={propertyImages[currentImageIndex]?.caption || `Property image ${currentImageIndex + 1}`}
-                    className="max-h-[50vh] max-w-full object-contain"
-                  />
-                  
-                  {/* Navigation Arrows */}
-                  {propertyImages.length > 1 && (
-                    <>
-                      <button
-                        onClick={goToPreviousImage}
-                        className="absolute left-2 top-1/2 -translate-y-1/2 bg-white bg-opacity-80 hover:bg-opacity-100 rounded-full p-2 shadow-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
-                      >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={goToNextImage}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 bg-white bg-opacity-80 hover:bg-opacity-100 rounded-full p-2 shadow-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
-                      >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </button>
-                    </>
-                  )}
+                {/* Main Image */}
+                <img
+                  key={propertyImages[currentImageIndex]?.id} 
+                  src={propertyImages[currentImageIndex]?.image_url}
+                  alt={propertyImages[currentImageIndex]?.caption || "Property"}
+                  className="max-w-full max-h-full object-contain transition-transform duration-500 hover:scale-[1.02]"
+                />
 
-                  {/* Delete Button */}
-                  <button
-                    onClick={() => handleDeleteImage(propertyImages[currentImageIndex]?.id)}
-                    className="absolute top-2 right-2 bg-red-600 hover:bg-red-700 text-white rounded-full p-2 shadow-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
-                    title="Delete this image"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-
-                  {/* Image Counter */}
-                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black bg-opacity-60 text-white px-3 py-1 rounded-full text-sm">
-                    {currentImageIndex + 1} / {propertyImages.length}
-                  </div>
+                {/* Caption Overlay */}
+                <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                  <p className="text-center text-white text-lg font-medium">
+                    {propertyImages[currentImageIndex]?.caption}
+                  </p>
                 </div>
 
-                {/* Thumbnail Strip */}
-                <div className="bg-gray-100 p-3 overflow-x-auto">
-                  <div className="flex space-x-2">
-                    {propertyImages.map((image, index) => (
-                      <button
-                        key={image.id}
-                        onClick={() => setCurrentImageIndex(index)}
-                        className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
-                          index === currentImageIndex 
-                            ? 'border-blue-600 ring-2 ring-blue-300' 
-                            : 'border-transparent hover:border-gray-300'
-                        }`}
-                      >
-                        <img
-                          src={image.image_url}
-                          alt={image.caption || `Thumbnail ${index + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {/* Navigation Buttons */}
+                {propertyImages.length > 1 && (
+                  <>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); goToPreviousImage(); }}
+                      className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/40 text-white/70 hover:bg-white/20 hover:text-white hover:scale-110 transition-all duration-200 backdrop-blur-sm border border-white/10"
+                    >
+                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); goToNextImage(); }}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/40 text-white/70 hover:bg-white/20 hover:text-white hover:scale-110 transition-all duration-200 backdrop-blur-sm border border-white/10"
+                    >
+                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </button>
+                  </>
+                )}
+
+                {/* Delete Action */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDeleteImage(propertyImages[currentImageIndex]?.id); }}
+                  className="absolute top-4 right-4 p-2 rounded-full bg-red-500/20 text-red-400 hover:bg-red-600 hover:text-white transition-all duration-200 backdrop-blur-md border border-red-500/30 opacity-0 group-hover:opacity-100"
+                  title="Delete Image"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-500">
-                <div className="text-center">
-                  <div className="text-6xl mb-4">📷</div>
-                  <p>No images uploaded yet</p>
-                </div>
+              <div className="text-center text-gray-500">
+                <div className="text-6xl mb-4 opacity-20">🖼️</div>
+                <p className="text-lg font-medium">No images yet</p>
+                <p className="text-sm opacity-60">Upload some photos to showcase this property</p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer / Thumbnails / Upload */}
+          <div className="bg-gray-900 border-t border-gray-800 p-4 flex flex-col gap-4">
+            
+            {/* Thumbnails */}
+            {propertyImages.length > 0 && (
+              <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide snap-x">
+                {propertyImages.map((img, idx) => (
+                  <button
+                    key={img.id}
+                    onClick={() => setCurrentImageIndex(idx)}
+                    className={`relative flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden transition-all duration-200 snap-center ${
+                      idx === currentImageIndex 
+                        ? 'ring-2 ring-blue-500 scale-105 opacity-100' 
+                        : 'opacity-50 hover:opacity-80 hover:scale-105'
+                    }`}
+                  >
+                    <img 
+                      src={img.image_url} 
+                      alt="" 
+                      className="w-full h-full object-cover" 
+                    />
+                  </button>
+                ))}
               </div>
             )}
 
-            {/* Upload Section */}
+            {/* Upload Zone */}
             <div 
-              className={`p-4 border-t border-gray-200 ${isDragging ? 'bg-blue-50' : 'bg-gray-50'}`}
+              className={`relative rounded-xl border-2 border-dashed transition-all duration-300 ${
+                isDragging 
+                  ? 'border-blue-500 bg-blue-500/10' 
+                  : 'border-gray-700 bg-gray-800/50 hover:bg-gray-800 hover:border-gray-600'
+              }`}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
+              {isUploading ? (
+                <div className="flex items-center justify-center p-6 text-blue-400">
+                  <div className="animate-spin mr-3 h-5 w-5 border-2 border-current border-t-transparent rounded-full"></div>
+                  <span className="font-medium animate-pulse">Uploading photos...</span>
+                </div>
+              ) : (
+                <label className="flex flex-col sm:flex-row items-center justify-center p-4 cursor-pointer gap-3 text-gray-400 hover:text-white transition-colors">
+                  <div className="p-2 rounded-full bg-gray-700/50">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                  </div>
+                  <div className="text-center sm:text-left">
+                    <span className="font-medium text-blue-400 hover:text-blue-300 hover:underline">Click to upload</span>
+                    <span className="mx-1">or drag and drop</span>
+                    <span className="text-xs text-gray-500 block sm:inline">(Max 10MB each)</span>
+                  </div>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleImageUpload(e.target.files)}
+                  />
+                </label>
+              )}
               {uploadError && (
-                <div className="mb-3 p-2 bg-red-100 text-red-700 rounded text-sm">
-                  {uploadError}
+                <div className="absolute top-0 left-0 right-0 -mt-3 text-center">
+                  <span className="bg-red-500 text-white text-xs px-2 py-1 rounded shadow-lg">
+                    {uploadError}
+                  </span>
                 </div>
               )}
-              
-              <div className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                isDragging ? 'border-blue-500 bg-blue-100' : 'border-gray-300'
-              }`}>
-                {isUploading ? (
-                  <div className="flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mr-2"></div>
-                    <span>Uploading...</span>
-                  </div>
-                ) : (
-                  <>
-                    <div className="text-gray-500 mb-2">
-                      <svg className="w-10 h-10 mx-auto mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      Drag & drop images here or
-                    </div>
-                    <label className="cursor-pointer">
-                      <span className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors inline-block">
-                        Browse Files
-                      </span>
-                      <input
-                        type="file"
-                        multiple
-                        accept="image/jpeg,image/png,image/webp"
-                        className="hidden"
-                        onChange={(e) => handleImageUpload(e.target.files)}
-                      />
-                    </label>
-                    <p className="text-xs text-gray-400 mt-2">
-                      JPEG, PNG, WebP • Max 10MB per image
-                    </p>
-                  </>
-                )}
-              </div>
             </div>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   // Separate Modal Component for Property Form - REMOVED unit_type field
