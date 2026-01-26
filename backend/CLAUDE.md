@@ -257,7 +257,7 @@ autoTable(doc, { ...options }); // doc as first argument, NOT doc.autoTable()
 | GET | `/admin/dashboard/top-properties` | Top 6 properties by revenue |
 
 ### Schema Constraints
-- `properties` has NO `is_active` column - don't filter by it
+- `properties` has NO `is_active` column - dont filter by it
 - Use `raised_at` for complaints (not `created_at`)
 - Use `allocation_date` for tenant_allocations (not `created_at`)
 - Use `sent_at` for SMS sent today count
@@ -265,7 +265,7 @@ autoTable(doc, { ...options }); // doc as first argument, NOT doc.autoTable()
 - Return `pendingPayments` (not `processingPayments`)
 
 ### Route Registration (adminRoutes.js)
-```javascript
+``javascript
 router.get('/dashboard/comprehensive-stats', protect, adminOnly, dashboardController.getComprehensiveStats);
 
 ---
@@ -302,3 +302,12 @@ zakaria_rental/
 └── unit_images/
     └── {unit_id}/
         └── image-{timestamp}.jpg
+
+## MARKETING & SHOWCASE ENDPOINTS
+| Method | Route | Scope |
+|--------|-------|-------|
+| GET | `/api/properties/showcase/list` | List names/codes of all buildings |
+| GET | `/api/properties/showcase/:id` | Full marketing data (Images + Units) |
+
+### Implementation Note
+These endpoints return public building data and images to Agents without requiring assignment in `agent_property_assignments`, enabling cross-portfolio marketing.

@@ -63,6 +63,159 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
+// ==================== SHOWCASE ROUTES (Must be BEFORE /:id) ====================
+
+// GET SHOWCASE PROPERTIES LIST - Agents can view all properties for marketing
+router.get('/showcase/list', protect, async (req, res) => {
+  try {
+    console.log('📋 Fetching showcase properties list for user:', req.user.id);
+    
+    // Return all properties (no agent assignment filter for marketing purposes)
+    const result = await pool.query(`
+      SELECT 
+        p.id,
+        p.property_code,
+        p.name,
+        p.address,
+        p.county,
+        p.town,
+        p.description,
+        p.total_units,
+        p.available_units,
+        p.created_at
+      FROM properties p
+      ORDER BY p.name ASC
+    `);
+    
+    console.log(`✅ Found ${result.rows.length} properties for showcase`);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('❌ Error fetching showcase properties:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching properties for showcase',
+      error: error.message
+    });
+  }
+});
+
+// GET SHOWCASE PROPERTY DETAILS - Full property data for marketing (no assignment check)
+router.get('/showcase/:id', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`📋 Fetching showcase details for property: ${id}`);
+    
+    // Get property details
+    const propertyResult = await pool.query(`
+      SELECT 
+        p.*,
+        u.first_name || ' ' || u.last_name as created_by_name
+      FROM properties p
+      LEFT JOIN users u ON p.created_by = u.id
+      WHERE p.id = $1
+    `, [id]);
+    
+    if (propertyResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Property not found'
+      });
+    }
+    
+    const property = propertyResult.rows[0];
+    
+    // Get all units for this property
+    const unitsResult = await pool.query(`
+      SELECT * FROM property_units 
+      WHERE property_id = $1 AND is_active = true
+      ORDER BY unit_number ASC
+    `, [id]);
+    
+    // Get all images (property-level: unit_id IS NULL)
+    let imagesResult = { rows: [] };
+    try {
+      imagesResult = await pool.query(`
+        SELECT * FROM property_images 
+        WHERE property_id = $1 AND unit_id IS NULL
+        ORDER BY display_order ASC, uploaded_at DESC
+      `, [id]);
+    } catch (imgError) {
+      console.log('Note: property_images query failed:', imgError.message);
+    }
+    
+    console.log(`✅ Showcase data: ${unitsResult.rows.length} units, ${imagesResult.rows.length} images`);
+    
+    res.json({
+      success: true,
+      data: {
+        ...property,
+        units: unitsResult.rows,
+        images: imagesResult.rows
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching showcase property details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching property showcase details',
+      error: error.message
+    });
+  }
+});
+
+// ==================== STANDALONE UNIT IMAGES ROUTE (Must be BEFORE /:id) ====================
+// This allows fetching unit images without needing the property ID
+
+router.get('/units/:unitId/images', protect, async (req, res) => {
+  try {
+    const { unitId } = req.params;
+    
+    console.log(`📷 Fetching images for unit: ${unitId}`);
+    
+    // Verify unit exists
+    const unitCheck = await pool.query(
+      'SELECT id, unit_code, property_id FROM property_units WHERE id = $1',
+      [unitId]
+    );
+    
+    if (unitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found'
+      });
+    }
+    
+    // Get unit images (Option A: unit_id matches)
+    const result = await pool.query(`
+      SELECT pi.*, u.first_name || ' ' || u.last_name as uploaded_by_name
+      FROM property_images pi
+      LEFT JOIN users u ON pi.uploaded_by = u.id
+      WHERE pi.unit_id = $1
+      ORDER BY pi.display_order ASC, pi.uploaded_at DESC
+    `, [unitId]);
+    
+    console.log(`✅ Found ${result.rows.length} images for unit ${unitId}`);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('❌ Error fetching unit images:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching unit images',
+      error: error.message
+    });
+  }
+});
+
 // ==================== GET SINGLE PROPERTY WITH UNITS AND IMAGES (Option A) ====================
 router.get('/:id', protect, async (req, res) => {
   try {
@@ -341,7 +494,7 @@ router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
 
 // ==================== UNIT IMAGES ROUTES (Option A) ====================
 
-// GET UNIT IMAGES
+// GET UNIT IMAGES (with property context)
 router.get('/:id/units/:unitId/images', protect, async (req, res) => {
   try {
     const { id, unitId } = req.params;

@@ -266,3 +266,13 @@ const propertyImages = allImages.filter(img => !img.unit_id);
 
 // Unit-level images (unit_id matches)
 unit.images = allImages.filter(img => img.unit_id === unit.id);
+## AGENT SHOWCASE COMPONENT (Option B UI)
+### UI/UX
+- **Interactive Selection:** Dropdown to select any building from the global registry.
+- **Filtering Logic:** Agents can toggle "Show Only Vacant Units" and "Items with Images" for focused tours.
+- **Smooth Navigation:** Full-screen lightbox for high-res walkthroughs with keyboard support.
+
+### Image Segregation (Option A Pattern)
+- Frontend processes single `images[]` array from showcase endpoint.
+- Segregation: `Building_Photos = images.filter(i => !i.unit_id)`
+- Segregation: `Unit_Photos = images.filter(i => i.unit_id === active_unit_id)`

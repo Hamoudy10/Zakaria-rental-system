@@ -275,7 +275,7 @@ bedsitter, studio, one_bedroom, two_bedroom, three_bedroom, shop, hall
 Single table architecture storing both property showcase images and unit walkthrough images.
 
 ### Schema
-```sql
+``sql
 CREATE TABLE property_images (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
@@ -287,3 +287,7 @@ CREATE TABLE property_images (
   uploaded_by UUID REFERENCES users(id),
   uploaded_at TIMESTAMP DEFAULT NOW()
 );
+## PROPERTY_IMAGES SCHEMA (Option A - Verified)
+- **Constraint Fix:** `image_type` now defaults to `'general'` via DB default to prevent 500 errors.
+- **Indexing:** `idx_property_images_unit_id` added to optimize walkthrough gallery performance in the Agent Dashboard.
+- **Order:** `display_order` column added (default 0) to allow admin curation.

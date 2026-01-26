@@ -237,3 +237,12 @@ caption VARCHAR
 display_order INTEGER DEFAULT 0
 uploaded_by UUID REFERENCES users(id)
 uploaded_at TIMESTAMP DEFAULT NOW()
+## AGENT PROPERTY SHOWCASE (v4.5)
+### Features
+- **Visual Marketing:** Agents can access any property for showcasing, regardless of assignment.
+- **Showcase Tab:** Default landing tab in Agent Dashboard for property tours.
+- **Unified Assets:** Combines Building Showcase (Option C UI) and Unit Walkthroughs into a single view.
+
+### Critical Backend Adjustments
+- **Route Specificity:** Showcase routes (`/showcase/*`) are placed above generic `/:id` routes in `properties.js` to prevent 404 shadowing.
+- **Unassigned Access:** New endpoint `GET /api/properties/showcase` bypasses agent assignment checks for marketing data only.
