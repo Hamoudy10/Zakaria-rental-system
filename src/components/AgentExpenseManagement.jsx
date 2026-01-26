@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { expenseAPI, propertyAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { exportToPDF } from '../utils/pdfExport';
+import { exportToExcel } from '../utils/excelExport';
 
 const AgentExpenseManagement = () => {
   const { user } = useAuth();
@@ -11,6 +13,9 @@ const AgentExpenseManagement = () => {
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
+  
+  // Export state
+  const [exporting, setExporting] = useState(false);
   
   // Filters
   const [filters, setFilters] = useState({
@@ -51,9 +56,6 @@ const AgentExpenseManagement = () => {
   
   // Units for selected property
   const [units, setUnits] = useState([]);
-  
-  // View mode
-  const [viewMode, setViewMode] = useState('list'); // 'list' or 'stats'
   
   // Toast notification
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
@@ -152,6 +154,117 @@ const AgentExpenseManagement = () => {
       }
     } catch (error) {
       console.error('Error fetching units:', error);
+    }
+  };
+
+  // Fetch all expenses for export (ignoring pagination)
+  const fetchAllExpensesForExport = async () => {
+    try {
+      const params = {
+        page: 1,
+        limit: 10000, // Get all records
+        ...filters
+      };
+      
+      // Remove empty filters
+      Object.keys(params).forEach(key => {
+        if (params[key] === '') delete params[key];
+      });
+      
+      const response = await expenseAPI.getExpenses(params);
+      if (response.data.success) {
+        return response.data.data;
+      }
+      return [];
+    } catch (error) {
+      console.error('Error fetching all expenses:', error);
+      return [];
+    }
+  };
+
+  // Export to PDF
+  const handleExportPDF = async () => {
+    if (exporting) return;
+    
+    setExporting(true);
+    showToast('Preparing PDF export...', 'success');
+    
+    try {
+      const allExpenses = await fetchAllExpensesForExport();
+      
+      if (allExpenses.length === 0) {
+        showToast('No expenses to export', 'error');
+        return;
+      }
+      
+      // Build title with filter info
+      let title = 'Expense Report';
+      if (filters.category) title += ` - ${filters.category}`;
+      if (filters.status) title += ` (${filters.status})`;
+      
+      const success = await exportToPDF({
+        reportType: 'expenses',
+        data: allExpenses,
+        filters: {
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+          search: filters.category ? `Category: ${filters.category}` : null
+        },
+        user,
+        title
+      });
+      
+      if (success) {
+        showToast('PDF exported successfully!', 'success');
+      }
+    } catch (error) {
+      console.error('PDF export error:', error);
+      showToast('Failed to export PDF', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Export to Excel
+  const handleExportExcel = async () => {
+    if (exporting) return;
+    
+    setExporting(true);
+    showToast('Preparing Excel export...', 'success');
+    
+    try {
+      const allExpenses = await fetchAllExpensesForExport();
+      
+      if (allExpenses.length === 0) {
+        showToast('No expenses to export', 'error');
+        return;
+      }
+      
+      // Build title with filter info
+      let title = 'Expense Report';
+      if (filters.category) title += ` - ${filters.category}`;
+      if (filters.status) title += ` (${filters.status})`;
+      
+      const success = await exportToExcel({
+        reportType: 'expenses',
+        data: allExpenses,
+        filters: {
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+          search: filters.category ? `Category: ${filters.category}` : null
+        },
+        user,
+        title
+      });
+      
+      if (success) {
+        showToast('Excel exported successfully!', 'success');
+      }
+    } catch (error) {
+      console.error('Excel export error:', error);
+      showToast('Failed to export Excel', 'error');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -296,11 +409,6 @@ const AgentExpenseManagement = () => {
     );
   };
 
-  const getCategoryIcon = (categoryName) => {
-    const category = categories.find(c => c.name === categoryName);
-    return category?.icon || 'receipt';
-  };
-
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-KE', {
       style: 'currency',
@@ -346,15 +454,54 @@ const AgentExpenseManagement = () => {
             <h1 className="text-2xl font-bold text-gray-900">Expense Tracking</h1>
             <p className="text-sm text-gray-500 mt-1">Record and manage daily operational expenses</p>
           </div>
-          <button
-            onClick={openNewExpenseModal}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-          >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            New Expense
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {/* Export Buttons */}
+            <button
+              onClick={handleExportPDF}
+              disabled={exporting || expenses.length === 0}
+              className="flex items-center px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              {exporting ? (
+                <svg className="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+              )}
+              PDF
+            </button>
+            
+            <button
+              onClick={handleExportExcel}
+              disabled={exporting || expenses.length === 0}
+              className="flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              {exporting ? (
+                <svg className="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              )}
+              Excel
+            </button>
+            
+            <button
+              onClick={openNewExpenseModal}
+              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+            >
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Expense
+            </button>
+          </div>
         </div>
       </div>
 
@@ -424,6 +571,14 @@ const AgentExpenseManagement = () => {
       {/* Filters */}
       <div className="px-4 sm:px-6 py-4">
         <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-gray-700">Filter Expenses</h3>
+            {(filters.startDate || filters.endDate || filters.category || filters.propertyId || filters.status) && (
+              <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
+                Filters Active
+              </span>
+            )}
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
@@ -484,13 +639,16 @@ const AgentExpenseManagement = () => {
               </select>
             </div>
           </div>
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex justify-between items-center">
+            <p className="text-sm text-gray-500">
+              {pagination.total} expense{pagination.total !== 1 ? 's' : ''} found
+            </p>
             <button
               onClick={() => {
                 setFilters({ startDate: '', endDate: '', category: '', propertyId: '', status: '' });
                 setPagination(prev => ({ ...prev, page: 1 }));
               }}
-              className="text-sm text-gray-600 hover:text-gray-900"
+              className="text-sm text-gray-600 hover:text-gray-900 hover:underline"
             >
               Clear Filters
             </button>

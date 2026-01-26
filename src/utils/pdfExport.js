@@ -665,6 +665,28 @@ const prepareTableData = (reportType, data) => {
       };
       break;
 
+    // Add this case in the prepareTableData function's switch statement
+
+    case 'expenses':
+      headers = ['#', 'Date', 'Category', 'Description', 'Property', 'Amount (KSh)', 'Payment', 'Status'];
+      rows = data.map((item, index) => [
+        index + 1,
+        formatDate(item.expense_date),
+        item.category || 'N/A',
+        truncateText(item.description, 25),
+        item.property_name || 'General',
+        formatCurrency(item.amount),
+        capitalizeFirst(item.payment_method) || 'Cash',
+        capitalizeFirst(item.status) || 'Pending'
+      ]);
+      columnStyles = {
+        0: { halign: 'center', cellWidth: 10 },
+        1: { halign: 'center' },
+        5: { halign: 'right' },
+        7: { halign: 'center' }
+      };
+      break;
+
     default:
       headers = ['#', 'Name', 'Description', 'Date', 'Amount (KSh)', 'Status'];
       rows = data.map((item, index) => [
@@ -736,6 +758,19 @@ const calculateTotals = (reportType, data) => {
         'Total Units': totalUnits.toLocaleString(),
         'Occupied Units': occupiedUnits.toLocaleString(),
         'Overall Occupancy': `${overallOccupancy}%`
+      };
+
+    // Add this case in the calculateTotals function's switch statement
+
+    case 'expenses':
+      const totalExpenses = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const approvedExpenses = data.filter(item => item.status === 'approved');
+      const approvedTotal = approvedExpenses.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const pendingCount = data.filter(item => item.status === 'pending').length;
+      return {
+        'Total Expenses': `KSh ${totalExpenses.toLocaleString()}`,
+        'Approved Total': `KSh ${approvedTotal.toLocaleString()}`,
+        'Pending Approval': `${pendingCount} expense(s)`
       };
       
     default:

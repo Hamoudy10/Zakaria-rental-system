@@ -578,6 +578,31 @@ const prepareExcelData = (reportType, data) => {
       };
       break;
 
+    // Add this case in the prepareExcelData function's switch statement
+
+    case 'expenses':
+      headers = ['#', 'Date', 'Category', 'Subcategory', 'Description', 'Property', 'Unit', 'Amount (KSh)', 'Payment Method', 'Vendor', 'Receipt No.', 'Status', 'Recorded By', 'Notes'];
+      rows = data.map((item, index) => [
+        index + 1,
+        formatDate(item.expense_date),
+        item.category || 'N/A',
+        item.subcategory || '',
+        item.description || 'N/A',
+        item.property_name || 'General',
+        item.unit_code || '',
+        parseFloat(item.amount) || 0,
+        capitalizeFirst(item.payment_method) || 'Cash',
+        item.vendor_name || '',
+        item.receipt_number || '',
+        capitalizeFirst(item.status) || 'Pending',
+        item.recorded_by_name || 'N/A',
+        item.notes || ''
+      ]);
+      columnFormats = {
+        7: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
+      break;
+
     default:
       headers = ['#', 'Name', 'Description', 'Date', 'Amount (KSh)', 'Status'];
       rows = data.map((item, index) => [
@@ -639,6 +664,21 @@ const calculateTotals = (reportType, data) => {
         'Total Units': totalUnits.toLocaleString(),
         'Occupied Units': occupiedUnits.toLocaleString(),
         'Overall Occupancy': `${overallOccupancy}%`
+      };
+
+    // Add this case in the calculateTotals function's switch statement
+
+    case 'expenses':
+      const totalExpenses = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const approvedExpenses = data.filter(item => item.status === 'approved');
+      const approvedTotal = approvedExpenses.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const pendingCount = data.filter(item => item.status === 'pending').length;
+      const rejectedCount = data.filter(item => item.status === 'rejected').length;
+      return {
+        'Total Expenses': `KSh ${totalExpenses.toLocaleString()}`,
+        'Approved Total': `KSh ${approvedTotal.toLocaleString()}`,
+        'Pending Approval': `${pendingCount} expense(s)`,
+        'Rejected': `${rejectedCount} expense(s)`
       };
       
     default:
