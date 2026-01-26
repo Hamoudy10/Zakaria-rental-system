@@ -1,10 +1,11 @@
+// backend/routes/properties.js
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
-const { uploadPropertyImages, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
+const { uploadPropertyImages, uploadUnitImages, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
 
-// GET ALL PROPERTIES (For admins) OR AGENT ASSIGNED PROPERTIES
+// ==================== GET ALL PROPERTIES ====================
 router.get('/', protect, async (req, res) => {
   try {
     console.log('Fetching properties for user role:', req.user.role);
@@ -12,18 +13,18 @@ router.get('/', protect, async (req, res) => {
     // If user is agent, get only assigned properties
     if (req.user.role === 'agent') {
       const agentProperties = await pool.query(`
-         SELECT DISTINCT p.*, 
-         COUNT(pu.id) as unit_count,
-         COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-         COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
-          FROM properties p
-          LEFT JOIN property_units pu ON p.id = pu.property_id
-          INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
-          WHERE apa.agent_id = $1 
-          AND apa.is_active = true
-          GROUP BY p.id
-          ORDER BY p.created_at DESC
-        `, [req.user.id]);
+        SELECT DISTINCT p.*, 
+          COUNT(pu.id) as unit_count,
+          COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+          COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+        FROM properties p
+        LEFT JOIN property_units pu ON p.id = pu.property_id
+        INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+        WHERE apa.agent_id = $1 
+        AND apa.is_active = true
+        GROUP BY p.id
+        ORDER BY p.created_at DESC
+      `, [req.user.id]);
       
       console.log(`Found ${agentProperties.rows.length} assigned properties for agent ${req.user.id}`);
       return res.json({ 
@@ -33,13 +34,13 @@ router.get('/', protect, async (req, res) => {
       });
     }
     
-    // For admins, get all properties (original logic)
+    // For admins, get all properties
     console.log('Fetching all properties for admin...');
     const result = await pool.query(`
       SELECT p.*, 
-             COUNT(pu.id) as unit_count,
-             COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-             COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+        COUNT(pu.id) as unit_count,
+        COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+        COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
       FROM properties p
       LEFT JOIN property_units pu ON p.id = pu.property_id
       GROUP BY p.id
@@ -62,56 +63,15 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// GET AGENT ASSIGNED PROPERTIES (Explicit endpoint)
-router.get('/agent/assigned', protect, async (req, res) => {
-  try {
-    if (req.user.role !== 'agent') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Only agents can access assigned properties.'
-      });
-    }
-    
-    const query = `
-     SELECT DISTINCT p.*, 
-         COUNT(pu.id) as unit_count,
-         COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-         COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
-          FROM properties p
-          LEFT JOIN property_units pu ON p.id = pu.property_id
-          INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
-          WHERE apa.agent_id = $1 
-          AND apa.is_active = true
-          GROUP BY p.id
-          ORDER BY p.name
-        `;
-    
-    const result = await pool.query(query, [req.user.id]);
-    
-    res.json({
-      success: true,
-      data: result.rows,
-      count: result.rows.length
-    });
-  } catch (error) {
-    console.error('Error fetching agent properties:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching agent properties',
-      error: error.message
-    });
-  }
-});
-
-// GET SINGLE PROPERTY WITH UNITS
+// ==================== GET SINGLE PROPERTY WITH UNITS AND IMAGES (Option A) ====================
 router.get('/:id', protect, async (req, res) => {
   try {
     const { id } = req.params;
     
     let query = `
       SELECT p.*, 
-             u.first_name as created_by_name,
-             u.email as created_by_email
+        u.first_name as created_by_name,
+        u.email as created_by_email
       FROM properties p
       LEFT JOIN users u ON p.created_by = u.id
       WHERE p.id = $1
@@ -147,7 +107,7 @@ router.get('/:id', protect, async (req, res) => {
       ORDER BY unit_number
     `, [id]);
 
-    // Get property images (with fallback if table doesn't exist)
+    // Get ALL images for this property (Option A - includes both property and unit images)
     let imagesResult = { rows: [] };
     try {
       imagesResult = await pool.query(`
@@ -156,7 +116,7 @@ router.get('/:id', protect, async (req, res) => {
         ORDER BY display_order ASC, uploaded_at DESC
       `, [id]);
     } catch (imgError) {
-      console.log('Note: property_images table may not exist yet:', imgError.message);
+      console.log('Note: property_images query failed:', imgError.message);
     }
 
     res.json({ 
@@ -164,7 +124,7 @@ router.get('/:id', protect, async (req, res) => {
       data: {
         ...propertyResult.rows[0],
         units: unitsResult.rows,
-        images: imagesResult.rows
+        images: imagesResult.rows  // Contains ALL images (property + unit), frontend segregates by unit_id
       }
     });
   } catch (error) {
@@ -177,9 +137,9 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
-// ==================== PROPERTY IMAGES ROUTES ====================
+// ==================== PROPERTY IMAGES ROUTES (Option A) ====================
 
-// GET PROPERTY IMAGES
+// GET PROPERTY IMAGES (property-level only)
 router.get('/:id/images', protect, async (req, res) => {
   try {
     const { id } = req.params;
@@ -211,28 +171,20 @@ router.get('/:id/images', protect, async (req, res) => {
       }
     }
     
-    try {
-      const result = await pool.query(`
-        SELECT pi.*, u.first_name || ' ' || u.last_name as uploaded_by_name
-        FROM property_images pi
-        LEFT JOIN users u ON pi.uploaded_by = u.id
-        WHERE pi.property_id = $1
-        ORDER BY pi.display_order ASC, pi.uploaded_at DESC
-      `, [id]);
-      
-      res.json({
-        success: true,
-        data: result.rows,
-        count: result.rows.length
-      });
-    } catch (imgError) {
-      console.log('Note: property_images table may not exist yet');
-      res.json({
-        success: true,
-        data: [],
-        count: 0
-      });
-    }
+    // Option A: Get only property-level images (unit_id IS NULL)
+    const result = await pool.query(`
+      SELECT pi.*, u.first_name || ' ' || u.last_name as uploaded_by_name
+      FROM property_images pi
+      LEFT JOIN users u ON pi.uploaded_by = u.id
+      WHERE pi.property_id = $1 AND pi.unit_id IS NULL
+      ORDER BY pi.display_order ASC, pi.uploaded_at DESC
+    `, [id]);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
   } catch (error) {
     console.error('Error fetching property images:', error);
     res.status(500).json({
@@ -243,7 +195,7 @@ router.get('/:id/images', protect, async (req, res) => {
   }
 });
 
-// UPLOAD PROPERTY IMAGES (Admin only)
+// UPLOAD PROPERTY IMAGES (Admin only) - Option A: unit_id = NULL
 router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req, res) => {
   const client = await pool.connect();
   
@@ -253,7 +205,7 @@ router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req,
     const { id } = req.params;
     const { captions } = req.body;
     
-    console.log(`📤 Uploading images for property ${id}`);
+    console.log(`📤 Uploading property images for property ${id}`);
     
     const propertyCheck = await client.query(
       'SELECT id, name FROM properties WHERE id = $1',
@@ -274,12 +226,14 @@ router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req,
       });
     }
     
+    // Get current max display_order
     const maxOrderResult = await client.query(
-      'SELECT COALESCE(MAX(display_order), 0) as max_order FROM property_images WHERE property_id = $1',
+      'SELECT COALESCE(MAX(display_order), 0) as max_order FROM property_images WHERE property_id = $1 AND unit_id IS NULL',
       [id]
     );
     let displayOrder = maxOrderResult.rows[0].max_order;
     
+    // Parse captions if provided
     let captionArray = [];
     if (captions) {
       try {
@@ -296,11 +250,12 @@ router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req,
       
       const caption = captionArray[i] || null;
       
+      // Option A: Insert with unit_id = NULL for property images
       const result = await client.query(
-        `INSERT INTO property_images (property_id, image_url, image_type, caption, display_order, uploaded_by)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO property_images (property_id, unit_id, image_url, image_type, caption, display_order, uploaded_by)
+         VALUES ($1, NULL, $2, 'property', $3, $4, $5)
          RETURNING *`,
-        [id, file.path, 'gallery', caption, displayOrder, req.user.id]
+        [id, file.path, caption, displayOrder, req.user.id]
       );
       
       insertedImages.push(result.rows[0]);
@@ -308,7 +263,7 @@ router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req,
     
     await client.query('COMMIT');
     
-    console.log(`✅ Successfully uploaded ${insertedImages.length} images for property ${id}`);
+    console.log(`✅ Successfully uploaded ${insertedImages.length} property images`);
     
     res.status(201).json({
       success: true,
@@ -329,70 +284,6 @@ router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req,
   }
 });
 
-// UPDATE PROPERTY IMAGE (Caption, Display Order)
-router.patch('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
-  try {
-    const { id, imageId } = req.params;
-    const { caption, display_order } = req.body;
-    
-    const imageCheck = await pool.query(
-      'SELECT * FROM property_images WHERE id = $1 AND property_id = $2',
-      [imageId, id]
-    );
-    
-    if (imageCheck.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Image not found or does not belong to this property'
-      });
-    }
-    
-    const updates = [];
-    const values = [];
-    let paramCount = 1;
-    
-    if (caption !== undefined) {
-      updates.push(`caption = $${paramCount}`);
-      values.push(caption);
-      paramCount++;
-    }
-    
-    if (display_order !== undefined) {
-      updates.push(`display_order = $${paramCount}`);
-      values.push(display_order);
-      paramCount++;
-    }
-    
-    if (updates.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No valid fields to update'
-      });
-    }
-    
-    values.push(imageId);
-    
-    const result = await pool.query(
-      `UPDATE property_images SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
-      values
-    );
-    
-    res.json({
-      success: true,
-      message: 'Image updated successfully',
-      data: result.rows[0]
-    });
-    
-  } catch (error) {
-    console.error('Error updating property image:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating property image',
-      error: error.message
-    });
-  }
-});
-
 // DELETE PROPERTY IMAGE (Admin only)
 router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
@@ -402,10 +293,11 @@ router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
     
     const { id, imageId } = req.params;
     
-    console.log(`🗑️ Deleting image ${imageId} from property ${id}`);
+    console.log(`🗑️ Deleting property image ${imageId} from property ${id}`);
     
+    // Option A: Check that it's a property image (unit_id IS NULL)
     const imageCheck = await client.query(
-      'SELECT * FROM property_images WHERE id = $1 AND property_id = $2',
+      'SELECT * FROM property_images WHERE id = $1 AND property_id = $2 AND unit_id IS NULL',
       [imageId, id]
     );
     
@@ -420,13 +312,14 @@ router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
     
     await client.query('DELETE FROM property_images WHERE id = $1', [imageId]);
     
+    // Delete from Cloudinary
     if (deleteCloudinaryImage) {
       await deleteCloudinaryImage(imageUrl);
     }
     
     await client.query('COMMIT');
     
-    console.log(`✅ Successfully deleted image ${imageId}`);
+    console.log(`✅ Successfully deleted property image ${imageId}`);
     
     res.json({
       success: true,
@@ -446,45 +339,161 @@ router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
   }
 });
 
-// REORDER PROPERTY IMAGES
-router.put('/:id/images/reorder', protect, adminOnly, async (req, res) => {
+// ==================== UNIT IMAGES ROUTES (Option A) ====================
+
+// GET UNIT IMAGES
+router.get('/:id/units/:unitId/images', protect, async (req, res) => {
+  try {
+    const { id, unitId } = req.params;
+    
+    // Verify unit exists and belongs to property
+    const unitCheck = await pool.query(
+      'SELECT id, unit_code FROM property_units WHERE id = $1 AND property_id = $2',
+      [unitId, id]
+    );
+    
+    if (unitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found or does not belong to this property'
+      });
+    }
+    
+    if (req.user.role === 'agent') {
+      const assignmentCheck = await pool.query(
+        `SELECT 1 FROM agent_property_assignments 
+         WHERE property_id = $1 AND agent_id = $2 AND is_active = true`,
+        [id, req.user.id]
+      );
+      
+      if (assignmentCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You are not assigned to this property.'
+        });
+      }
+    }
+    
+    // Option A: Get images where unit_id matches
+    const result = await pool.query(`
+      SELECT pi.*, u.first_name || ' ' || u.last_name as uploaded_by_name
+      FROM property_images pi
+      LEFT JOIN users u ON pi.uploaded_by = u.id
+      WHERE pi.unit_id = $1
+      ORDER BY pi.display_order ASC, pi.uploaded_at DESC
+    `, [unitId]);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error fetching unit images:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching unit images',
+      error: error.message
+    });
+  }
+});
+
+// UPLOAD UNIT IMAGES (Admin only) - Option A: unit_id = populated
+router.post('/:id/units/:unitId/images', protect, adminOnly, uploadUnitImages, async (req, res) => {
   const client = await pool.connect();
   
   try {
     await client.query('BEGIN');
     
-    const { id } = req.params;
-    const { imageOrder } = req.body;
+    const { id, unitId } = req.params;
+    const { captions } = req.body;
     
-    if (!Array.isArray(imageOrder) || imageOrder.length === 0) {
-      return res.status(400).json({
+    console.log(`📤 Uploading unit images for unit ${unitId} in property ${id}`);
+    
+    // Verify property exists
+    const propertyCheck = await client.query(
+      'SELECT id, name FROM properties WHERE id = $1',
+      [id]
+    );
+    
+    if (propertyCheck.rows.length === 0) {
+      return res.status(404).json({
         success: false,
-        message: 'imageOrder must be a non-empty array of { id, display_order }'
+        message: 'Property not found'
       });
     }
     
-    for (const item of imageOrder) {
-      await client.query(
-        `UPDATE property_images 
-         SET display_order = $1 
-         WHERE id = $2 AND property_id = $3`,
-        [item.display_order, item.id, id]
+    // Verify unit exists and belongs to property
+    const unitCheck = await client.query(
+      'SELECT id, unit_code FROM property_units WHERE id = $1 AND property_id = $2',
+      [unitId, id]
+    );
+    
+    if (unitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Unit not found or does not belong to this property'
+      });
+    }
+    
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No images provided'
+      });
+    }
+    
+    // Get current max display_order for this unit
+    const maxOrderResult = await client.query(
+      'SELECT COALESCE(MAX(display_order), 0) as max_order FROM property_images WHERE unit_id = $1',
+      [unitId]
+    );
+    let displayOrder = maxOrderResult.rows[0].max_order;
+    
+    // Parse captions if provided
+    let captionArray = [];
+    if (captions) {
+      try {
+        captionArray = typeof captions === 'string' ? JSON.parse(captions) : captions;
+      } catch (e) {
+        captionArray = [];
+      }
+    }
+    
+    const insertedImages = [];
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      displayOrder++;
+      
+      const caption = captionArray[i] || null;
+      
+      // Option A: Insert with unit_id populated for unit images
+      const result = await client.query(
+        `INSERT INTO property_images (property_id, unit_id, image_url, image_type, caption, display_order, uploaded_by)
+         VALUES ($1, $2, $3, 'unit', $4, $5, $6)
+         RETURNING *`,
+        [id, unitId, file.path, caption, displayOrder, req.user.id]
       );
+      
+      insertedImages.push(result.rows[0]);
     }
     
     await client.query('COMMIT');
     
-    res.json({
+    console.log(`✅ Successfully uploaded ${insertedImages.length} unit images for unit ${unitId}`);
+    
+    res.status(201).json({
       success: true,
-      message: 'Image order updated successfully'
+      message: `Successfully uploaded ${insertedImages.length} image(s)`,
+      data: insertedImages
     });
     
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error reordering property images:', error);
+    console.error('❌ Error uploading unit images:', error);
     res.status(500).json({
       success: false,
-      message: 'Error reordering property images',
+      message: 'Error uploading unit images',
       error: error.message
     });
   } finally {
@@ -492,9 +501,64 @@ router.put('/:id/images/reorder', protect, adminOnly, async (req, res) => {
   }
 });
 
-// ==================== END PROPERTY IMAGES ROUTES ====================
+// DELETE UNIT IMAGE (Admin only)
+router.delete('/:id/units/:unitId/images/:imageId', protect, adminOnly, async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { id, unitId, imageId } = req.params;
+    
+    console.log(`🗑️ Deleting unit image ${imageId} from unit ${unitId}`);
+    
+    // Option A: Check that it's a unit image (unit_id matches)
+    const imageCheck = await client.query(
+      'SELECT * FROM property_images WHERE id = $1 AND unit_id = $2',
+      [imageId, unitId]
+    );
+    
+    if (imageCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Image not found or does not belong to this unit'
+      });
+    }
+    
+    const imageUrl = imageCheck.rows[0].image_url;
+    
+    await client.query('DELETE FROM property_images WHERE id = $1', [imageId]);
+    
+    // Delete from Cloudinary
+    if (deleteCloudinaryImage) {
+      await deleteCloudinaryImage(imageUrl);
+    }
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Successfully deleted unit image ${imageId}`);
+    
+    res.json({
+      success: true,
+      message: 'Image deleted successfully'
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error deleting unit image:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting unit image',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
 
-// CREATE NEW PROPERTY (POST) - WITHOUT unit_type at property level
+// ==================== PROPERTY CRUD ROUTES ====================
+
+// CREATE NEW PROPERTY (POST)
 router.post('/', protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
@@ -541,6 +605,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
       [property_code, name, address, county, town, description, total_units, total_units, req.user.id]
     );
 
+    // Create default units
     if (total_units > 0) {
       for (let i = 1; i <= total_units; i++) {
         await client.query(
@@ -584,7 +649,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
   }
 });
 
-// UPDATE PROPERTY (PUT) - WITHOUT unit_type at property level
+// UPDATE PROPERTY (PUT)
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
@@ -690,23 +755,7 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
       });
     }
 
-    const relatedPayments = await client.query(
-      'SELECT COUNT(*) as payment_count FROM rent_payments WHERE unit_id IN (SELECT id FROM property_units WHERE property_id = $1)',
-      [id]
-    );
-
-    const relatedComplaints = await client.query(
-      'SELECT COUNT(*) as complaint_count FROM complaints WHERE unit_id IN (SELECT id FROM property_units WHERE property_id = $1)',
-      [id]
-    );
-
-    if (parseInt(relatedPayments.rows[0].payment_count) > 0 || parseInt(relatedComplaints.rows[0].complaint_count) > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete property with historical payments or complaints. Consider archiving instead.'
-      });
-    }
-
+    // Get all images to delete from Cloudinary
     let propertyImages = { rows: [] };
     try {
       propertyImages = await client.query(
@@ -714,21 +763,25 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
         [id]
       );
     } catch (imgError) {
-      console.log('Note: property_images table may not exist yet');
+      console.log('Note: property_images query failed');
     }
 
+    // Delete property units first
     await client.query('DELETE FROM property_units WHERE property_id = $1', [id]);
     
+    // Delete property images
     try {
       await client.query('DELETE FROM property_images WHERE property_id = $1', [id]);
     } catch (imgError) {
-      console.log('Note: property_images table may not exist yet');
+      console.log('Note: property_images delete failed');
     }
     
+    // Delete the property
     await client.query('DELETE FROM properties WHERE id = $1', [id]);
     
     await client.query('COMMIT');
     
+    // Delete from Cloudinary
     for (const img of propertyImages.rows) {
       if (deleteCloudinaryImage) {
         await deleteCloudinaryImage(img.image_url);
@@ -760,64 +813,7 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
   }
 });
 
-// GET PROPERTY STATISTICS
-router.get('/:id/stats', protect, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    let query = `
-      SELECT 
-        p.total_units,
-        p.available_units,
-        COUNT(pu.id) as current_units,
-        COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-        COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as vacant_units,
-        COALESCE(SUM(rp.amount), 0) as total_rent_collected,
-        COUNT(rp.id) as total_payments
-      FROM properties p
-      LEFT JOIN property_units pu ON p.id = pu.property_id
-      LEFT JOIN rent_payments rp ON pu.id = rp.unit_id
-      WHERE p.id = $1
-    `;
-    
-    const params = [id];
-    
-    if (req.user.role === 'agent') {
-      query += `
-        AND EXISTS (
-          SELECT 1 FROM agent_property_assignments apa 
-          WHERE apa.property_id = p.id 
-          AND apa.agent_id = $2 
-          AND apa.is_active = true
-        )
-      `;
-      params.push(req.user.id);
-    }
-    
-    query += ` GROUP BY p.id, p.total_units, p.available_units`;
-    
-    const statsResult = await pool.query(query, params);
-
-    if (statsResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Property not found or not accessible'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: statsResult.rows[0]
-    });
-  } catch (error) {
-    console.error('Error fetching property stats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching property statistics',
-      error: error.message
-    });
-  }
-});
+// ==================== UNIT MANAGEMENT ROUTES ====================
 
 // GET PROPERTY UNITS
 router.get('/:id/units', protect, async (req, res) => {
@@ -848,13 +844,6 @@ router.get('/:id/units', protect, async (req, res) => {
     
     const result = await pool.query(query, params);
     
-    if (result.rows.length === 0 && req.user.role === 'agent') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied or property not found'
-      });
-    }
-    
     res.json({
       success: true,
       data: result.rows,
@@ -868,8 +857,6 @@ router.get('/:id/units', protect, async (req, res) => {
     });
   }
 });
-
-// ==================== UNIT MANAGEMENT ROUTES ====================
 
 // CREATE NEW UNIT FOR A PROPERTY (POST)
 router.post('/:id/units', protect, adminOnly, async (req, res) => {
@@ -1186,6 +1173,24 @@ router.delete('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
       });
     }
     
+    // Get unit images to delete from Cloudinary
+    let unitImages = { rows: [] };
+    try {
+      unitImages = await client.query(
+        'SELECT image_url FROM property_images WHERE unit_id = $1',
+        [unitId]
+      );
+    } catch (imgError) {
+      console.log('Note: unit images query failed');
+    }
+    
+    // Delete unit images from database
+    try {
+      await client.query('DELETE FROM property_images WHERE unit_id = $1', [unitId]);
+    } catch (imgError) {
+      console.log('Note: unit images delete failed');
+    }
+    
     await client.query(
       'DELETE FROM property_units WHERE id = $1',
       [unitId]
@@ -1201,6 +1206,13 @@ router.delete('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
     );
     
     await client.query('COMMIT');
+    
+    // Delete from Cloudinary
+    for (const img of unitImages.rows) {
+      if (deleteCloudinaryImage) {
+        await deleteCloudinaryImage(img.image_url);
+      }
+    }
     
     res.json({
       success: true,
@@ -1263,6 +1275,7 @@ router.get('/:id/units/:unitId', protect, async (req, res) => {
       });
     }
     
+    // Get tenant info if unit is occupied
     let tenantInfo = null;
     if (result.rows[0].is_occupied) {
       const tenantResult = await pool.query(`
@@ -1277,11 +1290,23 @@ router.get('/:id/units/:unitId', protect, async (req, res) => {
       }
     }
     
+    // Get unit images (Option A)
+    let unitImages = { rows: [] };
+    try {
+      unitImages = await pool.query(
+        'SELECT * FROM property_images WHERE unit_id = $1 ORDER BY display_order ASC',
+        [unitId]
+      );
+    } catch (imgError) {
+      console.log('Note: unit images query failed');
+    }
+    
     res.json({
       success: true,
       data: {
         ...result.rows[0],
-        current_tenant: tenantInfo
+        current_tenant: tenantInfo,
+        images: unitImages.rows
       }
     });
     
