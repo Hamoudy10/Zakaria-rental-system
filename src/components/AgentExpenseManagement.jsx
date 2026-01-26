@@ -12,7 +12,9 @@ const AgentExpenseManagement = () => {
   const [categories, setCategories] = useState([]);
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false); // Added refreshing state
   const [stats, setStats] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null); // Added lastUpdated state
   
   // Export state
   const [exporting, setExporting] = useState(false);
@@ -62,10 +64,18 @@ const AgentExpenseManagement = () => {
 
   // Fetch initial data
   useEffect(() => {
-    fetchCategories();
-    fetchProperties();
-    fetchExpenses();
-    fetchStats();
+    const init = async () => {
+      setLoading(true);
+      await Promise.all([
+        fetchCategories(),
+        fetchProperties(),
+        fetchExpenses(),
+        fetchStats()
+      ]);
+      setLastUpdated(new Date());
+      setLoading(false);
+    };
+    init();
   }, []);
 
   // Fetch expenses when filters or pagination change
@@ -76,6 +86,24 @@ const AgentExpenseManagement = () => {
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000);
+  };
+
+  // REFRESH HANDLER
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        fetchExpenses(),
+        fetchStats()
+      ]);
+      setLastUpdated(new Date());
+      showToast('Data refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      showToast('Failed to refresh data', 'error');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const fetchCategories = async () => {
@@ -101,7 +129,8 @@ const AgentExpenseManagement = () => {
   };
 
   const fetchExpenses = async () => {
-    setLoading(true);
+    // Only set main loading on first load, not on refresh or filter change (optional)
+    // Here we let specific actions handle their own loading states if needed
     try {
       const params = {
         page: pagination.page,
@@ -109,7 +138,6 @@ const AgentExpenseManagement = () => {
         ...filters
       };
       
-      // Remove empty filters
       Object.keys(params).forEach(key => {
         if (params[key] === '') delete params[key];
       });
@@ -126,8 +154,6 @@ const AgentExpenseManagement = () => {
     } catch (error) {
       console.error('Error fetching expenses:', error);
       showToast('Failed to load expenses', 'error');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -157,16 +183,15 @@ const AgentExpenseManagement = () => {
     }
   };
 
-  // Fetch all expenses for export (ignoring pagination)
+  // Fetch all expenses for export
   const fetchAllExpensesForExport = async () => {
     try {
       const params = {
         page: 1,
-        limit: 10000, // Get all records
+        limit: 10000,
         ...filters
       };
       
-      // Remove empty filters
       Object.keys(params).forEach(key => {
         if (params[key] === '') delete params[key];
       });
@@ -185,19 +210,16 @@ const AgentExpenseManagement = () => {
   // Export to PDF
   const handleExportPDF = async () => {
     if (exporting) return;
-    
     setExporting(true);
     showToast('Preparing PDF export...', 'success');
     
     try {
       const allExpenses = await fetchAllExpensesForExport();
-      
       if (allExpenses.length === 0) {
         showToast('No expenses to export', 'error');
         return;
       }
       
-      // Build title with filter info
       let title = 'Expense Report';
       if (filters.category) title += ` - ${filters.category}`;
       if (filters.status) title += ` (${filters.status})`;
@@ -228,19 +250,16 @@ const AgentExpenseManagement = () => {
   // Export to Excel
   const handleExportExcel = async () => {
     if (exporting) return;
-    
     setExporting(true);
     showToast('Preparing Excel export...', 'success');
     
     try {
       const allExpenses = await fetchAllExpensesForExport();
-      
       if (allExpenses.length === 0) {
         showToast('No expenses to export', 'error');
         return;
       }
       
-      // Build title with filter info
       let title = 'Expense Report';
       if (filters.category) title += ` - ${filters.category}`;
       if (filters.status) title += ` (${filters.status})`;
@@ -275,30 +294,24 @@ const AgentExpenseManagement = () => {
 
   const validateForm = () => {
     const errors = {};
-    
     if (!formData.amount || parseFloat(formData.amount) <= 0) {
       errors.amount = 'Amount must be greater than 0';
     }
-    
     if (!formData.description.trim()) {
       errors.description = 'Description is required';
     }
-    
     if (!formData.category) {
       errors.category = 'Category is required';
     }
-    
     if (!formData.expense_date) {
       errors.expense_date = 'Date is required';
     }
-    
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (!validateForm()) return;
     
     setSubmitting(true);
@@ -321,8 +334,7 @@ const AgentExpenseManagement = () => {
         showToast(editingExpense ? 'Expense updated successfully' : 'Expense recorded successfully');
         setShowModal(false);
         resetForm();
-        fetchExpenses();
-        fetchStats();
+        handleRefresh(); // Refresh list and stats
       }
     } catch (error) {
       console.error('Error saving expense:', error);
@@ -361,8 +373,7 @@ const AgentExpenseManagement = () => {
       const response = await expenseAPI.deleteExpense(expenseId);
       if (response.data.success) {
         showToast('Expense deleted successfully');
-        fetchExpenses();
-        fetchStats();
+        handleRefresh(); // Refresh list and stats
       }
     } catch (error) {
       console.error('Error deleting expense:', error);
@@ -426,7 +437,6 @@ const AgentExpenseManagement = () => {
     });
   };
 
-  // Payment method options
   const paymentMethods = [
     { value: 'cash', label: 'Cash' },
     { value: 'mpesa', label: 'M-Pesa' },
@@ -452,9 +462,34 @@ const AgentExpenseManagement = () => {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Expense Tracking</h1>
-            <p className="text-sm text-gray-500 mt-1">Record and manage daily operational expenses</p>
+            <p className="text-sm text-gray-500 mt-1">
+              Record and manage daily operational expenses
+              {lastUpdated && (
+                <span className="ml-2 text-gray-400">
+                  • Updated: {lastUpdated.toLocaleTimeString()}
+                </span>
+              )}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            
+            {/* --- REFRESH BUTTON ADDED HERE --- */}
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50 text-sm"
+            >
+              <svg 
+                className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+
             {/* Export Buttons */}
             <button
               onClick={handleExportPDF}
