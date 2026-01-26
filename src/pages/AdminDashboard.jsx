@@ -1,6 +1,7 @@
 // src/pages/AdminDashboard.jsx
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import api from '../services/api';
+import { expenseAPI } from '../services/api';
 import {
   Building2,
   Users,
@@ -26,7 +27,10 @@ import {
   FileText,
   Send,
   XCircle,
-  Loader2
+  Loader2,
+  Receipt,
+  TrendingDown,
+  CreditCard
 } from 'lucide-react';
 
 // Lazy load admin components
@@ -40,6 +44,7 @@ const UnitManagement = lazy(() => import('../components/UnitManagement'));
 const AgentAllocation = lazy(() => import('../components/AgentAllocation'));
 const AdminTenantBrowser = lazy(() => import('../components/AdminTenantBrowser'));
 const AgentReports = lazy(() => import('../components/AgentReports'));
+const AdminExpenseManagement = lazy(() => import('../components/AdminExpenseManagement'));
 
 // Loading spinner component
 const TabLoadingSpinner = () => (
@@ -53,6 +58,8 @@ const AdminDashboard = () => {
   const [comprehensiveStats, setComprehensiveStats] = useState(null);
   const [recentActivities, setRecentActivities] = useState([]);
   const [topProperties, setTopProperties] = useState([]);
+  const [expenseStats, setExpenseStats] = useState(null);
+  const [netProfitData, setNetProfitData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -77,6 +84,24 @@ const AdminDashboard = () => {
       if (topPropsRes.data.success) {
         setTopProperties(topPropsRes.data.data || []);
       }
+
+      // Fetch expense stats separately (optional - won't fail main dashboard)
+      try {
+        const [expenseStatsRes, netProfitRes] = await Promise.all([
+          expenseAPI.getStats(),
+          expenseAPI.getNetProfitReport()
+        ]);
+        
+        if (expenseStatsRes.data.success) {
+          setExpenseStats(expenseStatsRes.data.data);
+        }
+        if (netProfitRes.data.success) {
+          setNetProfitData(netProfitRes.data.data);
+        }
+      } catch (expenseErr) {
+        console.log('Expense stats not available:', expenseErr.message);
+      }
+
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -100,6 +125,7 @@ const AdminDashboard = () => {
     { id: 'agentAllocation', name: 'Agent Allocation', shortName: 'Agents' },
     { id: 'payments', name: 'Payment Management', shortName: 'Payments' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
+    { id: 'expenses', name: 'Expense Approval', shortName: 'Expenses' },
     { id: 'reports', name: 'Reports', shortName: 'Reports' },
     { id: 'settings', name: 'System Settings', shortName: 'Settings' },
   ];
@@ -126,6 +152,12 @@ const AdminDashboard = () => {
         return <Suspense fallback={<TabLoadingSpinner />}><AgentReports /></Suspense>;
       case 'settings':
         return <Suspense fallback={<TabLoadingSpinner />}><SystemSettings /></Suspense>;
+      case 'expenses':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AdminExpenseManagement />
+          </Suspense>
+        );
       case 'overview':
       default:
         return (
@@ -133,6 +165,8 @@ const AdminDashboard = () => {
             stats={comprehensiveStats}
             recentActivities={recentActivities}
             topProperties={topProperties}
+            expenseStats={expenseStats}
+            netProfitData={netProfitData}
             loading={loading}
             error={error}
             onRefresh={fetchDashboardData}
@@ -153,7 +187,7 @@ const AdminDashboard = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex-shrink-0 py-2.5 px-3 border-b-2 font-medium text-sm transition-all duration-200 min-w-[80px] text-center whitespace-nowrap ${
+                className={`relative flex-shrink-0 py-2.5 px-3 border-b-2 font-medium text-sm transition-all duration-200 min-w-[80px] text-center whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600 bg-blue-50'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-gray-50'
@@ -161,6 +195,12 @@ const AdminDashboard = () => {
               >
                 <span className="hidden sm:block">{tab.name}</span>
                 <span className="sm:hidden">{tab.shortName}</span>
+                {/* Badge for pending expenses */}
+                {tab.id === 'expenses' && expenseStats?.totals?.pending?.count > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[18px]">
+                    {expenseStats.totals.pending.count}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -183,6 +223,8 @@ const DashboardOverview = ({
   stats,
   recentActivities,
   topProperties,
+  expenseStats,
+  netProfitData,
   loading,
   error,
   onRefresh,
@@ -235,6 +277,12 @@ const DashboardOverview = ({
 
   const { property, tenant, financial, agent, complaint, sms, payment, unitTypeBreakdown, monthlyTrend } = stats;
 
+  // Calculate net profit
+  const totalRevenue = financial?.revenueThisMonth || 0;
+  const totalExpenses = expenseStats?.totals?.approved?.amount || netProfitData?.expenses?.total || 0;
+  const netProfit = netProfitData?.netProfit ?? (totalRevenue - totalExpenses);
+  const profitMargin = netProfitData?.profitMargin ?? (totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : 0);
+
   return (
     <div className="space-y-6">
       {/* Header with Refresh */}
@@ -255,6 +303,46 @@ const DashboardOverview = ({
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* NET PROFIT BANNER - New prominent section */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      <div className={`rounded-xl p-4 sm:p-6 ${netProfit >= 0 ? 'bg-gradient-to-r from-green-600 to-emerald-600' : 'bg-gradient-to-r from-red-600 to-rose-600'} text-white`}>
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              {netProfit >= 0 ? (
+                <TrendingUp className="h-6 w-6" />
+              ) : (
+                <TrendingDown className="h-6 w-6" />
+              )}
+              <h2 className="text-lg font-semibold">Net Profit This Month</h2>
+            </div>
+            <p className="text-3xl sm:text-4xl font-bold">{formatCurrency(netProfit)}</p>
+            <p className="text-sm mt-1 opacity-90">
+              {profitMargin}% profit margin
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-3 gap-4 lg:gap-8">
+            <div className="text-center">
+              <p className="text-sm opacity-80">Revenue</p>
+              <p className="text-xl font-bold">{formatCurrency(totalRevenue)}</p>
+              <p className="text-xs opacity-70">{payment?.paymentsThisMonth || 0} payments</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm opacity-80">Expenses</p>
+              <p className="text-xl font-bold">{formatCurrency(totalExpenses)}</p>
+              <p className="text-xs opacity-70">{expenseStats?.totals?.approved?.count || 0} approved</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm opacity-80">Pending</p>
+              <p className="text-xl font-bold">{expenseStats?.totals?.pending?.count || 0}</p>
+              <p className="text-xs opacity-70">expenses</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
@@ -294,6 +382,157 @@ const DashboardOverview = ({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* EXPENSE OVERVIEW - New Section */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+        {/* Expense Stats Card */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Receipt className="h-5 w-5 text-purple-600" />
+              <h3 className="font-semibold text-gray-900">Expense Overview</h3>
+            </div>
+            <button
+              onClick={() => setActiveTab('expenses')}
+              className="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-1"
+            >
+              Manage <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="bg-purple-50 rounded-lg p-3">
+              <p className="text-sm text-purple-600 font-medium">Today's Expenses</p>
+              <p className="text-xl font-bold text-purple-900">
+                {formatCurrency(expenseStats?.todayTotal || 0)}
+              </p>
+              <p className="text-xs text-purple-600">{expenseStats?.todayCount || 0} entries</p>
+            </div>
+            <div className="bg-yellow-50 rounded-lg p-3">
+              <p className="text-sm text-yellow-600 font-medium">Pending Approval</p>
+              <p className="text-xl font-bold text-yellow-900">
+                {expenseStats?.totals?.pending?.count || 0}
+              </p>
+              <p className="text-xs text-yellow-600">
+                {formatCurrency(expenseStats?.totals?.pending?.amount || 0)}
+              </p>
+            </div>
+            <div className="bg-green-50 rounded-lg p-3">
+              <p className="text-sm text-green-600 font-medium">Approved (Month)</p>
+              <p className="text-xl font-bold text-green-900">
+                {formatCurrency(expenseStats?.totals?.approved?.amount || 0)}
+              </p>
+              <p className="text-xs text-green-600">{expenseStats?.totals?.approved?.count || 0} expenses</p>
+            </div>
+            <div className="bg-red-50 rounded-lg p-3">
+              <p className="text-sm text-red-600 font-medium">Rejected</p>
+              <p className="text-xl font-bold text-red-900">
+                {expenseStats?.totals?.rejected?.count || 0}
+              </p>
+              <p className="text-xs text-red-600">This month</p>
+            </div>
+          </div>
+
+          {/* Quick action for pending */}
+          {(expenseStats?.totals?.pending?.count || 0) > 0 && (
+            <button
+              onClick={() => setActiveTab('expenses')}
+              className="w-full py-2 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium hover:bg-yellow-200 transition-colors flex items-center justify-center gap-2"
+            >
+              <Clock className="h-4 w-4" />
+              Review {expenseStats.totals.pending.count} Pending Expense{expenseStats.totals.pending.count !== 1 ? 's' : ''}
+            </button>
+          )}
+        </div>
+
+        {/* Top Expense Categories */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <PieChart className="h-5 w-5 text-indigo-600" />
+            <h3 className="font-semibold text-gray-900">Top Expense Categories</h3>
+          </div>
+
+          {expenseStats?.byCategory && expenseStats.byCategory.length > 0 ? (
+            <div className="space-y-3">
+              {expenseStats.byCategory.slice(0, 5).map((cat, index) => {
+                const percentage = expenseStats.totals?.approved?.amount > 0 
+                  ? ((parseFloat(cat.total_amount) / expenseStats.totals.approved.amount) * 100).toFixed(0)
+                  : 0;
+                return (
+                  <div key={index} className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="font-medium text-gray-700">{cat.category}</span>
+                        <span className="text-gray-600">{formatCurrency(cat.total_amount)}</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all"
+                          style={{ width: `${Math.min(percentage, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-500 w-10 text-right">{percentage}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 text-center py-8">No expense data available</p>
+          )}
+        </div>
+
+        {/* Expense Trend (if available) */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <BarChart3 className="h-5 w-5 text-cyan-600" />
+            <h3 className="font-semibold text-gray-900">Expense Trend</h3>
+          </div>
+
+          {expenseStats?.monthlyTrend && expenseStats.monthlyTrend.length > 0 ? (
+            <div className="space-y-3">
+              {expenseStats.monthlyTrend.slice(-5).map((month, index) => (
+                <div key={index} className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">{month.month}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-cyan-500 rounded-full"
+                        style={{ 
+                          width: `${Math.min((parseFloat(month.total_amount) / (expenseStats.monthlyTrend.reduce((max, m) => Math.max(max, parseFloat(m.total_amount)), 0) || 1)) * 100, 100)}%` 
+                        }}
+                      />
+                    </div>
+                    <span className="text-sm font-medium text-gray-900 w-20 text-right">
+                      {formatCurrency(month.total_amount)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <CreditCard className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">Expense trends will appear here</p>
+            </div>
+          )}
+
+          {/* Top Properties by Expense */}
+          {expenseStats?.topProperties && expenseStats.topProperties.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-sm font-medium text-gray-700 mb-2">Top Properties by Expense</p>
+              {expenseStats.topProperties.slice(0, 3).map((prop, index) => (
+                <div key={index} className="flex justify-between text-sm py-1">
+                  <span className="text-gray-600">{prop.name}</span>
+                  <span className="font-medium text-gray-900">{formatCurrency(prop.total_amount)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
       {/* FINANCIAL OVERVIEW */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-4 sm:p-6 text-white">
@@ -324,8 +563,9 @@ const DashboardOverview = ({
             value={formatCurrency(financial?.outstandingWater || 0)}
           />
           <FinanceMetric
-            label="Arrears Collected"
-            value={formatCurrency(financial?.totalArrearsCollected || 0)}
+            label="Total Expenses"
+            value={formatCurrency(totalExpenses)}
+            subValue="Approved"
           />
         </div>
       </div>
@@ -389,7 +629,7 @@ const DashboardOverview = ({
           )}
         </div>
 
-        {/* Payment Statistics - FIXED: Changed processingPayments to pendingPayments */}
+        {/* Payment Statistics */}
         <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -419,7 +659,6 @@ const DashboardOverview = ({
               <p className="text-sm text-purple-600 font-medium">This Month</p>
               <p className="text-xl font-bold text-purple-900">{payment?.paymentsThisMonth || 0}</p>
             </div>
-            {/* FIXED: Changed from processingPayments to pendingPayments */}
             <div className="bg-yellow-50 rounded-lg p-3">
               <p className="text-sm text-yellow-600 font-medium">Pending</p>
               <p className="text-xl font-bold text-yellow-900">{payment?.pendingPayments || 0}</p>
@@ -556,7 +795,7 @@ const DashboardOverview = ({
       {/* ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6">
         <h3 className="font-semibold text-gray-900 mb-4">Quick Actions</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           <QuickActionButton
             label="Add Tenant"
             icon={Users}
@@ -577,10 +816,17 @@ const DashboardOverview = ({
             badge={(complaint?.openComplaints || 0) > 0 ? complaint.openComplaints : null}
           />
           <QuickActionButton
+            label="Review Expenses"
+            icon={Receipt}
+            onClick={() => setActiveTab('expenses')}
+            color="purple"
+            badge={(expenseStats?.totals?.pending?.count || 0) > 0 ? expenseStats.totals.pending.count : null}
+          />
+          <QuickActionButton
             label="Generate Reports"
             icon={FileText}
             onClick={() => setActiveTab('reports')}
-            color="purple"
+            color="cyan"
           />
         </div>
       </div>
@@ -631,6 +877,7 @@ const DashboardOverview = ({
                     activity.type === 'payment' ? 'bg-green-500' :
                     activity.type === 'complaint' ? 'bg-orange-500' :
                     activity.type === 'allocation' ? 'bg-purple-500' :
+                    activity.type === 'expense' ? 'bg-pink-500' :
                     'bg-blue-500'
                   }`}></div>
                   <div className="flex-1 min-w-0">
@@ -743,17 +990,18 @@ const QuickActionButton = ({ label, icon: Icon, onClick, color, badge }) => {
     green: 'bg-green-50 hover:bg-green-100 text-green-700 border-green-200',
     orange: 'bg-orange-50 hover:bg-orange-100 text-orange-700 border-orange-200',
     purple: 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200',
+    cyan: 'bg-cyan-50 hover:bg-cyan-100 text-cyan-700 border-cyan-200',
   };
 
   return (
     <button
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center gap-2 p-4 rounded-xl border transition ${colorClasses[color]}`}
+      className={`relative flex flex-col items-center justify-center gap-2 p-4 rounded-xl border transition ${colorClasses[color] || colorClasses.blue}`}
     >
       <Icon className="h-6 w-6" />
       <span className="text-sm font-medium">{label}</span>
       {badge && (
-        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full min-w-[20px]">
           {badge}
         </span>
       )}
