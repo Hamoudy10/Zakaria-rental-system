@@ -1,4 +1,4 @@
-// routes/auth.js - UPDATED WITH PROFILE IMAGE UPLOAD
+// routes/auth.js - UPDATED WITH PROFILE IMAGE UPLOAD AND PASSWORD CHANGE
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
@@ -369,6 +369,122 @@ const deleteProfileImage = async (req, res) => {
   }
 };
 
+// ==================== CHANGE PASSWORD ====================
+const changePassword = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { current_password, new_password } = req.body;
+
+    console.log('🔑 Changing password for user:', userId);
+
+    // Validate required fields
+    if (!current_password || !new_password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password and new password are required'
+      });
+    }
+
+    // Validate new password strength - Minimum 6 characters
+    if (new_password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters long'
+      });
+    }
+
+    // Check for uppercase letter
+    if (!/[A-Z]/.test(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must contain at least one uppercase letter'
+      });
+    }
+
+    // Check for lowercase letter
+    if (!/[a-z]/.test(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must contain at least one lowercase letter'
+      });
+    }
+
+    // Check for number
+    if (!/[0-9]/.test(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must contain at least one number'
+      });
+    }
+
+    // Check for special character
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must contain at least one special character (!@#$%^&*)'
+      });
+    }
+
+    // Get current password hash from database
+    const userResult = await db.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const currentHashedPassword = userResult.rows[0].password_hash;
+
+    // Verify current password
+    const isCurrentPasswordValid = await bcrypt.compare(current_password, currentHashedPassword);
+    
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+
+    // Check that new password is different from current
+    const isSamePassword = await bcrypt.compare(new_password, currentHashedPassword);
+    if (isSamePassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be different from current password'
+      });
+    }
+
+    // Hash new password
+    const saltRounds = 12;
+    const newHashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    // Update password in database
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+      [newHashedPassword, userId]
+    );
+
+    console.log('✅ Password changed successfully for user:', userId);
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Change password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error changing password: ' + error.message
+    });
+  }
+};
+
 // Debug login endpoint (for testing only)
 router.post('/debug-login', async (req, res) => {
   try {
@@ -442,6 +558,9 @@ router.put('/profile', authMiddleware, uploadProfileImage, updateProfile);
 
 // Delete profile image
 router.delete('/profile/image', authMiddleware, deleteProfileImage);
+
+// Change password route
+router.put('/change-password', authMiddleware, changePassword);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

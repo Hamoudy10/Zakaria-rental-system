@@ -268,4 +268,25 @@ Maintenance, Repairs, Utilities, Security, Cleaning, Supplies, Professional Serv
 2. Admin reviews → Status: `approved` or `rejected`
 3. Optional: `reimbursed` status for cash advances
 
-### Net Profit Calculation
+### Net Profit 
+## EXPENSE TRACKING - TODAY'S STATS (v5.1)
+
+### Backend Fix
+- `/expenses/stats` endpoint now returns `todayTotal` and `todayCount`
+- Calculates expenses where `DATE(expense_date) = CURRENT_DATE`
+- Respects agent isolation (agents see only their own expenses)
+
+### Response Structure
+``javascript
+{
+  success: true,
+  data: {
+    todayTotal: 10000,      // Sum of today's expenses
+    todayCount: 1,          // Count of today's expenses
+    totals: { ... },
+    byStatus: [...],
+    byCategory: [...],
+    monthlyTrend: [...],
+    topProperties: [...]
+  }
+}
