@@ -12,6 +12,7 @@ const TenantManagement = lazy(() => import('../components/TenantManagement'));
 const AgentSMSManagement = lazy(() => import('../components/AgentSMSManagement'));
 const AgentReports = lazy(() => import('../components/AgentReports'));
 const AgentPropertyShowcase = lazy(() => import('../components/AgentPropertyShowcase'));
+const AgentExpenseManagement = lazy(() => import('../components/AgentExpenseManagement'));
 
 // Loading component for Suspense fallback
 const TabLoadingSpinner = () => (
@@ -35,6 +36,7 @@ const AgentDashboard = () => {
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
     { id: 'payments', name: 'Payment Tracking', shortName: 'Payments' },
     { id: 'water-bills', name: 'Water Bills', shortName: 'Water Bills' },
+    { id: 'expenses', name: 'Expense Tracking', shortName: 'Expenses' },
     { id: 'notifications', name: 'Send Notifications', shortName: 'Notify' },
     { id: 'reports', name: 'Reports', shortName: 'Reports' }, 
     { id: 'profile', name: 'My Profile', shortName: 'Profile' }
@@ -54,7 +56,7 @@ const AgentDashboard = () => {
             <TenantManagement />
           </Suspense>
         );
-        case 'smsManagement':
+      case 'smsManagement':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
             <AgentSMSManagement />
@@ -78,13 +80,19 @@ const AgentDashboard = () => {
             <AgentWaterBills />
           </Suspense>
         )
+      case 'expenses':
+        return (
+          <Suspense fallback={<TabLoadingSpinner />}>
+            <AgentExpenseManagement />
+          </Suspense>
+        )
       case 'notifications':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
             <NotificationManagement />
           </Suspense>
         )
-        case 'reports':
+      case 'reports':
         return (
           <Suspense fallback={<TabLoadingSpinner />}>
             <AgentReports />
@@ -145,7 +153,8 @@ const AgentOverview = ({ setActiveTab, user }) => {
     stats: {},
     recentComplaints: [],
     paymentAlerts: [],
-    assignedProperties: []
+    assignedProperties: [],
+    expenseStats: null
   });
 
   useEffect(() => {
@@ -164,6 +173,18 @@ const AgentOverview = ({ setActiveTab, user }) => {
         agentService.getTenantsWithPaymentStatus()
       ]);
 
+      // Try to fetch expense stats (optional - won't fail if endpoint doesn't exist yet)
+      let expenseStats = null;
+      try {
+        const { expenseAPI } = await import('../services/api');
+        const expenseResponse = await expenseAPI.getStats();
+        if (expenseResponse.data.success) {
+          expenseStats = expenseResponse.data.data;
+        }
+      } catch (expenseErr) {
+        console.log('Expense stats not available yet');
+      }
+
       const paymentAlertsData = paymentsResponse.data?.data || paymentsResponse.data || [];
       const pendingPayments = Array.isArray(paymentAlertsData) 
         ? paymentAlertsData.filter(tenant => tenant.payment_status === 'pending' || tenant.balance_due > 0)
@@ -173,7 +194,8 @@ const AgentOverview = ({ setActiveTab, user }) => {
         stats: statsResponse.data?.data || statsResponse.data || {},
         assignedProperties: propertiesResponse.data?.data || propertiesResponse.data || [],
         recentComplaints: complaintsResponse.data?.data || complaintsResponse.data || [],
-        paymentAlerts: pendingPayments
+        paymentAlerts: pendingPayments,
+        expenseStats
       });
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -270,7 +292,7 @@ const AgentOverview = ({ setActiveTab, user }) => {
       </div>
 
       {/* Stats Grid - Focused on core metrics */}
-      <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+      <div className="grid grid-cols-2 xs:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -322,40 +344,56 @@ const AgentOverview = ({ setActiveTab, user }) => {
             <div className="text-lg sm:text-xl text-green-600">✅</div>
           </div>
         </div>
+
+        {/* New Expense Stats Card */}
+        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Expenses (Month)</p>
+              <p className="text-lg sm:text-xl font-bold text-purple-600">
+                {dashboardData.expenseStats?.totals?.totalCount || 0}
+              </p>
+              <p className="text-xs text-gray-500">
+                {dashboardData.expenseStats?.totals?.pending?.count || 0} pending
+              </p>
+            </div>
+            <div className="text-lg sm:text-xl text-purple-600">📝</div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Quick Actions - Focused on core functions */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
           <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-2 sm:gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
             <button 
               onClick={() => setActiveTab('showcase')}
               className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:from-blue-700 hover:to-purple-700 transition-all touch-target active:opacity-90"
             >
               <span className="text-sm sm:text-lg mb-1">🏘️</span>
-              <span className="text-xs sm:text-sm text-center">Showcase Properties</span>
+              <span className="text-xs sm:text-sm text-center">Showcase</span>
             </button>
             <button 
               onClick={() => setActiveTab('complaints')}
               className="bg-blue-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-blue-700 transition-colors touch-target active:bg-blue-800"
             >
               <span className="text-sm sm:text-lg mb-1">🛠️</span>
-              <span className="text-xs sm:text-sm text-center">Manage Complaints</span>
+              <span className="text-xs sm:text-sm text-center">Complaints</span>
             </button>
             <button 
               onClick={() => setActiveTab('payments')}
               className="bg-green-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-green-700 transition-colors touch-target active:bg-green-800"
             >
               <span className="text-sm sm:text-lg mb-1">💰</span>
-              <span className="text-xs sm:text-sm text-center">Track Payments</span>
+              <span className="text-xs sm:text-sm text-center">Payments</span>
             </button>
             <button 
-              onClick={() => setActiveTab('notifications')}
+              onClick={() => setActiveTab('expenses')}
               className="bg-purple-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-purple-700 transition-colors touch-target active:bg-purple-800"
             >
-              <span className="text-sm sm:text-lg mb-1">📢</span>
-              <span className="text-xs sm:text-sm text-center">Send Notices</span>
+              <span className="text-sm sm:text-lg mb-1">📝</span>
+              <span className="text-xs sm:text-sm text-center">Expenses</span>
             </button>
             <button
               onClick={() => setActiveTab('water-bills')}
@@ -365,11 +403,11 @@ const AgentOverview = ({ setActiveTab, user }) => {
               <span className="text-xs sm:text-sm text-center">Water Bills</span>
             </button>
             <button 
-              onClick={() => setActiveTab('profile')}
-              className="bg-gray-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-gray-700 transition-colors touch-target active:bg-gray-800"
+              onClick={() => setActiveTab('notifications')}
+              className="bg-orange-600 text-white py-2 sm:py-3 px-2 sm:px-4 rounded-lg flex flex-col items-center hover:bg-orange-700 transition-colors touch-target active:bg-orange-800"
             >
-              <span className="text-sm sm:text-lg mb-1">👤</span>
-              <span className="text-xs sm:text-sm text-center">My Profile</span>
+              <span className="text-sm sm:text-lg mb-1">📢</span>
+              <span className="text-xs sm:text-sm text-center">Notify</span>
             </button>
           </div>
         </div>
@@ -414,43 +452,118 @@ const AgentOverview = ({ setActiveTab, user }) => {
         </div>
       </div>
 
-      {/* Payment Alerts */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
-        <div className="flex justify-between items-center mb-3 sm:mb-4">
-          <h3 className="text-base sm:text-lg font-semibold">Payment Alerts</h3>
-          <button 
-            onClick={() => setActiveTab('payments')}
-            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-          >
-            View All
-          </button>
+      {/* Payment Alerts and Expense Summary Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+        {/* Payment Alerts */}
+        <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
+          <div className="flex justify-between items-center mb-3 sm:mb-4">
+            <h3 className="text-base sm:text-lg font-semibold">Payment Alerts</h3>
+            <button 
+              onClick={() => setActiveTab('payments')}
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              View All
+            </button>
+          </div>
+          <div className="space-y-2 sm:space-y-3">
+            {dashboardData.paymentAlerts.length === 0 ? (
+              <div className="text-center py-4 text-gray-500">
+                No payment alerts
+              </div>
+            ) : (
+              dashboardData.paymentAlerts.slice(0, 5).map((alert, index) => (
+                <div key={alert.tenant_id || index} className="flex items-center justify-between p-2 sm:p-3 bg-red-50 rounded-lg">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-900">
+                      {alert.tenant_name || alert.first_name + ' ' + alert.last_name}
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      {alert.property_name} • {alert.unit_number || alert.unit_code}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs sm:text-sm font-semibold text-red-600">
+                      {formatCurrency(alert.balance_due || alert.amount_due)}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Due {alert.due_date || 'This month'}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
-        <div className="space-y-2 sm:space-y-3">
-          {dashboardData.paymentAlerts.length === 0 ? (
-            <div className="text-center py-4 text-gray-500">
-              No payment alerts
-            </div>
-          ) : (
-            dashboardData.paymentAlerts.slice(0, 5).map((alert, index) => (
-              <div key={alert.tenant_id || index} className="flex items-center justify-between p-2 sm:p-3 bg-red-50 rounded-lg">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs sm:text-sm font-medium text-gray-900">
-                    {alert.tenant_name || alert.first_name + ' ' + alert.last_name}
-                  </p>
-                  <p className="text-xs text-gray-600">
-                    {alert.property_name} • {alert.unit_number || alert.unit_code}
+
+        {/* Expense Summary */}
+        <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
+          <div className="flex justify-between items-center mb-3 sm:mb-4">
+            <h3 className="text-base sm:text-lg font-semibold">Expense Summary</h3>
+            <button 
+              onClick={() => setActiveTab('expenses')}
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              View All
+            </button>
+          </div>
+          
+          {dashboardData.expenseStats ? (
+            <div className="space-y-3">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-purple-50 rounded-lg p-3">
+                  <p className="text-xs text-purple-600 font-medium">Total This Month</p>
+                  <p className="text-lg font-bold text-purple-700">
+                    {formatCurrency(dashboardData.expenseStats.totals?.total || 0)}
                   </p>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs sm:text-sm font-semibold text-red-600">
-                    {formatCurrency(alert.balance_due || alert.amount_due)}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Due {alert.due_date || 'This month'}
+                <div className="bg-yellow-50 rounded-lg p-3">
+                  <p className="text-xs text-yellow-600 font-medium">Pending Approval</p>
+                  <p className="text-lg font-bold text-yellow-700">
+                    {dashboardData.expenseStats.totals?.pending?.count || 0}
                   </p>
                 </div>
               </div>
-            ))
+              
+              {/* Top Categories */}
+              {dashboardData.expenseStats.byCategory?.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-gray-500 mb-2">Top Categories</p>
+                  <div className="space-y-2">
+                    {dashboardData.expenseStats.byCategory.slice(0, 3).map((cat, idx) => (
+                      <div key={idx} className="flex justify-between items-center text-sm">
+                        <span className="text-gray-700">{cat.category}</span>
+                        <span className="font-medium text-gray-900">{formatCurrency(cat.total_amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Quick Add Button */}
+              <button
+                onClick={() => setActiveTab('expenses')}
+                className="w-full mt-2 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Record New Expense
+              </button>
+            </div>
+          ) : (
+            <div className="text-center py-6">
+              <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="text-2xl">📝</span>
+              </div>
+              <p className="text-gray-500 text-sm mb-3">Start tracking your daily expenses</p>
+              <button
+                onClick={() => setActiveTab('expenses')}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
+              >
+                Record First Expense
+              </button>
+            </div>
           )}
         </div>
       </div>
