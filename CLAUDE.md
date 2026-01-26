@@ -246,3 +246,26 @@ uploaded_at TIMESTAMP DEFAULT NOW()
 ### Critical Backend Adjustments
 - **Route Specificity:** Showcase routes (`/showcase/*`) are placed above generic `/:id` routes in `properties.js` to prevent 404 shadowing.
 - **Unassigned Access:** New endpoint `GET /api/properties/showcase` bypasses agent assignment checks for marketing data only.
+## EXPENSE TRACKING MODULE (v5.0)
+
+### Features
+- Daily expense recording by agents
+- Category-based expense classification
+- Property and unit association
+- Approval workflow (pending → approved/rejected)
+- Net profit calculation for admin dashboard
+- Receipt tracking with vendor information
+
+### Database Tables
+- `expenses` - Main expense records
+- `expense_categories` - Dynamic category list
+
+### Expense Categories
+Maintenance, Repairs, Utilities, Security, Cleaning, Supplies, Professional Services, Insurance, Taxes, Marketing, Salaries, Transportation, Miscellaneous
+
+### Approval Flow
+1. Agent records expense → Status: `pending`
+2. Admin reviews → Status: `approved` or `rejected`
+3. Optional: `reimbursed` status for cash advances
+
+### Net Profit Calculation

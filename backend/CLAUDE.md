@@ -311,3 +311,17 @@ zakaria_rental/
 
 ### Implementation Note
 These endpoints return public building data and images to Agents without requiring assignment in `agent_property_assignments`, enabling cross-portfolio marketing.
+## EXPENSE ROUTES (backend/routes/expenses.js)
+
+| Method | Endpoint | Access | Description |
+|--------|----------|--------|-------------|
+| GET | `/expenses/categories` | All | Get expense categories |
+| GET | `/expenses` | All | Get expenses (agents see own) |
+| GET | `/expenses/stats` | All | Get expense statistics |
+| GET | `/expenses/:id` | All | Get single expense |
+| POST | `/expenses` | All | Create expense |
+| PUT | `/expenses/:id` | All | Update expense |
+| PATCH | `/expenses/:id/status` | Admin | Approve/reject expense |
+| POST | `/expenses/bulk-approve` | Admin | Bulk status update |
+| DELETE | `/expenses/:id` | All | Delete expense |
+| GET | `/expenses/reports/net-profit` | Admin | Net profit calculation |

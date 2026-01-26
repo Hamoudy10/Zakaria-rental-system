@@ -276,3 +276,20 @@ unit.images = allImages.filter(img => img.unit_id === unit.id);
 - Frontend processes single `images[]` array from showcase endpoint.
 - Segregation: `Building_Photos = images.filter(i => !i.unit_id)`
 - Segregation: `Unit_Photos = images.filter(i => i.unit_id === active_unit_id)`
+## AGENT EXPENSE MANAGEMENT
+
+### Component: AgentExpenseManagement.jsx
+- Record daily expenses with categories
+- Associate with properties/units
+- Filter by date, category, property, status
+- Edit/delete pending expenses only
+- View approval status
+
+### API: expenseAPI
+```javascript
+expenseAPI.getCategories()
+expenseAPI.getExpenses(params)
+expenseAPI.createExpense(data)
+expenseAPI.updateExpense(id, data)
+expenseAPI.deleteExpense(id)
+expenseAPI.getStats()
