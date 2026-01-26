@@ -325,3 +325,18 @@ These endpoints return public building data and images to Agents without requiri
 | POST | `/expenses/bulk-approve` | Admin | Bulk status update |
 | DELETE | `/expenses/:id` | All | Delete expense |
 | GET | `/expenses/reports/net-profit` | Admin | Net profit calculation |
+
+---
+
+## For **Backend `backend/claude.md`** (Add at the end)
+
+``markdown
+## PUBLIC COMPANY INFO ENDPOINT (v5.2)
+
+### Purpose
+Provide company branding for Login page without requiring authentication.
+
+### Route
+``javascript
+// In adminRoutes.js - NO AUTH MIDDLEWARE
+router.get('/public/company-info', adminSettingsController.getPublicCompanyInfo);

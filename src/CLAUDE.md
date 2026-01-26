@@ -293,3 +293,41 @@ expenseAPI.createExpense(data)
 expenseAPI.updateExpense(id, data)
 expenseAPI.deleteExpense(id)
 expenseAPI.getStats()
+
+---
+
+## For **Frontend `src/claude.md`** (Add at the end)
+
+```markdown
+## LOGIN PAGE COMPONENT (v5.2)
+
+### File: Login.jsx
+
+### Features
+- Company branding from `/api/admin/public/company-info`
+- Rounded company logo with ring border and hover effects
+- Glassmorphism card design
+- Dark gradient background (slate-900 → blue-900)
+- Animated background orbs
+
+### Form Features
+- Email input with Mail icon (right side)
+- Password input with Lock icon (right side)
+- Show/hide password toggle (Eye/EyeOff)
+- Remember me checkbox (saves email to localStorage)
+- Forgot password → Shows "Contact administrator" message
+
+### Animations
+- Button press: `active:scale-[0.98]`
+- Button shine effect on hover
+- Error message shake animation
+- Logo hover scale with glow
+- Smooth transitions on inputs
+
+### API Endpoint
+```javascript
+// Public endpoint - no auth required
+GET /api/admin/public/company-info
+
+// Response
+{ success: true, data: { name: "...", logo: "..." } }
