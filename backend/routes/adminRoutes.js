@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect, adminOnly } = require('../middleware/authMiddleware');
+const { protect, adminOnly, requireAgent } = require('../middleware/authMiddleware');
 const { uploadCompanyLogo } = require('../middleware/uploadMiddleware');
 
 // ============================
@@ -91,13 +91,13 @@ router.get('/dashboard/top-properties', protect, adminOnly, (req, res, next) => 
 console.log('Setting up company info routes');
 
 // GET company info
-router.get('/company-info', protect, adminOnly, adminSettingsController.getCompanyInfo);
+router.get('/company-info', protect, requireAgent, adminSettingsController.getCompanyInfo);
 
 // UPDATE company info (with optional logo upload)
-router.put('/company-info', protect, adminOnly, uploadCompanyLogo, adminSettingsController.updateCompanyInfo);
+router.put('/company-info', protect, requireAgent, uploadCompanyLogo, adminSettingsController.updateCompanyInfo);
 
 // DELETE company logo
-router.delete('/company-logo', protect, adminOnly, adminSettingsController.deleteCompanyLogo);
+router.delete('/company-logo', protect, requireAgent, adminSettingsController.deleteCompanyLogo);
 
 // ============================
 // Admin Settings Routes
