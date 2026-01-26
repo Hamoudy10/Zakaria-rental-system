@@ -54,26 +54,67 @@ const Login = () => {
     }
   }, []);
 
+  // Clear error after 10 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(''), 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
   // Login handler
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    
+    // Clear previous errors
     setError('');
     setShowForgotMessage(false);
+    
+    // Validate inputs
+    if (!email.trim()) {
+      setError('Please enter your email address');
+      return;
+    }
+    
+    if (!password) {
+      setError('Please enter your password');
+      return;
+    }
+    
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    setLoading(true);
 
     try {
       console.log('🔐 Starting login process...');
-      const result = await login({ email, password });
+      const result = await login({ email: email.trim().toLowerCase(), password });
       console.log('✅ Login result:', result);
 
       if (!result?.success) {
-        setError(result?.message || 'Login failed');
+        // Handle specific error cases
+        const errorMessage = result?.message || 'Login failed';
+        
+        if (errorMessage.toLowerCase().includes('password')) {
+          setError('Incorrect password. Please try again.');
+        } else if (errorMessage.toLowerCase().includes('email') || errorMessage.toLowerCase().includes('not found')) {
+          setError('No account found with this email address.');
+        } else if (errorMessage.toLowerCase().includes('inactive')) {
+          setError('Your account is inactive. Please contact the administrator.');
+        } else {
+          setError(errorMessage);
+        }
+        setLoading(false);
         return;
       }
 
       // Handle remember me
       if (rememberMe) {
-        localStorage.setItem('rememberedEmail', email);
+        localStorage.setItem('rememberedEmail', email.trim().toLowerCase());
       } else {
         localStorage.removeItem('rememberedEmail');
       }
@@ -91,14 +132,27 @@ const Login = () => {
       }
     } catch (err) {
       console.error('❌ Login error:', err);
-      setError('An unexpected error occurred during login');
+      
+      // Handle network errors
+      if (err.message?.includes('Network') || err.message?.includes('fetch')) {
+        setError('Unable to connect to server. Please check your internet connection.');
+      } else if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else {
+        setError('An unexpected error occurred. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleForgotPassword = () => {
+  const handleForgotPassword = (e) => {
+    e.preventDefault();
     setShowForgotMessage(true);
+    setError('');
+  };
+
+  const clearError = () => {
     setError('');
   };
 
@@ -163,17 +217,41 @@ const Login = () => {
             <form className="space-y-5" onSubmit={handleSubmit}>
               {/* Error Message */}
               {error && (
-                <div className="bg-red-500/10 border border-red-500/30 text-red-200 px-4 py-3 rounded-xl text-sm flex items-center gap-2 animate-shake">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{error}</span>
+                <div className="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-xl text-sm flex items-start gap-3 animate-shake">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-medium">Login Failed</p>
+                    <p className="text-red-300/90 text-xs mt-1">{error}</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={clearError}
+                    className="text-red-300 hover:text-white transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
               )}
 
               {/* Forgot Password Message */}
               {showForgotMessage && (
-                <div className="bg-blue-500/10 border border-blue-500/30 text-blue-200 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>Please contact the administrator to reset your password.</span>
+                <div className="bg-blue-500/20 border border-blue-500/50 text-blue-200 px-4 py-3 rounded-xl text-sm flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-medium">Password Reset</p>
+                    <p className="text-blue-300/90 text-xs mt-1">Please contact the administrator to reset your password.</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setShowForgotMessage(false)}
+                    className="text-blue-300 hover:text-white transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
               )}
 
@@ -186,13 +264,24 @@ const Login = () => {
                   <input
                     type="email"
                     required
-                    className="w-full pl-4 pr-11 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-blue-200/30 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 hover:bg-white/10"
+                    className={`w-full pl-4 pr-11 py-3 bg-white/5 border rounded-xl text-white placeholder-blue-200/30 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 hover:bg-white/10 ${
+                      error && error.toLowerCase().includes('email') 
+                        ? 'border-red-500/50 bg-red-500/5' 
+                        : 'border-white/10'
+                    }`}
                     placeholder="Enter your email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (error) setError('');
+                    }}
                   />
                   <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-blue-300/50 group-focus-within:text-blue-400 transition-colors" />
+                    <Mail className={`h-5 w-5 transition-colors ${
+                      error && error.toLowerCase().includes('email') 
+                        ? 'text-red-400' 
+                        : 'text-blue-300/50 group-focus-within:text-blue-400'
+                    }`} />
                   </div>
                 </div>
               </div>
@@ -206,16 +295,24 @@ const Login = () => {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
-                    className="w-full pl-4 pr-20 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-blue-200/30 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 hover:bg-white/10"
+                    className={`w-full pl-4 pr-20 py-3 bg-white/5 border rounded-xl text-white placeholder-blue-200/30 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 hover:bg-white/10 ${
+                      error && error.toLowerCase().includes('password') 
+                        ? 'border-red-500/50 bg-red-500/5' 
+                        : 'border-white/10'
+                    }`}
                     placeholder="Enter your password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (error) setError('');
+                    }}
                   />
                   <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="text-blue-300/50 hover:text-blue-300 transition-colors"
+                      tabIndex={-1}
                     >
                       {showPassword ? (
                         <EyeOff className="h-5 w-5" />
@@ -223,7 +320,11 @@ const Login = () => {
                         <Eye className="h-5 w-5" />
                       )}
                     </button>
-                    <Lock className="h-5 w-5 text-blue-300/50 group-focus-within:text-blue-400 transition-colors pointer-events-none" />
+                    <Lock className={`h-5 w-5 pointer-events-none transition-colors ${
+                      error && error.toLowerCase().includes('password') 
+                        ? 'text-red-400' 
+                        : 'text-blue-300/50 group-focus-within:text-blue-400'
+                    }`} />
                   </div>
                 </div>
               </div>
