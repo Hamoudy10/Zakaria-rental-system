@@ -178,6 +178,20 @@ router.get('/stats', protect, async (req, res) => {
       params.push(req.user.id);
       paramCount++;
     }
+
+    // ============ TODAY'S EXPENSES QUERY ============
+    // This query calculates expenses for today only (server's CURRENT_DATE)
+    // Uses inline values for property/agent filters to avoid parameter conflicts
+    const todayQuery = `
+      SELECT 
+        COUNT(*) as today_count,
+        COALESCE(SUM(amount), 0) as today_total
+      FROM expenses
+      WHERE DATE(expense_date) = CURRENT_DATE
+        ${propertyId ? `AND property_id = '${propertyId}'` : ''}
+        ${req.user.role === 'agent' ? `AND recorded_by = '${req.user.id}'` : ''}
+    `;
+    // ================================================
     
     // Total expenses by status
     const statusQuery = `
@@ -232,14 +246,30 @@ router.get('/stats', protect, async (req, res) => {
       LIMIT 5
     `;
     
-    const [statusResult, categoryResult, trendResult, propertyResult] = await Promise.all([
-      pool.query(statusQuery, params.slice(0, dateFilter ? 2 : 0).concat(propertyId ? [propertyId] : []).concat(req.user.role === 'agent' ? [req.user.id] : [])),
-      pool.query(categoryQuery, params.slice(0, dateFilter ? 2 : 0).concat(propertyId ? [propertyId] : []).concat(req.user.role === 'agent' ? [req.user.id] : [])),
-      pool.query(trendQuery, (propertyId ? [propertyId] : []).concat(req.user.role === 'agent' ? [req.user.id] : [])),
-      pool.query(propertyQuery, params.slice(0, dateFilter ? 2 : 0).concat(req.user.role === 'agent' ? [req.user.id] : []))
+    // Helper function to build params for each query based on what filters are active
+    const buildParams = (needsDateFilter, needsPropertyFilter, needsAgentFilter) => {
+      const p = [];
+      if (needsDateFilter && startDate && endDate) {
+        p.push(startDate, endDate);
+      }
+      if (needsPropertyFilter && propertyId) {
+        p.push(propertyId);
+      }
+      if (needsAgentFilter && req.user.role === 'agent') {
+        p.push(req.user.id);
+      }
+      return p;
+    };
+
+    const [todayResult, statusResult, categoryResult, trendResult, propertyResult] = await Promise.all([
+      pool.query(todayQuery), // No params needed - uses inline values for safety
+      pool.query(statusQuery, buildParams(true, true, true)),
+      pool.query(categoryQuery, buildParams(true, true, true)),
+      pool.query(trendQuery, buildParams(false, true, true)),
+      pool.query(propertyQuery, buildParams(true, false, true))
     ]);
     
-    // Calculate totals
+    // Calculate totals from status breakdown
     const totals = statusResult.rows.reduce((acc, row) => {
       acc[row.status] = {
         count: parseInt(row.count),
@@ -253,6 +283,10 @@ router.get('/stats', protect, async (req, res) => {
     res.json({
       success: true,
       data: {
+        // ============ TODAY'S STATS (NEW) ============
+        todayTotal: parseFloat(todayResult.rows[0].today_total) || 0,
+        todayCount: parseInt(todayResult.rows[0].today_count) || 0,
+        // =============================================
         totals,
         byStatus: statusResult.rows,
         byCategory: categoryResult.rows,
@@ -399,39 +433,37 @@ router.post('/', protect, async (req, res) => {
       }
     }
     
-// In the CREATE EXPENSE route, update the INSERT query:
-
-const result = await client.query(
-  `INSERT INTO expenses (
-    expense_date, amount, description, category, subcategory,
-    property_id, unit_id, complaint_id, recorded_by,
-    payment_method, receipt_number, receipt_image_url,
-    vendor_name, vendor_phone, notes, is_recurring, recurring_frequency,
-    status, expense_type
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-  RETURNING *`,
-  [
-    expense_date || new Date(),
-    parseFloat(amount),
-    description.trim(),
-    category,
-    subcategory || null,
-    property_id || null,
-    unit_id || null,
-    complaint_id || null,
-    req.user.id,
-    payment_method || 'cash',
-    receipt_number || null,
-    receipt_image_url || null,
-    vendor_name || null,
-    vendor_phone || null,
-    notes || null,
-    is_recurring || false,
-    recurring_frequency || null,
-    'pending',
-    category // Use category as expense_type
-  ]
-);
+    const result = await client.query(
+      `INSERT INTO expenses (
+        expense_date, amount, description, category, subcategory,
+        property_id, unit_id, complaint_id, recorded_by,
+        payment_method, receipt_number, receipt_image_url,
+        vendor_name, vendor_phone, notes, is_recurring, recurring_frequency,
+        status, expense_type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      RETURNING *`,
+      [
+        expense_date || new Date(),
+        parseFloat(amount),
+        description.trim(),
+        category,
+        subcategory || null,
+        property_id || null,
+        unit_id || null,
+        complaint_id || null,
+        req.user.id,
+        payment_method || 'cash',
+        receipt_number || null,
+        receipt_image_url || null,
+        vendor_name || null,
+        vendor_phone || null,
+        notes || null,
+        is_recurring || false,
+        recurring_frequency || null,
+        'pending',
+        category // Use category as expense_type
+      ]
+    );
     
     await client.query('COMMIT');
     
