@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Mail, Lock, LogIn, AlertCircle, Building2, Loader2, XCircle, WifiOff, ShieldX, UserX } from 'lucide-react';
 
 const Login = () => {
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -21,6 +22,22 @@ const Login = () => {
 
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    console.log('🔵 LOGIN COMPONENT MOUNTED');
+    
+    // Detect actual page unload (not just unmount)
+    const handleBeforeUnload = (e) => {
+      console.log('🚨🚨🚨 PAGE RELOADING - beforeunload event!');
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      console.log('🔴 LOGIN COMPONENT UNMOUNTING');
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Fetch company info on mount
   useEffect(() => {
