@@ -119,100 +119,112 @@ const Login = () => {
     };
   };
 
-  // Login handler
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    // Clear previous errors
-    setError(null);
-    setShowForgotMessage(false);
-    
-    // Validate inputs
-    if (!email.trim()) {
-      setError({
-        type: 'validation',
-        title: 'Email Required',
-        message: 'Please enter your email address'
-      });
-      return;
-    }
-    
-    if (!password) {
-      setError({
-        type: 'validation',
-        title: 'Password Required',
-        message: 'Please enter your password'
-      });
-      return;
-    }
-    
-    // Basic email format validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
-      setError({
-        type: 'validation',
-        title: 'Invalid Email',
-        message: 'Please enter a valid email address'
-      });
-      return;
-    }
+// Login handler
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  console.log('📝 FORM SUBMITTED - preventDefault called');
+  
+  // Clear previous errors
+  setError(null);
+  setShowForgotMessage(false);
+  
+  // Validate inputs
+  if (!email.trim()) {
+    console.log('❌ Validation failed: no email');
+    setError({
+      type: 'validation',
+      title: 'Email Required',
+      message: 'Please enter your email address'
+    });
+    return;
+  }
+  
+  if (!password) {
+    console.log('❌ Validation failed: no password');
+    setError({
+      type: 'validation',
+      title: 'Password Required',
+      message: 'Please enter your password'
+    });
+    return;
+  }
+  
+  // Basic email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email.trim())) {
+    console.log('❌ Validation failed: invalid email format');
+    setError({
+      type: 'validation',
+      title: 'Invalid Email',
+      message: 'Please enter a valid email address'
+    });
+    return;
+  }
 
-    setLoading(true);
+  setLoading(true);
+  console.log('🔐 Starting login process...');
 
-    try {
-      console.log('🔐 Starting login process...');
-      const result = await login({ email: email.trim().toLowerCase(), password });
-      console.log('📦 Login result:', result);
+  try {
+    const result = await login({ email: email.trim().toLowerCase(), password });
+    console.log('📦 Login result:', result);
 
-      if (!result.success) {
-        // Determine error details for better UX
-        const errorDetails = getErrorDetails(result.message);
-        
-        setError({
-          type: errorDetails.type,
-          title: errorDetails.title,
-          message: result.message,
-          icon: errorDetails.icon,
-          color: errorDetails.color
-        });
-        
-        setLoading(false);
-        return;
-      }
-
-      // Handle remember me
-      if (rememberMe) {
-        localStorage.setItem('rememberedEmail', email.trim().toLowerCase());
-      } else {
-        localStorage.removeItem('rememberedEmail');
-      }
-
-      const user = result.user;
-      console.log('👤 Logged in user:', user);
-
-      // Redirect based on role
-      if (user.role === 'admin') {
-        navigate('/admin-dashboard');
-      } else if (user.role === 'agent') {
-        navigate('/agent-dashboard');
-      } else {
-        navigate('/admin-dashboard');
-      }
-    } catch (err) {
-      // This should rarely happen now since login returns result instead of throwing
-      console.error('❌ Unexpected login error:', err);
+    if (!result.success) {
+      console.log('⚠️ Login failed, setting error state...');
+      
+      // Determine error details for better UX
+      const errorDetails = getErrorDetails(result.message);
       
       setError({
-        type: 'unexpected',
-        title: 'Unexpected Error',
-        message: 'An unexpected error occurred. Please try again.',
-        icon: AlertCircle,
-        color: 'red'
+        type: errorDetails.type,
+        title: errorDetails.title,
+        message: result.message,
+        icon: errorDetails.icon,
+        color: errorDetails.color
       });
-    } finally {
+      
       setLoading(false);
+      console.log('✅ Error state set, returning (NO NAVIGATION)');
+      return; // <-- IMPORTANT: Should stop here
     }
-  };
+
+    console.log('✅ Login successful, proceeding to navigate...');
+
+    // Handle remember me
+    if (rememberMe) {
+      localStorage.setItem('rememberedEmail', email.trim().toLowerCase());
+    } else {
+      localStorage.removeItem('rememberedEmail');
+    }
+
+    const user = result.user;
+    console.log('👤 Logged in user:', user);
+
+    // Redirect based on role
+    if (user.role === 'admin') {
+      console.log('🚀 Navigating to admin dashboard...');
+      navigate('/admin-dashboard');
+    } else if (user.role === 'agent') {
+      console.log('🚀 Navigating to agent dashboard...');
+      navigate('/agent-dashboard');
+    } else {
+      console.log('🚀 Navigating to admin dashboard (default)...');
+      navigate('/admin-dashboard');
+    }
+  } catch (err) {
+    console.error('❌ Unexpected login error:', err);
+    
+    setError({
+      type: 'unexpected',
+      title: 'Unexpected Error',
+      message: 'An unexpected error occurred. Please try again.',
+      icon: AlertCircle,
+      color: 'red'
+    });
+  } finally {
+    setLoading(false);
+    console.log('🏁 handleSubmit finally block - loading set to false');
+  }
+};
 
   const handleForgotPassword = (e) => {
     e.preventDefault();
