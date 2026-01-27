@@ -46,6 +46,13 @@ export const AuthProvider = ({ children }) => {
   /* -------------------- LOGIN -------------------- */
 
   const login = useCallback(async (credentials) => {
+    const login = useCallback(async (credentials) => {
+  console.log('🚀 LOGIN FUNCTION START - checking if old or new version');
+  console.log('🔍 Will clearToken be called before API? Check next log...');
+  
+  setLoading(true);
+  setError(null);
+  // ... rest of function
     setLoading(true);
     setError(null);
 
