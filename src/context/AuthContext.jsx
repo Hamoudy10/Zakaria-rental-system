@@ -4,7 +4,8 @@ import React, {
   useContext,
   useEffect,
   useCallback,
-  useMemo
+  useMemo,
+  useRef
 } from 'react';
 import api, { authAPI } from '../services/api';
 
@@ -19,8 +20,11 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem('token'));
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // Only true during initial session restore
   const [error, setError] = useState(null);
+  
+  // Use ref to track if we're currently logging in (doesn't trigger re-renders)
+  const isLoggingIn = useRef(false);
 
   const isAuthenticated = useCallback(
     () => !!user && !!token,
@@ -46,74 +50,84 @@ export const AuthProvider = ({ children }) => {
   /* -------------------- LOGIN -------------------- */
 
   const login = useCallback(async (credentials) => {
-  console.log('🚀 LOGIN FUNCTION START - checking if old or new version');
-  console.log('🔍 Will clearToken be called before API? Check next log...');
-  
-    setLoading(true);
+    console.log('🚀 LOGIN FUNCTION START');
+    
+    // Use ref instead of state to avoid re-renders
+    isLoggingIn.current = true;
+    
+    // Clear any previous errors (but this won't cause unmount since loading doesn't change)
     setError(null);
 
     try {
-      // DON'T clear token/user before API call - wait for result
+      console.log('📡 Making API call...');
       const response = await authAPI.login(credentials);
+      console.log('📨 API response received');
       
-      // Check if response indicates success
-      if (!response.data || !response.data.token || !response.data.user) {
-        const message = response.data?.message || 'Invalid response from server';
-        setError(message);
-        return { success: false, message };
+      // Backend returns: { success: true, token, user, message }
+      const responseData = response.data;
+      
+      if (!responseData.success) {
+        console.log('❌ Backend returned success: false');
+        isLoggingIn.current = false;
+        return {
+          success: false,
+          message: responseData.message || 'Login failed'
+        };
       }
-
-      const { user: userData, token: authToken } = response.data;
-
-      // Only clear old session and apply new one after successful login
-      clearToken();
-      setUser(null);
       
+      const { user: userData, token: authToken } = responseData;
+
+      // Apply new session
       applyToken(authToken);
       setUser(userData);
 
-      console.log('✅ Login successful:', userData);
-      return { success: true, user: userData };
+      console.log('✅ Login successful:', userData.email);
+      isLoggingIn.current = false;
+      
+      return {
+        success: true,
+        user: userData,
+        message: 'Login successful'
+      };
       
     } catch (err) {
       console.error('❌ Login error:', err);
       
-      // Extract error message from response
+      // Extract error message
       let message = 'Login failed. Please try again.';
       
       if (err.response?.data?.message) {
         message = err.response.data.message;
       } else if (err.response?.status === 401) {
         message = 'Invalid email or password';
-      } else if (err.response?.status === 403) {
-        message = 'Your account has been deactivated. Please contact the administrator.';
       } else if (err.response?.status === 404) {
-        message = 'Login service not available. Please try again later.';
+        message = 'Login service unavailable';
       } else if (err.response?.status >= 500) {
         message = 'Server error. Please try again later.';
-      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
-        message = 'Connection timed out. Please check your internet and try again.';
-      } else if (err.message?.includes('Network') || err.message?.includes('network')) {
-        message = 'Network error. Please check your internet connection.';
-      } else if (err.message) {
-        message = err.message;
+      } else if (err.code === 'ERR_NETWORK' || err.message?.includes('Network')) {
+        message = 'Unable to connect to server. Please check your internet connection.';
+      } else if (err.code === 'ECONNABORTED') {
+        message = 'Request timed out. Please try again.';
       }
       
-      setError(message);
+      // DON'T set error in AuthContext - let Login component handle it
+      // setError(message); // REMOVED - this was causing re-renders
       
-      // Return error object instead of throwing
-      return { success: false, message };
+      isLoggingIn.current = false;
       
-    } finally {
-      setLoading(false);
+      return {
+        success: false,
+        message: message
+      };
     }
-  }, [applyToken, clearToken]);
+  }, [applyToken]);
 
   /* -------------------- LOGOUT -------------------- */
 
   const logout = useCallback(() => {
     setUser(null);
     clearToken();
+    setError(null);
     console.log('🚪 Logged out');
   }, [clearToken]);
 
@@ -129,7 +143,10 @@ export const AuthProvider = ({ children }) => {
       return;
     }
 
-    setLoading(true);
+    // Only set loading during initial session restore, not during login
+    if (!isLoggingIn.current) {
+      setLoading(true);
+    }
 
     try {
       applyToken(storedToken);
@@ -138,7 +155,7 @@ export const AuthProvider = ({ children }) => {
       const currentUser = response.data?.user || response.data;
 
       setUser(currentUser);
-      console.log('✅ Session restored:', currentUser);
+      console.log('✅ Session restored:', currentUser.email);
     } catch (err) {
       console.error('❌ Failed to restore session:', err);
       setUser(null);
@@ -175,7 +192,7 @@ export const AuthProvider = ({ children }) => {
       const response = await authAPI.getProfile();
       const currentUser = response.data?.user || response.data;
       setUser(currentUser);
-      console.log('🔄 User data refreshed:', currentUser);
+      console.log('🔄 User data refreshed:', currentUser.email);
       return currentUser;
     } catch (err) {
       console.error('❌ Failed to refresh user:', err);
