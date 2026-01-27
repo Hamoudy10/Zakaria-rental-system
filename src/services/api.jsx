@@ -16,11 +16,8 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
-     console.log('🔐 API Request Interceptor Debug:', {
-      url: config.url,
-      tokenExists: !!token,
-      tokenPreview: token ? `${token.substring(0, 20)}...` : 'none'
-    });
+    // Reduced logging for production - uncomment for debugging
+    // console.log('🔐 API Request:', config.url);
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -32,13 +29,35 @@ api.interceptors.request.use(
 );
 
 // Response interceptor for error handling
+// FIXED: Exclude auth endpoints from auto-logout on 401
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const requestUrl = error.config?.url || '';
+    
+    // List of endpoints that should NOT trigger auto-logout on 401
+    const authEndpoints = [
+      '/auth/login',
+      '/auth/register',
+      '/auth/forgot-password',
+      '/auth/reset-password'
+    ];
+    
+    // Check if this is an auth endpoint
+    const isAuthEndpoint = authEndpoints.some(endpoint => requestUrl.includes(endpoint));
+    
+    if (error.response?.status === 401 && !isAuthEndpoint) {
+      // Only auto-logout for non-auth endpoints (e.g., expired token on protected routes)
+      console.log('🔒 Session expired, redirecting to login...');
       localStorage.removeItem('token');
-      window.location.href = '/login';
+      
+      // Use a small delay to prevent race conditions
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 100);
     }
+    
+    // Always reject the error so calling code can handle it
     return Promise.reject(error);
   }
 );
@@ -211,8 +230,6 @@ export const paybillAPI = {
   sendReminders: () => api.post('/payments/send-reminders'),
   getStats: (period = '30days') => api.get('/payments/paybill/stats', { params: { period } })
 };
-
-// In your api.jsx, update the authAPI object:
 
 // Auth API
 export const authAPI = {
