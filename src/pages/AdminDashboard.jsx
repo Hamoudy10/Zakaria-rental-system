@@ -120,7 +120,6 @@ const AdminDashboard = () => {
     { id: 'properties', name: 'Properties', shortName: 'Properties' },
     { id: 'units', name: 'Unit Management', shortName: 'Units' },
     { id: 'tenants', name: 'Tenant Hub', shortName: 'Tenants' },
-    { id: 'allocations', name: 'Tenant Allocation', shortName: 'Allocations' },
     { id: 'agentAllocation', name: 'Agent Allocation', shortName: 'Agents' },
     { id: 'payments', name: 'Payment Management', shortName: 'Payments' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
