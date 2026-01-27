@@ -12,28 +12,16 @@ const api = axios.create({
   timeout: 120000, // Increased timeout for M-Pesa requests
 });
 
-// Add auth token to requests
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    // Reduced logging for production - uncomment for debugging
-    // console.log('🔐 API Request:', config.url);
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
-
 // Response interceptor for error handling
 // FIXED: Exclude auth endpoints from auto-logout on 401
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     const requestUrl = error.config?.url || '';
+    const status = error.response?.status;
+    
+    // DEBUG: Log to verify new code is running
+    console.log('🔍 INTERCEPTOR v2:', { requestUrl, status });
     
     // List of endpoints that should NOT trigger auto-logout on 401
     const authEndpoints = [
@@ -46,7 +34,9 @@ api.interceptors.response.use(
     // Check if this is an auth endpoint
     const isAuthEndpoint = authEndpoints.some(endpoint => requestUrl.includes(endpoint));
     
-    if (error.response?.status === 401 && !isAuthEndpoint) {
+    console.log('🔍 Is Auth Endpoint:', isAuthEndpoint, '| Should redirect:', status === 401 && !isAuthEndpoint);
+    
+    if (status === 401 && !isAuthEndpoint) {
       // Only auto-logout for non-auth endpoints (e.g., expired token on protected routes)
       console.log('🔒 Session expired, redirecting to login...');
       localStorage.removeItem('token');
@@ -55,6 +45,9 @@ api.interceptors.response.use(
       setTimeout(() => {
         window.location.href = '/login';
       }, 100);
+    } else if (status === 401 && isAuthEndpoint) {
+      // DEBUG: Confirm we're NOT redirecting
+      console.log('✅ Auth endpoint 401 - NOT redirecting (this is correct)');
     }
     
     // Always reject the error so calling code can handle it
