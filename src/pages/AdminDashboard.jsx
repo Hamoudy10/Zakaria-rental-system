@@ -37,14 +37,13 @@ import {
 const UserManagement = lazy(() => import('../components/UserManagement'));
 const PropertyManagement = lazy(() => import('../components/PropertyManagement'));
 const SystemSettings = lazy(() => import('../components/SystemSettings'));
-const TenantAllocation = lazy(() => import('../components/TenantAllocation'));
 const PaymentManagement = lazy(() => import('../components/PaymentManagement'));
 const ComplaintManagement = lazy(() => import('../components/ComplaintManagement'));
 const UnitManagement = lazy(() => import('../components/UnitManagement'));
 const AgentAllocation = lazy(() => import('../components/AgentAllocation'));
-const AdminTenantBrowser = lazy(() => import('../components/AdminTenantBrowser'));
 const AgentReports = lazy(() => import('../components/AgentReports'));
 const AdminExpenseManagement = lazy(() => import('../components/AdminExpenseManagement'));
+const TenantHub = lazy(() => import('../components/TenantHub'));
 
 // Loading spinner component
 const TabLoadingSpinner = () => (
@@ -120,7 +119,7 @@ const AdminDashboard = () => {
     { id: 'users', name: 'User Management', shortName: 'Users' },
     { id: 'properties', name: 'Properties', shortName: 'Properties' },
     { id: 'units', name: 'Unit Management', shortName: 'Units' },
-    { id: 'tenants', name: 'Tenant Browser', shortName: 'Tenants' },
+    { id: 'tenants', name: 'Tenant Hub', shortName: 'Tenants' },
     { id: 'allocations', name: 'Tenant Allocation', shortName: 'Allocations' },
     { id: 'agentAllocation', name: 'Agent Allocation', shortName: 'Agents' },
     { id: 'payments', name: 'Payment Management', shortName: 'Payments' },
@@ -139,9 +138,7 @@ const AdminDashboard = () => {
       case 'units':
         return <Suspense fallback={<TabLoadingSpinner />}><UnitManagement /></Suspense>;
       case 'tenants':
-        return <Suspense fallback={<TabLoadingSpinner />}><AdminTenantBrowser /></Suspense>;
-      case 'allocations':
-        return <Suspense fallback={<TabLoadingSpinner />}><TenantAllocation /></Suspense>;
+        return <Suspense fallback={<TabLoadingSpinner />}><TenantHub /></Suspense>;
       case 'agentAllocation':
         return <Suspense fallback={<TabLoadingSpinner />}><AgentAllocation /></Suspense>;
       case 'payments':
