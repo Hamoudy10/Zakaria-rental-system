@@ -50,23 +50,57 @@ export const AuthProvider = ({ children }) => {
     setError(null);
 
     try {
-      clearToken();
-      setUser(null);
-
+      // DON'T clear token/user before API call - wait for result
       const response = await authAPI.login(credentials);
+      
+      // Check if response indicates success
+      if (!response.data || !response.data.token || !response.data.user) {
+        const message = response.data?.message || 'Invalid response from server';
+        setError(message);
+        return { success: false, message };
+      }
+
       const { user: userData, token: authToken } = response.data;
 
+      // Only clear old session and apply new one after successful login
+      clearToken();
+      setUser(null);
+      
       applyToken(authToken);
       setUser(userData);
 
       console.log('✅ Login successful:', userData);
-      return userData;
+      return { success: true, user: userData };
+      
     } catch (err) {
       console.error('❌ Login error:', err);
-      const message =
-        err.response?.data?.message || err.message || 'Login failed';
+      
+      // Extract error message from response
+      let message = 'Login failed. Please try again.';
+      
+      if (err.response?.data?.message) {
+        message = err.response.data.message;
+      } else if (err.response?.status === 401) {
+        message = 'Invalid email or password';
+      } else if (err.response?.status === 403) {
+        message = 'Your account has been deactivated. Please contact the administrator.';
+      } else if (err.response?.status === 404) {
+        message = 'Login service not available. Please try again later.';
+      } else if (err.response?.status >= 500) {
+        message = 'Server error. Please try again later.';
+      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        message = 'Connection timed out. Please check your internet and try again.';
+      } else if (err.message?.includes('Network') || err.message?.includes('network')) {
+        message = 'Network error. Please check your internet connection.';
+      } else if (err.message) {
+        message = err.message;
+      }
+      
       setError(message);
-      throw err;
+      
+      // Return error object instead of throwing
+      return { success: false, message };
+      
     } finally {
       setLoading(false);
     }
