@@ -128,7 +128,7 @@ const chatReducer = (state, action) => {
       };
 
     case 'SET_TYPING_USER':
-      const { conversationId: tConvId, userId: typingUserId, isTyping, userName } = action.payload;
+      const { oderId: tConvId, userId: typingUserId, isTyping, userName } = action.payload;
       const currentTyping = state.typingUsers[tConvId] || {};
       if (isTyping) {
         return {
@@ -207,7 +207,10 @@ export const ChatProvider = ({ children }) => {
 
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
+      console.log('🔄 Loading conversations...');
+      
       const convs = await ChatService.getRecentChats(50);
+      console.log('✅ Loaded conversations:', convs.length);
 
       const uniqueConvs = [];
       const seenIds = new Set();
@@ -229,7 +232,7 @@ export const ChatProvider = ({ children }) => {
       dispatch({ type: 'SET_UNREAD_COUNTS', payload: unread });
       
     } catch (err) {
-      console.error('Error loading conversations:', err);
+      console.error('❌ Error loading conversations:', err);
       dispatch({ type: 'SET_ERROR', payload: err.message });
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
@@ -244,7 +247,11 @@ export const ChatProvider = ({ children }) => {
 
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
+      console.log('🔄 Creating conversation with:', participantIds);
+      
       const conversation = await ChatService.createConversation(participantIds, title, type);
+      console.log('✅ Conversation created:', conversation?.id);
+      
       dispatch({ type: 'ADD_OR_UPDATE_CONVERSATION', payload: conversation });
       
       const existingIndex = convsRef.current.findIndex(c => c.id === conversation.id);
@@ -260,7 +267,7 @@ export const ChatProvider = ({ children }) => {
       
       return conversation;
     } catch (error) {
-      console.error('Error creating conversation:', error);
+      console.error('❌ Error creating conversation:', error);
       dispatch({ type: 'SET_ERROR', payload: error.message });
       throw error;
     } finally {
@@ -272,6 +279,7 @@ export const ChatProvider = ({ children }) => {
   useEffect(() => {
     if (authLoading || !user || initializedRef.current) return;
     initializedRef.current = true;
+    console.log('🚀 Initializing chat for user:', user.id);
     loadConversations();
     
     // Request notification permission
@@ -286,7 +294,10 @@ export const ChatProvider = ({ children }) => {
 
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
+      console.log('🔄 Loading messages for:', conversationId);
+      
       const msgs = await ChatService.getMessages(conversationId);
+      console.log('✅ Loaded messages:', msgs.length);
       
       const uniqueMsgs = [];
       const seenIds = new Set();
@@ -322,7 +333,7 @@ export const ChatProvider = ({ children }) => {
       }
       
     } catch (err) {
-      console.error('Error loading messages:', err);
+      console.error('❌ Error loading messages:', err);
       dispatch({ type: 'SET_ERROR', payload: err.message });
       throw err;
     } finally {
@@ -335,7 +346,9 @@ export const ChatProvider = ({ children }) => {
     if (!conversationId || (!messageText?.trim() && !imageUrl)) return;
 
     try {
+      console.log('📤 Sending message to:', conversationId);
       const message = await ChatService.sendMessage(conversationId, messageText?.trim() || '', imageUrl);
+      console.log('✅ Message sent:', message?.id);
 
       dispatch({ type: 'ADD_MESSAGE', payload: { conversationId, message } });
       
@@ -375,7 +388,7 @@ export const ChatProvider = ({ children }) => {
 
       return message;
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('❌ Error sending message:', error);
       dispatch({ type: 'SET_ERROR', payload: error.message });
       throw error;
     }
@@ -386,6 +399,7 @@ export const ChatProvider = ({ children }) => {
     dispatch({ type: 'SET_ACTIVE_CONVERSATION', payload: conv });
 
     if (conv) {
+      console.log('🎯 Setting active conversation:', conv.id);
       activeConvRef.current = conv;
       processingMessagesRef.current.clear();
       
@@ -393,6 +407,7 @@ export const ChatProvider = ({ children }) => {
         socketRef.current.emit('join_conversation', conv.id);
       }
     } else {
+      console.log('🚫 Clearing active conversation');
       activeConvRef.current = null;
     }
   }, []);
@@ -401,11 +416,14 @@ export const ChatProvider = ({ children }) => {
   const loadAvailableUsers = useCallback(async () => {
     if (!user) return [];
     try {
+      console.log('🔄 Loading available users...');
       const users = await ChatService.getAvailableUsers();
+      console.log('✅ Loaded users:', users.length);
       setAvailableUsers(users);
       return users;
-    } catch (err) {
-      console.error("Failed to load users:", err);
+    } catch (error) {
+      console.error('❌ Error loading users:', error);
+      setAvailableUsers([]);
       return [];
     }
   }, [user]);
@@ -456,6 +474,7 @@ export const ChatProvider = ({ children }) => {
     if (!token) return;
 
     socketSetupInProgressRef.current = true;
+    console.log('🔌 Setting up socket...');
     
     if (socketRef.current) {
       socketRef.current.removeAllListeners();
@@ -463,6 +482,7 @@ export const ChatProvider = ({ children }) => {
     }
 
     const socketUrl = import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
+    console.log('🔌 Socket URL:', socketUrl);
 
     const socket = io(socketUrl, {
       auth: { token },
@@ -477,7 +497,7 @@ export const ChatProvider = ({ children }) => {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('🟢 Chat socket connected');
+      console.log('🟢 Socket connected');
       dispatch({ type: 'SET_SOCKET_CONNECTED', payload: true });
       reconnectAttemptsRef.current = 0;
       socketSetupInProgressRef.current = false;
@@ -491,12 +511,12 @@ export const ChatProvider = ({ children }) => {
     });
 
     socket.on('disconnect', (reason) => {
-      console.log('🔴 Chat socket disconnected:', reason);
+      console.log('🔴 Socket disconnected:', reason);
       dispatch({ type: 'SET_SOCKET_CONNECTED', payload: false });
     });
 
     socket.on('connect_error', (error) => {
-      console.error('Socket connection error:', error.message);
+      console.error('❌ Socket error:', error.message);
       reconnectAttemptsRef.current += 1;
       
       if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
@@ -507,6 +527,8 @@ export const ChatProvider = ({ children }) => {
 
     // New message
     socket.on('new_message', ({ message, conversationId }) => {
+      console.log('📨 New message received:', message?.id);
+      
       if (processingMessagesRef.current.has(message.id)) return;
       processingMessagesRef.current.add(message.id);
       
@@ -611,7 +633,7 @@ export const ChatProvider = ({ children }) => {
       if (userId !== user.id) {
         dispatch({ 
           type: 'SET_TYPING_USER', 
-          payload: { conversationId, userId, isTyping: true, userName } 
+          payload: { oderId: conversationId, userId, isTyping: true, userName } 
         });
       }
     });
@@ -619,12 +641,12 @@ export const ChatProvider = ({ children }) => {
     socket.on('user_stopped_typing', ({ userId, conversationId }) => {
       dispatch({ 
         type: 'SET_TYPING_USER', 
-        payload: { conversationId, userId, isTyping: false } 
+        payload: { oderId: conversationId, userId, isTyping: false } 
       });
     });
 
     socket.on('error', (error) => {
-      console.error('Socket error:', error);
+      console.error('❌ Socket error:', error);
     });
 
     return () => {
@@ -679,7 +701,7 @@ export const ChatProvider = ({ children }) => {
       const imageUrl = await ChatService.uploadChatImage(file);
       return imageUrl;
     } catch (error) {
-      console.error('Error uploading image:', error);
+      console.error('❌ Error uploading image:', error);
       throw error;
     }
   }, []);
