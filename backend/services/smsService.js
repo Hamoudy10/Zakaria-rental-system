@@ -1,17 +1,35 @@
+// ============================================================
+// SMS SERVICE - CELCOM INTEGRATION TEMPLATE
+// ============================================================
+// 
+// This is a template for Celcom integration.
+// You'll need to update the sendSMS method based on Celcom's actual API format.
+// 
+// INSTRUCTIONS:
+// 1. Get Celcom credentials and API documentation
+// 2. Update the constructor with correct environment variables
+// 3. Update sendSMS method to match Celcom's API format
+// 4. Test with a single SMS before deploying
+// ============================================================
+
 const axios = require('axios');
 const pool = require('../config/database');
 
 class SMSService {
   constructor() {
+    // ============================================================
+    // UPDATE THESE based on what Celcom provides
+    // ============================================================
     this.apiKey = process.env.SMS_API_KEY;
-    this.senderId = process.env.SMS_SENDER_ID;
-    this.username = process.env.SMS_USERNAME || 'sandbox';
-    this.baseURL = process.env.SMS_BASE_URL || 'https://api.sandbox.africastalking.com/version1/messaging';
+    this.senderId = process.env.SMS_SENDER_ID || 'ZakariaAgcy';
+    this.username = process.env.SMS_USERNAME;
+    this.password = process.env.SMS_PASSWORD;
+    this.baseURL = process.env.SMS_BASE_URL || 'https://api.celcom.co.ke/sms/send'; // Update with actual URL
     
-    console.log('📱 SMS Service Initialized:', {
+    console.log('📱 SMS Service Initialized (Celcom):', {
       hasApiKey: !!this.apiKey,
       hasSenderId: !!this.senderId,
-      username: this.username,
+      hasUsername: !!this.username,
       baseURL: this.baseURL
     });
   }
@@ -25,42 +43,35 @@ class SMSService {
     // Remove any non-digit characters
     let cleaned = phone.replace(/\D/g, '');
     
-    console.log('📞 Formatting phone number:', { original: phone, cleaned });
-    
-    // Handle different formats: 07..., 254..., +254...
+    // Handle different formats
     if (cleaned.startsWith('0') && cleaned.length === 10) {
-      // Format: 07XXXXXXXX -> 2547XXXXXXXX
       return '254' + cleaned.substring(1);
     } else if (cleaned.startsWith('254') && cleaned.length === 12) {
-      // Format: 2547XXXXXXXX
       return cleaned;
-    } else if (cleaned.startsWith('+254') && cleaned.length === 13) {
-      // Format: +2547XXXXXXXX
+    } else if (cleaned.startsWith('+254')) {
       return cleaned.substring(1);
     } else if (cleaned.startsWith('7') && cleaned.length === 9) {
-      // Format: 7XXXXXXXX -> 2547XXXXXXXX
       return '254' + cleaned;
-    } else {
-      console.warn('⚠️ Unusual phone number format:', cleaned);
-      // Try to return as is, but log warning
-      return cleaned;
     }
+    
+    console.warn('⚠️ Unusual phone number format:', cleaned);
+    return cleaned;
   }
 
   // Validate phone number format
   validatePhoneNumber(phone) {
     const formatted = this.formatPhoneNumber(phone);
-    // Kenyan phone number regex: 254 followed by 7, 1, or 0 and 8 digits
     const phoneRegex = /^254(7\d{8}|1\d{8}|0\d{8})$/;
     return phoneRegex.test(formatted);
   }
 
-  // Send SMS using Africa's Talking API (or your preferred provider)
+  // ============================================================
+  // MAIN SMS SENDING METHOD - UPDATE THIS FOR CELCOM
+  // ============================================================
   async sendSMS(phoneNumber, message) {
     try {
-      console.log('📱 Attempting to send SMS:', { 
+      console.log('📱 Attempting to send SMS via Celcom:', { 
         phoneNumber, 
-        formattedPhone: this.formatPhoneNumber(phoneNumber),
         messageLength: message.length,
         messagePreview: message.substring(0, 50) + '...'
       });
@@ -76,11 +87,8 @@ class SMSService {
       }
 
       // Check if SMS service is configured
-      if (!this.apiKey || !this.senderId) {
-        console.warn('⚠️ SMS service not configured. Skipping SMS sending.');
-        console.log('💡 To enable SMS, set SMS_API_KEY, SMS_SENDER_ID, and SMS_USERNAME in your .env file');
-        
-        // Simulate success for development
+      if (!this.apiKey) {
+        console.warn('⚠️ SMS service not configured. Simulating success.');
         return { 
           success: true, 
           message: 'SMS service not configured - simulated success',
@@ -92,63 +100,90 @@ class SMSService {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
       console.log('📞 Formatted phone number:', formattedPhone);
 
-      // For Africa's Talking API
+      // ============================================================
+      // CELCOM API REQUEST - UPDATE BASED ON THEIR DOCUMENTATION
+      // ============================================================
+      
+      // OPTION A: API Key in Authorization Header
       const payload = {
-        username: this.username,
-        to: formattedPhone,
-        message: message,
-        from: this.senderId
+        to: formattedPhone,           // May need to change: 'phone', 'recipient', 'msisdn'
+        message: message,             // May need to change: 'text', 'content', 'body'
+        from: this.senderId,          // May need to change: 'sender', 'senderId', 'source'
+        // Add any additional fields Celcom requires:
+        // type: 'text',
+        // dlr: true,  // delivery reports
       };
 
       const headers = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'apiKey': this.apiKey,
-        'Accept': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        // OPTION A: Bearer token
+        'Authorization': `Bearer ${this.apiKey}`,
+        // OPTION B: API Key header
+        // 'X-API-Key': this.apiKey,
+        // OPTION C: Custom header
+        // 'Api-Key': this.apiKey,
       };
 
-      console.log('🚀 Sending SMS via Africa\'s Talking API...', {
-        to: formattedPhone,
-        from: this.senderId,
-        messageLength: message.length
-      });
+      console.log('🚀 Sending SMS via Celcom API...');
 
-      const response = await axios.post(this.baseURL, new URLSearchParams(payload), { 
+      const response = await axios.post(this.baseURL, payload, { 
         headers,
-        timeout: 30000 // 30 second timeout
+        timeout: 30000,
+        // OPTION: If Celcom uses Basic Auth instead
+        // auth: {
+        //   username: this.username,
+        //   password: this.password
+        // }
       });
 
-      console.log('✅ Africa\'s Talking API Response:', response.data);
+      console.log('✅ Celcom API Response:', response.data);
 
-      if (response.data.SMSMessageData && response.data.SMSMessageData.Recipients) {
-        const recipient = response.data.SMSMessageData.Recipients[0];
+      // ============================================================
+      // PARSE RESPONSE - UPDATE BASED ON CELCOM'S RESPONSE FORMAT
+      // ============================================================
+      
+      // Example: { "status": "success", "messageId": "12345", "cost": 1.5 }
+      // Or: { "code": 200, "data": { "id": "12345" } }
+      // Or: { "result": "OK", "smsId": "12345" }
+      
+      const isSuccess = 
+        response.data.status === 'success' ||
+        response.data.code === 200 ||
+        response.data.code === '200' ||
+        response.data.result === 'OK' ||
+        response.status === 200;
+
+      if (isSuccess) {
+        const messageId = 
+          response.data.messageId || 
+          response.data.id || 
+          response.data.smsId ||
+          response.data.data?.id ||
+          'unknown';
+
+        console.log('✅ SMS sent successfully:', {
+          messageId,
+          phone: formattedPhone
+        });
         
-        if (recipient.status === 'Success') {
-          console.log('✅ SMS sent successfully to:', formattedPhone, {
-            messageId: recipient.messageId,
-            cost: recipient.cost
-          });
-          
-          return { 
-            success: true, 
-            messageId: recipient.messageId,
-            cost: recipient.cost,
-            status: recipient.status
-          };
-        } else {
-          console.error('❌ SMS sending failed:', recipient.status, recipient.statusCode);
-          return { 
-            success: false, 
-            error: recipient.status,
-            statusCode: recipient.statusCode,
-            message: `SMS failed: ${recipient.status}`
-          };
-        }
+        return { 
+          success: true, 
+          messageId: messageId,
+          status: 'sent'
+        };
       } else {
-        console.error('❌ Unexpected API response format:', response.data);
+        const errorMessage = 
+          response.data.message || 
+          response.data.error ||
+          response.data.description ||
+          'SMS sending failed';
+
+        console.error('❌ SMS sending failed:', errorMessage);
         return { 
           success: false, 
-          error: 'UNEXPECTED_RESPONSE',
-          message: 'Unexpected response format from SMS provider'
+          error: errorMessage,
+          statusCode: response.data.code || response.status
         };
       }
 
@@ -183,8 +218,8 @@ class SMSService {
       );
       
       console.log('📨 SMS queued for retry:', formattedPhone);
-    } catch (error) {
-      console.error('❌ Failed to queue SMS:', error);
+    } catch (queueError) {
+      console.error('❌ Failed to queue SMS:', queueError);
     }
   }
 
@@ -193,7 +228,6 @@ class SMSService {
     try {
       console.log('🔄 Processing queued SMS messages...');
       
-      // Get pending SMS messages (limit to 10 at a time)
       const queuedSMS = await pool.query(
         `SELECT * FROM sms_queue 
          WHERE status = 'pending' AND attempts < 3
@@ -203,17 +237,12 @@ class SMSService {
       
       console.log(`📨 Found ${queuedSMS.rows.length} queued SMS messages to process`);
       
-      const results = {
-        processed: 0,
-        successful: 0,
-        failed: 0
-      };
+      const results = { processed: 0, successful: 0, failed: 0 };
       
       for (const sms of queuedSMS.rows) {
         try {
           const result = await this.sendSMS(sms.recipient_phone, sms.message);
           
-          // Update SMS queue record
           await pool.query(
             `UPDATE sms_queue 
              SET status = $1, 
@@ -232,30 +261,22 @@ class SMSService {
           
           if (result.success) {
             results.successful++;
-            console.log(`✅ Successfully sent queued SMS #${sms.id}`);
           } else {
             results.failed++;
-            console.log(`❌ Failed to send queued SMS #${sms.id}:`, result.error);
           }
-          
           results.processed++;
           
-          // Small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Rate limiting - adjust based on Celcom's limits
+          await new Promise(resolve => setTimeout(resolve, 200)); // 5 SMS per second
           
         } catch (error) {
           console.error(`❌ Error processing queued SMS #${sms.id}:`, error);
-          
-          // Update attempt count
           await pool.query(
             `UPDATE sms_queue 
-             SET attempts = attempts + 1,
-                 last_attempt_at = NOW(),
-                 error_message = $1
+             SET attempts = attempts + 1, last_attempt_at = NOW(), error_message = $1
              WHERE id = $2`,
             [error.message, sms.id]
           );
-          
           results.failed++;
           results.processed++;
         }
@@ -270,39 +291,40 @@ class SMSService {
     }
   }
 
+  // Get paybill number from admin settings
+  async getPaybillNumber() {
+    try {
+      const result = await pool.query(
+        `SELECT setting_value FROM admin_settings WHERE setting_key = 'paybill_number'`
+      );
+      return result.rows[0]?.setting_value || 'YOUR_PAYBILL';
+    } catch (error) {
+      console.warn('⚠️ Could not fetch paybill number:', error.message);
+      return 'YOUR_PAYBILL';
+    }
+  }
+
   // Send payment confirmation to tenant
   async sendPaymentConfirmation(tenantPhone, tenantName, amount, unitCode, balance, month, waterAmount) {
     try {
       let message;
 
-      if(waterAmount && waterAmount > 0) {
+      if (waterAmount && waterAmount > 0) {
         if (balance > 0) {
           message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Water bill of KSh ${this.formatAmount(waterAmount)} is also due. Balance: KSh ${this.formatAmount(balance)}. Thank you!`;
         } else {
           message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Water bill of KSh ${this.formatAmount(waterAmount)} is also due. Payment complete! Thank you!`;
         }
       } else {
-      if (balance > 0) {
-        message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Balance: KSh ${this.formatAmount(balance)}. Thank you!`;
-      } else {
-        message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Payment complete! Thank you!`;
+        if (balance > 0) {
+          message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Balance: KSh ${this.formatAmount(balance)}. Thank you!`;
+        } else {
+          message = `Hello ${tenantName}, your rent payment of KSh ${this.formatAmount(amount)} for ${unitCode} (${month}) has been received. Payment complete! Thank you!`;
+        }
       }
-    }
-      console.log('💰 Sending payment confirmation SMS:', {
-        tenantName,
-        tenantPhone,
-        amount,
-        unitCode,
-        balance,
-        month,
-        messageLength: message.length
-      });
-      
+
       const result = await this.sendSMS(tenantPhone, message);
-      
-      // Log the SMS notification
       await this.logSMSNotification(tenantPhone, 'payment_confirmation', message, result.success);
-      
       return result;
       
     } catch (error) {
@@ -311,104 +333,26 @@ class SMSService {
     }
   }
 
-  // Add these methods to the SMSService class:
-
-// Send bill notification to tenant
-async sendBillNotification(tenantPhone, tenantName, unitCode, month, rentDue, waterDue, arrearsDue, totalDue, paybillNumber) {
-  try {
-    const message = `Hello ${tenantName}, your ${month} bill for ${unitCode}:\n` +
-                   `🏠 Rent: KSh ${this.formatAmount(rentDue)}\n` +
-                   `🚰 Water: KSh ${this.formatAmount(waterDue)}\n` +
-                   `📝 Arrears: KSh ${this.formatAmount(arrearsDue)}\n` +
-                   `💰 Total Due: KSh ${this.formatAmount(totalDue)}\n` +
-                   `📱 Pay via paybill ${paybillNumber}, Account: ${unitCode}\n` +
-                   `Due by end of month. Thank you!`;
-    
-    console.log('📋 Sending bill notification:', {
-      tenantName,
-      tenantPhone,
-      unitCode,
-      month,
-      totalDue
-    });
-    
-    const result = await this.sendSMS(tenantPhone, message);
-    
-    await this.logSMSNotification(tenantPhone, 'bill_notification', message, result.success);
-    
-    return result;
-    
-  } catch (error) {
-    console.error('❌ Error sending bill notification:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-// Send enhanced payment confirmation with breakdown
-async sendEnhancedPaymentConfirmation(tenantPhone, tenantName, amount, unitCode, breakdown, balance, month) {
-  try {
-    const { rentPaid, waterPaid, arrearsPaid } = breakdown;
-    
-    let message = `Hello ${tenantName}, payment of KSh ${this.formatAmount(amount)} received for ${unitCode} (${month}):\n`;
-    
-    if (rentPaid > 0) message += `🏠 Rent: KSh ${this.formatAmount(rentPaid)}\n`;
-    if (waterPaid > 0) message += `🚰 Water: KSh ${this.formatAmount(waterPaid)}\n`;
-    if (arrearsPaid > 0) message += `📝 Arrears: KSh ${this.formatAmount(arrearsPaid)}\n`;
-    
-    if (balance > 0) {
-      message += `📊 Remaining Balance: KSh ${this.formatAmount(balance)}`;
-    } else {
-      message += `✅ Payment complete! Thank you!`;
+  // Send bill notification to tenant
+  async sendBillNotification(tenantPhone, tenantName, unitCode, month, rentDue, waterDue, arrearsDue, totalDue, paybillNumber) {
+    try {
+      const message = `Hello ${tenantName}, your ${month} bill for ${unitCode}:\n` +
+                     `🏠 Rent: KSh ${this.formatAmount(rentDue)}\n` +
+                     `🚰 Water: KSh ${this.formatAmount(waterDue)}\n` +
+                     `📝 Arrears: KSh ${this.formatAmount(arrearsDue)}\n` +
+                     `💰 Total Due: KSh ${this.formatAmount(totalDue)}\n` +
+                     `📱 Pay via paybill ${paybillNumber}, Account: ${unitCode}\n` +
+                     `Due by end of month. Thank you!`;
+      
+      const result = await this.sendSMS(tenantPhone, message);
+      await this.logSMSNotification(tenantPhone, 'bill_notification', message, result.success);
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Error sending bill notification:', error);
+      return { success: false, error: error.message };
     }
-    
-    console.log('💰 Sending enhanced payment confirmation:', {
-      tenantName,
-      tenantPhone,
-      amount,
-      breakdown
-    });
-    
-    const result = await this.sendSMS(tenantPhone, message);
-    await this.logSMSNotification(tenantPhone, 'payment_confirmation', message, result.success);
-    
-    return result;
-    
-  } catch (error) {
-    console.error('❌ Error sending enhanced payment confirmation:', error);
-    return { success: false, error: error.message };
   }
-}
-
-// Send admin payment alert with breakdown
-async sendAdminPaymentAlert(adminPhone, tenantName, amount, unitCode, breakdown, balance, month) {
-  try {
-    const { rentPaid, waterPaid, arrearsPaid } = breakdown;
-    
-    let message = `💸 PAYMENT RECEIVED:\n` +
-                  `Tenant: ${tenantName}\n` +
-                  `Unit: ${unitCode} (${month})\n` +
-                  `Amount: KSh ${this.formatAmount(amount)}\n`;
-    
-    if (rentPaid > 0) message += `Rent: KSh ${this.formatAmount(rentPaid)}\n`;
-    if (waterPaid > 0) message += `Water: KSh ${this.formatAmount(waterPaid)}\n`;
-    if (arrearsPaid > 0) message += `Arrears: KSh ${this.formatAmount(arrearsPaid)}\n`;
-    
-    if (balance > 0) {
-      message += `Remaining: KSh ${this.formatAmount(balance)}`;
-    } else {
-      message += `✅ Fully paid`;
-    }
-    
-    const result = await this.sendSMS(adminPhone, message);
-    await this.logSMSNotification(adminPhone, 'admin_payment_alert', message, result.success);
-    
-    return result;
-    
-  } catch (error) {
-    console.error('❌ Error sending admin payment alert:', error);
-    return { success: false, error: error.message };
-  }
-}
 
   // Send payment alert to admin
   async sendAdminAlert(adminPhone, tenantName, amount, unitCode, balance, month) {
@@ -421,24 +365,28 @@ async sendAdminPaymentAlert(adminPhone, tenantName, amount, unitCode, breakdown,
         message = `PAYMENT ALERT: ${tenantName} paid KSh ${this.formatAmount(amount)} for ${unitCode} (${month}). Fully paid!`;
       }
       
-      console.log('👨‍💼 Sending admin alert SMS:', {
-        adminPhone,
-        tenantName,
-        amount,
-        unitCode,
-        balance,
-        month
-      });
-      
       const result = await this.sendSMS(adminPhone, message);
-      
-      // Log the SMS notification
       await this.logSMSNotification(adminPhone, 'admin_alert', message, result.success);
-      
       return result;
       
     } catch (error) {
       console.error('❌ Error sending admin alert:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Send welcome message to new tenant
+  async sendWelcomeMessage(tenantPhone, tenantName, unitCode, monthlyRent, dueDate) {
+    try {
+      const paybill = await this.getPaybillNumber();
+      const message = `Welcome ${tenantName}! You have been allocated to ${unitCode}. Monthly rent: KSh ${this.formatAmount(monthlyRent)}, due on ${dueDate} each month. For payments, use paybill ${paybill} with account ${unitCode}.`;
+      
+      const result = await this.sendSMS(tenantPhone, message);
+      await this.logSMSNotification(tenantPhone, 'welcome_message', message, result.success);
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Error sending welcome message:', error);
       return { success: false, error: error.message };
     }
   }
@@ -448,20 +396,8 @@ async sendAdminPaymentAlert(adminPhone, tenantName, amount, unitCode, breakdown,
     try {
       const message = `Hello ${tenantName}, your rent balance for ${unitCode} (${month}) is KSh ${this.formatAmount(balance)}. Please pay by ${dueDate} to avoid late fees.`;
       
-      console.log('⏰ Sending balance reminder SMS:', {
-        tenantName,
-        tenantPhone,
-        unitCode,
-        balance,
-        month,
-        dueDate
-      });
-      
       const result = await this.sendSMS(tenantPhone, message);
-      
-      // Log the SMS notification
       await this.logSMSNotification(tenantPhone, 'balance_reminder', message, result.success);
-      
       return result;
       
     } catch (error) {
@@ -470,84 +406,7 @@ async sendAdminPaymentAlert(adminPhone, tenantName, amount, unitCode, breakdown,
     }
   }
 
-  // Send advance payment notification
-  async sendAdvancePaymentNotification(tenantPhone, tenantName, amount, unitCode, monthsPaid) {
-    try {
-      const message = `Hello ${tenantName}, your payment of KSh ${this.formatAmount(amount)} for ${unitCode} has been applied as advance payment for ${monthsPaid} future month(s). Thank you!`;
-      
-      console.log('🔮 Sending advance payment notification:', {
-        tenantName,
-        tenantPhone,
-        amount,
-        unitCode,
-        monthsPaid
-      });
-      
-      const result = await this.sendSMS(tenantPhone, message);
-      
-      // Log the SMS notification
-      await this.logSMSNotification(tenantPhone, 'advance_payment', message, result.success);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Error sending advance payment notification:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Send welcome message to new tenant
-  async sendWelcomeMessage(tenantPhone, tenantName, unitCode, monthlyRent, dueDate) {
-    try {
-      const message = `Welcome ${tenantName}! You have been allocated to ${unitCode}. Monthly rent: KSh ${this.formatAmount(monthlyRent)}, due on ${dueDate} each month. For payments, use paybill [BUSINESS_NO] with account ${unitCode}.`;
-      
-      console.log('👋 Sending welcome message:', {
-        tenantName,
-        tenantPhone,
-        unitCode,
-        monthlyRent,
-        dueDate
-      });
-      
-      const result = await this.sendSMS(tenantPhone, message);
-      
-      // Log the SMS notification
-      await this.logSMSNotification(tenantPhone, 'welcome_message', message, result.success);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Error sending welcome message:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Send maintenance update to tenant
-  async sendMaintenanceUpdate(tenantPhone, tenantName, unitCode, update) {
-    try {
-      const message = `Hello ${tenantName}, maintenance update for ${unitCode}: ${update}`;
-      
-      console.log('🔧 Sending maintenance update:', {
-        tenantName,
-        tenantPhone,
-        unitCode,
-        update
-      });
-      
-      const result = await this.sendSMS(tenantPhone, message);
-      
-      // Log the SMS notification
-      await this.logSMSNotification(tenantPhone, 'maintenance_update', message, result.success);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Error sending maintenance update:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Format amount with commas for thousands
+  // Format amount with commas
   formatAmount(amount) {
     return parseFloat(amount).toLocaleString('en-KE', {
       minimumFractionDigits: 2,
@@ -568,79 +427,16 @@ async sendAdminPaymentAlert(adminPhone, tenantName, amount, unitCode, breakdown,
     }
   }
 
-  // Get SMS statistics
-  async getSMSStatistics() {
-    try {
-      const stats = await pool.query(`
-        SELECT 
-          COUNT(*) as total_sms,
-          COUNT(CASE WHEN status = 'sent' THEN 1 END) as sent_sms,
-          COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_sms,
-          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_sms,
-          MIN(sent_at) as first_sent,
-          MAX(sent_at) as last_sent
-        FROM sms_notifications
-      `);
-      
-      const queueStats = await pool.query(`
-        SELECT 
-          COUNT(*) as total_queued,
-          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_queued,
-          COUNT(CASE WHEN status = 'sent' THEN 1 END) as sent_queued,
-          COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_queued
-        FROM sms_queue
-      `);
-      
-      return {
-        success: true,
-        data: {
-          notifications: stats.rows[0],
-          queue: queueStats.rows[0]
-        }
-      };
-      
-    } catch (error) {
-      console.error('❌ Error getting SMS statistics:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
   // Check SMS service status
   async checkServiceStatus() {
-    const status = {
-      configured: !!(this.apiKey && this.senderId),
+    return {
+      configured: !!this.apiKey,
       apiKey: !!this.apiKey,
       senderId: !!this.senderId,
-      username: this.username,
-      baseURL: this.baseURL
+      username: this.username || 'not set',
+      baseURL: this.baseURL,
+      provider: 'Celcom'
     };
-    
-    // Test credentials by making a simple balance check if configured
-    if (status.configured) {
-      try {
-        // Try to get account balance (Africa's Talking specific)
-        const response = await axios.get(
-          `https://api.sandbox.africastalking.com/version1/user?username=${this.username}`,
-          {
-            headers: {
-              'apiKey': this.apiKey,
-              'Accept': 'application/json'
-            },
-            timeout: 10000
-          }
-        );
-        
-        status.credentialsValid = true;
-        status.balance = response.data.UserData.balance;
-        console.log('✅ SMS service credentials are valid, balance:', status.balance);
-      } catch (error) {
-        status.credentialsValid = false;
-        status.error = error.message;
-        console.error('❌ SMS service credentials test failed:', error.message);
-      }
-    }
-    
-    return status;
   }
 }
 

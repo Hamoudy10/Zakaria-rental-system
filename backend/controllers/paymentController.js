@@ -18,6 +18,12 @@ const checkDatabase = async () => {
   }
 };
 
+const getMpesaBaseUrl = () => {
+  return process.env.MPESA_ENVIRONMENT === 'production' 
+    ? 'https://api.safaricom.co.ke' 
+    : 'https://sandbox.safaricom.co.ke';
+};
+
 const generateTimestamp = () => {
   const date = new Date();
   const year = date.getFullYear();
@@ -45,8 +51,13 @@ const getAccessToken = async () => {
     
     const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
     
+    // ✅ FIXED: Use environment-aware base URL
+    const baseUrl = process.env.MPESA_ENVIRONMENT === 'production' 
+      ? 'https://api.safaricom.co.ke' 
+      : 'https://sandbox.safaricom.co.ke';
+    
     const response = await axios.get(
-      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+      `${baseUrl}/oauth/v1/generate?grant_type=client_credentials`,
       {
         headers: { 'Authorization': `Basic ${auth}` },
         timeout: 10000,
@@ -59,6 +70,7 @@ const getAccessToken = async () => {
     throw new Error(`Failed to get access token: ${error.message}`);
   }
 };
+
 
 const formatPaymentMonth = (paymentMonth) => {
   console.log('📅 Formatting payment month:', paymentMonth);
@@ -232,10 +244,12 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
     const tenantId = payment.tenant_id;
     const amount = payment.amount;
     
+    // Get payment details
     const detailsQuery = `
       SELECT 
         t.first_name, t.last_name, t.phone_number,
-        p.name as property_name, pu.unit_number, pu.unit_code
+        p.name as property_name, pu.unit_number, pu.unit_code,
+        pu.property_id
       FROM rent_payments rp
       LEFT JOIN tenants t ON rp.tenant_id = t.id
       LEFT JOIN property_units pu ON rp.unit_id = pu.id
@@ -254,69 +268,100 @@ const sendPaymentNotifications = async (payment, trackingResult, isCarryForward 
     const propertyInfo = details.property_name;
     const unitInfo = `Unit ${details.unit_number} (${details.unit_code})`;
     
+    // ✅ FIXED: Only create notifications for USERS (admins/agents), not tenants
+    // Tenants receive SMS instead (handled separately)
+    
     if (isCarryForward) {
-      const carryForwardNotification = {
-        userId: tenantId,
-        title: 'Payment Carry-Forward',
-        message: `Your payment of KSh ${amount} has been carried forward to future months as advance payment.`,
-        type: 'payment_carry_forward',
-        relatedEntityType: 'rent_payment',
-        relatedEntityId: paymentId
-      };
-      
-      await NotificationService.createNotification(carryForwardNotification);
-    } else {
-      let tenantMessage = `Your rent payment of KSh ${amount} has been processed successfully. `;
-      
-      if (trackingResult.carryForwardAmount > 0) {
-        tenantMessage += `KSh ${trackingResult.allocatedAmount} applied to ${trackingResult.targetMonth}, KSh ${trackingResult.carryForwardAmount} carried forward to future months.`;
-      } else if (trackingResult.isMonthComplete) {
-        tenantMessage += `Your rent for ${trackingResult.targetMonth} is now fully paid.`;
-      } else {
-        tenantMessage += `Your rent for ${trackingResult.targetMonth} is partially paid. Remaining balance: KSh ${trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount}.`;
-      }
-      
-      const tenantNotification = {
-        userId: tenantId,
-        title: 'Payment Successful',
-        message: tenantMessage,
-        type: 'payment_success',
-        relatedEntityType: 'rent_payment',
-        relatedEntityId: paymentId
-      };
-      
-      await NotificationService.createNotification(tenantNotification);
-      
-      const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+      // For carry-forward, notify admins only
+      const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1 AND is_active = true', ['admin']);
       
       for (const admin of adminUsers.rows) {
-        let adminMessage = `Tenant ${tenantName} has successfully paid KSh ${amount} for ${propertyInfo} - ${unitInfo} (${trackingResult.targetMonth}). `;
-        
-        if (trackingResult.carryForwardAmount > 0) {
-          adminMessage += `KSh ${trackingResult.carryForwardAmount} carried forward to future months.`;
-        } else if (!trackingResult.isMonthComplete) {
-          adminMessage += `Remaining balance for ${trackingResult.targetMonth}: KSh ${trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount}.`;
-        } else {
-          adminMessage += `Payment for ${trackingResult.targetMonth} is now complete.`;
-        }
-        
-        const adminNotification = {
-          userId: admin.id,
+        await NotificationService.createNotification({
+          userId: admin.id,  // ✅ This is a valid users.id
+          title: 'Payment Carry-Forward',
+          message: `Payment of KSh ${amount} for ${tenantName} (${details.unit_code}) has been carried forward to future months.`,
+          type: 'payment_carry_forward',
+          relatedEntityType: 'rent_payment',
+          relatedEntityId: paymentId
+        });
+      }
+      
+      // Also notify assigned agent if any
+      const agentQuery = await pool.query(
+        `SELECT agent_id FROM agent_property_assignments 
+         WHERE property_id = $1 AND is_active = true`,
+        [details.property_id]
+      );
+      
+      if (agentQuery.rows.length > 0) {
+        const agentId = agentQuery.rows[0].agent_id;
+        await NotificationService.createNotification({
+          userId: agentId,  // ✅ This is a valid users.id
+          title: 'Payment Carry-Forward',
+          message: `Payment of KSh ${amount} for ${tenantName} (${details.unit_code}) has been carried forward.`,
+          type: 'payment_carry_forward',
+          relatedEntityType: 'rent_payment',
+          relatedEntityId: paymentId
+        });
+      }
+      
+    } else {
+      // Regular payment notification
+      
+      // Build message based on payment status
+      let notificationMessage = `Payment of KSh ${amount} received from ${tenantName} for ${propertyInfo} - ${unitInfo}. `;
+      
+      if (trackingResult.carryForwardAmount > 0) {
+        notificationMessage += `KSh ${trackingResult.allocatedAmount} applied to ${trackingResult.targetMonth}, KSh ${trackingResult.carryForwardAmount} carried forward.`;
+      } else if (trackingResult.isMonthComplete) {
+        notificationMessage += `Payment for ${trackingResult.targetMonth} is now complete.`;
+      } else {
+        const remaining = trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
+        notificationMessage += `Remaining balance for ${trackingResult.targetMonth}: KSh ${remaining}.`;
+      }
+      
+      // ✅ Notify all admins
+      const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1 AND is_active = true', ['admin']);
+      
+      for (const admin of adminUsers.rows) {
+        await NotificationService.createNotification({
+          userId: admin.id,  // ✅ Valid users.id
           title: 'Tenant Payment Received',
-          message: adminMessage,
+          message: notificationMessage,
           type: 'payment_confirmation',
           relatedEntityType: 'rent_payment',
           relatedEntityId: paymentId
-        };
-        
-        await NotificationService.createNotification(adminNotification);
+        });
       }
       
-      console.log('✅ Payment notifications sent successfully');
+      // ✅ Notify assigned agent
+      const agentQuery = await pool.query(
+        `SELECT agent_id FROM agent_property_assignments 
+         WHERE property_id = $1 AND is_active = true`,
+        [details.property_id]
+      );
+      
+      if (agentQuery.rows.length > 0) {
+        const agentId = agentQuery.rows[0].agent_id;
+        await NotificationService.createNotification({
+          userId: agentId,  // ✅ Valid users.id
+          title: 'Tenant Payment Received',
+          message: notificationMessage,
+          type: 'payment_confirmation',
+          relatedEntityType: 'rent_payment',
+          relatedEntityId: paymentId
+        });
+      }
+      
+      console.log('✅ Payment notifications sent to admins and agents');
     }
+    
+    // ✅ NOTE: Tenant receives SMS notification (handled in sendPaybillSMSNotifications 
+    // or in the callback handler), not in-app notifications since they don't have user accounts
     
   } catch (error) {
     console.error('❌ Error sending payment notifications:', error);
+    // Don't throw - notification failure shouldn't break payment flow
   }
 };
 
@@ -1495,6 +1540,54 @@ const handleMpesaCallback = async (req, res) => {
 
       await sendPaymentNotifications(payment, trackingResult, false);
 
+       // ✅ ADD THIS: Send SMS confirmation to tenant
+      try {
+        const tenantName = `${payment.first_name} ${payment.last_name}`;
+        const unitCode = payment.unit_code;
+        const month = payment.payment_month.toISOString().slice(0, 7);
+        const balance = trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
+        
+        // Get water bill amount for this month
+        const wbRes = await pool.query(
+          `SELECT amount FROM water_bills WHERE tenant_id = $1 AND bill_month = $2 LIMIT 1`,
+          [payment.tenant_id, `${month}-01`]
+        );
+        const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
+
+        // Send SMS to tenant
+        await SMSService.sendPaymentConfirmation(
+          phoneNumber || payment.phone_number,
+          tenantName,
+          amount || payment.amount,
+          unitCode,
+          balance,
+          month,
+          waterAmount
+        );
+
+        // Send SMS to admins
+        const adminUsers = await pool.query(
+          'SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL',
+          ['admin']
+        );
+
+        for (const admin of adminUsers.rows) {
+          await SMSService.sendAdminAlert(
+            admin.phone_number,
+            tenantName,
+            amount || payment.amount,
+            unitCode,
+            balance,
+            month
+          );
+        }
+
+        console.log('✅ SMS notifications sent for M-Pesa callback payment');
+      } catch (smsError) {
+        console.error('❌ Failed to send SMS notifications:', smsError);
+        // Don't throw - payment was successful, SMS failure shouldn't break the flow
+      }
+
     } else {
       const failureReason = stkCallback.ResultDesc || 'Payment failed';
       await pool.query(
@@ -1708,8 +1801,15 @@ const initiateSTKPush = async (req, res) => {
 
     console.log('📤 Initiating STK Push to M-Pesa...');
     
+   // ✅ FIXED: Use environment-aware base URL
+    const mpesaBaseUrl = process.env.MPESA_ENVIRONMENT === 'production' 
+      ? 'https://api.safaricom.co.ke' 
+      : 'https://sandbox.safaricom.co.ke';
+
+    console.log('📤 Initiating STK Push to M-Pesa...');
+    
     const stkResponse = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      `${mpesaBaseUrl}/mpesa/stkpush/v1/processrequest`,
       stkPushPayload,
       {
         headers: {
