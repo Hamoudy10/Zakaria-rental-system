@@ -4,98 +4,184 @@ import api from './api';
 const ChatService = {
   // ---------- USERS ----------
   getAvailableUsers: async () => {
-    const res = await api.get('/chat/available-users');
-    return res.data?.data || [];
+    try {
+      console.log('📡 ChatService: Fetching available users...');
+      const res = await api.get('/chat/available-users');
+      console.log('📡 ChatService: Available users response:', res.data);
+      return res.data?.data || [];
+    } catch (error) {
+      console.error('❌ ChatService: Failed to fetch available users:', error);
+      throw error;
+    }
   },
 
   // ---------- CONVERSATIONS ----------
   getConversations: async () => {
-    const res = await api.get('/chat/conversations');
-    return res.data?.data || [];
+    try {
+      console.log('📡 ChatService: Fetching conversations...');
+      const res = await api.get('/chat/conversations');
+      console.log('📡 ChatService: Conversations response:', res.data);
+      return res.data?.data || [];
+    } catch (error) {
+      console.error('❌ ChatService: Failed to fetch conversations:', error);
+      throw error;
+    }
   },
 
   getRecentChats: async (limit = 50, offset = 0) => {
-    const res = await api.get('/chat/recent-chats', {
-      params: { limit, offset },
-    });
-    return res.data?.data || [];
+    try {
+      console.log('📡 ChatService: Fetching recent chats...');
+      const res = await api.get('/chat/recent-chats', {
+        params: { limit, offset },
+      });
+      console.log('📡 ChatService: Recent chats response:', res.data);
+      return res.data?.data || [];
+    } catch (error) {
+      console.error('❌ ChatService: Failed to fetch recent chats:', error);
+      throw error;
+    }
   },
 
   createConversation: async (participantIds, title = null, type = 'direct') => {
-    const res = await api.post('/chat/conversations', {
-      participantIds,
-      title,
-      conversationType: type,
-    });
-    return res.data?.data;
+    try {
+      console.log('📡 ChatService: Creating conversation...', { participantIds, title, type });
+      const res = await api.post('/chat/conversations', {
+        participantIds,
+        title,
+        conversationType: type,
+      });
+      console.log('📡 ChatService: Create conversation response:', res.data);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to create conversation:', error);
+      throw error;
+    }
   },
 
   // ---------- MESSAGES ----------
   getMessages: async (conversationId, page = 1) => {
-    const res = await api.get(`/chat/conversations/${conversationId}/messages`, {
-      params: { page },
-    });
-    return res.data?.data || [];
+    try {
+      console.log('📡 ChatService: Fetching messages for conversation:', conversationId);
+      const res = await api.get(`/chat/conversations/${conversationId}/messages`, {
+        params: { page },
+      });
+      console.log('📡 ChatService: Messages response:', res.data);
+      return res.data?.data || [];
+    } catch (error) {
+      console.error('❌ ChatService: Failed to fetch messages:', error);
+      throw error;
+    }
   },
 
   sendMessage: async (conversationId, messageText, imageUrl = null) => {
-    const res = await api.post('/chat/messages/send', {
-      conversationId,
-      messageText,
-      imageUrl,
-    });
-    return res.data?.data;
+    try {
+      console.log('📡 ChatService: Sending message...', { conversationId, messageText, imageUrl });
+      const res = await api.post('/chat/messages/send', {
+        conversationId,
+        messageText,
+        imageUrl,
+      });
+      console.log('📡 ChatService: Send message response:', res.data);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to send message:', error);
+      throw error;
+    }
   },
 
   // ---------- READ RECEIPTS ----------
   markAsRead: async (messageIds) => {
-    await api.post('/chat/messages/mark-read', { messageIds });
+    try {
+      console.log('📡 ChatService: Marking messages as read:', messageIds);
+      await api.post('/chat/messages/mark-read', { messageIds });
+    } catch (error) {
+      console.error('❌ ChatService: Failed to mark as read:', error);
+      throw error;
+    }
   },
 
   markAsDelivered: async (messageIds) => {
-    await api.post('/chat/messages/mark-delivered', { messageIds });
+    try {
+      console.log('📡 ChatService: Marking messages as delivered:', messageIds);
+      await api.post('/chat/messages/mark-delivered', { messageIds });
+    } catch (error) {
+      console.error('❌ ChatService: Failed to mark as delivered:', error);
+      throw error;
+    }
   },
 
   // ---------- TYPING INDICATORS ----------
   startTyping: async (conversationId) => {
-    await api.post(`/chat/conversations/${conversationId}/typing/start`);
+    try {
+      await api.post(`/chat/conversations/${conversationId}/typing/start`);
+    } catch (error) {
+      console.error('❌ ChatService: Failed to start typing:', error);
+    }
   },
 
   stopTyping: async (conversationId) => {
-    await api.post(`/chat/conversations/${conversationId}/typing/stop`);
+    try {
+      await api.post(`/chat/conversations/${conversationId}/typing/stop`);
+    } catch (error) {
+      console.error('❌ ChatService: Failed to stop typing:', error);
+    }
   },
 
   // ---------- ONLINE STATUS ----------
   updateOnlineStatus: async (isOnline) => {
-    await api.post('/chat/status/online', { isOnline });
+    try {
+      await api.post('/chat/status/online', { isOnline });
+    } catch (error) {
+      console.error('❌ ChatService: Failed to update online status:', error);
+    }
   },
 
   getOnlineUsers: async () => {
-    const res = await api.get('/chat/status/online-users');
-    return res.data?.data || [];
+    try {
+      const res = await api.get('/chat/status/online-users');
+      return res.data?.data || [];
+    } catch (error) {
+      console.error('❌ ChatService: Failed to get online users:', error);
+      return [];
+    }
   },
 
   // ---------- SEARCH ----------
   searchMessages: async (query, conversationId = null) => {
-    const res = await api.get('/chat/search', {
-      params: { q: query, conversationId },
-    });
-    return res.data?.data || [];
+    try {
+      const res = await api.get('/chat/search', {
+        params: { q: query, conversationId },
+      });
+      return res.data?.data || [];
+    } catch (error) {
+      console.error('❌ ChatService: Search failed:', error);
+      throw error;
+    }
   },
 
   getUnreadCount: async () => {
-    const res = await api.get('/chat/unread-count');
-    return res.data?.data || 0;
+    try {
+      const res = await api.get('/chat/unread-count');
+      return res.data?.data || 0;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to get unread count:', error);
+      return 0;
+    }
   },
 
   // ---------- IMAGE UPLOAD ----------
   uploadChatImage: async (file) => {
-    const formData = new FormData();
-    formData.append('image', file);
-    const res = await api.post('/chat/upload-image', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return res.data?.data?.url;
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const res = await api.post('/chat/upload-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data?.data?.url;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to upload image:', error);
+      throw error;
+    }
   },
 };
 
