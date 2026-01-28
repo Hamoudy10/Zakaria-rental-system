@@ -16,25 +16,53 @@ exports.getAvailableUsers = async (req, res) => {
   try {
     const currentUserId = req.user.id;
 
-    const result = await db.query(
-      `
-      SELECT 
-        id, 
-        first_name, 
-        last_name, 
-        email, 
-        role,
-        profile_image,
-        is_online,
-        last_seen
-      FROM users
-      WHERE id != $1 AND is_active = true
-      ORDER BY 
-        is_online DESC,
-        first_name ASC
-      `,
-      [currentUserId]
-    );
+    // First check if is_online column exists
+    const columnCheck = await db.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'is_online'
+    `);
+
+    const hasOnlineColumn = columnCheck.rows.length > 0;
+
+    let query;
+    if (hasOnlineColumn) {
+      query = `
+        SELECT 
+          id, 
+          first_name, 
+          last_name, 
+          email, 
+          role,
+          profile_image,
+          COALESCE(is_online, false) as is_online,
+          last_seen
+        FROM users
+        WHERE id != $1 AND is_active = true
+        ORDER BY 
+          is_online DESC NULLS LAST,
+          first_name ASC
+      `;
+    } else {
+      query = `
+        SELECT 
+          id, 
+          first_name, 
+          last_name, 
+          email, 
+          role,
+          profile_image,
+          false as is_online,
+          NULL as last_seen
+        FROM users
+        WHERE id != $1 AND is_active = true
+        ORDER BY first_name ASC
+      `;
+    }
+
+    const result = await db.query(query, [currentUserId]);
+
+    console.log(`📋 getAvailableUsers: Found ${result.rows.length} users for user ${currentUserId}`);
 
     res.json({
       success: true,
@@ -183,6 +211,30 @@ exports.getRecentChats = async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 50;
     const offset = parseInt(req.query.offset, 10) || 0;
 
+    // Check if is_online column exists
+    const columnCheck = await db.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'is_online'
+    `);
+    const hasOnlineColumn = columnCheck.rows.length > 0;
+
+    // Check if status column exists in chat_messages
+    const statusCheck = await db.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'chat_messages' AND column_name = 'status'
+    `);
+    const hasStatusColumn = statusCheck.rows.length > 0;
+
+    const participantFields = hasOnlineColumn 
+      ? `'is_online', COALESCE(u.is_online, false), 'last_seen', u.last_seen`
+      : `'is_online', false, 'last_seen', NULL`;
+
+    const unreadCondition = hasStatusColumn
+      ? `AND (cm.status IS NULL OR cm.status != 'read')`
+      : '';
+
     const result = await db.query(
       `
       SELECT
@@ -212,7 +264,7 @@ exports.getRecentChats = async (req, res) => {
           WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
             AND cm.sender_id != $1
-            AND (cm.status IS NULL OR cm.status != 'read')
+            ${unreadCondition}
             AND NOT EXISTS (
               SELECT 1
               FROM chat_message_reads mr
@@ -227,8 +279,7 @@ exports.getRecentChats = async (req, res) => {
               'first_name', u.first_name,
               'last_name', u.last_name,
               'profile_image', u.profile_image,
-              'is_online', u.is_online,
-              'last_seen', u.last_seen
+              ${participantFields}
             )
           )
           FROM chat_participants cp2
@@ -249,6 +300,8 @@ exports.getRecentChats = async (req, res) => {
       `,
       [userId, limit, offset]
     );
+
+    console.log(`📋 getRecentChats: Found ${result.rows.length} conversations for user ${userId}`);
 
     res.json({ success: true, data: result.rows });
   } catch (error) {
