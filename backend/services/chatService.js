@@ -21,11 +21,17 @@ class ChatService {
       console.log(`💬 Chat connection: User ${userName} (${userId}) - Socket ${socket.id}`);
 
       try {
-        // 1. Update user online status
-        await db.query(
-          `UPDATE users SET is_online = true, last_seen = NOW() WHERE id = $1`,
-          [userId]
-        );
+        // Check if columns exist
+        let hasOnline = true;
+        try { await db.query("SELECT is_online FROM users LIMIT 1"); } catch(e) { hasOnline = false; }
+
+        // 1. Update user online status if column exists
+        if (hasOnline) {
+            await db.query(
+            `UPDATE users SET is_online = true, last_seen = NOW() WHERE id = $1`,
+            [userId]
+            );
+        }
 
         // 2. Join user to their personal room
         socket.join(`user_${userId}`);
@@ -53,10 +59,14 @@ class ChatService {
         });
 
         // 5. Send list of online users to the connecting user
-        const onlineUsersResult = await db.query(
-          `SELECT id, first_name, last_name, profile_image FROM users WHERE is_online = true AND is_active = true`
-        );
-        socket.emit('online_users_list', onlineUsersResult.rows);
+        if (hasOnline) {
+            const onlineUsersResult = await db.query(
+            `SELECT id, first_name, last_name, profile_image FROM users WHERE is_online = true AND is_active = true`
+            );
+            socket.emit('online_users_list', onlineUsersResult.rows);
+        } else {
+            socket.emit('online_users_list', []);
+        }
 
         // 6. Emit connection success
         socket.emit('chat_connected', {
@@ -79,16 +89,21 @@ class ChatService {
       // Handle user coming online (explicit)
       socket.on('user_online', async () => {
         try {
-          await db.query(
-            `UPDATE users SET is_online = true, last_seen = NOW() WHERE id = $1`,
-            [userId]
-          );
+          let hasOnline = true;
+          try { await db.query("SELECT is_online FROM users LIMIT 1"); } catch(e) { hasOnline = false; }
+          
+          if (hasOnline) {
+            await db.query(
+                `UPDATE users SET is_online = true, last_seen = NOW() WHERE id = $1`,
+                [userId]
+            );
 
-          this.io.emit('user_online_status', {
-            userId: userId,
-            isOnline: true,
-            lastSeen: null
-          });
+            this.io.emit('user_online_status', {
+                userId: userId,
+                isOnline: true,
+                lastSeen: null
+            });
+          }
         } catch (error) {
           console.error('Error updating online status:', error);
         }
@@ -97,16 +112,21 @@ class ChatService {
       // Handle user going offline (explicit)
       socket.on('user_offline', async () => {
         try {
-          await db.query(
-            `UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1`,
-            [userId]
-          );
+          let hasOnline = true;
+          try { await db.query("SELECT is_online FROM users LIMIT 1"); } catch(e) { hasOnline = false; }
+          
+          if (hasOnline) {
+            await db.query(
+                `UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1`,
+                [userId]
+            );
 
-          this.io.emit('user_online_status', {
-            userId: userId,
-            isOnline: false,
-            lastSeen: new Date()
-          });
+            this.io.emit('user_online_status', {
+                userId: userId,
+                isOnline: false,
+                lastSeen: new Date()
+            });
+          }
         } catch (error) {
           console.error('Error updating offline status:', error);
         }
@@ -132,33 +152,39 @@ class ChatService {
             conversationId: conversationId
           });
 
-          // Mark unread messages as delivered
-          const unreadMessages = await db.query(
-            `
-            SELECT id, sender_id FROM chat_messages 
-            WHERE conversation_id = $1 AND sender_id != $2 AND status = 'sent'
-            `,
-            [conversationId, userId]
-          );
+          // Check if status column exists
+          let hasStatus = true;
+          try { await db.query("SELECT status FROM chat_messages LIMIT 1"); } catch(e) { hasStatus = false; }
 
-          if (unreadMessages.rows.length > 0) {
-            const messageIds = unreadMessages.rows.map(m => m.id);
-            
-            await db.query(
-              `UPDATE chat_messages SET status = 'delivered', delivered_at = NOW() WHERE id = ANY($1::uuid[])`,
-              [messageIds]
+          if (hasStatus) {
+            // Mark unread messages as delivered
+            const unreadMessages = await db.query(
+                `
+                SELECT id, sender_id FROM chat_messages 
+                WHERE conversation_id = $1 AND sender_id != $2 AND status = 'sent'
+                `,
+                [conversationId, userId]
             );
 
-            // Notify senders
-            const senderIds = [...new Set(unreadMessages.rows.map(m => m.sender_id))];
-            senderIds.forEach(senderId => {
-              this.io.to(`user_${senderId}`).emit('message_delivered', {
-                messageIds: messageIds.filter(id => 
-                  unreadMessages.rows.find(m => m.id === id && m.sender_id === senderId)
-                ),
-                conversationId: conversationId
-              });
-            });
+            if (unreadMessages.rows.length > 0) {
+                const messageIds = unreadMessages.rows.map(m => m.id);
+                
+                await db.query(
+                `UPDATE chat_messages SET status = 'delivered', delivered_at = NOW() WHERE id = ANY($1::uuid[])`,
+                [messageIds]
+                );
+
+                // Notify senders
+                const senderIds = [...new Set(unreadMessages.rows.map(m => m.sender_id))];
+                senderIds.forEach(senderId => {
+                this.io.to(`user_${senderId}`).emit('message_delivered', {
+                    messageIds: messageIds.filter(id => 
+                    unreadMessages.rows.find(m => m.id === id && m.sender_id === senderId)
+                    ),
+                    conversationId: conversationId
+                });
+                });
+            }
           }
 
         } catch (error) {
@@ -176,49 +202,54 @@ class ChatService {
         try {
           if (!messageIds || messageIds.length === 0) return;
 
-          // Update status in database
-          const updateResult = await db.query(
-            `
-            UPDATE chat_messages 
-            SET status = 'read', read_at = NOW()
-            WHERE id = ANY($1::uuid[]) AND status != 'read'
-            RETURNING id, sender_id
-            `,
-            [messageIds]
-          );
+          let hasStatus = true;
+          try { await db.query("SELECT status FROM chat_messages LIMIT 1"); } catch(e) { hasStatus = false; }
 
-          // Insert read receipts
-          await db.query(
-            `
-            INSERT INTO chat_message_reads (message_id, user_id)
-            SELECT unnest($1::uuid[]), $2
-            ON CONFLICT DO NOTHING
-            `,
-            [messageIds, readBy]
-          );
+          if (hasStatus) {
+            // Update status in database
+            const updateResult = await db.query(
+                `
+                UPDATE chat_messages 
+                SET status = 'read', read_at = NOW()
+                WHERE id = ANY($1::uuid[]) AND status != 'read'
+                RETURNING id, sender_id
+                `,
+                [messageIds]
+            );
 
-          // Notify senders
-          if (updateResult.rows.length > 0) {
-            const senderIds = [...new Set(updateResult.rows.map(m => m.sender_id))];
-            
-            senderIds.forEach(senderId => {
-              if (senderId !== readBy) {
-                this.io.to(`user_${senderId}`).emit('messages_read_receipt', {
-                  messageIds: updateResult.rows
-                    .filter(m => m.sender_id === senderId)
-                    .map(m => m.id),
-                  conversationId: conversationId,
-                  readBy: readBy
+            // Insert read receipts
+            await db.query(
+                `
+                INSERT INTO chat_message_reads (message_id, user_id)
+                SELECT unnest($1::uuid[]), $2
+                ON CONFLICT DO NOTHING
+                `,
+                [messageIds, readBy]
+            );
+
+            // Notify senders
+            if (updateResult.rows.length > 0) {
+                const senderIds = [...new Set(updateResult.rows.map(m => m.sender_id))];
+                
+                senderIds.forEach(senderId => {
+                if (senderId !== readBy) {
+                    this.io.to(`user_${senderId}`).emit('messages_read_receipt', {
+                    messageIds: updateResult.rows
+                        .filter(m => m.sender_id === senderId)
+                        .map(m => m.id),
+                    conversationId: conversationId,
+                    readBy: readBy
+                    });
+                }
                 });
-              }
-            });
 
-            // Also broadcast to conversation room
-            socket.to(`conversation_${conversationId}`).emit('messages_read_receipt', {
-              messageIds: messageIds,
-              conversationId: conversationId,
-              readBy: readBy
-            });
+                // Also broadcast to conversation room
+                socket.to(`conversation_${conversationId}`).emit('messages_read_receipt', {
+                messageIds: messageIds,
+                conversationId: conversationId,
+                readBy: readBy
+                });
+            }
           }
 
         } catch (error) {
@@ -264,17 +295,22 @@ class ChatService {
 
           // Only mark offline if no other sockets
           if (socketsInRoom.length === 0) {
-            await db.query(
-              `UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1`,
-              [userId]
-            );
+            let hasOnline = true;
+            try { await db.query("SELECT is_online FROM users LIMIT 1"); } catch(e) { hasOnline = false; }
+            
+            if (hasOnline) {
+                await db.query(
+                `UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1`,
+                [userId]
+                );
 
-            // Broadcast offline status
-            this.io.emit('user_online_status', {
-              userId: userId,
-              isOnline: false,
-              lastSeen: new Date()
-            });
+                // Broadcast offline status
+                this.io.emit('user_online_status', {
+                userId: userId,
+                isOnline: false,
+                lastSeen: new Date()
+                });
+            }
           }
         } catch (error) {
           console.error('Error handling disconnect:', error);
