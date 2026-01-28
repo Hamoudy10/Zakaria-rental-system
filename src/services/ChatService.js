@@ -14,7 +14,6 @@ const ChatService = {
     return res.data?.data || [];
   },
 
-  // ✅ FIXED: Correct endpoint for recent chats
   getRecentChats: async (limit = 50, offset = 0) => {
     const res = await api.get('/chat/recent-chats', {
       params: { limit, offset },
@@ -32,7 +31,6 @@ const ChatService = {
   },
 
   // ---------- MESSAGES ----------
-  // ✅ FIXED: Correct endpoint for getting messages
   getMessages: async (conversationId, page = 1) => {
     const res = await api.get(`/chat/conversations/${conversationId}/messages`, {
       params: { page },
@@ -40,26 +38,25 @@ const ChatService = {
     return res.data?.data || [];
   },
 
-  sendMessage: async (conversationId, messageText) => {
+  sendMessage: async (conversationId, messageText, imageUrl = null) => {
     const res = await api.post('/chat/messages/send', {
       conversationId,
       messageText,
+      imageUrl,
     });
     return res.data?.data;
   },
 
-  // ---------- OPTIONAL FEATURES ----------
-  searchMessages: async (query, conversationId = null) => {
-    const res = await api.get('/chat/search', {
-      params: { q: query, conversationId },
-    });
-    return res.data?.data || [];
-  },
-
+  // ---------- READ RECEIPTS ----------
   markAsRead: async (messageIds) => {
     await api.post('/chat/messages/mark-read', { messageIds });
   },
 
+  markAsDelivered: async (messageIds) => {
+    await api.post('/chat/messages/mark-delivered', { messageIds });
+  },
+
+  // ---------- TYPING INDICATORS ----------
   startTyping: async (conversationId) => {
     await api.post(`/chat/conversations/${conversationId}/typing/start`);
   },
@@ -68,11 +65,38 @@ const ChatService = {
     await api.post(`/chat/conversations/${conversationId}/typing/stop`);
   },
 
+  // ---------- ONLINE STATUS ----------
+  updateOnlineStatus: async (isOnline) => {
+    await api.post('/chat/status/online', { isOnline });
+  },
+
+  getOnlineUsers: async () => {
+    const res = await api.get('/chat/status/online-users');
+    return res.data?.data || [];
+  },
+
+  // ---------- SEARCH ----------
+  searchMessages: async (query, conversationId = null) => {
+    const res = await api.get('/chat/search', {
+      params: { q: query, conversationId },
+    });
+    return res.data?.data || [];
+  },
+
   getUnreadCount: async () => {
     const res = await api.get('/chat/unread-count');
     return res.data?.data || 0;
   },
+
+  // ---------- IMAGE UPLOAD ----------
+  uploadChatImage: async (file) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    const res = await api.post('/chat/upload-image', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data?.data?.url;
+  },
 };
 
-// ✅ FIX: Add default export
 export default ChatService;
