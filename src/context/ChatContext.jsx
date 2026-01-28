@@ -128,7 +128,7 @@ const chatReducer = (state, action) => {
       };
 
     case 'SET_TYPING_USER':
-      const { oderId: tConvId, userId: typingUserId, isTyping, userName } = action.payload;
+      const { conversationId: tConvId, userId: typingUserId, isTyping, userName } = action.payload;
       const currentTyping = state.typingUsers[tConvId] || {};
       if (isTyping) {
         return {
@@ -400,9 +400,14 @@ export const ChatProvider = ({ children }) => {
   // Load available users
   const loadAvailableUsers = useCallback(async () => {
     if (!user) return [];
-    const users = await ChatService.getAvailableUsers();
-    setAvailableUsers(users);
-    return users;
+    try {
+      const users = await ChatService.getAvailableUsers();
+      setAvailableUsers(users);
+      return users;
+    } catch (err) {
+      console.error("Failed to load users:", err);
+      return [];
+    }
   }, [user]);
 
   // Typing indicator
@@ -606,7 +611,7 @@ export const ChatProvider = ({ children }) => {
       if (userId !== user.id) {
         dispatch({ 
           type: 'SET_TYPING_USER', 
-          payload: { oderId: conversationId, userId, isTyping: true, userName } 
+          payload: { conversationId, userId, isTyping: true, userName } 
         });
       }
     });
@@ -614,7 +619,7 @@ export const ChatProvider = ({ children }) => {
     socket.on('user_stopped_typing', ({ userId, conversationId }) => {
       dispatch({ 
         type: 'SET_TYPING_USER', 
-        payload: { oderId: conversationId, userId, isTyping: false } 
+        payload: { conversationId, userId, isTyping: false } 
       });
     });
 

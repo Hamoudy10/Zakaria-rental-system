@@ -1,4 +1,3 @@
-// backend/controllers/chatController.js
 const db = require('../config/database');
 let ioInstance = null;
 
@@ -9,56 +8,59 @@ const setIOInstance = (io) => {
 };
 
 /**
- * GET /chat/available-users
- * Returns all users except the authenticated user with online status
+ * Helper to safely select user columns that might not exist yet
  */
-exports.getAvailableUsers = async (req, res) => {
+const getUserColumns = async () => {
   try {
-    const currentUserId = req.user.id;
-
-    // First check if is_online column exists
-    const columnCheck = await db.query(`
+    // Check if is_online column exists
+    const check = await db.query(`
       SELECT column_name 
       FROM information_schema.columns 
       WHERE table_name = 'users' AND column_name = 'is_online'
     `);
+    const hasOnline = check.rows.length > 0;
+    
+    // Check if last_seen column exists
+    const checkSeen = await db.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'last_seen'
+    `);
+    const hasLastSeen = checkSeen.rows.length > 0;
 
-    const hasOnlineColumn = columnCheck.rows.length > 0;
+    return {
+      is_online: hasOnline ? 'is_online' : 'false as is_online',
+      last_seen: hasLastSeen ? 'last_seen' : 'NULL as last_seen'
+    };
+  } catch (e) {
+    return { is_online: 'false as is_online', last_seen: 'NULL as last_seen' };
+  }
+};
 
-    let query;
-    if (hasOnlineColumn) {
-      query = `
-        SELECT 
-          id, 
-          first_name, 
-          last_name, 
-          email, 
-          role,
-          profile_image,
-          COALESCE(is_online, false) as is_online,
-          last_seen
-        FROM users
-        WHERE id != $1 AND is_active = true
-        ORDER BY 
-          is_online DESC NULLS LAST,
-          first_name ASC
-      `;
-    } else {
-      query = `
-        SELECT 
-          id, 
-          first_name, 
-          last_name, 
-          email, 
-          role,
-          profile_image,
-          false as is_online,
-          NULL as last_seen
-        FROM users
-        WHERE id != $1 AND is_active = true
-        ORDER BY first_name ASC
-      `;
-    }
+/**
+ * GET /chat/available-users
+ * Returns all users except the authenticated user
+ */
+exports.getAvailableUsers = async (req, res) => {
+  try {
+    const currentUserId = req.user.id;
+    const cols = await getUserColumns();
+
+    // NOTE: Removed role filtering so everyone can chat with everyone
+    const query = `
+      SELECT 
+        id, 
+        first_name, 
+        last_name, 
+        email, 
+        role,
+        profile_image,
+        ${cols.is_online},
+        ${cols.last_seen}
+      FROM users
+      WHERE id != $1 AND is_active = true
+      ORDER BY first_name ASC
+    `;
 
     const result = await db.query(query, [currentUserId]);
 
@@ -102,23 +104,7 @@ exports.createConversation = async (req, res) => {
       // Check if conversation already exists
       const existing = await client.query(
         `
-        SELECT c.id, c.conversation_type, c.title, c.created_at,
-          (
-            SELECT json_agg(
-              json_build_object(
-                'id', u.id,
-                'first_name', u.first_name,
-                'last_name', u.last_name,
-                'profile_image', u.profile_image,
-                'is_online', u.is_online,
-                'last_seen', u.last_seen
-              )
-            )
-            FROM chat_participants cp2
-            JOIN users u ON u.id = cp2.user_id
-            WHERE cp2.conversation_id = c.id
-              AND cp2.is_active = true
-          ) AS participants
+        SELECT c.id, c.conversation_type, c.title, c.created_at
         FROM chat_conversations c
         JOIN chat_participants p1 ON c.id = p1.conversation_id AND p1.is_active = true
         JOIN chat_participants p2 ON c.id = p2.conversation_id AND p2.is_active = true
@@ -131,9 +117,23 @@ exports.createConversation = async (req, res) => {
       );
 
       if (existing.rows.length > 0) {
+        // Fetch full details and return
+        const conversation = existing.rows[0];
+        
+        // Fetch participants
+        const cols = await getUserColumns();
+        const parts = await client.query(`
+          SELECT 
+            u.id, u.first_name, u.last_name, u.profile_image,
+            ${cols.is_online}, ${cols.last_seen}
+          FROM chat_participants cp
+          JOIN users u ON u.id = cp.user_id
+          WHERE cp.conversation_id = $1 AND cp.is_active = true
+        `, [conversation.id]);
+
         return res.json({
           success: true,
-          data: existing.rows[0]
+          data: { ...conversation, participants: parts.rows }
         });
       }
     }
@@ -156,15 +156,16 @@ exports.createConversation = async (req, res) => {
     const conversation = conversationResult.rows[0];
     const allParticipants = [creatorId, ...participantIds];
 
-    await client.query(
-      `
-      INSERT INTO chat_participants (conversation_id, user_id)
-      SELECT $1, unnest($2::uuid[])
-      `,
-      [conversation.id, allParticipants]
-    );
+    // Bulk insert participants
+    for (const pid of allParticipants) {
+      await client.query(
+        `INSERT INTO chat_participants (conversation_id, user_id) VALUES ($1, $2)`,
+        [conversation.id, pid]
+      );
+    }
 
     // Get participants with details
+    const cols = await getUserColumns();
     const participantsResult = await client.query(
       `
       SELECT 
@@ -172,8 +173,8 @@ exports.createConversation = async (req, res) => {
         u.first_name, 
         u.last_name, 
         u.profile_image,
-        u.is_online,
-        u.last_seen
+        ${cols.is_online},
+        ${cols.last_seen}
       FROM chat_participants cp
       JOIN users u ON u.id = cp.user_id
       WHERE cp.conversation_id = $1 AND cp.is_active = true
@@ -202,41 +203,28 @@ exports.createConversation = async (req, res) => {
 };
 
 /**
- * GET /chat/recent-chats?limit=50&offset=0
- * Returns recent conversations for the user with last message info
+ * GET /chat/recent-chats
  */
 exports.getRecentChats = async (req, res) => {
   try {
     const userId = req.user.id;
     const limit = parseInt(req.query.limit, 10) || 50;
     const offset = parseInt(req.query.offset, 10) || 0;
-
-    // Check if is_online column exists
-    const columnCheck = await db.query(`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'users' AND column_name = 'is_online'
-    `);
-    const hasOnlineColumn = columnCheck.rows.length > 0;
+    const cols = await getUserColumns();
 
     // Check if status column exists in chat_messages
-    const statusCheck = await db.query(`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'chat_messages' AND column_name = 'status'
-    `);
-    const hasStatusColumn = statusCheck.rows.length > 0;
-
-    const participantFields = hasOnlineColumn 
-      ? `'is_online', COALESCE(u.is_online, false), 'last_seen', u.last_seen`
-      : `'is_online', false, 'last_seen', NULL`;
+    let hasStatusColumn = true;
+    try {
+        await db.query("SELECT status FROM chat_messages LIMIT 1");
+    } catch (e) {
+        hasStatusColumn = false;
+    }
 
     const unreadCondition = hasStatusColumn
       ? `AND (cm.status IS NULL OR cm.status != 'read')`
       : '';
 
-    const result = await db.query(
-      `
+    const query = `
       SELECT
         c.id,
         c.conversation_type,
@@ -279,7 +267,8 @@ exports.getRecentChats = async (req, res) => {
               'first_name', u.first_name,
               'last_name', u.last_name,
               'profile_image', u.profile_image,
-              ${participantFields}
+              'is_online', ${cols.is_online},
+              'last_seen', ${cols.last_seen}
             )
           )
           FROM chat_participants cp2
@@ -297,12 +286,9 @@ exports.getRecentChats = async (req, res) => {
       )
       ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
       LIMIT $2 OFFSET $3
-      `,
-      [userId, limit, offset]
-    );
+    `;
 
-    console.log(`📋 getRecentChats: Found ${result.rows.length} conversations for user ${userId}`);
-
+    const result = await db.query(query, [userId, limit, offset]);
     res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error('getRecentChats error:', error);
@@ -311,66 +297,10 @@ exports.getRecentChats = async (req, res) => {
 };
 
 /**
- * GET /chat/conversations
- * Returns all conversations for the user
+ * GET /chat/conversations (Legacy, kept for compat)
  */
 exports.getUserConversations = async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const result = await db.query(
-      `
-      SELECT
-        c.id,
-        c.conversation_type,
-        c.title,
-        c.created_at,
-        (
-          SELECT cm.message_text
-          FROM chat_messages cm
-          WHERE cm.conversation_id = c.id
-            AND cm.is_deleted = false
-          ORDER BY cm.created_at DESC
-          LIMIT 1
-        ) AS last_message,
-        (
-          SELECT cm.created_at
-          FROM chat_messages cm
-          WHERE cm.conversation_id = c.id
-            AND cm.is_deleted = false
-          ORDER BY cm.created_at DESC
-          LIMIT 1
-        ) AS last_message_at,
-        (
-          SELECT json_agg(
-            json_build_object(
-              'id', u.id,
-              'first_name', u.first_name,
-              'last_name', u.last_name,
-              'profile_image', u.profile_image,
-              'is_online', u.is_online
-            )
-          )
-          FROM chat_participants cp2
-          JOIN users u ON u.id = cp2.user_id
-          WHERE cp2.conversation_id = c.id
-            AND cp2.is_active = true
-        ) AS participants
-      FROM chat_conversations c
-      JOIN chat_participants cp_self
-        ON c.id = cp_self.conversation_id
-       AND cp_self.user_id = $1
-       AND cp_self.is_active = true
-      ORDER BY last_message_at DESC NULLS LAST
-      `,
-      [userId]
-    );
-
-    res.json({ success: true, data: result.rows });
-  } catch (error) {
-    console.error('getUserConversations error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load conversations' });
-  }
+  exports.getRecentChats(req, res);
 };
 
 /**
@@ -394,6 +324,17 @@ exports.getConversationMessages = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not a participant' });
     }
 
+    // Check columns existence for message query
+    let hasFileUrl = true;
+    let hasStatus = true;
+    try { await db.query("SELECT file_url FROM chat_messages LIMIT 1"); } catch(e) { hasFileUrl = false; }
+    try { await db.query("SELECT status FROM chat_messages LIMIT 1"); } catch(e) { hasStatus = false; }
+
+    const fileUrlCol = hasFileUrl ? 'cm.file_url' : 'NULL';
+    const statusCol = hasStatus ? 'cm.status' : "'sent'";
+    const deliveredAtCol = hasStatus ? 'cm.delivered_at' : 'NULL';
+    const readAtCol = hasStatus ? 'cm.read_at' : 'NULL';
+
     const result = await db.query(
       `
       SELECT
@@ -402,10 +343,10 @@ exports.getConversationMessages = async (req, res) => {
         cm.sender_id,
         cm.created_at,
         cm.message_type,
-        cm.file_url AS image_url,
-        cm.status,
-        cm.delivered_at,
-        cm.read_at,
+        ${fileUrlCol} AS image_url,
+        ${statusCol} as status,
+        ${deliveredAtCol} as delivered_at,
+        ${readAtCol} as read_at,
         u.first_name,
         u.last_name,
         u.profile_image,
@@ -425,25 +366,27 @@ exports.getConversationMessages = async (req, res) => {
       [conversationId, limit, offset]
     );
 
-    // Update message status for received messages
-    const unreadMessageIds = result.rows
-      .filter(m => m.sender_id !== userId && m.status !== 'read')
-      .map(m => m.id);
+    // Update message status for received messages (if status column exists)
+    if (hasStatus) {
+        const unreadMessageIds = result.rows
+        .filter(m => m.sender_id !== userId && m.status !== 'read')
+        .map(m => m.id);
 
-    if (unreadMessageIds.length > 0) {
-      // Mark as delivered if not already
-      await db.query(
-        `
-        UPDATE chat_messages 
-        SET status = CASE 
-          WHEN status = 'sent' THEN 'delivered' 
-          ELSE status 
-        END,
-        delivered_at = COALESCE(delivered_at, NOW())
-        WHERE id = ANY($1::uuid[]) AND sender_id != $2
-        `,
-        [unreadMessageIds, userId]
-      );
+        if (unreadMessageIds.length > 0) {
+        // Mark as delivered if not already
+        await db.query(
+            `
+            UPDATE chat_messages 
+            SET status = CASE 
+            WHEN status = 'sent' THEN 'delivered' 
+            ELSE status 
+            END,
+            delivered_at = COALESCE(delivered_at, NOW())
+            WHERE id = ANY($1::uuid[]) AND sender_id != $2
+            `,
+            [unreadMessageIds, userId]
+        );
+        }
     }
 
     res.json({
@@ -458,7 +401,6 @@ exports.getConversationMessages = async (req, res) => {
 
 /**
  * POST /chat/messages/send
- * Send a new message with proper socket emission
  */
 exports.sendMessage = async (req, res) => {
   try {
@@ -479,31 +421,42 @@ exports.sendMessage = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not a participant' });
     }
 
+    // Check columns
+    let hasFileUrl = true;
+    let hasStatus = true;
+    try { await db.query("SELECT file_url FROM chat_messages LIMIT 1"); } catch(e) { hasFileUrl = false; }
+    try { await db.query("SELECT status FROM chat_messages LIMIT 1"); } catch(e) { hasStatus = false; }
+
     // Determine message type
     const messageType = imageUrl ? 'image' : 'text';
 
+    // Build Insert Query Dynamically
+    let insertQuery = `INSERT INTO chat_messages (conversation_id, sender_id, message_text, message_type`;
+    let values = [conversationId, senderId, messageText || '', messageType];
+    let placeholders = ['$1', '$2', '$3', '$4'];
+    let valIndex = 5;
+
+    if (hasFileUrl) {
+        insertQuery += `, file_url`;
+        values.push(imageUrl);
+        placeholders.push(`$${valIndex++}`);
+    }
+    if (hasStatus) {
+        insertQuery += `, status`;
+        values.push('sent');
+        placeholders.push(`$${valIndex++}`);
+    }
+
+    insertQuery += `) VALUES (${placeholders.join(', ')}) RETURNING *, 
+        (SELECT first_name FROM users WHERE id = $2) as first_name,
+        (SELECT last_name FROM users WHERE id = $2) as last_name,
+        (SELECT profile_image FROM users WHERE id = $2) as profile_image`;
+
     // Save message to database
-    const result = await db.query(
-      `
-      INSERT INTO chat_messages (
-        conversation_id, 
-        sender_id, 
-        message_text, 
-        message_type,
-        file_url,
-        status
-      )
-      VALUES ($1, $2, $3, $4, $5, 'sent')
-      RETURNING *,
-      (SELECT first_name FROM users WHERE id = $2) as first_name,
-      (SELECT last_name FROM users WHERE id = $2) as last_name,
-      (SELECT profile_image FROM users WHERE id = $2) as profile_image
-      `,
-      [conversationId, senderId, messageText || '', messageType, imageUrl]
-    );
+    const result = await db.query(insertQuery, values);
 
     const message = result.rows[0];
-    message.image_url = message.file_url; // Map for frontend
+    if (hasFileUrl) message.image_url = message.file_url; // Map for frontend
 
     // Get all participants
     const participantsResult = await db.query(
@@ -529,19 +482,21 @@ exports.sendMessage = async (req, res) => {
             message: message
           });
 
-          // Mark as delivered if user is online
-          const socketsInRoom = await ioInstance.in(userRoom).fetchSockets();
-          if (socketsInRoom.length > 0) {
-            await db.query(
-              `UPDATE chat_messages SET status = 'delivered', delivered_at = NOW() WHERE id = $1`,
-              [message.id]
-            );
+          // Mark as delivered if user is online and status column exists
+          if (hasStatus) {
+            const socketsInRoom = await ioInstance.in(userRoom).fetchSockets();
+            if (socketsInRoom.length > 0) {
+                await db.query(
+                `UPDATE chat_messages SET status = 'delivered', delivered_at = NOW() WHERE id = $1`,
+                [message.id]
+                );
 
-            // Notify sender of delivery
-            ioInstance.to(`user_${senderId}`).emit('message_delivered', {
-              messageId: message.id,
-              conversationId: conversationId
-            });
+                // Notify sender of delivery
+                ioInstance.to(`user_${senderId}`).emit('message_delivered', {
+                messageId: message.id,
+                conversationId: conversationId
+                });
+            }
           }
         }
       }
@@ -579,48 +534,50 @@ exports.markAsRead = async (req, res) => {
       [messageIds, userId]
     );
 
-    // Update message status
-    const updateResult = await db.query(
-      `
-      UPDATE chat_messages 
-      SET status = 'read', read_at = NOW()
-      WHERE id = ANY($1::uuid[]) 
-        AND sender_id != $2
-        AND status != 'read'
-      RETURNING id, conversation_id, sender_id
-      `,
-      [messageIds, userId]
-    );
+    // Update message status if column exists
+    let hasStatus = true;
+    try { await db.query("SELECT status FROM chat_messages LIMIT 1"); } catch(e) { hasStatus = false; }
 
-    // Notify senders via socket
-    if (ioInstance && updateResult.rows.length > 0) {
-      // Group by sender and conversation
-      const byConversation = {};
-      updateResult.rows.forEach(row => {
-        if (!byConversation[row.conversation_id]) {
-          byConversation[row.conversation_id] = {
-            senderId: row.sender_id,
-            messageIds: []
-          };
+    if (hasStatus) {
+        const updateResult = await db.query(
+        `
+        UPDATE chat_messages 
+        SET status = 'read', read_at = NOW()
+        WHERE id = ANY($1::uuid[]) 
+            AND sender_id != $2
+            AND status != 'read'
+        RETURNING id, conversation_id, sender_id
+        `,
+        [messageIds, userId]
+        );
+
+        // Notify senders via socket
+        if (ioInstance && updateResult.rows.length > 0) {
+            const byConversation = {};
+            updateResult.rows.forEach(row => {
+                if (!byConversation[row.conversation_id]) {
+                byConversation[row.conversation_id] = {
+                    senderId: row.sender_id,
+                    messageIds: []
+                };
+                }
+                byConversation[row.conversation_id].messageIds.push(row.id);
+            });
+
+            for (const [convId, data] of Object.entries(byConversation)) {
+                ioInstance.to(`conversation_${convId}`).emit('messages_read_receipt', {
+                messageIds: data.messageIds,
+                conversationId: convId,
+                readBy: userId
+                });
+                
+                ioInstance.to(`user_${data.senderId}`).emit('messages_read_receipt', {
+                messageIds: data.messageIds,
+                conversationId: convId,
+                readBy: userId
+                });
+            }
         }
-        byConversation[row.conversation_id].messageIds.push(row.id);
-      });
-
-      for (const [convId, data] of Object.entries(byConversation)) {
-        // Emit to conversation room
-        ioInstance.to(`conversation_${convId}`).emit('messages_read_receipt', {
-          messageIds: data.messageIds,
-          conversationId: convId,
-          readBy: userId
-        });
-
-        // Emit to sender's personal room
-        ioInstance.to(`user_${data.senderId}`).emit('messages_read_receipt', {
-          messageIds: data.messageIds,
-          conversationId: convId,
-          readBy: userId
-        });
-      }
     }
 
     res.json({ success: true });
@@ -642,26 +599,30 @@ exports.markAsDelivered = async (req, res) => {
       return res.json({ success: true });
     }
 
-    const updateResult = await db.query(
-      `
-      UPDATE chat_messages 
-      SET status = 'delivered', delivered_at = NOW()
-      WHERE id = ANY($1::uuid[]) 
-        AND sender_id != $2
-        AND status = 'sent'
-      RETURNING id, conversation_id, sender_id
-      `,
-      [messageIds, userId]
-    );
+    let hasStatus = true;
+    try { await db.query("SELECT status FROM chat_messages LIMIT 1"); } catch(e) { hasStatus = false; }
 
-    // Notify senders via socket
-    if (ioInstance && updateResult.rows.length > 0) {
-      updateResult.rows.forEach(row => {
-        ioInstance.to(`user_${row.sender_id}`).emit('message_delivered', {
-          messageId: row.id,
-          conversationId: row.conversation_id
+    if (hasStatus) {
+        const updateResult = await db.query(
+        `
+        UPDATE chat_messages 
+        SET status = 'delivered', delivered_at = NOW()
+        WHERE id = ANY($1::uuid[]) 
+            AND sender_id != $2
+            AND status = 'sent'
+        RETURNING id, conversation_id, sender_id
+        `,
+        [messageIds, userId]
+        );
+
+        if (ioInstance && updateResult.rows.length > 0) {
+        updateResult.rows.forEach(row => {
+            ioInstance.to(`user_${row.sender_id}`).emit('message_delivered', {
+            messageId: row.id,
+            conversationId: row.conversation_id
+            });
         });
-      });
+        }
     }
 
     res.json({ success: true });
@@ -680,22 +641,27 @@ exports.updateOnlineStatus = async (req, res) => {
     const userId = req.user.id;
     const { isOnline } = req.body;
 
-    await db.query(
-      `
-      UPDATE users 
-      SET is_online = $1, last_seen = CASE WHEN $1 = false THEN NOW() ELSE last_seen END
-      WHERE id = $2
-      `,
-      [isOnline, userId]
-    );
+    // Check if column exists
+    let hasOnline = true;
+    try { await db.query("SELECT is_online FROM users LIMIT 1"); } catch(e) { hasOnline = false; }
 
-    // Broadcast to all users
-    if (ioInstance) {
-      ioInstance.emit('user_online_status', {
-        userId,
-        isOnline,
-        lastSeen: isOnline ? null : new Date()
-      });
+    if (hasOnline) {
+        await db.query(
+        `
+        UPDATE users 
+        SET is_online = $1, last_seen = CASE WHEN $1 = false THEN NOW() ELSE last_seen END
+        WHERE id = $2
+        `,
+        [isOnline, userId]
+        );
+
+        if (ioInstance) {
+        ioInstance.emit('user_online_status', {
+            userId,
+            isOnline,
+            lastSeen: isOnline ? null : new Date()
+        });
+        }
     }
 
     res.json({ success: true });
@@ -711,15 +677,21 @@ exports.updateOnlineStatus = async (req, res) => {
  */
 exports.getOnlineUsers = async (req, res) => {
   try {
-    const result = await db.query(
-      `
-      SELECT id, first_name, last_name, profile_image, last_seen
-      FROM users
-      WHERE is_online = true AND is_active = true
-      `
-    );
-
-    res.json({ success: true, data: result.rows });
+    let hasOnline = true;
+    try { await db.query("SELECT is_online FROM users LIMIT 1"); } catch(e) { hasOnline = false; }
+    
+    if (hasOnline) {
+        const result = await db.query(
+        `
+        SELECT id, first_name, last_name, profile_image, last_seen
+        FROM users
+        WHERE is_online = true AND is_active = true
+        `
+        );
+        res.json({ success: true, data: result.rows });
+    } else {
+        res.json({ success: true, data: [] });
+    }
   } catch (error) {
     console.error('getOnlineUsers error:', error);
     res.status(500).json({ success: false, message: 'Failed to get online users' });
@@ -732,31 +704,35 @@ exports.getOnlineUsers = async (req, res) => {
 exports.getUnreadChats = async (req, res) => {
   try {
     const userId = req.user.id;
+    
+    // Check status column
+    let hasStatus = true;
+    try { await db.query("SELECT status FROM chat_messages LIMIT 1"); } catch(e) { hasStatus = false; }
 
-    const result = await db.query(
-      `
-      SELECT COUNT(*)::int AS unread_count
-      FROM chat_messages cm
-      JOIN chat_participants cp ON cm.conversation_id = cp.conversation_id
-      WHERE cp.user_id = $1
-        AND cp.is_active = true
-        AND cm.sender_id != $1
-        AND cm.is_deleted = false
-        AND (cm.status IS NULL OR cm.status != 'read')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM chat_message_reads r
-          WHERE r.message_id = cm.id
-            AND r.user_id = $1
-        )
-      `,
-      [userId]
-    );
-
-    res.json({
-      success: true,
-      data: Number(result.rows[0].unread_count)
-    });
+    if (hasStatus) {
+        const result = await db.query(
+        `
+        SELECT COUNT(*)::int AS unread_count
+        FROM chat_messages cm
+        JOIN chat_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = $1
+            AND cp.is_active = true
+            AND cm.sender_id != $1
+            AND cm.is_deleted = false
+            AND (cm.status IS NULL OR cm.status != 'read')
+            AND NOT EXISTS (
+            SELECT 1
+            FROM chat_message_reads r
+            WHERE r.message_id = cm.id
+                AND r.user_id = $1
+            )
+        `,
+        [userId]
+        );
+        res.json({ success: true, data: Number(result.rows[0].unread_count) });
+    } else {
+        res.json({ success: true, data: 0 });
+    }
   } catch (error) {
     console.error('getUnreadChats error:', error);
     res.status(500).json({ success: false, message: 'Failed to get unread count' });
@@ -835,5 +811,4 @@ exports.uploadChatImage = async (req, res) => {
   }
 };
 
-// Export functions
 exports.setIOInstance = setIOInstance;
