@@ -1,7 +1,8 @@
+// backend/controllers/chatController.js
 const db = require('../config/database');
 let ioInstance = null;
 
-// ✅ Function to set io instance from service
+// Set io instance from service
 const setIOInstance = (io) => {
   ioInstance = io;
   console.log('✅ Chat controller received io instance');
@@ -9,7 +10,7 @@ const setIOInstance = (io) => {
 
 /**
  * GET /chat/available-users
- * Returns all users except the authenticated user
+ * Returns all users except the authenticated user with online status
  */
 exports.getAvailableUsers = async (req, res) => {
   try {
@@ -17,10 +18,20 @@ exports.getAvailableUsers = async (req, res) => {
 
     const result = await db.query(
       `
-      SELECT id, first_name, last_name, email
+      SELECT 
+        id, 
+        first_name, 
+        last_name, 
+        email, 
+        role,
+        profile_image,
+        is_online,
+        last_seen
       FROM users
-      WHERE id != $1
-      ORDER BY first_name ASC
+      WHERE id != $1 AND is_active = true
+      ORDER BY 
+        is_online DESC,
+        first_name ASC
       `,
       [currentUserId]
     );
@@ -49,7 +60,7 @@ exports.createConversation = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
 
-    // DIRECT CHAT — must be exactly 2 users
+    // DIRECT CHAT — check for existing
     if (conversationType === 'direct') {
       if (participantIds.length !== 1) {
         return res.status(400).json({
@@ -63,13 +74,30 @@ exports.createConversation = async (req, res) => {
       // Check if conversation already exists
       const existing = await client.query(
         `
-        SELECT c.id
+        SELECT c.id, c.conversation_type, c.title, c.created_at,
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', u.id,
+                'first_name', u.first_name,
+                'last_name', u.last_name,
+                'profile_image', u.profile_image,
+                'is_online', u.is_online,
+                'last_seen', u.last_seen
+              )
+            )
+            FROM chat_participants cp2
+            JOIN users u ON u.id = cp2.user_id
+            WHERE cp2.conversation_id = c.id
+              AND cp2.is_active = true
+          ) AS participants
         FROM chat_conversations c
-        JOIN chat_participants p1 ON c.id = p1.conversation_id
-        JOIN chat_participants p2 ON c.id = p2.conversation_id
+        JOIN chat_participants p1 ON c.id = p1.conversation_id AND p1.is_active = true
+        JOIN chat_participants p2 ON c.id = p2.conversation_id AND p2.is_active = true
         WHERE c.conversation_type = 'direct'
           AND p1.user_id = $1
           AND p2.user_id = $2
+        LIMIT 1
         `,
         [creatorId, otherUserId]
       );
@@ -108,11 +136,33 @@ exports.createConversation = async (req, res) => {
       [conversation.id, allParticipants]
     );
 
+    // Get participants with details
+    const participantsResult = await client.query(
+      `
+      SELECT 
+        u.id, 
+        u.first_name, 
+        u.last_name, 
+        u.profile_image,
+        u.is_online,
+        u.last_seen
+      FROM chat_participants cp
+      JOIN users u ON u.id = cp.user_id
+      WHERE cp.conversation_id = $1 AND cp.is_active = true
+      `,
+      [conversation.id]
+    );
+
     await client.query('COMMIT');
+
+    const result = {
+      ...conversation,
+      participants: participantsResult.rows
+    };
 
     res.json({
       success: true,
-      data: conversation
+      data: result
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -157,11 +207,12 @@ exports.getRecentChats = async (req, res) => {
           LIMIT 1
         ) AS last_message_at,
         (
-          SELECT COUNT(*)
+          SELECT COUNT(*)::int
           FROM chat_messages cm
           WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
             AND cm.sender_id != $1
+            AND (cm.status IS NULL OR cm.status != 'read')
             AND NOT EXISTS (
               SELECT 1
               FROM chat_message_reads mr
@@ -174,13 +225,15 @@ exports.getRecentChats = async (req, res) => {
             json_build_object(
               'id', u.id,
               'first_name', u.first_name,
-              'last_name', u.last_name
+              'last_name', u.last_name,
+              'profile_image', u.profile_image,
+              'is_online', u.is_online,
+              'last_seen', u.last_seen
             )
           )
           FROM chat_participants cp2
           JOIN users u ON u.id = cp2.user_id
           WHERE cp2.conversation_id = c.id
-            AND cp2.user_id != $1
             AND cp2.is_active = true
         ) AS participants
       FROM chat_conversations c
@@ -191,7 +244,7 @@ exports.getRecentChats = async (req, res) => {
           AND cp.user_id = $1
           AND cp.is_active = true
       )
-      ORDER BY last_message_at DESC NULLS LAST
+      ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
       LIMIT $2 OFFSET $3
       `,
       [userId, limit, offset]
@@ -217,10 +270,7 @@ exports.getUserConversations = async (req, res) => {
       SELECT
         c.id,
         c.conversation_type,
-        CASE
-          WHEN c.conversation_type = 'group' THEN c.title
-          ELSE CONCAT(u.first_name, ' ', u.last_name)
-        END AS display_name,
+        c.title,
         c.created_at,
         (
           SELECT cm.message_text
@@ -237,17 +287,27 @@ exports.getUserConversations = async (req, res) => {
             AND cm.is_deleted = false
           ORDER BY cm.created_at DESC
           LIMIT 1
-        ) AS last_message_at
+        ) AS last_message_at,
+        (
+          SELECT json_agg(
+            json_build_object(
+              'id', u.id,
+              'first_name', u.first_name,
+              'last_name', u.last_name,
+              'profile_image', u.profile_image,
+              'is_online', u.is_online
+            )
+          )
+          FROM chat_participants cp2
+          JOIN users u ON u.id = cp2.user_id
+          WHERE cp2.conversation_id = c.id
+            AND cp2.is_active = true
+        ) AS participants
       FROM chat_conversations c
       JOIN chat_participants cp_self
         ON c.id = cp_self.conversation_id
        AND cp_self.user_id = $1
        AND cp_self.is_active = true
-      LEFT JOIN chat_participants cp_other
-        ON c.id = cp_other.conversation_id
-       AND cp_other.user_id != $1
-      LEFT JOIN users u
-        ON u.id = cp_other.user_id
       ORDER BY last_message_at DESC NULLS LAST
       `,
       [userId]
@@ -267,6 +327,19 @@ exports.getConversationMessages = async (req, res) => {
   try {
     const userId = req.user.id;
     const { conversationId } = req.params;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = 50;
+    const offset = (page - 1) * limit;
+
+    // Verify user is participant
+    const participantCheck = await db.query(
+      `SELECT 1 FROM chat_participants WHERE conversation_id = $1 AND user_id = $2 AND is_active = true`,
+      [conversationId, userId]
+    );
+
+    if (participantCheck.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Not a participant' });
+    }
 
     const result = await db.query(
       `
@@ -275,22 +348,50 @@ exports.getConversationMessages = async (req, res) => {
         cm.message_text,
         cm.sender_id,
         cm.created_at,
+        cm.message_type,
+        cm.file_url AS image_url,
+        cm.status,
+        cm.delivered_at,
+        cm.read_at,
         u.first_name,
         u.last_name,
+        u.profile_image,
         EXISTS (
           SELECT 1
           FROM chat_message_reads r
           WHERE r.message_id = cm.id
-            AND r.user_id = $1
+            AND r.user_id != cm.sender_id
         ) AS is_read
       FROM chat_messages cm
       JOIN users u ON u.id = cm.sender_id
-      WHERE cm.conversation_id = $2
+      WHERE cm.conversation_id = $1
         AND cm.is_deleted = false
       ORDER BY cm.created_at ASC
+      LIMIT $2 OFFSET $3
       `,
-      [userId, conversationId]
+      [conversationId, limit, offset]
     );
+
+    // Update message status for received messages
+    const unreadMessageIds = result.rows
+      .filter(m => m.sender_id !== userId && m.status !== 'read')
+      .map(m => m.id);
+
+    if (unreadMessageIds.length > 0) {
+      // Mark as delivered if not already
+      await db.query(
+        `
+        UPDATE chat_messages 
+        SET status = CASE 
+          WHEN status = 'sent' THEN 'delivered' 
+          ELSE status 
+        END,
+        delivered_at = COALESCE(delivered_at, NOW())
+        WHERE id = ANY($1::uuid[]) AND sender_id != $2
+        `,
+        [unreadMessageIds, userId]
+      );
+    }
 
     res.json({
       success: true,
@@ -309,98 +410,96 @@ exports.getConversationMessages = async (req, res) => {
 exports.sendMessage = async (req, res) => {
   try {
     const senderId = req.user.id;
-    const { conversationId, messageText } = req.body;
+    const { conversationId, messageText, imageUrl } = req.body;
 
-    console.log('========================================');
-    console.log('📤 SEND MESSAGE REQUEST');
-    console.log(`Sender ID: ${senderId}`);
-    console.log(`Conversation ID: ${conversationId}`);
-    console.log(`Message: ${messageText}`);
-    console.log('========================================');
-
-    if (!conversationId || !messageText) {
+    if (!conversationId || (!messageText && !imageUrl)) {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
+
+    // Verify sender is participant
+    const participantCheck = await db.query(
+      `SELECT 1 FROM chat_participants WHERE conversation_id = $1 AND user_id = $2 AND is_active = true`,
+      [conversationId, senderId]
+    );
+
+    if (participantCheck.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Not a participant' });
+    }
+
+    // Determine message type
+    const messageType = imageUrl ? 'image' : 'text';
 
     // Save message to database
     const result = await db.query(
       `
-      INSERT INTO chat_messages (conversation_id, sender_id, message_text)
-      VALUES ($1, $2, $3)
+      INSERT INTO chat_messages (
+        conversation_id, 
+        sender_id, 
+        message_text, 
+        message_type,
+        file_url,
+        status
+      )
+      VALUES ($1, $2, $3, $4, $5, 'sent')
       RETURNING *,
       (SELECT first_name FROM users WHERE id = $2) as first_name,
       (SELECT last_name FROM users WHERE id = $2) as last_name,
-      (SELECT role FROM users WHERE id = $2) as role
+      (SELECT profile_image FROM users WHERE id = $2) as profile_image
       `,
-      [conversationId, senderId, messageText]
+      [conversationId, senderId, messageText || '', messageType, imageUrl]
     );
 
     const message = result.rows[0];
-    console.log(`✅ Message saved to database, ID: ${message.id}`);
+    message.image_url = message.file_url; // Map for frontend
 
-    // Get all participants for logging
+    // Get all participants
     const participantsResult = await db.query(
       'SELECT user_id FROM chat_participants WHERE conversation_id = $1 AND is_active = true',
       [conversationId]
     );
 
-    console.log(`👥 Conversation has ${participantsResult.rows.length} participants:`,
-      participantsResult.rows.map(p => p.user_id));
-
-    // ✅ Emit via Socket.IO if instance is available
+    // Emit via Socket.IO
     if (ioInstance) {
-      console.log('📡 Socket.IO instance available, emitting messages...');
-
-      // ✅ SINGLE EMISSION: Broadcast to conversation room ONLY
       const roomName = `conversation_${conversationId}`;
       ioInstance.to(roomName).emit('new_message', {
         message: message,
         conversationId: conversationId
       });
-      console.log(`📡 Emitted to room: ${roomName}`);
 
-      // Get sockets in the room for verification
-      const socketsInRoom = await ioInstance.in(roomName).fetchSockets();
-      console.log(`🔍 Sockets in room ${roomName}: ${socketsInRoom.length}`);
-      socketsInRoom.forEach(s => {
-        console.log(`  - Socket ${s.id}, User ${s.userId}`);
-      });
-
-      // ✅ Keep notification emission for user rooms (optional)
+      // Send notifications to other participants
       for (const participant of participantsResult.rows) {
-        const userRoom = `user_${participant.user_id}`;
-
-        // Send notification only to OTHER participants (not the sender)
         if (participant.user_id !== senderId) {
+          const userRoom = `user_${participant.user_id}`;
           ioInstance.to(userRoom).emit('chat_notification', {
             type: 'new_message',
             conversationId: conversationId,
-            message: message,
-            unreadCount: 1
+            message: message
           });
-          console.log(`🔔 Sent notification to ${userRoom}`);
+
+          // Mark as delivered if user is online
+          const socketsInRoom = await ioInstance.in(userRoom).fetchSockets();
+          if (socketsInRoom.length > 0) {
+            await db.query(
+              `UPDATE chat_messages SET status = 'delivered', delivered_at = NOW() WHERE id = $1`,
+              [message.id]
+            );
+
+            // Notify sender of delivery
+            ioInstance.to(`user_${senderId}`).emit('message_delivered', {
+              messageId: message.id,
+              conversationId: conversationId
+            });
+          }
         }
-
-        // Verify socket in user room
-        const userSockets = await ioInstance.in(userRoom).fetchSockets();
-        console.log(`🔍 Sockets in ${userRoom}: ${userSockets.length}`);
       }
-
-      console.log('✅ All socket emissions complete');
-    } else {
-      console.error('❌ Socket.IO instance NOT available!');
     }
-
-    console.log('========================================');
-    console.log('✅ SEND MESSAGE COMPLETE');
-    console.log('========================================');
 
     res.json({
       success: true,
       data: message
     });
   } catch (error) {
-    console.error('❌ sendMessage error:', error);
+    console.error('sendMessage error:', error);
     res.status(500).json({ success: false, message: 'Failed to send message' });
   }
 };
@@ -417,6 +516,7 @@ exports.markAsRead = async (req, res) => {
       return res.json({ success: true });
     }
 
+    // Insert read receipts
     await db.query(
       `
       INSERT INTO chat_message_reads (message_id, user_id)
@@ -426,10 +526,150 @@ exports.markAsRead = async (req, res) => {
       [messageIds, userId]
     );
 
+    // Update message status
+    const updateResult = await db.query(
+      `
+      UPDATE chat_messages 
+      SET status = 'read', read_at = NOW()
+      WHERE id = ANY($1::uuid[]) 
+        AND sender_id != $2
+        AND status != 'read'
+      RETURNING id, conversation_id, sender_id
+      `,
+      [messageIds, userId]
+    );
+
+    // Notify senders via socket
+    if (ioInstance && updateResult.rows.length > 0) {
+      // Group by sender and conversation
+      const byConversation = {};
+      updateResult.rows.forEach(row => {
+        if (!byConversation[row.conversation_id]) {
+          byConversation[row.conversation_id] = {
+            senderId: row.sender_id,
+            messageIds: []
+          };
+        }
+        byConversation[row.conversation_id].messageIds.push(row.id);
+      });
+
+      for (const [convId, data] of Object.entries(byConversation)) {
+        // Emit to conversation room
+        ioInstance.to(`conversation_${convId}`).emit('messages_read_receipt', {
+          messageIds: data.messageIds,
+          conversationId: convId,
+          readBy: userId
+        });
+
+        // Emit to sender's personal room
+        ioInstance.to(`user_${data.senderId}`).emit('messages_read_receipt', {
+          messageIds: data.messageIds,
+          conversationId: convId,
+          readBy: userId
+        });
+      }
+    }
+
     res.json({ success: true });
   } catch (error) {
     console.error('markAsRead error:', error);
     res.status(500).json({ success: false, message: 'Failed to mark messages as read' });
+  }
+};
+
+/**
+ * POST /chat/messages/mark-delivered
+ */
+exports.markAsDelivered = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { messageIds } = req.body;
+
+    if (!Array.isArray(messageIds) || messageIds.length === 0) {
+      return res.json({ success: true });
+    }
+
+    const updateResult = await db.query(
+      `
+      UPDATE chat_messages 
+      SET status = 'delivered', delivered_at = NOW()
+      WHERE id = ANY($1::uuid[]) 
+        AND sender_id != $2
+        AND status = 'sent'
+      RETURNING id, conversation_id, sender_id
+      `,
+      [messageIds, userId]
+    );
+
+    // Notify senders via socket
+    if (ioInstance && updateResult.rows.length > 0) {
+      updateResult.rows.forEach(row => {
+        ioInstance.to(`user_${row.sender_id}`).emit('message_delivered', {
+          messageId: row.id,
+          conversationId: row.conversation_id
+        });
+      });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('markAsDelivered error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark messages as delivered' });
+  }
+};
+
+/**
+ * POST /chat/status/online
+ * Update user online status
+ */
+exports.updateOnlineStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { isOnline } = req.body;
+
+    await db.query(
+      `
+      UPDATE users 
+      SET is_online = $1, last_seen = CASE WHEN $1 = false THEN NOW() ELSE last_seen END
+      WHERE id = $2
+      `,
+      [isOnline, userId]
+    );
+
+    // Broadcast to all users
+    if (ioInstance) {
+      ioInstance.emit('user_online_status', {
+        userId,
+        isOnline,
+        lastSeen: isOnline ? null : new Date()
+      });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('updateOnlineStatus error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update status' });
+  }
+};
+
+/**
+ * GET /chat/status/online-users
+ * Get list of online users
+ */
+exports.getOnlineUsers = async (req, res) => {
+  try {
+    const result = await db.query(
+      `
+      SELECT id, first_name, last_name, profile_image, last_seen
+      FROM users
+      WHERE is_online = true AND is_active = true
+      `
+    );
+
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('getOnlineUsers error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get online users' });
   }
 };
 
@@ -442,12 +682,14 @@ exports.getUnreadChats = async (req, res) => {
 
     const result = await db.query(
       `
-      SELECT COUNT(*) AS unread_count
+      SELECT COUNT(*)::int AS unread_count
       FROM chat_messages cm
       JOIN chat_participants cp ON cm.conversation_id = cp.conversation_id
       WHERE cp.user_id = $1
+        AND cp.is_active = true
         AND cm.sender_id != $1
         AND cm.is_deleted = false
+        AND (cm.status IS NULL OR cm.status != 'read')
         AND NOT EXISTS (
           SELECT 1
           FROM chat_message_reads r
@@ -474,23 +716,38 @@ exports.getUnreadChats = async (req, res) => {
 exports.searchMessages = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { q } = req.query;
+    const { q, conversationId } = req.query;
 
     if (!q) {
       return res.json({ success: true, data: [] });
     }
 
-    const result = await db.query(
-      `
-      SELECT cm.*
+    let query = `
+      SELECT 
+        cm.*,
+        u.first_name,
+        u.last_name,
+        c.title as conversation_title
       FROM chat_messages cm
       JOIN chat_participants cp ON cm.conversation_id = cp.conversation_id
+      JOIN users u ON cm.sender_id = u.id
+      JOIN chat_conversations c ON cm.conversation_id = c.id
       WHERE cp.user_id = $1
+        AND cp.is_active = true
+        AND cm.is_deleted = false
         AND cm.message_text ILIKE '%' || $2 || '%'
-      ORDER BY cm.created_at DESC
-      `,
-      [userId, q]
-    );
+    `;
+
+    const params = [userId, q];
+
+    if (conversationId) {
+      query += ` AND cm.conversation_id = $3`;
+      params.push(conversationId);
+    }
+
+    query += ` ORDER BY cm.created_at DESC LIMIT 50`;
+
+    const result = await db.query(query, params);
 
     res.json({
       success: true,
@@ -502,5 +759,28 @@ exports.searchMessages = async (req, res) => {
   }
 };
 
-// ✅ Export the setIOInstance function
+/**
+ * POST /chat/upload-image
+ * Upload chat image to Cloudinary
+ */
+exports.uploadChatImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No image provided' });
+    }
+
+    // The file.path contains the Cloudinary URL when using multer-storage-cloudinary
+    const imageUrl = req.file.path;
+
+    res.json({
+      success: true,
+      data: { url: imageUrl }
+    });
+  } catch (error) {
+    console.error('uploadChatImage error:', error);
+    res.status(500).json({ success: false, message: 'Failed to upload image' });
+  }
+};
+
+// Export functions
 exports.setIOInstance = setIOInstance;
