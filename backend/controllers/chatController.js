@@ -230,8 +230,6 @@ const getRecentChats = async (req, res) => {
   try {
     const userId = req.user.id;
     const userEmail = req.user.email;
-    const limit = parseInt(req.query.limit, 10) || 50;
-    const offset = parseInt(req.query.offset, 10) || 0;
 
     console.log('========================================');
     console.log('📋 getRecentChats called');
@@ -296,9 +294,8 @@ const getRecentChats = async (req, res) => {
         AND my_participation.user_id = $1 
         AND my_participation.is_active = true
       ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
-      LIMIT $2 OFFSET $3
       `,
-      [userId, limit, offset]
+      [userId]
     );
 
     console.log('========================================');
@@ -388,16 +385,19 @@ const getUserConversations = async (req, res) => {
 
 /**
  * GET /chat/conversations/:conversationId/messages
+ * Returns ALL messages for a conversation (NO LIMIT)
+ * Messages are ordered from oldest to newest for proper display
  */
 const getConversationMessages = async (req, res) => {
   try {
     const userId = req.user.id;
     const { conversationId } = req.params;
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = 50;
-    const offset = (page - 1) * limit;
 
-    console.log('📋 getConversationMessages called:', { conversationId, userId, page });
+    console.log('========================================');
+    console.log('📋 getConversationMessages called');
+    console.log('👤 User ID:', userId);
+    console.log('💬 Conversation ID:', conversationId);
+    console.log('========================================');
 
     // Verify user is participant
     const participantCheck = await db.query(
@@ -406,9 +406,12 @@ const getConversationMessages = async (req, res) => {
     );
 
     if (participantCheck.rows.length === 0) {
+      console.log('❌ User', userId, 'is NOT a participant of conversation', conversationId);
       return res.status(403).json({ success: false, message: 'Not a participant' });
     }
 
+    // Get ALL messages - NO LIMIT
+    // Order by created_at ASC so oldest messages come first (for proper chat display)
     const result = await db.query(
       `
       SELECT
@@ -433,12 +436,13 @@ const getConversationMessages = async (req, res) => {
       WHERE cm.conversation_id = $1
         AND cm.is_deleted = false
       ORDER BY cm.created_at ASC
-      LIMIT $2 OFFSET $3
       `,
-      [conversationId, limit, offset]
+      [conversationId]
     );
 
-    console.log('📋 Found messages:', result.rows.length);
+    console.log('📋 Found', result.rows.length, 'messages for conversation', conversationId);
+    console.log('========================================');
+
     res.json({
       success: true,
       data: result.rows
@@ -485,9 +489,10 @@ const sendMessage = async (req, res) => {
         sender_id, 
         message_text, 
         message_type,
-        file_url
+        file_url,
+        status
       )
-      VALUES ($1, $2, $3, $4, $5)
+      VALUES ($1, $2, $3, $4, $5, 'sent')
       RETURNING *,
       (SELECT first_name FROM users WHERE id = $2) as first_name,
       (SELECT last_name FROM users WHERE id = $2) as last_name,
@@ -498,7 +503,6 @@ const sendMessage = async (req, res) => {
 
     const message = result.rows[0];
     message.image_url = message.file_url;
-    message.status = 'sent';
 
     console.log('📋 Message saved:', message.id);
 
@@ -564,6 +568,17 @@ const markAsRead = async (req, res) => {
       [messageIds, userId]
     );
 
+    // Update message status to 'read'
+    await db.query(
+      `
+      UPDATE chat_messages 
+      SET status = 'read'
+      WHERE id = ANY($1::uuid[])
+        AND sender_id != $2
+      `,
+      [messageIds, userId]
+    );
+
     res.json({ success: true });
   } catch (error) {
     console.error('❌ markAsRead error:', error);
@@ -582,6 +597,18 @@ const markAsDelivered = async (req, res) => {
     if (!Array.isArray(messageIds) || messageIds.length === 0) {
       return res.json({ success: true });
     }
+
+    // Update message status to 'delivered' only if currently 'sent'
+    await db.query(
+      `
+      UPDATE chat_messages 
+      SET status = 'delivered'
+      WHERE id = ANY($1::uuid[])
+        AND sender_id != $2
+        AND status = 'sent'
+      `,
+      [messageIds, userId]
+    );
 
     res.json({ success: true });
   } catch (error) {
