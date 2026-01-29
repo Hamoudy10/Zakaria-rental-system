@@ -15,7 +15,7 @@ const Login = () => {
   
   // Company info state
   const [companyInfo, setCompanyInfo] = useState({
-    name: 'Zakaria Housing Agency Limited',
+    name: 'Zakaria House Agency Limited',
     logo: null,
     loading: true
   });
