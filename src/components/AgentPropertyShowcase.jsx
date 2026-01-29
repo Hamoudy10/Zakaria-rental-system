@@ -1,6 +1,393 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { propertyAPI } from '../services/api';
 
+// ============================================
+// PROPERTY CARD COMPONENT WITH IMAGE SLIDESHOW
+// ============================================
+const PropertyCard = ({ property, onSelect }) => {
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const images = property.images || [];
+  const hasImages = images.length > 0;
+
+  // Auto-rotate images every 3 seconds
+  useEffect(() => {
+    if (!hasImages || images.length <= 1) return;
+    
+    const interval = setInterval(() => {
+      setCurrentImageIndex((prev) => (prev + 1) % images.length);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [hasImages, images.length]);
+
+  // Calculate unit statistics
+  const totalUnits = property.total_units || 0;
+  const availableUnits = property.available_units || 0;
+  const occupiedUnits = totalUnits - availableUnits;
+  const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
+
+  // Get rent range from units if available
+  const rentRange = useMemo(() => {
+    if (!property.units || property.units.length === 0) {
+      return { min: property.min_rent || null, max: property.max_rent || null };
+    }
+    const rents = property.units.map(u => u.rent_amount).filter(r => r > 0);
+    if (rents.length === 0) return { min: null, max: null };
+    return {
+      min: Math.min(...rents),
+      max: Math.max(...rents)
+    };
+  }, [property.units, property.min_rent, property.max_rent]);
+
+  // Get unit type breakdown
+  const unitTypeBreakdown = useMemo(() => {
+    if (!property.units || property.units.length === 0) {
+      // Try to use unit_types if available from API
+      if (property.unit_types) {
+        return Object.entries(property.unit_types).map(([type, count]) => ({
+          type: type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+          count
+        })).slice(0, 3);
+      }
+      return [];
+    }
+    
+    const typeCount = {};
+    property.units.forEach(unit => {
+      const type = unit.unit_type || 'unknown';
+      typeCount[type] = (typeCount[type] || 0) + 1;
+    });
+
+    return Object.entries(typeCount).map(([type, count]) => ({
+      type: type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+      count
+    })).slice(0, 3);
+  }, [property.units, property.unit_types]);
+
+  // Determine property type based on units
+  const propertyType = useMemo(() => {
+    if (property.property_type) return property.property_type;
+    
+    if (!property.units || property.units.length === 0) return 'Mixed';
+    
+    const types = [...new Set(property.units.map(u => u.unit_type))];
+    if (types.length === 1) {
+      return types[0].split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+    if (types.every(t => ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom'].includes(t))) {
+      return 'Residential';
+    }
+    if (types.every(t => ['shop', 'hall'].includes(t))) {
+      return 'Commercial';
+    }
+    return 'Mixed Use';
+  }, [property.units, property.property_type]);
+
+  // Property type colors
+  const getPropertyTypeColor = (type) => {
+    const colors = {
+      'Residential': 'bg-blue-500',
+      'Commercial': 'bg-amber-500',
+      'Mixed Use': 'bg-purple-500',
+      'Mixed': 'bg-slate-500',
+      'Bedsitter': 'bg-teal-500',
+      'Studio': 'bg-cyan-500',
+      'One Bedroom': 'bg-indigo-500',
+      'Two Bedroom': 'bg-violet-500',
+      'Three Bedroom': 'bg-fuchsia-500',
+      'Shop': 'bg-orange-500',
+      'Hall': 'bg-rose-500',
+    };
+    return colors[type] || 'bg-gray-500';
+  };
+
+  // Placeholder pattern for properties without images
+  const PlaceholderPattern = () => (
+    <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-slate-700 to-slate-900">
+      {/* Animated pattern */}
+      <div className="absolute inset-0 opacity-20">
+        <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <pattern id={`pattern-${property.id}`} x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+              <path d="M0 20 L20 0 L40 20 L20 40 Z" fill="none" stroke="currentColor" strokeWidth="1" className="text-white"/>
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill={`url(#pattern-${property.id})`} />
+        </svg>
+      </div>
+      
+      {/* Building illustration */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="relative">
+          <svg className="w-24 h-24 text-white/20" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/>
+          </svg>
+          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-16 h-1 bg-white/10 rounded-full blur-sm"></div>
+        </div>
+      </div>
+
+      {/* Floating elements */}
+      <div className="absolute top-4 left-4 w-2 h-2 bg-blue-400/30 rounded-full animate-pulse"></div>
+      <div className="absolute top-8 right-6 w-3 h-3 bg-purple-400/20 rounded-full animate-pulse" style={{animationDelay: '1s'}}></div>
+      <div className="absolute bottom-12 left-8 w-2 h-2 bg-teal-400/25 rounded-full animate-pulse" style={{animationDelay: '0.5s'}}></div>
+    </div>
+  );
+
+  // Circular progress ring for occupancy
+  const OccupancyRing = ({ percentage }) => {
+    const radius = 18;
+    const circumference = 2 * Math.PI * radius;
+    const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+    return (
+      <div className="relative w-12 h-12">
+        <svg className="w-12 h-12 transform -rotate-90">
+          {/* Background circle */}
+          <circle
+            cx="24"
+            cy="24"
+            r={radius}
+            fill="none"
+            stroke="rgba(0,0,0,0.1)"
+            strokeWidth="4"
+          />
+          {/* Progress circle */}
+          <circle
+            cx="24"
+            cy="24"
+            r={radius}
+            fill="none"
+            stroke={percentage >= 80 ? '#ef4444' : percentage >= 50 ? '#f59e0b' : '#22c55e'}
+            strokeWidth="4"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            className="transition-all duration-1000 ease-out"
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-xs font-bold text-gray-700">{percentage}%</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div 
+      onClick={() => onSelect(property.id)}
+      className="group relative bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-500 cursor-pointer overflow-hidden border border-gray-100 hover:-translate-y-2"
+    >
+      {/* Image Slideshow Background */}
+      <div className="relative h-48 sm:h-56 overflow-hidden">
+        {hasImages ? (
+          <>
+            {images.map((img, idx) => (
+              <div
+                key={img.id || idx}
+                className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
+                  idx === currentImageIndex ? 'opacity-100' : 'opacity-0'
+                }`}
+              >
+                <img 
+                  src={img.image_url} 
+                  alt={`${property.name} - ${idx + 1}`}
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                />
+              </div>
+            ))}
+            
+            {/* Image indicators */}
+            {images.length > 1 && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
+                {images.map((_, idx) => (
+                  <div
+                    key={idx}
+                    className={`h-1.5 rounded-full transition-all duration-300 ${
+                      idx === currentImageIndex 
+                        ? 'w-6 bg-white' 
+                        : 'w-1.5 bg-white/50'
+                    }`}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <PlaceholderPattern />
+        )}
+
+        {/* Gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+
+        {/* Property type badge */}
+        <div className="absolute top-3 left-3 z-10">
+          <span className={`${getPropertyTypeColor(propertyType)} text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur-sm flex items-center gap-1.5`}>
+            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/>
+            </svg>
+            {propertyType}
+          </span>
+        </div>
+
+        {/* Image count badge */}
+        {hasImages && (
+          <div className="absolute top-3 right-3 z-10">
+            <span className="bg-black/50 backdrop-blur-sm text-white text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              {images.length}
+            </span>
+          </div>
+        )}
+
+        {/* Property name on image */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 z-10">
+          <h3 className="text-xl sm:text-2xl font-bold text-white drop-shadow-lg group-hover:text-blue-200 transition-colors">
+            {property.name}
+          </h3>
+          <div className="flex items-center text-white/90 text-sm mt-1">
+            <svg className="w-4 h-4 mr-1.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span className="truncate">{property.address}, {property.town}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Glassmorphism Card Body */}
+      <div className="relative bg-white/80 backdrop-blur-xl p-5">
+        {/* Rent Range */}
+        {(rentRange.min || rentRange.max) && (
+          <div className="mb-4 pb-4 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center shadow-sm">
+                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 font-medium">Rent Range</p>
+                  <p className="text-sm font-bold text-gray-900">
+                    KES {rentRange.min?.toLocaleString()}
+                    {rentRange.min !== rentRange.max && rentRange.max && (
+                      <span className="text-gray-400"> - {rentRange.max?.toLocaleString()}</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-gray-400">/month</span>
+            </div>
+          </div>
+        )}
+
+        {/* Unit Stats with Progress Bar */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+              {/* Occupancy Ring */}
+              <OccupancyRing percentage={occupancyRate} />
+              
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Occupancy</p>
+                <p className="text-sm font-bold text-gray-900">{occupiedUnits} of {totalUnits} units</p>
+              </div>
+            </div>
+            
+            {/* Available badge */}
+            <div className="text-right">
+              <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
+                availableUnits > 0 
+                  ? 'bg-green-100 text-green-700' 
+                  : 'bg-red-100 text-red-700'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${availableUnits > 0 ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
+                {availableUnits} Available
+              </div>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div 
+              className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                occupancyRate >= 80 ? 'bg-gradient-to-r from-red-400 to-red-500' :
+                occupancyRate >= 50 ? 'bg-gradient-to-r from-amber-400 to-amber-500' :
+                'bg-gradient-to-r from-green-400 to-green-500'
+              }`}
+              style={{ width: `${occupancyRate}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Unit Type Breakdown */}
+        {unitTypeBreakdown.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {unitTypeBreakdown.map((item, idx) => (
+              <span 
+                key={idx}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs font-medium text-gray-700 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/>
+                </svg>
+                {item.count} {item.type}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Quick Stats Icons */}
+        <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+          <div className="flex items-center gap-4">
+            {/* Total Units */}
+            <div className="flex items-center gap-1.5 text-gray-600">
+              <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center">
+                <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+              </div>
+              <span className="text-sm font-semibold">{totalUnits}</span>
+            </div>
+
+            {/* Available */}
+            <div className="flex items-center gap-1.5 text-gray-600">
+              <div className="w-7 h-7 rounded-lg bg-green-50 flex items-center justify-center">
+                <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <span className="text-sm font-semibold">{availableUnits}</span>
+            </div>
+
+            {/* Occupied */}
+            <div className="flex items-center gap-1.5 text-gray-600">
+              <div className="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center">
+                <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <span className="text-sm font-semibold">{occupiedUnits}</span>
+            </div>
+          </div>
+
+          {/* View Details Arrow */}
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
+            <svg className="w-5 h-5 text-white transform group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
 const AgentPropertyShowcase = () => {
   const [viewMode, setViewMode] = useState('search'); // 'search' or 'detail'
   const [properties, setProperties] = useState([]);
@@ -195,41 +582,21 @@ const AgentPropertyShowcase = () => {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
           </div>
         ) : (
-          <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in">
+          <div className="w-full max-w-7xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 animate-fade-in pb-12">
             {filteredProperties.map(property => (
-              <div 
+              <PropertyCard 
                 key={property.id}
-                onClick={() => handleSelectProperty(property.id)}
-                className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 cursor-pointer border border-gray-100 overflow-hidden group hover:-translate-y-1"
-              >
-                <div className="h-3 bg-gradient-to-r from-blue-500 to-purple-600"></div>
-                <div className="p-6">
-                  <h3 className="text-xl font-bold text-gray-900 group-hover:text-blue-600 transition-colors mb-2">
-                    {property.name}
-                  </h3>
-                  <div className="flex items-start text-gray-500 text-sm mb-4">
-                    <svg className="w-5 h-5 mr-2 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    <span>{property.address}, {property.town}</span>
-                  </div>
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
-                    <div className="flex flex-col">
-                      <span className="text-xs text-gray-400 uppercase font-bold tracking-wider">Available</span>
-                      <span className="text-lg font-bold text-green-600">{property.available_units}</span>
-                    </div>
-                    <div className="flex flex-col text-right">
-                      <span className="text-xs text-gray-400 uppercase font-bold tracking-wider">Total Units</span>
-                      <span className="text-lg font-bold text-gray-700">{property.total_units}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                property={property}
+                onSelect={handleSelectProperty}
+              />
             ))}
             {filteredProperties.length === 0 && !loading && (
               <div className="col-span-full text-center py-12 text-gray-500">
-                No properties found matching your search.
+                <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+                <p className="text-lg font-medium">No properties found</p>
+                <p className="text-sm text-gray-400 mt-1">Try adjusting your search criteria</p>
               </div>
             )}
           </div>
@@ -386,8 +753,6 @@ const AgentPropertyShowcase = () => {
             {filteredUnits.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {filteredUnits.map(unit => {
-                  // This part needs to call an API to get unit images if not preloaded
-                  // For now assuming we handle fetching on click
                   const isAvailable = !unit.is_occupied;
                   
                   return (
@@ -428,7 +793,6 @@ const AgentPropertyShowcase = () => {
                       <div className="p-4 bg-gray-50 border-t border-gray-100 mt-auto">
                         <button 
                           onClick={async () => {
-                            // On click, fetch unit images and open gallery
                             try {
                               const res = await propertyAPI.getUnitImages(unit.id);
                               if (res.data.success && res.data.data.length > 0) {
