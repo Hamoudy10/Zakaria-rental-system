@@ -1,6 +1,6 @@
 // ============================================
-// FINAL FIXED complaints.js ROUTES FILE
-// Replace your existing backend/routes/complaints.js with this
+// FIXED complaints.js ROUTES FILE
+// With UUID casting for PostgreSQL compatibility
 // ============================================
 
 const express = require('express');
@@ -12,7 +12,7 @@ const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 const protect = authMiddleware;
 const authorize = requireRole;
 
-console.log('✅ Complaints routes loaded - v3 FINAL with PATCH support');
+console.log('✅ Complaints routes loaded - v4 with UUID casting fix');
 
 // ============================================
 // STATIC ROUTES FIRST (no :id parameter)
@@ -29,7 +29,7 @@ router.get('/stats/overview', protect, authorize(['admin', 'agent']), async (req
         SELECT pu.id FROM property_units pu
         WHERE pu.property_id IN (
           SELECT property_id FROM agent_property_assignments 
-          WHERE agent_id = $1 AND is_active = true
+          WHERE agent_id = $1::uuid AND is_active = true
         )
       )`;
       queryParams.push(req.user.id);
@@ -104,12 +104,13 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
     // Role-based filtering
     if (req.user.role === 'tenant') {
       paramCount++;
-      query += ` AND c.tenant_id = $${paramCount}`;
+      query += ` AND c.tenant_id = $${paramCount}::uuid`;
       queryParams.push(req.user.id);
     } else if (req.user.role === 'agent') {
+      paramCount++;
       query += ` AND pu.property_id IN (
         SELECT property_id FROM agent_property_assignments 
-        WHERE agent_id = $${++paramCount} AND is_active = true
+        WHERE agent_id = $${paramCount}::uuid AND is_active = true
       )`;
       queryParams.push(req.user.id);
     }
@@ -134,13 +135,13 @@ router.get('/', protect, authorize(['admin', 'agent', 'tenant']), async (req, re
 
     if (assigned_agent) {
       paramCount++;
-      query += ` AND c.assigned_agent = $${paramCount}`;
+      query += ` AND c.assigned_agent = $${paramCount}::uuid`;
       queryParams.push(assigned_agent);
     }
 
     if (tenant_id && (req.user.role === 'admin' || req.user.role === 'agent')) {
       paramCount++;
-      query += ` AND c.tenant_id = $${paramCount}`;
+      query += ` AND c.tenant_id = $${paramCount}::uuid`;
       queryParams.push(tenant_id);
     }
 
@@ -240,7 +241,7 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
     const complaintResult = await client.query(
       `INSERT INTO complaints (
         tenant_id, unit_id, title, description, category, categories, priority, status
-      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'open')
+      ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7, 'open')
       RETURNING *`,
       [
         finalTenantId,
@@ -256,7 +257,7 @@ router.post('/', protect, authorize(['tenant', 'admin', 'agent']), async (req, r
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)`,
+      ) VALUES ($1::uuid, $2::uuid, $3, $4)`,
       [
         complaintResult.rows[0].id,
         req.user.id,
@@ -307,7 +308,7 @@ router.get('/:id/steps', protect, async (req, res) => {
       FROM complaint_steps cs
       LEFT JOIN users u ON cs.completed_by = u.id
       LEFT JOIN users creator ON cs.created_by = creator.id
-      WHERE cs.complaint_id = $1
+      WHERE cs.complaint_id = $1::uuid
       ORDER BY cs.step_order ASC
     `, [id]);
     
@@ -343,7 +344,7 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
     }
     
     const complaintCheck = await client.query(
-      'SELECT id, title FROM complaints WHERE id = $1',
+      'SELECT id, title FROM complaints WHERE id = $1::uuid',
       [id]
     );
     
@@ -357,7 +358,7 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
     let finalStepOrder = step_order;
     if (!finalStepOrder) {
       const maxOrderResult = await client.query(
-        'SELECT COALESCE(MAX(step_order), 0) + 1 as next_order FROM complaint_steps WHERE complaint_id = $1',
+        'SELECT COALESCE(MAX(step_order), 0) + 1 as next_order FROM complaint_steps WHERE complaint_id = $1::uuid',
         [id]
       );
       finalStepOrder = maxOrderResult.rows[0].next_order;
@@ -366,7 +367,7 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
     const stepResult = await client.query(
       `INSERT INTO complaint_steps (
         complaint_id, step_order, step_description, created_by
-      ) VALUES ($1, $2, $3, $4)
+      ) VALUES ($1::uuid, $2, $3, $4::uuid)
       RETURNING *`,
       [id, finalStepOrder, step_description, req.user.id]
     );
@@ -375,15 +376,15 @@ router.post('/:id/steps', protect, authorize(['admin', 'agent']), async (req, re
       `UPDATE complaints 
        SET status = 'in_progress', 
            acknowledged_at = COALESCE(acknowledged_at, NOW()),
-           acknowledged_by = COALESCE(acknowledged_by, $2)
-       WHERE id = $1 AND status = 'open'`,
+           acknowledged_by = COALESCE(acknowledged_by, $2::uuid)
+       WHERE id = $1::uuid AND status = 'open'`,
       [id, req.user.id]
     );
     
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)`,
+      ) VALUES ($1::uuid, $2::uuid, $3, $4)`,
       [id, req.user.id, `Servicing step added: ${step_description}`, 'step_added']
     );
     
@@ -425,7 +426,7 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
     }
     
     const complaintCheck = await client.query(
-      'SELECT id, title, tenant_id FROM complaints WHERE id = $1',
+      'SELECT id, title, tenant_id FROM complaints WHERE id = $1::uuid',
       [id]
     );
     
@@ -445,7 +446,7 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
         const stepResult = await client.query(
           `INSERT INTO complaint_steps (
             complaint_id, step_order, step_description, created_by
-          ) VALUES ($1, $2, $3, $4)
+          ) VALUES ($1::uuid, $2, $3, $4::uuid)
           RETURNING *`,
           [id, i + 1, stepDescription.trim(), req.user.id]
         );
@@ -457,23 +458,23 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
       `UPDATE complaints 
        SET status = 'in_progress', 
            acknowledged_at = NOW(),
-           acknowledged_by = $2,
-           assigned_agent = COALESCE(assigned_agent, $2)
-       WHERE id = $1`,
+           acknowledged_by = $2::uuid,
+           assigned_agent = COALESCE(assigned_agent, $2::uuid)
+       WHERE id = $1::uuid`,
       [id, req.user.id]
     );
     
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)`,
+      ) VALUES ($1::uuid, $2::uuid, $3, $4)`,
       [id, req.user.id, `${insertedSteps.length} servicing steps added. Work has begun.`, 'servicing_started']
     );
 
     await client.query(
       `INSERT INTO notifications (
         user_id, title, message, type, related_entity_type, related_entity_id
-      ) VALUES ($1, $2, $3, $4, $5, $6)`,
+      ) VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid)`,
       [
         complaintCheck.rows[0].tenant_id,
         'Complaint Being Serviced',
@@ -504,7 +505,7 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
   }
 });
 
-// PATCH /:complaintId/steps/:stepId - Toggle step completion
+// PATCH /:complaintId/steps/:stepId - Toggle step completion (FIXED WITH UUID CASTING)
 router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent']), async (req, res) => {
   const client = await pool.connect();
   
@@ -514,29 +515,34 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
     const { complaintId, stepId } = req.params;
     const { is_completed } = req.body;
     
+    console.log('📝 Toggling step completion:', { complaintId, stepId, is_completed });
+    
+    // FIXED: Added ::uuid casting for all UUID columns
     const updateResult = await client.query(
       `UPDATE complaint_steps 
        SET is_completed = $1,
            completed_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END,
-           completed_by = CASE WHEN $1 = true THEN $2 ELSE NULL END
-       WHERE id = $3 AND complaint_id = $4
+           completed_by = CASE WHEN $1 = true THEN $2::uuid ELSE NULL END
+       WHERE id = $3::uuid AND complaint_id = $4::uuid
        RETURNING *`,
       [is_completed, req.user.id, stepId, complaintId]
     );
     
     if (updateResult.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({
         success: false,
         message: 'Step not found'
       });
     }
     
+    // Check if all steps are completed
     const allStepsResult = await client.query(
       `SELECT 
         COUNT(*) as total,
         COUNT(CASE WHEN is_completed = true THEN 1 END) as completed
        FROM complaint_steps 
-       WHERE complaint_id = $1`,
+       WHERE complaint_id = $1::uuid`,
       [complaintId]
     );
     
@@ -548,20 +554,20 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
         `UPDATE complaints 
          SET status = 'resolved',
              resolved_at = NOW(),
-             resolved_by = $2
-         WHERE id = $1`,
+             resolved_by = $2::uuid
+         WHERE id = $1::uuid`,
         [complaintId, req.user.id]
       );
       
       const complaintResult = await client.query(
-        'SELECT title, tenant_id FROM complaints WHERE id = $1',
+        'SELECT title, tenant_id FROM complaints WHERE id = $1::uuid',
         [complaintId]
       );
       
       await client.query(
         `INSERT INTO complaint_updates (
           complaint_id, updated_by, update_text, update_type
-        ) VALUES ($1, $2, $3, $4)`,
+        ) VALUES ($1::uuid, $2::uuid, $3, $4)`,
         [complaintId, req.user.id, 'All steps completed. Complaint resolved.', 'resolved']
       );
 
@@ -569,7 +575,7 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
         await client.query(
           `INSERT INTO notifications (
             user_id, title, message, type, related_entity_type, related_entity_id
-          ) VALUES ($1, $2, $3, $4, $5, $6)`,
+          ) VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid)`,
           [
             complaintResult.rows[0].tenant_id,
             'Complaint Resolved',
@@ -584,6 +590,8 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
     
     await client.query('COMMIT');
     
+    console.log('✅ Step toggled successfully');
+    
     res.json({
       success: true,
       message: is_completed ? 'Step marked as completed' : 'Step marked as pending',
@@ -592,7 +600,7 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error toggling step:', error);
+    console.error('❌ Error toggling step:', error);
     res.status(500).json({
       success: false,
       message: 'Error updating step',
@@ -609,7 +617,7 @@ router.delete('/:complaintId/steps/:stepId', protect, authorize(['admin']), asyn
     const { complaintId, stepId } = req.params;
     
     const result = await pool.query(
-      'DELETE FROM complaint_steps WHERE id = $1 AND complaint_id = $2 RETURNING *',
+      'DELETE FROM complaint_steps WHERE id = $1::uuid AND complaint_id = $2::uuid RETURNING *',
       [stepId, complaintId]
     );
     
@@ -666,14 +674,14 @@ router.patch('/:id/status', protect, authorize(['admin', 'agent']), async (req, 
     const queryParams = [status, id];
     
     if (status === 'in_progress') {
-      updateQuery += `, acknowledged_at = COALESCE(acknowledged_at, NOW()), acknowledged_by = COALESCE(acknowledged_by, $3)`;
+      updateQuery += `, acknowledged_at = COALESCE(acknowledged_at, NOW()), acknowledged_by = COALESCE(acknowledged_by, $3::uuid)`;
       queryParams.push(req.user.id);
     } else if (status === 'resolved') {
-      updateQuery += `, resolved_at = COALESCE(resolved_at, NOW()), resolved_by = COALESCE(resolved_by, $3)`;
+      updateQuery += `, resolved_at = COALESCE(resolved_at, NOW()), resolved_by = COALESCE(resolved_by, $3::uuid)`;
       queryParams.push(req.user.id);
     }
     
-    updateQuery += ` WHERE id = $2 RETURNING *`;
+    updateQuery += ` WHERE id = $2::uuid RETURNING *`;
     
     const updateResult = await client.query(updateQuery, queryParams);
     
@@ -687,7 +695,7 @@ router.patch('/:id/status', protect, authorize(['admin', 'agent']), async (req, 
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)`,
+      ) VALUES ($1::uuid, $2::uuid, $3, $4)`,
       [id, req.user.id, `Status changed to ${status}.`, 'status_change']
     );
     
@@ -729,7 +737,7 @@ router.patch('/:id/assign', protect, authorize(['admin', 'agent']), async (req, 
     }
     
     const agentCheck = await pool.query(
-      'SELECT id, first_name, last_name FROM users WHERE id = $1 AND role IN ($2, $3)',
+      'SELECT id, first_name, last_name FROM users WHERE id = $1::uuid AND role IN ($2, $3)',
       [agent_id, 'agent', 'admin']
     );
     
@@ -744,8 +752,8 @@ router.patch('/:id/assign', protect, authorize(['admin', 'agent']), async (req, 
     
     const updateResult = await client.query(
       `UPDATE complaints 
-       SET assigned_agent = $1, updated_at = NOW()
-       WHERE id = $2
+       SET assigned_agent = $1::uuid, updated_at = NOW()
+       WHERE id = $2::uuid
        RETURNING *`,
       [agent_id, id]
     );
@@ -795,7 +803,7 @@ router.post('/:id/updates', protect, async (req, res) => {
     }
     
     const complaintCheck = await client.query(
-      'SELECT id, tenant_id FROM complaints WHERE id = $1',
+      'SELECT id, tenant_id FROM complaints WHERE id = $1::uuid',
       [id]
     );
     
@@ -818,7 +826,7 @@ router.post('/:id/updates', protect, async (req, res) => {
     const updateResult = await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)
+      ) VALUES ($1::uuid, $2::uuid, $3, $4)
       RETURNING *`,
       [id, req.user.id, update_text, update_type]
     );
@@ -872,7 +880,7 @@ router.patch('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (re
     
     // Check if complaint exists
     const complaintCheck = await client.query(
-      'SELECT * FROM complaints WHERE id = $1',
+      'SELECT * FROM complaints WHERE id = $1::uuid',
       [id]
     );
     
@@ -920,12 +928,12 @@ router.patch('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (re
            category = COALESCE($3, category),
            categories = COALESCE($4::jsonb, categories),
            priority = COALESCE($5, priority),
-           assigned_agent = COALESCE($6, assigned_agent),
+           assigned_agent = COALESCE($6::uuid, assigned_agent),
            status = COALESCE($7, status),
-           tenant_id = COALESCE($8, tenant_id),
-           unit_id = COALESCE($9, unit_id),
+           tenant_id = COALESCE($8::uuid, tenant_id),
+           unit_id = COALESCE($9::uuid, unit_id),
            updated_at = NOW()
-       WHERE id = $10
+       WHERE id = $10::uuid
        RETURNING *`,
       [
         title,
@@ -945,7 +953,7 @@ router.patch('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (re
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)`,
+      ) VALUES ($1::uuid, $2::uuid, $3, $4)`,
       [id, req.user.id, 'Complaint details updated.', 'updated']
     );
     
@@ -995,7 +1003,7 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
     console.log('📝 Request body:', req.body);
     
     const complaintCheck = await client.query(
-      'SELECT * FROM complaints WHERE id = $1',
+      'SELECT * FROM complaints WHERE id = $1::uuid',
       [id]
     );
     
@@ -1039,12 +1047,12 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
            category = COALESCE($3, category),
            categories = COALESCE($4::jsonb, categories),
            priority = COALESCE($5, priority),
-           assigned_agent = COALESCE($6, assigned_agent),
+           assigned_agent = COALESCE($6::uuid, assigned_agent),
            status = COALESCE($7, status),
-           tenant_id = COALESCE($8, tenant_id),
-           unit_id = COALESCE($9, unit_id),
+           tenant_id = COALESCE($8::uuid, tenant_id),
+           unit_id = COALESCE($9::uuid, unit_id),
            updated_at = NOW()
-       WHERE id = $10
+       WHERE id = $10::uuid
        RETURNING *`,
       [
         title,
@@ -1063,7 +1071,7 @@ router.put('/:id', protect, authorize(['admin', 'agent', 'tenant']), async (req,
     await client.query(
       `INSERT INTO complaint_updates (
         complaint_id, updated_by, update_text, update_type
-      ) VALUES ($1, $2, $3, $4)`,
+      ) VALUES ($1::uuid, $2::uuid, $3, $4)`,
       [id, req.user.id, 'Complaint details updated.', 'updated']
     );
     
@@ -1113,7 +1121,7 @@ router.get('/:id', protect, async (req, res) => {
       LEFT JOIN property_units pu ON c.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN users agent ON c.assigned_agent = agent.id
-      WHERE c.id = $1
+      WHERE c.id = $1::uuid
     `, [id]);
     
     if (complaintResult.rows.length === 0) {
@@ -1131,7 +1139,7 @@ router.get('/:id', protect, async (req, res) => {
         u.first_name as completed_by_name
       FROM complaint_steps cs
       LEFT JOIN users u ON cs.completed_by = u.id
-      WHERE cs.complaint_id = $1
+      WHERE cs.complaint_id = $1::uuid
       ORDER BY cs.step_order ASC
     `, [id]);
 
@@ -1162,7 +1170,7 @@ router.delete('/:id', protect, authorize(['admin']), async (req, res) => {
     const { id } = req.params;
     
     const complaintCheck = await client.query(
-      'SELECT id, title FROM complaints WHERE id = $1',
+      'SELECT id, title FROM complaints WHERE id = $1::uuid',
       [id]
     );
     
@@ -1173,9 +1181,9 @@ router.delete('/:id', protect, authorize(['admin']), async (req, res) => {
       });
     }
     
-    await client.query('DELETE FROM complaint_steps WHERE complaint_id = $1', [id]);
-    await client.query('DELETE FROM complaint_updates WHERE complaint_id = $1', [id]);
-    await client.query('DELETE FROM complaints WHERE id = $1', [id]);
+    await client.query('DELETE FROM complaint_steps WHERE complaint_id = $1::uuid', [id]);
+    await client.query('DELETE FROM complaint_updates WHERE complaint_id = $1::uuid', [id]);
+    await client.query('DELETE FROM complaints WHERE id = $1::uuid', [id]);
     
     await client.query('COMMIT');
     
