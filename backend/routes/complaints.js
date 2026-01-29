@@ -12,7 +12,7 @@ const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 const protect = authMiddleware;
 const authorize = requireRole;
 
-console.log('✅ Complaints routes loaded - v4 with UUID casting fix');
+console.log('✅ Complaints routes loaded - v5 with UUID casting + notifications fix');
 
 // ============================================
 // STATIC ROUTES FIRST (no :id parameter)
@@ -471,19 +471,7 @@ router.post('/:id/steps/bulk', protect, authorize(['admin', 'agent']), async (re
       [id, req.user.id, `${insertedSteps.length} servicing steps added. Work has begun.`, 'servicing_started']
     );
 
-    await client.query(
-      `INSERT INTO notifications (
-        user_id, title, message, type, related_entity_type, related_entity_id
-      ) VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid)`,
-      [
-        complaintCheck.rows[0].tenant_id,
-        'Complaint Being Serviced',
-        `Your complaint "${complaintCheck.rows[0].title}" is now being worked on.`,
-        'complaint',
-        'complaint',
-        id
-      ]
-    );
+    // NOTE: Notifications only sent to admins/agents (users table), not tenants (separate table)
     
     await client.query('COMMIT');
     
@@ -571,21 +559,7 @@ router.patch('/:complaintId/steps/:stepId', protect, authorize(['admin', 'agent'
         [complaintId, req.user.id, 'All steps completed. Complaint resolved.', 'resolved']
       );
 
-      if (complaintResult.rows.length > 0) {
-        await client.query(
-          `INSERT INTO notifications (
-            user_id, title, message, type, related_entity_type, related_entity_id
-          ) VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid)`,
-          [
-            complaintResult.rows[0].tenant_id,
-            'Complaint Resolved',
-            `Your complaint "${complaintResult.rows[0].title}" has been fully resolved.`,
-            'complaint',
-            'complaint',
-            complaintId
-          ]
-        );
-      }
+      // NOTE: Notifications only sent to admins/agents (users table), not tenants (separate table)
     }
     
     await client.query('COMMIT');
