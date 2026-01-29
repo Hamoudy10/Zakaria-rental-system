@@ -290,3 +290,31 @@ Maintenance, Repairs, Utilities, Security, Cleaning, Supplies, Professional Serv
     topProperties: [...]
   }
 }
+## WHATSAPP-STYLE CHAT SYSTEM (v6.0)
+
+### Overview
+Complete redesign of the internal messaging system with WhatsApp-like UI and features. User-specific conversation isolation (not role-based grouping).
+
+### Features Implemented
+| Feature | Description |
+|---------|-------------|
+| User Isolation | Each user sees only their own conversations |
+| Direct Messaging | 1:1 chats between any two users |
+| Group Chats | Multi-participant conversations with custom titles |
+| Online Status | Green dot indicator with pulse animation |
+| Last Seen | "last seen today at 3:45 PM" format |
+| Typing Indicators | "John is typing..." with animated dots |
+| Read Receipts | Single ✓ (sent), Double ✓✓ (delivered), Blue ✓✓ (read) |
+| Profile Avatars | User profile images in chat bubbles |
+| Image Messages | Send images via Cloudinary upload |
+| Unread Badges | Count badges on conversation list |
+| Real-time Updates | Socket.io for instant messaging |
+
+### Database Columns Added
+```sql
+-- Users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP;
+
+-- Chat messages table
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'sent';

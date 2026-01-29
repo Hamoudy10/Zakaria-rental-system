@@ -340,3 +340,51 @@ Provide company branding for Login page without requiring authentication.
 ``javascript
 // In adminRoutes.js - NO AUTH MIDDLEWARE
 router.get('/public/company-info', adminSettingsController.getPublicCompanyInfo);
+
+---
+
+### 3. BACKEND `backend/claude.md` - Add at the end:
+
+```markdown
+## WHATSAPP-STYLE CHAT BACKEND (v6.0)
+
+### Chat Controller Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/chat/available-users` | All users except current (with online status) |
+| GET | `/chat/conversations` | User's conversations |
+| GET | `/chat/recent-chats` | Conversations with last message & unread count |
+| POST | `/chat/conversations` | Create direct or group conversation |
+| GET | `/chat/conversations/:id/messages` | Get messages with read status |
+| POST | `/chat/messages/send` | Send text or image message |
+| POST | `/chat/messages/mark-read` | Mark messages as read |
+| POST | `/chat/messages/mark-delivered` | Mark messages as delivered |
+| POST | `/chat/status/online` | Update user online status |
+| GET | `/chat/status/online-users` | Get all online users |
+| GET | `/chat/unread-count` | Total unread message count |
+| GET | `/chat/search` | Search messages |
+| POST | `/chat/upload-image` | Upload chat image to Cloudinary |
+
+### Socket Events (Backend chatService.js)
+| Event | Direction | Purpose |
+|-------|-----------|---------|
+| `connection` | Receive | User connected - join rooms, set online |
+| `disconnect` | Receive | User disconnected - set offline |
+| `join_conversation` | Receive | Join specific conversation room |
+| `leave_conversation` | Receive | Leave conversation room |
+| `typing_start` | Receive | Broadcast typing to conversation |
+| `typing_stop` | Receive | Broadcast stop typing |
+| `messages_read` | Receive | Update read receipts |
+| `user_online` | Receive | Explicit online status |
+| `user_offline` | Receive | Explicit offline status |
+| `new_message` | Emit | Broadcast new message to room |
+| `user_typing` | Emit | Notify typing in conversation |
+| `user_online_status` | Emit | Broadcast online/offline change |
+| `messages_read_receipt` | Emit | Notify sender of read status |
+
+### Message Status Flow
+
+// Storage: zakaria_rental/chat_images
+// Max size: 5MB
+// Formats: JPEG, PNG, GIF, WebP
+// Transformation: 800x800 limit, auto quality

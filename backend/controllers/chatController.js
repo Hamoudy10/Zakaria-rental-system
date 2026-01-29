@@ -76,6 +76,7 @@ const getAvailableUsers = async (req, res) => {
 /**
  * POST /chat/conversations
  * Creates direct or group conversation
+ * IMPORTANT: Direct chats are ONLY between exactly 2 users (creator + 1 recipient)
  */
 const createConversation = async (req, res) => {
   const client = await db.connect();
@@ -89,18 +90,22 @@ const createConversation = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
 
+    // Validate participantIds don't include the creator (prevent duplicates)
+    const filteredParticipants = participantIds.filter(id => id !== creatorId);
+
     // DIRECT CHAT — check for existing
     if (conversationType === 'direct') {
-      if (participantIds.length !== 1) {
+      if (filteredParticipants.length !== 1) {
         return res.status(400).json({
           success: false,
           message: 'Direct chat must have exactly one recipient'
         });
       }
 
-      const otherUserId = participantIds[0];
+      const otherUserId = filteredParticipants[0];
 
-      // Check if conversation already exists between these two users
+      // Check if conversation already exists between ONLY these two users
+      // Must have exactly 2 participants and be a direct chat
       const existing = await client.query(
         `
         SELECT c.id, c.conversation_type, c.title, c.created_at,
@@ -119,18 +124,29 @@ const createConversation = async (req, res) => {
               AND cp2.is_active = true
           ) AS participants
         FROM chat_conversations c
-        JOIN chat_participants p1 ON c.id = p1.conversation_id AND p1.is_active = true
-        JOIN chat_participants p2 ON c.id = p2.conversation_id AND p2.is_active = true
         WHERE c.conversation_type = 'direct'
-          AND p1.user_id = $1
-          AND p2.user_id = $2
+          AND c.id IN (
+            SELECT cp1.conversation_id 
+            FROM chat_participants cp1
+            WHERE cp1.user_id = $1 AND cp1.is_active = true
+          )
+          AND c.id IN (
+            SELECT cp2.conversation_id 
+            FROM chat_participants cp2
+            WHERE cp2.user_id = $2 AND cp2.is_active = true
+          )
+          AND (
+            SELECT COUNT(*) 
+            FROM chat_participants cp3 
+            WHERE cp3.conversation_id = c.id AND cp3.is_active = true
+          ) = 2
         LIMIT 1
         `,
         [creatorId, otherUserId]
       );
 
       if (existing.rows.length > 0) {
-        console.log('📋 Existing conversation found:', existing.rows[0].id);
+        console.log('📋 Existing direct conversation found:', existing.rows[0].id);
         return res.json({
           success: true,
           data: existing.rows[0]
@@ -154,14 +170,19 @@ const createConversation = async (req, res) => {
     );
 
     const conversation = conversationResult.rows[0];
-    const allParticipants = [creatorId, ...participantIds];
+    
+    // Use Set to prevent duplicate participants
+    const uniqueParticipants = [...new Set([creatorId, ...filteredParticipants])];
+
+    console.log('📋 Adding participants:', uniqueParticipants);
 
     await client.query(
       `
       INSERT INTO chat_participants (conversation_id, user_id)
       SELECT $1, unnest($2::uuid[])
+      ON CONFLICT DO NOTHING
       `,
-      [conversation.id, allParticipants]
+      [conversation.id, uniqueParticipants]
     );
 
     // Get participants with details
@@ -186,7 +207,7 @@ const createConversation = async (req, res) => {
       participants: participantsResult.rows
     };
 
-    console.log('📋 Conversation created:', result.id);
+    console.log('📋 Conversation created:', result.id, 'with', participantsResult.rows.length, 'participants');
     res.json({
       success: true,
       data: result
@@ -203,15 +224,22 @@ const createConversation = async (req, res) => {
 /**
  * GET /chat/recent-chats?limit=50&offset=0
  * Returns recent conversations for the user with last message info
+ * IMPORTANT: Only returns conversations where the current user is an ACTIVE participant
  */
 const getRecentChats = async (req, res) => {
   try {
     const userId = req.user.id;
+    const userEmail = req.user.email;
     const limit = parseInt(req.query.limit, 10) || 50;
     const offset = parseInt(req.query.offset, 10) || 0;
 
-    console.log('📋 getRecentChats called for user:', userId);
+    console.log('========================================');
+    console.log('📋 getRecentChats called');
+    console.log('👤 User ID:', userId);
+    console.log('📧 User Email:', userEmail);
+    console.log('========================================');
 
+    // EXPLICIT JOIN to ensure only user's conversations are returned
     const result = await db.query(
       `
       SELECT
@@ -263,20 +291,29 @@ const getRecentChats = async (req, res) => {
             AND cp2.is_active = true
         ) AS participants
       FROM chat_conversations c
-      WHERE EXISTS (
-        SELECT 1
-        FROM chat_participants cp
-        WHERE cp.conversation_id = c.id
-          AND cp.user_id = $1
-          AND cp.is_active = true
-      )
+      INNER JOIN chat_participants my_participation 
+        ON c.id = my_participation.conversation_id 
+        AND my_participation.user_id = $1 
+        AND my_participation.is_active = true
       ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
       LIMIT $2 OFFSET $3
       `,
       [userId, limit, offset]
     );
 
-    console.log('📋 Found conversations:', result.rows.length);
+    console.log('========================================');
+    console.log('📋 Results for user', userEmail);
+    console.log('📋 Found', result.rows.length, 'conversations');
+    
+    // Debug: Log each conversation with participants
+    result.rows.forEach((conv, i) => {
+      const participantNames = conv.participants 
+        ? conv.participants.map(p => `${p.first_name} ${p.last_name}`).join(', ')
+        : 'No participants';
+      console.log(`   ${i + 1}. Conv ${conv.id.substring(0, 8)}... | Participants: ${participantNames}`);
+    });
+    console.log('========================================');
+
     res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error('❌ getRecentChats error:', error);
@@ -287,6 +324,7 @@ const getRecentChats = async (req, res) => {
 /**
  * GET /chat/conversations
  * Returns all conversations for the user
+ * IMPORTANT: Only returns conversations where the current user is an ACTIVE participant
  */
 const getUserConversations = async (req, res) => {
   try {
@@ -331,16 +369,16 @@ const getUserConversations = async (req, res) => {
             AND cp2.is_active = true
         ) AS participants
       FROM chat_conversations c
-      JOIN chat_participants cp_self
+      INNER JOIN chat_participants cp_self
         ON c.id = cp_self.conversation_id
-       AND cp_self.user_id = $1
-       AND cp_self.is_active = true
+        AND cp_self.user_id = $1
+        AND cp_self.is_active = true
       ORDER BY last_message_at DESC NULLS LAST
       `,
       [userId]
     );
 
-    console.log('📋 Found conversations:', result.rows.length);
+    console.log('📋 Found conversations for user', userId, ':', result.rows.length);
     res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error('❌ getUserConversations error:', error);
