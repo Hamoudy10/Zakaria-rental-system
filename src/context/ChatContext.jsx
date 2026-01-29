@@ -128,14 +128,19 @@ const chatReducer = (state, action) => {
       };
 
     case 'SET_TYPING_USER':
-      const { oderId: tConvId, userId: typingUserId, isTyping, userName } = action.payload;
-      const currentTyping = state.typingUsers[tConvId] || {};
+      const { oderId: tConvId, oderId: typingConvId, oderId, oderId: tCId, oderId: typingCId, ...typingRest } = action.payload;
+      const actualConvId = action.payload.oderId || action.payload.conversationId;
+      const typingUserId = action.payload.userId;
+      const isTyping = action.payload.isTyping;
+      const userName = action.payload.userName;
+      
+      const currentTyping = state.typingUsers[actualConvId] || {};
       if (isTyping) {
         return {
           ...state,
           typingUsers: {
             ...state.typingUsers,
-            [tConvId]: { ...currentTyping, [typingUserId]: userName }
+            [actualConvId]: { ...currentTyping, [typingUserId]: userName }
           }
         };
       } else {
@@ -144,7 +149,7 @@ const chatReducer = (state, action) => {
           ...state,
           typingUsers: {
             ...state.typingUsers,
-            [tConvId]: rest
+            [actualConvId]: rest
           }
         };
       }
@@ -350,6 +355,7 @@ export const ChatProvider = ({ children }) => {
       const message = await ChatService.sendMessage(conversationId, messageText?.trim() || '', imageUrl);
       console.log('✅ Message sent:', message?.id);
 
+      // Add message to local state immediately
       dispatch({ type: 'ADD_MESSAGE', payload: { conversationId, message } });
       
       if (!messagesByConvRef.current[conversationId]) {
@@ -525,50 +531,79 @@ export const ChatProvider = ({ children }) => {
       }
     });
 
-    // New message
+    // ========================================
+    // NEW MESSAGE HANDLER - FIXED VERSION
+    // ========================================
     socket.on('new_message', ({ message, conversationId }) => {
-      console.log('📨 New message received:', message?.id);
+      console.log('📨 Socket received message:', message?.id, 'for conversation:', conversationId);
       
-      if (processingMessagesRef.current.has(message.id)) return;
+      // Prevent duplicate processing
+      if (processingMessagesRef.current.has(message.id)) {
+        console.log('⏭️ Message already being processed, skipping');
+        return;
+      }
       processingMessagesRef.current.add(message.id);
       
       const conversation = convsRef.current.find(c => c.id === conversationId);
       
-      // Show notification if not active conversation
-      if (activeConvRef.current?.id !== conversationId && conversation && message.sender_id !== user.id) {
-        showNotification(message, conversation);
-      }
-      
+      // Check if message already exists in current messages
       const currentMessages = messagesByConvRef.current[conversationId] || [];
       const messageExists = currentMessages.some(m => m.id === message.id);
       
-      if (!messageExists) {
-        if (activeConvRef.current?.id === conversationId) {
-          dispatch({ type: 'ADD_MESSAGE', payload: { conversationId, message } });
-          
-          if (!messagesByConvRef.current[conversationId]) {
-            messagesByConvRef.current[conversationId] = [];
-          }
-          messagesByConvRef.current[conversationId].push(message);
+      if (messageExists) {
+        console.log('⏭️ Message already exists in state, skipping');
+        processingMessagesRef.current.delete(message.id);
+        return;
+      }
 
-          // Mark as read immediately if we're viewing this conversation
-          if (message.sender_id !== user.id) {
-            ChatService.markAsRead([message.id]);
-            socket.emit('messages_read', {
-              conversationId,
-              messageIds: [message.id],
-              readBy: user.id
-            });
-          }
-        } else if (message.sender_id !== user.id) {
-          unreadCountsRef.current[conversationId] = 
-            (unreadCountsRef.current[conversationId] || 0) + 1;
-          dispatch({ type: 'SET_UNREAD_COUNTS', payload: { ...unreadCountsRef.current } });
+      // ========================================
+      // CRITICAL FIX: ALWAYS ADD MESSAGE TO STATE
+      // This ensures messages appear in the right panel
+      // ========================================
+      console.log('💬 Adding message to conversation:', conversationId);
+      dispatch({ type: 'ADD_MESSAGE', payload: { conversationId, message } });
+      
+      // Update the ref as well
+      if (!messagesByConvRef.current[conversationId]) {
+        messagesByConvRef.current[conversationId] = [];
+      }
+      messagesByConvRef.current[conversationId].push(message);
+
+      // ========================================
+      // Handle read status and notifications
+      // ========================================
+      const isActiveConversation = activeConvRef.current?.id === conversationId;
+      const isOwnMessage = message.sender_id === user.id;
+
+      if (isActiveConversation && !isOwnMessage) {
+        // Auto-mark as read since user is viewing this conversation
+        ChatService.markAsRead([message.id]).catch(err => {
+          console.error('Failed to mark as read:', err);
+        });
+        
+        // Emit read receipt via socket
+        socket.emit('messages_read', {
+          conversationId,
+          messageIds: [message.id],
+          readBy: user.id
+        });
+      } else if (!isOwnMessage) {
+        // Increment unread count for conversations not being viewed
+        unreadCountsRef.current[conversationId] = 
+          (unreadCountsRef.current[conversationId] || 0) + 1;
+        dispatch({ type: 'SET_UNREAD_COUNTS', payload: { ...unreadCountsRef.current } });
+        
+        // Show notification
+        if (conversation) {
+          showNotification(message, conversation);
         }
       }
 
-      // Update conversation list
+      // ========================================
+      // Update conversation list (move to top, update preview)
+      // ========================================
       const existingConvIndex = convsRef.current.findIndex(c => c.id === conversationId);
+      
       if (existingConvIndex >= 0) {
         const updatedConv = {
           ...convsRef.current[existingConvIndex],
@@ -576,9 +611,12 @@ export const ChatProvider = ({ children }) => {
           last_message_at: message.created_at
         };
         
+        // Remove from current position
         convsRef.current.splice(existingConvIndex, 1);
+        // Add to top
         convsRef.current.unshift(updatedConv);
         
+        // Remove duplicates
         const uniqueConvs = [];
         const seenIds = new Set();
         convsRef.current.forEach(conv => {
@@ -592,11 +630,13 @@ export const ChatProvider = ({ children }) => {
         dispatch({ type: 'SET_CONVERSATIONS', payload: uniqueConvs });
       }
       
+      // Cleanup
       processingMessagesRef.current.delete(message.id);
     });
 
     // Message status updates
     socket.on('message_delivered', ({ messageId, conversationId }) => {
+      console.log('✓✓ Message delivered:', messageId);
       dispatch({ 
         type: 'UPDATE_MESSAGE_STATUS', 
         payload: { messageId, status: 'delivered', conversationId } 
@@ -604,6 +644,7 @@ export const ChatProvider = ({ children }) => {
     });
 
     socket.on('messages_read_receipt', ({ messageIds, conversationId, readBy }) => {
+      console.log('✓✓ Messages read:', messageIds.length, 'by:', readBy);
       if (readBy !== user.id) {
         dispatch({ 
           type: 'BULK_UPDATE_MESSAGE_STATUS', 
@@ -614,6 +655,7 @@ export const ChatProvider = ({ children }) => {
 
     // Online status
     socket.on('user_online_status', ({ userId, isOnline, lastSeen }) => {
+      console.log('👤 User status change:', userId, isOnline ? 'online' : 'offline');
       dispatch({ 
         type: 'SET_USER_ONLINE', 
         payload: { userId, isOnline } 
@@ -633,7 +675,7 @@ export const ChatProvider = ({ children }) => {
       if (userId !== user.id) {
         dispatch({ 
           type: 'SET_TYPING_USER', 
-          payload: { oderId: conversationId, userId, isTyping: true, userName } 
+          payload: { oderId: conversationId, oderId: conversationId, userId, isTyping: true, userName } 
         });
       }
     });
@@ -641,7 +683,7 @@ export const ChatProvider = ({ children }) => {
     socket.on('user_stopped_typing', ({ userId, conversationId }) => {
       dispatch({ 
         type: 'SET_TYPING_USER', 
-        payload: { oderId: conversationId, userId, isTyping: false } 
+        payload: { oderId: conversationId, oderId: conversationId, userId, isTyping: false } 
       });
     });
 
@@ -669,7 +711,7 @@ export const ChatProvider = ({ children }) => {
     };
   }, [user, setupSocket]);
 
-  // Sync refs
+  // Sync refs with state
   useEffect(() => {
     unreadCountsRef.current = state.unreadCounts;
     convsRef.current = state.conversations;
