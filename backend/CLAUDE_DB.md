@@ -291,3 +291,71 @@ CREATE TABLE property_images (
 - **Constraint Fix:** `image_type` now defaults to `'general'` via DB default to prevent 500 errors.
 - **Indexing:** `idx_property_images_unit_id` added to optimize walkthrough gallery performance in the Agent Dashboard.
 - **Order:** `display_order` column added (default 0) to allow admin curation.
+
+---
+
+### 4. DATABASE `backend/claude_db.md` - Add at the end:
+
+```markdown
+## CHAT SYSTEM TABLES (v6.0)
+
+### chat_conversations
+```sql
+id UUID PRIMARY KEY
+title VARCHAR                    -- For group chats
+conversation_type VARCHAR        -- 'direct' or 'group'
+created_by UUID REFERENCES users(id)
+created_at TIMESTAMP
+updated_at TIMESTAMP
+
+---
+
+### 5. DATABASE MIGRATION SCRIPT (Save as `migrations/006_chat_enhancements.sql`)
+
+``sql
+-- =============================================
+-- CHAT SYSTEM ENHANCEMENTS MIGRATION (v6.0)
+-- Run this SQL in your Supabase SQL Editor
+-- =============================================
+
+-- 1. Add online status to users
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP;
+
+-- 2. Add message status tracking
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'sent';
+
+-- 3. Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_users_online ON users(is_online) WHERE is_online = true;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_status ON chat_messages(status);
+CREATE INDEX IF NOT EXISTS idx_chat_participants_user_active ON chat_participants(user_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_chat_participants_conv_active ON chat_participants(conversation_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conv_deleted ON chat_messages(conversation_id, is_deleted);
+
+-- 4. Ensure unique constraint on message reads
+ALTER TABLE chat_message_reads 
+ADD CONSTRAINT IF NOT EXISTS unique_message_user_read 
+UNIQUE (message_id, user_id);
+
+-- 5. Update existing messages to have 'read' status (optional - for existing data)
+UPDATE chat_messages 
+SET status = 'read' 
+WHERE status IS NULL OR status = '';
+
+-- =============================================
+-- VERIFICATION QUERIES
+-- =============================================
+
+-- Check columns exist
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'users' 
+AND column_name IN ('is_online', 'last_seen');
+
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'chat_messages' 
+AND column_name = 'status';
+
+-- Check indexes
+SELECT indexname FROM pg_indexes WHERE tablename IN ('users', 'chat_messages', 'chat_participants');

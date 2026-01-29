@@ -331,3 +331,53 @@ GET /api/admin/public/company-info
 
 // Response
 { success: true, data: { name: "...", logo: "..." } }
+
+---
+
+### 2. FRONTEND `src/claude.md` - Add at the end:
+
+```markdown
+## WHATSAPP-STYLE CHAT MODULE (v6.0)
+
+### Component: ChatModule.jsx
+- WhatsApp-style two-panel layout (sidebar + chat area)
+- Green message bubbles with tails for sent messages
+- White bubbles for received messages
+- Mobile responsive (sidebar hides when chat opens)
+- Conversation search functionality
+
+### Component: MessageItem.jsx
+- WhatsApp-style bubble design with tail
+- Read receipt icons (✓, ✓✓, blue ✓✓)
+- Profile avatar for received messages
+- Image message support with loading states
+- Timestamp display
+
+### Component: MessageList.jsx
+- Date dividers ("Today", "Yesterday", "January 15, 2024")
+- Typing indicator with animated dots
+- Auto-scroll to bottom on new messages
+- Empty state with icon
+
+### Component: MessageInput.jsx
+- Auto-growing textarea
+- Image upload with preview
+- Emoji button placeholder
+- Send button with loading state
+- Typing indicator emission
+
+### Component: NewConversationModal.jsx
+- User search functionality
+- Multi-select for group chats
+- Online status indicators
+- Selected users pills display
+- Group name input for 2+ participants
+
+### ChatContext Features
+```javascript
+// New methods available
+sendTypingStart(conversationId)    // Emit typing indicator
+sendTypingStop(conversationId)     // Stop typing indicator
+getTypingUsers(conversationId)     // Get who's typing
+isUserOnline(userId)               // Check online status
+uploadImage(file)                  // Upload chat image
