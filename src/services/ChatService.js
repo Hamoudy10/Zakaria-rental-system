@@ -28,12 +28,10 @@ const ChatService = {
     }
   },
 
-  getRecentChats: async (limit = 50, offset = 0) => {
+  getRecentChats: async () => {
     try {
       console.log('📡 ChatService: Fetching recent chats...');
-      const res = await api.get('/chat/recent-chats', {
-        params: { limit, offset },
-      });
+      const res = await api.get('/chat/recent-chats');
       console.log('📡 ChatService: Recent chats response:', res.data);
       return res.data?.data || [];
     } catch (error) {
@@ -59,13 +57,12 @@ const ChatService = {
   },
 
   // ---------- MESSAGES ----------
-  getMessages: async (conversationId, page = 1) => {
+  // NO LIMIT - fetches ALL messages
+  getMessages: async (conversationId) => {
     try {
-      console.log('📡 ChatService: Fetching messages for conversation:', conversationId);
-      const res = await api.get(`/chat/conversations/${conversationId}/messages`, {
-        params: { page },
-      });
-      console.log('📡 ChatService: Messages response:', res.data);
+      console.log('📡 ChatService: Fetching ALL messages for conversation:', conversationId);
+      const res = await api.get(`/chat/conversations/${conversationId}/messages`);
+      console.log('📡 ChatService: Messages response - count:', res.data?.data?.length || 0);
       return res.data?.data || [];
     } catch (error) {
       console.error('❌ ChatService: Failed to fetch messages:', error);
@@ -92,7 +89,7 @@ const ChatService = {
   // ---------- READ RECEIPTS ----------
   markAsRead: async (messageIds) => {
     try {
-      console.log('📡 ChatService: Marking messages as read:', messageIds);
+      console.log('📡 ChatService: Marking messages as read:', messageIds.length);
       await api.post('/chat/messages/mark-read', { messageIds });
     } catch (error) {
       console.error('❌ ChatService: Failed to mark as read:', error);
@@ -102,7 +99,7 @@ const ChatService = {
 
   markAsDelivered: async (messageIds) => {
     try {
-      console.log('📡 ChatService: Marking messages as delivered:', messageIds);
+      console.log('📡 ChatService: Marking messages as delivered:', messageIds.length);
       await api.post('/chat/messages/mark-delivered', { messageIds });
     } catch (error) {
       console.error('❌ ChatService: Failed to mark as delivered:', error);

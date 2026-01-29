@@ -128,8 +128,7 @@ const chatReducer = (state, action) => {
       };
 
     case 'SET_TYPING_USER':
-      const { oderId: tConvId, oderId: typingConvId, oderId, oderId: tCId, oderId: typingCId, ...typingRest } = action.payload;
-      const actualConvId = action.payload.oderId || action.payload.conversationId;
+      const actualConvId = action.payload.conversationId;
       const typingUserId = action.payload.userId;
       const isTyping = action.payload.isTyping;
       const userName = action.payload.userName;
@@ -214,7 +213,7 @@ export const ChatProvider = ({ children }) => {
       dispatch({ type: 'SET_LOADING', payload: true });
       console.log('🔄 Loading conversations...');
       
-      const convs = await ChatService.getRecentChats(50);
+      const convs = await ChatService.getRecentChats();
       console.log('✅ Loaded conversations:', convs.length);
 
       const uniqueConvs = [];
@@ -285,6 +284,11 @@ export const ChatProvider = ({ children }) => {
     if (authLoading || !user || initializedRef.current) return;
     initializedRef.current = true;
     console.log('🚀 Initializing chat for user:', user.id);
+    
+    // Clear any stale data
+    messagesByConvRef.current = {};
+    processingMessagesRef.current.clear();
+    
     loadConversations();
     
     // Request notification permission
@@ -293,13 +297,23 @@ export const ChatProvider = ({ children }) => {
     }
   }, [authLoading, user, loadConversations]);
 
-  // Load messages
+  // Load messages - NO LIMIT, fetches ALL messages
   const loadMessages = useCallback(async (conversationId) => {
-    if (!conversationId || state.loading) return;
+    if (!conversationId) {
+      console.log('⏭️ No conversation ID provided');
+      return;
+    }
 
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
-      console.log('🔄 Loading messages for:', conversationId);
+      console.log('🔄 Loading ALL messages for:', conversationId);
+      
+      // Clear existing messages for this conversation first
+      dispatch({ 
+        type: 'SET_MESSAGES', 
+        payload: { conversationId, messages: [] } 
+      });
+      messagesByConvRef.current[conversationId] = [];
       
       const msgs = await ChatService.getMessages(conversationId);
       console.log('✅ Loaded messages:', msgs.length);
@@ -344,7 +358,7 @@ export const ChatProvider = ({ children }) => {
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
-  }, [state.loading, user]);
+  }, [user]);
 
   // Send message
   const sendMessage = useCallback(async (conversationId, messageText, imageUrl = null) => {
@@ -412,11 +426,14 @@ export const ChatProvider = ({ children }) => {
       if (socketRef.current?.connected) {
         socketRef.current.emit('join_conversation', conv.id);
       }
+      
+      // Load messages when conversation is set
+      loadMessages(conv.id);
     } else {
       console.log('🚫 Clearing active conversation');
       activeConvRef.current = null;
     }
-  }, []);
+  }, [loadMessages]);
 
   // Load available users
   const loadAvailableUsers = useCallback(async () => {
@@ -531,9 +548,7 @@ export const ChatProvider = ({ children }) => {
       }
     });
 
-    // ========================================
-    // NEW MESSAGE HANDLER - FIXED VERSION
-    // ========================================
+    // New message handler - ALWAYS adds message to state
     socket.on('new_message', ({ message, conversationId }) => {
       console.log('📨 Socket received message:', message?.id, 'for conversation:', conversationId);
       
@@ -556,10 +571,7 @@ export const ChatProvider = ({ children }) => {
         return;
       }
 
-      // ========================================
-      // CRITICAL FIX: ALWAYS ADD MESSAGE TO STATE
-      // This ensures messages appear in the right panel
-      // ========================================
+      // ALWAYS add message to state - this ensures it appears in the right panel
       console.log('💬 Adding message to conversation:', conversationId);
       dispatch({ type: 'ADD_MESSAGE', payload: { conversationId, message } });
       
@@ -569,9 +581,7 @@ export const ChatProvider = ({ children }) => {
       }
       messagesByConvRef.current[conversationId].push(message);
 
-      // ========================================
       // Handle read status and notifications
-      // ========================================
       const isActiveConversation = activeConvRef.current?.id === conversationId;
       const isOwnMessage = message.sender_id === user.id;
 
@@ -599,9 +609,7 @@ export const ChatProvider = ({ children }) => {
         }
       }
 
-      // ========================================
       // Update conversation list (move to top, update preview)
-      // ========================================
       const existingConvIndex = convsRef.current.findIndex(c => c.id === conversationId);
       
       if (existingConvIndex >= 0) {
@@ -654,7 +662,7 @@ export const ChatProvider = ({ children }) => {
     });
 
     // Online status
-    socket.on('user_online_status', ({ userId, isOnline, lastSeen }) => {
+    socket.on('user_online_status', ({ userId, isOnline }) => {
       console.log('👤 User status change:', userId, isOnline ? 'online' : 'offline');
       dispatch({ 
         type: 'SET_USER_ONLINE', 
@@ -675,7 +683,7 @@ export const ChatProvider = ({ children }) => {
       if (userId !== user.id) {
         dispatch({ 
           type: 'SET_TYPING_USER', 
-          payload: { oderId: conversationId, oderId: conversationId, userId, isTyping: true, userName } 
+          payload: { conversationId, userId, isTyping: true, userName } 
         });
       }
     });
@@ -683,7 +691,7 @@ export const ChatProvider = ({ children }) => {
     socket.on('user_stopped_typing', ({ userId, conversationId }) => {
       dispatch({ 
         type: 'SET_TYPING_USER', 
-        payload: { oderId: conversationId, oderId: conversationId, userId, isTyping: false } 
+        payload: { conversationId, userId, isTyping: false } 
       });
     });
 
