@@ -400,8 +400,7 @@ export const settingsAPI = {
 // Add this NEW billingAPI section (add it after settingsAPI):
 export const billingAPI = {
   // Trigger manual billing run
-  triggerAgentBilling: () => api.post('/cron/agent/trigger-billing'),
-  
+  triggerAgentBilling: (data) => api.post('/cron/agent/trigger-billing', data),
   // Get billing run history
   getBillingHistory: (params = {}) => api.get('/cron/agent/history', { params }),
   

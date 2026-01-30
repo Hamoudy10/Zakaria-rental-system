@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 
 const AgentManagement = () => {
-  const { agents, loading, error, updateAgentPermissions } = useUsers();
+  const { agents, loading, error, updateAgentPermissions } = useUser();
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [updating, setUpdating] = useState(false);
 
