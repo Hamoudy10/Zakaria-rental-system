@@ -453,8 +453,8 @@ const updateSettingByKey = async (req, res) => {
     // Validate specific settings
     if (key === 'billing_day') {
       const day = parseInt(value, 10);
-      if (isNaN(day) || day < 1 || day > 28) {
-        throw new Error('Billing day must be between 1 and 28');
+      if (isNaN(day) || day < 1 || day > 31) {
+        throw new Error('Billing day must be between 1 and 31');
       }
     }
 
