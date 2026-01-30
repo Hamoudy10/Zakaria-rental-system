@@ -559,8 +559,8 @@ const updateMultipleSettings = async (req, res) => {
       // Validate specific settings
       if (key === 'billing_day') {
         const day = parseInt(value, 10);
-        if (isNaN(day) || day < 1 || day > 28) {
-          validationErrors.push('Billing day must be between 1 and 28');
+        if (isNaN(day) || day < 1 || day > 31) {
+          validationErrors.push('Billing day must be between 1 and 31');
         } else {
           restartCron = true;
         }
@@ -812,17 +812,14 @@ const initializeDefaultSettings = async () => {
       { setting_key: 'company_phone', setting_value: '', description: 'Company phone number' },
       { setting_key: 'company_address', setting_value: '', description: 'Company physical address' },
       { setting_key: 'company_logo', setting_value: '', description: 'Company logo URL (Cloudinary)' },
-      { setting_key: 'billing_day', setting_value: '28', description: 'Day of month for automatic billing (1-28)' },
+      { setting_key: 'billing_day', setting_value: '28', description: 'Day of month for automatic billing (1-31). Months with fewer days will bill on the last day.' },
       { setting_key: 'paybill_number', setting_value: '', description: 'Business paybill number for SMS instructions' },
       { setting_key: 'sms_billing_template', setting_value: 'Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.', description: 'SMS template for billing notifications' },
       { setting_key: 'late_fee_percentage', setting_value: '5', description: 'Late fee percentage applied to overdue payments' },
       { setting_key: 'grace_period_days', setting_value: '5', description: 'Number of grace days before late fee is applied' },
       { setting_key: 'sms_enabled', setting_value: 'true', description: 'Enable or disable SMS notifications' },
       { setting_key: 'auto_billing_enabled', setting_value: 'true', description: 'Enable or disable automatic monthly billing' },
-      { setting_key: 'mpesa_paybill_number', setting_value: '', description: 'M-Pesa paybill number for payments' },
-      { setting_key: 'mpesa_passkey', setting_value: '', description: 'M-Pesa Lipa Na M-Pesa passkey' },
-      { setting_key: 'mpesa_consumer_key', setting_value: '', description: 'M-Pesa consumer key for API access' },
-      { setting_key: 'mpesa_consumer_secret', setting_value: '', description: 'M-Pesa consumer secret for API access' }
+      { setting_key: 'mpesa_paybill_number', setting_value: '', description: 'M-Pesa paybill number for payments' }
     ];
     
     for (const setting of defaultSettings) {
