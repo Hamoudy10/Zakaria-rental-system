@@ -317,6 +317,9 @@ const triggerAgentBillingSMS = async (req, res) => {
   try {
     const agentId = req.user.id;
     const { month, property_id, include_missing_water_bills = false } = req.body;
+
+     // ✅ FALLBACK: If month is missing, default to current month YYYY-MM
+    const targetMonth = month || new Date().toISOString().slice(0, 7);
     
     if (!month) {
       return res.status(400).json({
@@ -426,7 +429,7 @@ const triggerAgentBillingSMS = async (req, res) => {
       ORDER BY p.name, pu.unit_code
     `;
     
-    const tenantsResult = await pool.query(tenantsQuery, [targetProperties, `${month}-01`]);
+    const tenantsResult = await pool.query(tenantsQuery, [targetProperties, `${targetMonth}-01`]);
     const tenants = tenantsResult.rows;
     
     if (tenants.length === 0) {
@@ -454,7 +457,7 @@ const triggerAgentBillingSMS = async (req, res) => {
         
         // Create bill message
         const message = `Hello ${tenant.first_name} ${tenant.last_name},\n` +
-          `Your ${month} bill for ${tenant.unit_code}:\n\n` +
+          `Your ${targetMonth} bill for ${tenant.unit_code}:\n\n` +
           (rentDue > 0 ? `🏠 Rent: KSh ${rentDue.toLocaleString()}\n` : '') +
           (waterDue > 0 ? `🚰 Water: KSh ${waterDue.toLocaleString()}\n` : '') +
           (arrearsDue > 0 ? `📝 Arrears: KSh ${arrearsDue.toLocaleString()}\n` : '') +
@@ -474,7 +477,7 @@ const triggerAgentBillingSMS = async (req, res) => {
             message,
             'bill_notification',
             'pending',
-            month,
+            targetMonth,
             agentId
           ]
         );
@@ -505,7 +508,7 @@ const triggerAgentBillingSMS = async (req, res) => {
       data: {
         ...results,
         property_count: targetProperties.length,
-        month: month
+        targetMonth: month
       }
     });
     
