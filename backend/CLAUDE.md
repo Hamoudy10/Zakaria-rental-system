@@ -345,7 +345,7 @@ router.get('/public/company-info', adminSettingsController.getPublicCompanyInfo)
 
 ### 3. BACKEND `backend/claude.md` - Add at the end:
 
-```markdown
+``markdown
 ## WHATSAPP-STYLE CHAT BACKEND (v6.0)
 
 ### Chat Controller Endpoints
@@ -380,11 +380,32 @@ router.get('/public/company-info', adminSettingsController.getPublicCompanyInfo)
 | `new_message` | Emit | Broadcast new message to room |
 | `user_typing` | Emit | Notify typing in conversation |
 | `user_online_status` | Emit | Broadcast online/offline change |
-| `messages_read_receipt` | Emit | Notify sender of read status |
+| `messages_read_receipt' | Emit | Notify sender of read status |
 
 ### Message Status Flow
 
-// Storage: zakaria_rental/chat_images
-// Max size: 5MB
-// Formats: JPEG, PNG, GIF, WebP
-// Transformation: 800x800 limit, auto quality
+ Storage: zakaria_rental/chat_images
+ Max size: 5MB
+Formats: JPEG, PNG, GIF, WebP
+Transformation: 800x800 limit, auto quality
+
+## CELCOM SMS INTEGRATION (v6.0)
+
+### Configuration
+- **Provider:** Celcom Africa
+- **Method:** POST (JSON)
+- **Endpoint:** https://isms.celcomafrica.com/api/services/sendsms/
+
+### Environment Variables
+| Variable | Description |
+|----------|-------------|
+| `SMS_API_KEY` | Celcom API Key |
+| `SMS_PARTNER_ID` | Celcom Partner ID |
+| `SMS_SENDER_ID` | Approved Shortcode/Sender ID |
+| `SMS_BASE_URL` | https://isms.celcomafrica.com/api/services/sendsms/ |
+
+### Logic Workflow
+1. **Format:** Phone numbers are converted to `2547XXXXXXXX`.
+2. **Payload:** Body includes `apikey`, `partnerID`, `message`, `shortcode`, `mobile`, and `pass_type: 'plain'`.
+3. **Validation:** Success is confirmed if `response.data.responses[0]['response-code'] === 200`.
+4. **Queueing:** Failed attempts are saved to `sms_queue` for 3 retries (via `cronService`).
