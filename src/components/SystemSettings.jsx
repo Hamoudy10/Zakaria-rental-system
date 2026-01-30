@@ -433,6 +433,12 @@ const SystemSettings = () => {
 
   const settingsByCategory = getSettingsByCategory();
 
+  // Get current paybill value from settings
+  const getPaybillValue = () => {
+    const paybillSetting = safeSettings.find(s => s.key === 'paybill_number');
+    return settingsUpdates['paybill_number'] ?? paybillSetting?.value ?? '';
+  };
+
   /* ---------------- Document Preview Component ---------------- */
   const DocumentPreview = () => (
     <div className="bg-white border-2 border-gray-300 rounded-lg p-6 shadow-inner max-w-md mx-auto">
@@ -582,11 +588,11 @@ const SystemSettings = () => {
               onChange={(e) => handleSettingChange(setting.key, parseInt(e.target.value))}
               className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
-              {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
+              {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
                 <option key={day} value={day}>{day}</option>
               ))}
             </select>
-            <p className="text-xs text-gray-500">Day of month for automatic billing (1-28)</p>
+            <p className="text-xs text-gray-500">Day of month for automatic billing (1-31). Note: Months with fewer days will bill on the last day.</p>
           </div>
         );
 
@@ -624,26 +630,6 @@ const SystemSettings = () => {
           </div>
         );
 
-      case 'paybill_number':
-      case 'mpesa_paybill_number':
-        return (
-          <div className="space-y-2">
-            <input
-              type="text"
-              value={currentValue || ''}
-              onChange={(e) => {
-                const value = e.target.value.replace(/\D/g, '');
-                if (value.length <= 10) {
-                  handleSettingChange(setting.key, value);
-                }
-              }}
-              placeholder="e.g., 123456"
-              className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-            <p className="text-xs text-gray-500">Business paybill number (5-10 digits)</p>
-          </div>
-        );
-
       case 'sms_billing_template':
         return (
           <div className="space-y-2">
@@ -669,22 +655,11 @@ const SystemSettings = () => {
           </div>
         );
 
+      // Skip sensitive M-Pesa fields - they should be in .env only
       case 'mpesa_passkey':
       case 'mpesa_consumer_secret':
-        return (
-          <div className="space-y-2">
-            <input
-              type="password"
-              value={currentValue || ''}
-              onChange={(e) => handleSettingChange(setting.key, e.target.value)}
-              placeholder="••••••••••"
-              className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-            <p className="text-xs text-gray-500">
-              {setting.key === 'mpesa_passkey' ? 'M-Pesa Lipa Na M-Pesa passkey' : 'M-Pesa consumer secret'}
-            </p>
-          </div>
-        );
+      case 'mpesa_consumer_key':
+        return null;
 
       default:
         return (
@@ -911,31 +886,176 @@ const SystemSettings = () => {
         );
 
       case 'billing':
-      case 'mpesa':
         return (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {settingsByCategory[activeTab]?.length > 0 ? (
-              settingsByCategory[activeTab].map(setting => (
-                <div 
-                  key={setting.key} 
-                  className="space-y-2 p-4 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <label className="block text-sm font-medium text-gray-900">
-                    {setting.description || setting.key.replace(/_/g, ' ')}
-                  </label>
-                  {renderSettingField(setting)}
-                  {setting.updated_at && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      Last updated: {new Date(setting.updated_at).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-              ))
+              settingsByCategory[activeTab]
+                .filter(setting => !['mpesa_passkey', 'mpesa_consumer_secret', 'mpesa_consumer_key', 'paybill_number', 'mpesa_paybill_number'].includes(setting.key))
+                .map(setting => (
+                  <div 
+                    key={setting.key} 
+                    className="space-y-2 p-4 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    <label className="block text-sm font-medium text-gray-900">
+                      {setting.description || setting.key.replace(/_/g, ' ')}
+                    </label>
+                    {renderSettingField(setting)}
+                    {setting.updated_at && (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Last updated: {new Date(setting.updated_at).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                ))
             ) : (
               <div className="col-span-2 text-center py-12">
                 <p className="text-gray-500">No settings found for this category.</p>
               </div>
             )}
+          </div>
+        );
+
+      case 'mpesa':
+        return (
+          <div className="space-y-8">
+            {/* How It Works Section */}
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border border-green-200">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-green-600 rounded-full flex items-center justify-center">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-green-900 mb-2">How M-Pesa Paybill Works</h3>
+                  <p className="text-sm text-green-800 mb-4">
+                    Tenants pay rent using their M-Pesa on their phones. They select <strong>Lipa na M-Pesa → Pay Bill</strong>, 
+                    enter your Paybill number and their Unit Code as the account number. The system automatically 
+                    receives and processes the payment.
+                  </p>
+                  <div className="bg-white rounded-lg p-4 border border-green-200">
+                    <p className="text-xs font-medium text-green-800 mb-2">Payment Flow:</p>
+                    <div className="flex items-center gap-2 text-xs text-green-700 flex-wrap">
+                      <span className="bg-green-100 px-2 py-1 rounded">1. Tenant opens M-Pesa</span>
+                      <span>→</span>
+                      <span className="bg-green-100 px-2 py-1 rounded">2. Lipa na M-Pesa</span>
+                      <span>→</span>
+                      <span className="bg-green-100 px-2 py-1 rounded">3. Pay Bill</span>
+                      <span>→</span>
+                      <span className="bg-green-100 px-2 py-1 rounded">4. Enter Paybill & Account</span>
+                      <span>→</span>
+                      <span className="bg-green-100 px-2 py-1 rounded">5. Confirm Payment</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Paybill Number Setting */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Paybill Configuration</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    M-Pesa Paybill Number
+                  </label>
+                  <input
+                    type="text"
+                    value={getPaybillValue()}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '');
+                      if (value.length <= 10) {
+                        handleSettingChange('paybill_number', value);
+                      }
+                    }}
+                    placeholder="e.g., 522522"
+                    className="w-full max-w-xs border rounded-lg p-3 text-lg font-mono focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    Your registered M-Pesa Paybill number (5-10 digits). This is shown in SMS messages to tenants.
+                  </p>
+                </div>
+
+                {/* Preview how it appears in SMS */}
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 max-w-md">
+                  <p className="text-xs font-medium text-gray-600 mb-2">SMS Preview:</p>
+                  <p className="text-sm text-gray-800 font-mono bg-white p-3 rounded border">
+                    "...Pay via Paybill <strong className="text-green-600">{getPaybillValue() || '[Your Paybill]'}</strong>, Account: MJ-01"
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Security Note */}
+            <div className="bg-amber-50 rounded-xl p-6 border border-amber-200">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0">
+                  <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-amber-900 mb-1">Security Information</h4>
+                  <p className="text-sm text-amber-800">
+                    M-Pesa API credentials (Consumer Key, Consumer Secret, and Passkey) are securely stored in environment 
+                    variables on the server. For security reasons, they cannot be changed from this interface. 
+                    Contact your system administrator to update API credentials.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* What Tenants See */}
+            <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+              <h4 className="text-sm font-semibold text-gray-900 mb-4">What Tenants See on Their Phone</h4>
+              
+              <div className="max-w-xs mx-auto">
+                {/* Mock Phone Screen */}
+                <div className="bg-gray-900 rounded-3xl p-2">
+                  <div className="bg-white rounded-2xl overflow-hidden">
+                    {/* Status Bar */}
+                    <div className="bg-green-600 text-white px-4 py-2 text-center text-sm font-medium">
+                      M-PESA
+                    </div>
+                    
+                    {/* Content */}
+                    <div className="p-4 space-y-4">
+                      <div className="text-center text-sm text-gray-600">Enter Details</div>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-xs text-gray-500">Business Number</label>
+                          <div className="border rounded p-2 bg-gray-50 font-mono text-lg">
+                            {getPaybillValue() || '______'}
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <label className="text-xs text-gray-500">Account Number</label>
+                          <div className="border rounded p-2 bg-gray-50 font-mono">
+                            MJ-01 <span className="text-xs text-gray-400">(Unit Code)</span>
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <label className="text-xs text-gray-500">Amount</label>
+                          <div className="border rounded p-2 bg-gray-50 font-mono">
+                            KSh 15,000
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <button className="w-full bg-green-600 text-white py-3 rounded-lg font-medium">
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         );
 
@@ -1234,7 +1354,7 @@ const SystemSettings = () => {
           <p className="text-gray-600">Manage application configuration, company branding, and preferences</p>
         </div>
 
-        {activeTab !== 'profile' && activeTab !== 'appearance' && activeTab !== 'company' && (
+        {activeTab !== 'profile' && activeTab !== 'appearance' && activeTab !== 'company' && activeTab !== 'mpesa' && (
           <button
             onClick={handleResetDefaults}
             className="px-4 py-2 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
@@ -1260,7 +1380,7 @@ const SystemSettings = () => {
             {[
               { id: 'company', name: 'Company Info', shortName: 'Company' },
               { id: 'billing', name: 'Billing & Payments', shortName: 'Billing' },
-              { id: 'mpesa', name: 'M-Pesa Integration', shortName: 'M-Pesa' },
+              { id: 'mpesa', name: 'M-Pesa Paybill', shortName: 'M-Pesa' },
               { id: 'profile', name: 'Admin Profile', shortName: 'Profile' },
               { id: 'appearance', name: 'Appearance', shortName: 'Theme' }
             ].map(tab => (
