@@ -1,4 +1,5 @@
 // src/components/PaymentManagement.jsx
+// COMPLETE FIXED VERSION - Ready to copy-paste
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePayment } from '../context/PaymentContext';
 import { useProperty } from '../context/PropertyContext';
@@ -9,7 +10,7 @@ import {
   Calendar, DollarSign, BarChart, Activity, Search, X, 
   ChevronsRight, ChevronsLeft, ChevronRight, ChevronLeft, 
   ArrowDown, ArrowUp, FileText, FileSpreadsheet 
-} from 'lucide-react'; // Removed unused Filter, Users icons
+} from 'lucide-react';
 
 // Helper for currency formatting
 const formatCurrency = (amount) => new Intl.NumberFormat('en-KE', { 
@@ -21,11 +22,22 @@ const formatCurrency = (amount) => new Intl.NumberFormat('en-KE', {
 // Helper for date formatting
 const formatDate = (dateString) => dateString ? new Date(dateString).toLocaleDateString('en-GB') : 'N/A';
 
+// ============================================================
+// FIX: Timezone-safe date formatting helper
+// This prevents the UTC conversion bug that caused wrong dates
+// ============================================================
+const formatDateLocal = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 const PaymentManagement = () => {
   const { user } = useAuth();
   const { 
     payments, 
-    pagination, // Now correctly available from context
+    pagination,
     loading, 
     error, 
     fetchPayments, 
@@ -47,7 +59,7 @@ const PaymentManagement = () => {
   });
   
   const [sort, setSort] = useState({ sortBy: 'payment_date', sortOrder: 'desc' });
-  const [currentPage, setCurrentPage] = useState(1); // Initialize to 1, useEffect will sync with actual pagination
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Modal State
   const [showTenantHistory, setShowTenantHistory] = useState(false);
@@ -79,26 +91,32 @@ const PaymentManagement = () => {
     const year = now.getFullYear();
     const month = now.getMonth();
 
-    // Handle Period Filters
+    // ============================================================
+    // FIX: Use formatDateLocal instead of toISOString()
+    // This prevents timezone conversion bugs
+    // ============================================================
     if (filters.period !== 'custom') {
       if (filters.period === 'this_month') {
-        startDate = new Date(year, month, 1).toISOString().split('T')[0];
-        endDate = new Date(year, month + 1, 0).toISOString().split('T')[0];
+        startDate = formatDateLocal(new Date(year, month, 1));
+        endDate = formatDateLocal(new Date(year, month + 1, 0));
       } else if (filters.period === 'last_month') {
-        startDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
-        endDate = new Date(year, month, 0).toISOString().split('T')[0];
+        startDate = formatDateLocal(new Date(year, month - 1, 1));
+        endDate = formatDateLocal(new Date(year, month, 0));
       } else if (filters.period === 'this_quarter') {
         const quarter = Math.floor(month / 3);
-        startDate = new Date(year, quarter * 3, 1).toISOString().split('T')[0];
-        endDate = new Date(year, (quarter + 1) * 3, 0).toISOString().split('T')[0];
+        startDate = formatDateLocal(new Date(year, quarter * 3, 1));
+        endDate = formatDateLocal(new Date(year, (quarter + 1) * 3, 0));
       } else if (filters.period === 'this_year') {
-        startDate = new Date(year, 0, 1).toISOString().split('T')[0];
-        endDate = new Date(year, 11, 31).toISOString().split('T')[0];
+        startDate = formatDateLocal(new Date(year, 0, 1));
+        endDate = formatDateLocal(new Date(year, 11, 31));
       }
     }
     
     if (startDate) params.startDate = startDate;
     if (endDate) params.endDate = endDate;
+
+    // Debug log to verify correct dates (remove in production)
+    console.log('📅 Payment fetch params:', { startDate, endDate, period: filters.period });
     
     fetchPayments(params);
   }, [currentPage, filters, sort, fetchPayments]);
@@ -109,7 +127,6 @@ const PaymentManagement = () => {
 
   // Sync currentPage with pagination updates received from context
   useEffect(() => {
-    // Only update if pagination exists and currentPage is different to prevent infinite loops
     if (pagination && pagination.currentPage && pagination.currentPage !== currentPage) {
       setCurrentPage(pagination.currentPage);
     }
@@ -124,23 +141,22 @@ const PaymentManagement = () => {
 
   const handleViewHistory = async (tenantId, fullName) => {
     setLoadingHistory(true);
-    setHistoryError(''); // Clear previous errors
+    setHistoryError('');
     setSelectedTenant({ id: tenantId, name: fullName });
     
     try {
-      // fetchTenantHistory is expected to return { payments: [], summary: {} }
       const historyData = await fetchTenantHistory(tenantId); 
       if (historyData) {
         setTenantHistory(historyData);
       } else {
-        setTenantHistory({ payments: [], summary: {} }); // Ensure state is cleared
+        setTenantHistory({ payments: [], summary: {} });
         setHistoryError('No payment history found for this tenant.');
       }
     } catch (err) {
       console.error('Fetch tenant history error:', err);
       setHistoryError('Failed to load payment history. Please try again.');
     } finally {
-      setShowTenantHistory(true); // Open modal regardless of success/error
+      setShowTenantHistory(true);
       setLoadingHistory(false);
     }
   };
@@ -167,7 +183,6 @@ const PaymentManagement = () => {
     payments?.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0) || 0
   , [payments]);
 
-  // Use optional chaining for payments here too
   const recentTransactions = useMemo(() => payments?.slice(0, 5) || [], [payments]);
 
   return (
@@ -211,7 +226,6 @@ const PaymentManagement = () => {
           <div className="bg-green-100 p-3 rounded-full"><BarChart className="text-green-600" /></div>
           <div>
             <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Transaction Count</p>
-            {/* Access pagination safely */}
             <p className="text-2xl font-bold text-gray-800">{pagination?.totalCount || 0}</p>
           </div>
         </div>

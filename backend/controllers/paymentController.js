@@ -465,17 +465,30 @@ const getAllPayments = async (req, res) => {
       sortOrder = 'desc' 
     } = req.query;
     
-    const offset = (page - 1) * limit;
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    const userRole = req.user.role;
+    const userId = req.user.id;
 
+    // Validate sort columns to prevent SQL injection
     const validSortColumns = ['payment_date', 'amount', 'first_name', 'property_name', 'status'];
     const safeSortBy = validSortColumns.includes(sortBy) ? sortBy : 'payment_date';
     const safeSortOrder = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
+    // Build base query with all necessary joins
     let baseQuery = `
       SELECT 
-        rp.id, rp.amount, rp.payment_month, rp.payment_date, rp.status, 
-        rp.mpesa_receipt_number, rp.mpesa_transaction_id, rp.phone_number,
-        t.id as tenant_id, t.first_name, t.last_name,
+        rp.id, 
+        rp.amount, 
+        rp.payment_month, 
+        rp.payment_date, 
+        rp.status, 
+        rp.mpesa_receipt_number, 
+        rp.mpesa_transaction_id, 
+        rp.phone_number,
+        t.id as tenant_id, 
+        t.first_name, 
+        t.last_name,
+        p.id as property_id, 
         p.name as property_name,
         pu.unit_code
       FROM rent_payments rp
@@ -488,56 +501,118 @@ const getAllPayments = async (req, res) => {
     const queryParams = [];
     let paramIndex = 1;
     
+    // ============================================================
+    // CRITICAL: Agent Isolation Filter
+    // Agents can only see payments for properties they're assigned to
+    // ============================================================
+    if (userRole === 'agent') {
+      whereClauses.push(`
+        p.id IN (
+          SELECT property_id 
+          FROM agent_property_assignments 
+          WHERE agent_id = $${paramIndex}::uuid 
+          AND is_active = true
+        )
+      `);
+      queryParams.push(userId);
+      paramIndex++;
+      
+      console.log(`🔒 Agent isolation applied for agent: ${userId}`);
+    }
+    // Admin sees all payments - no additional filter needed
+    
+    // Property filter
     if (propertyId) {
-      whereClauses.push(`p.id = $${paramIndex++}`);
+      whereClauses.push(`p.id = $${paramIndex}::uuid`);
       queryParams.push(propertyId);
+      paramIndex++;
     }
+    
+    // Tenant filter
     if (tenantId) {
-      whereClauses.push(`t.id = $${paramIndex++}`);
+      whereClauses.push(`t.id = $${paramIndex}::uuid`);
       queryParams.push(tenantId);
+      paramIndex++;
     }
+    
+    // Date range filters
     if (startDate) {
-      whereClauses.push(`rp.payment_date >= $${paramIndex++}`);
+      whereClauses.push(`rp.payment_date >= $${paramIndex}::date`);
       queryParams.push(startDate);
+      paramIndex++;
     }
+    
     if (endDate) {
-      whereClauses.push(`rp.payment_date <= $${paramIndex++}`);
+      whereClauses.push(`rp.payment_date <= $${paramIndex}::date`);
       queryParams.push(endDate);
+      paramIndex++;
     }
+    
+    // Search filter (tenant name or receipt number)
     if (search) {
-      whereClauses.push(`(t.first_name ILIKE $${paramIndex} OR t.last_name ILIKE $${paramIndex} OR rp.mpesa_receipt_number ILIKE $${paramIndex})`);
+      whereClauses.push(`(
+        t.first_name ILIKE $${paramIndex} OR 
+        t.last_name ILIKE $${paramIndex} OR 
+        rp.mpesa_receipt_number ILIKE $${paramIndex} OR
+        CONCAT(t.first_name, ' ', t.last_name) ILIKE $${paramIndex}
+      )`);
       queryParams.push(`%${search}%`);
       paramIndex++;
     }
 
+    // Apply WHERE clauses
     if (whereClauses.length > 0) {
       baseQuery += ` WHERE ${whereClauses.join(' AND ')}`;
     }
 
+    // Debug: Log the query for troubleshooting
+    console.log('📊 Payment query debug:', {
+      role: userRole,
+      userId: userId,
+      startDate,
+      endDate,
+      propertyId,
+      search,
+      whereClausesCount: whereClauses.length
+    });
+
+    // Get total count for pagination
     const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) as filtered_payments`;
     const countResult = await pool.query(countQuery, queryParams);
     const totalCount = parseInt(countResult.rows[0].count, 10);
     
-    baseQuery += ` ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-    queryParams.push(limit, offset);
+    // Add sorting and pagination
+    baseQuery += ` ORDER BY rp.${safeSortBy} ${safeSortOrder}`;
+    baseQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    queryParams.push(parseInt(limit, 10), offset);
 
+    // Execute main query
     const paymentsResult = await pool.query(baseQuery, queryParams);
 
+    // Log results summary
+    console.log(`✅ Payments fetched: ${paymentsResult.rows.length} of ${totalCount} total`);
+
+    // Return response
     res.json({
       success: true,
       data: {
         payments: paymentsResult.rows,
         pagination: {
           currentPage: parseInt(page, 10),
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.max(1, Math.ceil(totalCount / parseInt(limit, 10))),
           totalCount,
         },
       },
     });
 
   } catch (error) {
-    console.error('Error fetching all payments:', error);
-    res.status(500).json({ success: false, message: 'Server error fetching payments' });
+    console.error('❌ Error in getAllPayments:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error fetching payments',
+      // Only include error details in development
+      ...(process.env.NODE_ENV === 'development' && { error: error.message })
+    });
   }
 };
 
