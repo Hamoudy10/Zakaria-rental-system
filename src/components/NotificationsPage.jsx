@@ -37,24 +37,94 @@ const NotificationsPage = () => {
 
   const getNotificationIcon = (type) => {
     switch (type) {
-      case 'payment_success':
-      case 'payment_received': return '💰';
-      case 'payment_failed': return '❌';
-      case 'payment_carry_forward': return '⏭️';
-      case 'salary_paid': return '🏦';
-      case 'complaint_created': return '🚨';
-      case 'complaint_resolved': return '✅';
-      case 'announcement': return '📢';
-      case 'maintenance': return '🛠️';
-      default: return '🔔';
+      // EXISTING
+      case "payment_success":
+      case "payment_received":
+        return "💰";
+      case "payment_failed":
+        return "❌";
+      case "payment_pending":
+        return "⏳";
+      case "payment_carry_forward":
+        return "⏭️";
+      case "salary_paid":
+        return "🏦";
+      case "salary_processed":
+        return "🏦";
+      case "complaint_created":
+        return "🚨";
+      case "complaint_resolved":
+        return "✅";
+      case "complaint_updated":
+        return "📝";
+      case "announcement":
+        return "📢";
+      case "maintenance":
+        return "🛠️";
+
+      // NEW TYPES TO ADD
+      case "tenant_created":
+        return "👤";
+      case "tenant_allocated":
+        return "🏠";
+      case "tenant_deallocated":
+        return "🚪";
+      case "water_bill_created":
+        return "🚰";
+      case "expense_created":
+        return "💸";
+      case "expense_approved":
+        return "✅";
+      case "expense_rejected":
+        return "❌";
+      case "lease_expiring":
+        return "📅";
+      case "rent_overdue":
+        return "⚠️";
+      case "system_alert":
+        return "⚙️";
+
+      default:
+        return "🔔";
     }
   };
 
   const getNotificationColor = (type) => {
-    if (type?.includes('failed') || type?.includes('error')) return 'border-red-200 bg-red-50';
-    if (type?.includes('success') || type?.includes('resolved')) return 'border-green-200 bg-green-50';
-    if (type?.includes('payment')) return 'border-blue-200 bg-blue-50';
-    return 'border-gray-200 bg-gray-50';
+    // Error/Failure/Rejection (Red)
+    if (
+      type?.includes("failed") ||
+      type?.includes("error") ||
+      type?.includes("rejected")
+    ) {
+      return "border-red-200 bg-red-50";
+    }
+    // Success/Approved/Resolved (Green)
+    if (
+      type?.includes("success") ||
+      type?.includes("resolved") ||
+      type?.includes("approved")
+    ) {
+      return "border-green-200 bg-green-50";
+    }
+    // Financial/Payment (Blue)
+    if (
+      type?.includes("payment") ||
+      type?.includes("salary") ||
+      type?.includes("expense") ||
+      type?.includes("bill")
+    ) {
+      return "border-blue-200 bg-blue-50";
+    }
+    // Warnings/Alerts (Yellow/Orange)
+    if (
+      type?.includes("expiring") ||
+      type?.includes("overdue") ||
+      type?.includes("alert")
+    ) {
+      return "border-orange-200 bg-orange-50";
+    }
+    // Default (Gray)
+    return "border-gray-200 bg-gray-50";
   };
 
   const filteredNotifications = notifications.filter(n => {

@@ -318,3 +318,55 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP;
 
 -- Chat messages table
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'sent';
+## NOTIFICATION SYSTEM (v7.0)
+
+### Overview
+Comprehensive notification system that alerts users about all system events including payments, tenants, allocations, complaints, water bills, expenses, and scheduled reminders.
+
+### Notification Types
+| Type | Event | Recipients |
+|------|-------|------------|
+| `payment_success` | Payment completed | Tenant |
+| `payment_received` | Payment received | Admin + Agent |
+| `payment_failed` | Payment failed | Tenant + Admin |
+| `payment_pending` | STK push initiated | Tenant |
+| `payment_carry_forward` | Advance payment applied | Tenant |
+| `salary_paid` | Salary processed | Agent |
+| `salary_processed` | Salary confirmation | Admin |
+| `tenant_created` | New tenant registered | All Admins |
+| `tenant_allocated` | Tenant assigned to unit | Admin + Agent |
+| `tenant_deallocated` | Tenant removed from unit | Admin + Agent |
+| `complaint_created` | New complaint filed | Admin + Agent |
+| `complaint_updated` | Complaint status changed | Tenant |
+| `complaint_resolved` | Complaint resolved | Tenant + Admin |
+| `complaint_assigned` | Complaint assigned | Agent |
+| `water_bill_created` | Water bill added | Admin + Agent |
+| `expense_created` | Expense recorded | All Admins |
+| `expense_approved` | Expense approved | Recording Agent |
+| `expense_rejected` | Expense rejected | Recording Agent |
+| `lease_expiring` | Lease expires in 30 days | Admin + Agent |
+| `rent_overdue` | Rent payment overdue | Admin + Agent |
+| `announcement` | General announcement | Target users |
+| `maintenance` | Maintenance notice | Target users |
+| `emergency` | Emergency alert | All users |
+| `system_alert` | System notification | Admins |
+| `broadcast` | Admin broadcast | Target roles |
+
+### Scheduled Jobs (Cron)
+| Time | Job | Description |
+|------|-----|-------------|
+| 8:00 AM daily | `checkExpiringLeases()` | Check leases expiring in 30 days |
+| 10:00 AM daily | `checkOverdueRent()` | Check for overdue rent payments |
+| 9:00 AM (billing day) | `sendMonthlyBills()` | Send monthly billing SMS |
+| Every 5 min | `processQueuedSMS()` | Process SMS queue |
+
+### Integration Points
+| Controller | Events Triggered |
+|------------|------------------|
+| `tenantController` | `tenant_created` |
+| `allocationController` | `tenant_allocated`, `tenant_deallocated` |
+| `complaintController` | `complaint_created`, `complaint_updated`, `complaint_resolved`, `complaint_assigned` |
+| `waterBillController` | `water_bill_created` |
+| `paymentController` | `payment_success`, `payment_failed`, `payment_pending`, `payment_carry_forward`, `payment_received` |
+| `expenses route` | `expense_created`, `expense_approved`, `expense_rejected` |
+| `cronService` | `lease_expiring`, `rent_overdue` |

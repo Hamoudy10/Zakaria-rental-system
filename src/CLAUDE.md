@@ -388,3 +388,37 @@ uploadImage(file)                  // Upload chat image
 - **All-Time Period Filter:** Added to allow bypass of monthly date filters during debugging.
 - **Timezone-Safe Dates:** Replaced `toISOString()` with local date construction to prevent 1-day shifts in API requests.
 - **Empty State Debugger:** Shows active filter parameters (startDate, endDate) when no records are found.
+
+---
+
+## 3. FRONTEND src/claude.md (Add to the end of your src/claude.md file)
+
+```markdown
+## NOTIFICATION SYSTEM - FRONTEND
+
+### NotificationContext (`src/context/NotificationContext.jsx`)
+
+#### Features
+- Polling with exponential backoff (30s - 5min)
+- Rate limit handling (429 responses)
+- Optimistic updates for mark as read
+- Pagination support
+
+#### Exported Values
+``javascript
+const {
+  notifications,          // Array of notification objects
+  loading,               // Boolean loading state
+  error,                 // Error message or null
+  unreadCount,           // Number of unread notifications
+  pagination,            // { currentPage, totalPages, totalCount, hasNext, hasPrev }
+  fetchNotifications,    // Function to fetch notifications
+  fetchUnreadCount,      // Function to fetch unread count
+  refreshNotifications,  // Function to refresh both
+  markAsRead,            // Function to mark single as read
+  markAllAsRead,         // Function to mark all as read
+  deleteNotification,    // Function to delete notification
+  clearReadNotifications, // Function to clear all read
+  createBroadcastNotification, // Admin: send broadcast
+  clearError             // Function to clear error state
+} = useNotification();

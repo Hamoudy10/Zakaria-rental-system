@@ -363,3 +363,25 @@ SELECT indexname FROM pg_indexes WHERE tablename IN ('users', 'chat_messages', '
 ## PERFORMANCE INDEXES
 - `idx_rent_payments_payment_date`: Optimized for dashboard filtering.
 - `idx_agent_property_assignments_agent`: Faster isolation queries.
+
+---
+
+## 4. DATABASE backend/claude_db.md (Add to the end of your backend/claude_db.md file)
+
+```markdown
+## NOTIFICATIONS TABLE
+
+### Schema
+```sql
+CREATE TABLE notifications (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id),
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  related_entity_type VARCHAR(50),
+  related_entity_id UUID,
+  is_read BOOLEAN DEFAULT false,
+  read_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);

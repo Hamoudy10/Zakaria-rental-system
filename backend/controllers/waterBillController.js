@@ -1,6 +1,6 @@
 // backend/controllers/waterBillController.js
 const db = require('../config/database');
-
+const NotificationService = require("../services/notificationService");
 /**
  * Helper: check if agent manages the property
  */
@@ -20,12 +20,21 @@ const agentManagesProperty = async (agentId, propertyId) => {
 const createWaterBill = async (req, res) => {
   try {
     const agentId = req.user.id;
-    let { tenantId, tenantName, unitId = null, propertyId, amount, billMonth, notes = null } = req.body;
+    let {
+      tenantId,
+      tenantName,
+      unitId = null,
+      propertyId,
+      amount,
+      billMonth,
+      notes = null,
+    } = req.body;
 
     if (!tenantId || !propertyId || !amount || !billMonth) {
-      // tenantId is optional if tenantName provided; check specifically
       if (!propertyId || !amount || !billMonth) {
-        return res.status(400).json({ success: false, message: 'Missing required fields' });
+        return res
+          .status(400)
+          .json({ success: false, message: "Missing required fields" });
       }
     }
 
@@ -40,23 +49,46 @@ const createWaterBill = async (req, res) => {
         `;
         const found = await db.query(findQuery, [`${namePattern}`]);
         if (found.rows.length === 0) {
-          return res.status(404).json({ success: false, message: 'Tenant not found. Please ensure tenant exists in system or provide tenantId.' });
+          return res
+            .status(404)
+            .json({
+              success: false,
+              message:
+                "Tenant not found. Please ensure tenant exists in system or provide tenantId.",
+            });
         }
         if (found.rows.length > 1) {
-          return res.status(400).json({ success: false, message: 'Tenant name is ambiguous. Provide a tenant ID or precise name.' });
+          return res
+            .status(400)
+            .json({
+              success: false,
+              message:
+                "Tenant name is ambiguous. Provide a tenant ID or precise name.",
+            });
         }
         tenantId = found.rows[0].id;
       } catch (err) {
-        console.error('Error resolving tenantName:', err);
-        return res.status(500).json({ success: false, message: 'Failed to resolve tenant name', error: err.message });
+        console.error("Error resolving tenantName:", err);
+        return res
+          .status(500)
+          .json({
+            success: false,
+            message: "Failed to resolve tenant name",
+            error: err.message,
+          });
       }
     }
 
     // Validate agent has access (admin bypasses)
-    if (req.user.role !== 'admin') {
+    if (req.user.role !== "admin") {
       const ok = await agentManagesProperty(agentId, propertyId);
       if (!ok) {
-        return res.status(403).json({ success: false, message: 'Agent not assigned to this property' });
+        return res
+          .status(403)
+          .json({
+            success: false,
+            message: "Agent not assigned to this property",
+          });
       }
     }
 
@@ -68,15 +100,133 @@ const createWaterBill = async (req, res) => {
        ON CONFLICT (tenant_id, bill_month)
        DO UPDATE SET amount = EXCLUDED.amount, notes = EXCLUDED.notes, agent_id = EXCLUDED.agent_id, created_at = NOW()
        RETURNING *;`,
-      [tenantId, unitId, propertyId, agentId, amount, billDate, notes]
+      [tenantId, unitId, propertyId, agentId, amount, billDate, notes],
     );
 
-    res.json({ success: true, data: result.rows[0] });
+    const waterBill = result.rows[0];
+
+    // ============================================================
+    // NEW: SEND NOTIFICATIONS FOR WATER BILL CREATION
+    // ============================================================
+    try {
+      // Get tenant and unit details for notification
+      const detailsQuery = await db.query(
+        `SELECT 
+          t.id as tenant_id,
+          t.first_name,
+          t.last_name,
+          pu.unit_code,
+          p.name as property_name
+        FROM tenants t
+        LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+        LEFT JOIN property_units pu ON ta.unit_id = pu.id
+        LEFT JOIN properties p ON pu.property_id = p.id
+        WHERE t.id = $1`,
+        [tenantId],
+      );
+
+      if (detailsQuery.rows.length > 0) {
+        const details = detailsQuery.rows[0];
+        const tenantFullName = `${details.first_name} ${details.last_name}`;
+        const unitCode = details.unit_code || "N/A";
+
+        // Format month for display (e.g., "January 2025")
+        const billMonthDate = new Date(billDate);
+        const formattedMonth = billMonthDate.toLocaleDateString("en-US", {
+          month: "long",
+          year: "numeric",
+        });
+
+        // Format amount
+        const formattedAmount = parseFloat(amount).toLocaleString("en-KE");
+
+        // ============================================================
+        // NOTIFICATION 1: Notify Tenant about Water Bill
+        // ============================================================
+        // Note: Tenants are in 'tenants' table, not 'users' table
+        // So we check if there's a corresponding user account
+        const tenantUserQuery = await db.query(
+          `SELECT id FROM users WHERE email = (SELECT email FROM tenants WHERE id = $1) AND is_active = true`,
+          [tenantId],
+        );
+
+        if (tenantUserQuery.rows.length > 0) {
+          await NotificationService.createNotification({
+            userId: tenantUserQuery.rows[0].id,
+            title: "Water Bill Added",
+            message: `Water bill of KSh ${formattedAmount} for ${formattedMonth} has been added to your account for unit ${unitCode}.`,
+            type: "water_bill_created",
+            relatedEntityType: "water_bill",
+            relatedEntityId: waterBill.id,
+          });
+        }
+
+        // ============================================================
+        // NOTIFICATION 2: Notify All Admins about Water Bill
+        // ============================================================
+        const adminUsers = await db.query(
+          `SELECT id FROM users WHERE role = 'admin' AND is_active = true`,
+        );
+
+        for (const admin of adminUsers.rows) {
+          await NotificationService.createNotification({
+            userId: admin.id,
+            title: "Water Bill Recorded",
+            message: `Water bill of KSh ${formattedAmount} recorded for ${tenantFullName} (${unitCode}) for ${formattedMonth}.`,
+            type: "water_bill_created",
+            relatedEntityType: "water_bill",
+            relatedEntityId: waterBill.id,
+          });
+        }
+
+        // ============================================================
+        // NOTIFICATION 3: Notify Assigned Agent (if different from creator)
+        // ============================================================
+        const agentQuery = await db.query(
+          `SELECT agent_id FROM agent_property_assignments 
+           WHERE property_id = $1 AND is_active = true AND agent_id != $2`,
+          [propertyId, agentId],
+        );
+
+        for (const agent of agentQuery.rows) {
+          await NotificationService.createNotification({
+            userId: agent.agent_id,
+            title: "Water Bill Recorded",
+            message: `Water bill of KSh ${formattedAmount} recorded for ${tenantFullName} (${unitCode}) for ${formattedMonth}.`,
+            type: "water_bill_created",
+            relatedEntityType: "water_bill",
+            relatedEntityId: waterBill.id,
+          });
+        }
+
+        console.log(
+          `✅ Water bill notifications sent for tenant ${tenantFullName}`,
+        );
+      }
+    } catch (notificationError) {
+      // Log error but don't fail the water bill creation
+      console.error(
+        "❌ Failed to send water bill notifications:",
+        notificationError,
+      );
+    }
+    // ============================================================
+    // END OF NOTIFICATION CODE
+    // ============================================================
+
+    res.json({ success: true, data: waterBill });
   } catch (err) {
-    console.error('❌ createWaterBill error:', err);
-    res.status(500).json({ success: false, message: 'Failed to create water bill', error: err.message });
+    console.error("❌ createWaterBill error:", err);
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to create water bill",
+        error: err.message,
+      });
   }
 };
+
 
 // Add this function to waterBillController.js (after existing functions)
 

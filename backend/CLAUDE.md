@@ -414,3 +414,50 @@ Transformation: 800x800 limit, auto quality
 - **getAllPayments:** Implemented strict role-based filtering. 
 - Agents are restricted to payments from properties assigned to them via the `agent_property_assignments` table.
 - Admin users retain global visibility.
+## NOTIFICATION SYSTEM ARCHITECTURE
+
+### NotificationService Location
+`backend/services/notificationService.js`
+
+### Core Methods
+| Method | Purpose | Parameters |
+|--------|---------|------------|
+| `createNotification()` | Single user notification | `{ userId, title, message, type, relatedEntityType?, relatedEntityId? }` |
+| `createBulkNotifications()` | Multiple users | `Array<notificationData>` |
+| `markAsRead()` | Mark single as read | `notificationId, userId` |
+| `markAllAsRead()` | Mark all as read | `userId` |
+| `getUnreadCount()` | Get unread count | `userId` |
+| `getUserNotifications()` | Get with pagination | `userId, limit, offset` |
+| `cleanupOldNotifications()` | Delete old read notifications | `daysOld = 90` |
+
+### Event-Specific Methods
+| Method | Used By | Purpose |
+|--------|---------|---------|
+| `createTenantCreatedNotification()` | `tenantController.createTenant` | Notify admins of new tenant |
+| `createAllocationNotification()` | `allocationController` | Notify on allocate/deallocate |
+| `createComplaintNotification()` | `complaintController` | Notify on complaint events |
+| `createWaterBillNotification()` | `waterBillController` | Notify on water bill creation |
+| `createExpenseNotification()` | `expenses route` | Notify on expense events |
+| `createLeaseExpiryNotification()` | `cronService` | Notify on expiring leases |
+| `createOverdueRentNotification()` | `cronService` | Notify on overdue rent |
+| `createPaymentNotification()` | `paymentController` | Notify on payment success |
+| `createPaymentFailureNotification()` | `paymentController` | Notify on payment failure |
+| `createSalaryNotification()` | `paymentController` | Notify on salary payment |
+| `createAdminNotification()` | Various | Notify all admins |
+| `createPropertyNotification()` | Various | Notify property admins + agents |
+
+### Controller Integration Pattern
+``javascript
+// Import at top of controller
+const NotificationService = require('../services/notificationService');
+
+// After successful database operation
+try {
+  await NotificationService.createXxxNotification({
+    // notification data
+  });
+  console.log('✅ Notification sent');
+} catch (notificationError) {
+  // Log but don't throw - notification failure shouldn't break main flow
+  console.error('Notification failed:', notificationError);
+}
