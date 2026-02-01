@@ -409,3 +409,8 @@ Transformation: 800x800 limit, auto quality
 2. **Payload:** Body includes `apikey`, `partnerID`, `message`, `shortcode`, `mobile`, and `pass_type: 'plain'`.
 3. **Validation:** Success is confirmed if `response.data.responses[0]['response-code'] === 200`.
 4. **Queueing:** Failed attempts are saved to `sms_queue` for 3 retries (via `cronService`).
+## RECENT UPDATES (v20)
+### Agent Isolation in Payments
+- **getAllPayments:** Implemented strict role-based filtering. 
+- Agents are restricted to payments from properties assigned to them via the `agent_property_assignments` table.
+- Admin users retain global visibility.
