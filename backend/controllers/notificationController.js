@@ -1246,6 +1246,79 @@ const getSMSStats = async (req, res) => {
   }
 };
 
+// ============================================================
+// NEW: getTenantsByProperty - Get tenants for targeted SMS
+// ============================================================
+const getTenantsByProperty = async (req, res) => {
+  try {
+    const { propertyId } = req.params;
+    const userId = req.user.id;
+
+    if (!propertyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Property ID is required'
+      });
+    }
+
+    // Verify access to property
+    let accessCheck;
+    if (req.user.role === 'admin') {
+      accessCheck = await pool.query('SELECT id FROM properties WHERE id = $1', [propertyId]);
+    } else {
+      accessCheck = await pool.query(
+        `SELECT p.id FROM properties p
+         JOIN agent_property_assignments apa ON p.id = apa.property_id
+         WHERE p.id = $1 AND apa.agent_id = $2 AND apa.is_active = true`,
+        [propertyId, userId]
+      );
+    }
+
+    if (accessCheck.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied to this property'
+      });
+    }
+
+    // Get all tenants in the property (with active allocations)
+    const tenantsQuery = await pool.query(
+      `SELECT DISTINCT 
+         t.id, 
+         t.first_name, 
+         t.last_name, 
+         t.phone_number,
+         t.national_id,
+         pu.unit_code,
+         pu.unit_number,
+         ta.is_active as allocation_active,
+         ta.monthly_rent
+       FROM tenants t
+       JOIN tenant_allocations ta ON t.id = ta.tenant_id
+       JOIN property_units pu ON ta.unit_id = pu.id
+       WHERE pu.property_id = $1 AND ta.is_active = true
+       ORDER BY pu.unit_number, t.first_name`,
+      [propertyId]
+    );
+
+    console.log(`📋 Found ${tenantsQuery.rows.length} tenants in property ${propertyId}`);
+
+    res.json({
+      success: true,
+      data: tenantsQuery.rows
+    });
+
+  } catch (error) {
+    console.error('❌ Get tenants by property error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching tenants',
+      error: error.message
+    });
+  }
+};
+
+
 module.exports = {
   getNotifications,
   createNotification,
@@ -1262,6 +1335,7 @@ module.exports = {
   getPropertyTenants, // NEW
   sendTargetedSMS, // NEW
   getSMSHistory,
+  getTenantsByProperty,
   checkDeliveryStatus,
   getSMSStats,
 };
