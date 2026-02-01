@@ -155,6 +155,13 @@ export const notificationAPI = {
   // Get SMS history with filters and pagination
   getSMSHistory: (params) => api.get("/notifications/sms-history", { params }),
   // Expected params: { page, limit, status, startDate, endDate, search }
+
+  // NEW: Check delivery status for a specific message
+  checkDeliveryStatus: (messageId) =>
+    api.get(`/notifications/delivery-status/${messageId}`),
+
+  // NEW: Get SMS statistics
+  getSMSStats: () => api.get("/notifications/sms-stats"),
 };
 
 // Enhanced Payment API with salary payments and paybill integration

@@ -230,6 +230,13 @@ router.post('/targeted-sms', authMiddleware, callController(notificationControll
 // NEW: Get SMS history with filters and pagination
 router.get('/sms-history', authMiddleware, callController(notificationController.getSMSHistory));
 
+// Check delivery status for a specific message
+router.get('/delivery-status/:messageId', authMiddleware, callController(notificationController.checkDeliveryStatus));
+
+// Get SMS statistics
+router.get('/sms-stats', authMiddleware, callController(notificationController.getSMSStats));
+
+
 
 // =============================================
 // NOTIFICATION TYPE ROUTE
