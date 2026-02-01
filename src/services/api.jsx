@@ -143,10 +143,9 @@ export const notificationAPI = {
 
   clearUserNotifications: (userId) =>
     api.delete(`/notifications/admin/clear-all/${userId}`),
-
-  // Get tenants for a specific property (for targeted SMS)
-  getPropertyTenants: (propertyId) =>
-    api.get(`/notifications/property-tenants/${propertyId}`),
+  // NEW: Get tenants by property (for targeted SMS selection)
+  getTenantsByProperty: (propertyId) =>
+    api.get(`/notifications/tenants/${propertyId}`),
 
   // Send targeted SMS to selected tenants
   sendTargetedSMS: (data) => api.post("/notifications/targeted-sms", data),
