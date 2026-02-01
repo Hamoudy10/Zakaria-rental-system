@@ -643,13 +643,12 @@ const sendBulkSMS = async (req, res) => {
       `📤 Sending SMS to ${tenants.length} tenants in ${property.name}`,
     );
 
-    // Send SMS to each tenant
+    // Send SMS to each tenant and log individually
     const results = {
       total: tenants.length,
       sent: 0,
       failed: 0,
       errors: [],
-      messageIds: [],
     };
 
     for (const tenant of tenants) {
@@ -659,29 +658,22 @@ const sendBulkSMS = async (req, res) => {
           message,
         );
 
+        // Log each SMS to the queue
+        await pool.query(
+          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          [
+            tenant.phone_number,
+            message,
+            messageType,
+            smsResult.success ? "sent" : "failed",
+            userId,
+            smsResult.success ? new Date() : null,
+          ],
+        );
+
         if (smsResult.success) {
           results.sent++;
-
-          // Log each successful SMS to queue with actual phone number
-          const formattedPhone = SMSService.formatPhoneNumber(
-            tenant.phone_number,
-          );
-          await pool.query(
-            `INSERT INTO sms_queue (
-              recipient_phone, message, message_type, status, 
-              agent_id, sent_at, created_at
-            ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-            RETURNING id`,
-            [formattedPhone, message, messageType, "sent", userId],
-          );
-
-          if (smsResult.messageId) {
-            results.messageIds.push({
-              tenantId: tenant.id,
-              messageId: smsResult.messageId,
-              phone: formattedPhone,
-            });
-          }
         } else {
           results.failed++;
           results.errors.push({
@@ -689,25 +681,6 @@ const sendBulkSMS = async (req, res) => {
             unit: tenant.unit_code,
             error: smsResult.error,
           });
-
-          // Log failed SMS
-          const formattedPhone = SMSService.formatPhoneNumber(
-            tenant.phone_number,
-          );
-          await pool.query(
-            `INSERT INTO sms_queue (
-              recipient_phone, message, message_type, status, 
-              error_message, agent_id, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-            [
-              formattedPhone,
-              message,
-              messageType,
-              "failed",
-              smsResult.error,
-              userId,
-            ],
-          );
         }
       } catch (smsError) {
         results.failed++;
@@ -716,10 +689,24 @@ const sendBulkSMS = async (req, res) => {
           unit: tenant.unit_code,
           error: smsError.message,
         });
-      }
 
-      // Rate limiting - 100ms delay between messages
-      await new Promise((resolve) => setTimeout(resolve, 100));
+        // Log failed SMS
+        try {
+          await pool.query(
+            `INSERT INTO sms_queue (recipient_phone, message, message_type, status, error_message, agent_id, created_at)
+             VALUES ($1, $2, $3, 'failed', $4, $5, NOW())`,
+            [
+              tenant.phone_number,
+              message,
+              messageType,
+              smsError.message,
+              userId,
+            ],
+          );
+        } catch (logError) {
+          console.error("Failed to log SMS error:", logError);
+        }
+      }
     }
 
     console.log(
@@ -741,25 +728,102 @@ const sendBulkSMS = async (req, res) => {
   }
 };
 
-// ============================================================
-// NEW: sendTargetedSMS - Send to specific tenants
-// ============================================================
+// =====================================================================
+// 2. NEW: Get tenants for a specific property
+// =====================================================================
+
+const getPropertyTenants = async (req, res) => {
+  try {
+    const { propertyId } = req.params;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    if (!propertyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Property ID is required",
+      });
+    }
+
+    // Verify user has access to this property
+    let accessCheck;
+    if (userRole === "admin") {
+      accessCheck = await pool.query(
+        "SELECT id, name FROM properties WHERE id = $1",
+        [propertyId],
+      );
+    } else {
+      accessCheck = await pool.query(
+        `SELECT p.id, p.name FROM properties p
+         JOIN agent_property_assignments apa ON p.id = apa.property_id
+         WHERE p.id = $1 AND apa.agent_id = $2 AND apa.is_active = true`,
+        [propertyId, userId],
+      );
+    }
+
+    if (accessCheck.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied to this property",
+      });
+    }
+
+    // Get all active tenants in the property
+    const tenantsQuery = await pool.query(
+      `SELECT 
+        t.id, 
+        t.first_name, 
+        t.last_name, 
+        t.phone_number,
+        t.email,
+        pu.unit_code,
+        pu.unit_number,
+        ta.is_active as allocation_active
+       FROM tenants t
+       JOIN tenant_allocations ta ON t.id = ta.tenant_id
+       JOIN property_units pu ON ta.unit_id = pu.id
+       WHERE pu.property_id = $1 AND ta.is_active = true
+       ORDER BY pu.unit_code, t.first_name`,
+      [propertyId],
+    );
+
+    res.json({
+      success: true,
+      data: {
+        tenants: tenantsQuery.rows,
+        property: accessCheck.rows[0],
+      },
+    });
+  } catch (error) {
+    console.error("❌ Get property tenants error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error fetching tenants",
+      error: error.message,
+    });
+  }
+};
+
+// =====================================================================
+// 3. NEW: Send targeted SMS to selected tenants
+// =====================================================================
+
 const sendTargetedSMS = async (req, res) => {
   try {
     const { tenantIds, message, messageType = "announcement" } = req.body;
     const userId = req.user.id;
 
-    console.log("🎯 Sending targeted SMS:", {
+    console.log("📱 Sending targeted SMS:", {
       tenantCount: tenantIds?.length,
       messageType,
       userId,
     });
 
+    // Validation
     if (!tenantIds || !Array.isArray(tenantIds) || tenantIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "Missing required field: tenantIds (must be a non-empty array)",
+        message: "At least one tenant must be selected",
       });
     }
 
@@ -777,32 +841,29 @@ const sendTargetedSMS = async (req, res) => {
       });
     }
 
-    // Get tenants with their details
-    // For admin: get all requested tenants
-    // For agent: only get tenants in assigned properties
+    // Get tenant details with phone numbers
+    // Also verify agent has access to these tenants via property assignments
     let tenantsQuery;
+
     if (req.user.role === "admin") {
       tenantsQuery = await pool.query(
-        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, 
-                pu.unit_code, p.name as property_name
+        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, pu.unit_code
          FROM tenants t
-         LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-         LEFT JOIN property_units pu ON ta.unit_id = pu.id
-         LEFT JOIN properties p ON pu.property_id = p.id
-         WHERE t.id = ANY($1) AND t.phone_number IS NOT NULL`,
+         JOIN tenant_allocations ta ON t.id = ta.tenant_id
+         JOIN property_units pu ON ta.unit_id = pu.id
+         WHERE t.id = ANY($1::uuid[]) AND ta.is_active = true`,
         [tenantIds],
       );
     } else {
+      // Agent: verify they have access via property assignments
       tenantsQuery = await pool.query(
-        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number,
-                pu.unit_code, p.name as property_name
+        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, pu.unit_code
          FROM tenants t
-         JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+         JOIN tenant_allocations ta ON t.id = ta.tenant_id
          JOIN property_units pu ON ta.unit_id = pu.id
-         JOIN properties p ON pu.property_id = p.id
-         JOIN agent_property_assignments apa ON p.id = apa.property_id
-         WHERE t.id = ANY($1) 
-           AND t.phone_number IS NOT NULL
+         JOIN agent_property_assignments apa ON pu.property_id = apa.property_id
+         WHERE t.id = ANY($1::uuid[]) 
+           AND ta.is_active = true 
            AND apa.agent_id = $2 
            AND apa.is_active = true`,
         [tenantIds, userId],
@@ -814,48 +875,56 @@ const sendTargetedSMS = async (req, res) => {
     if (tenants.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "No valid tenants with phone numbers found",
+        message: "No accessible tenants found with the provided IDs",
       });
     }
 
-    console.log(`📤 Sending SMS to ${tenants.length} selected tenants`);
+    // Filter tenants with valid phone numbers
+    const tenantsWithPhones = tenants.filter((t) => t.phone_number);
+
+    if (tenantsWithPhones.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "None of the selected tenants have phone numbers",
+      });
+    }
+
+    console.log(
+      `📤 Sending SMS to ${tenantsWithPhones.length} selected tenants`,
+    );
 
     // Send SMS to each tenant
     const results = {
-      total: tenants.length,
+      total: tenantsWithPhones.length,
       sent: 0,
       failed: 0,
+      skipped: tenants.length - tenantsWithPhones.length,
       errors: [],
-      details: [],
     };
 
-    for (const tenant of tenants) {
+    for (const tenant of tenantsWithPhones) {
       try {
         const smsResult = await SMSService.sendSMS(
           tenant.phone_number,
           message,
         );
-        const formattedPhone = SMSService.formatPhoneNumber(
-          tenant.phone_number,
+
+        // Log to sms_queue
+        await pool.query(
+          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          [
+            tenant.phone_number,
+            message,
+            messageType,
+            smsResult.success ? "sent" : "failed",
+            userId,
+            smsResult.success ? new Date() : null,
+          ],
         );
 
         if (smsResult.success) {
           results.sent++;
-          results.details.push({
-            tenant: `${tenant.first_name} ${tenant.last_name}`,
-            phone: formattedPhone,
-            status: "sent",
-            messageId: smsResult.messageId,
-          });
-
-          // Log to sms_queue
-          await pool.query(
-            `INSERT INTO sms_queue (
-              recipient_phone, message, message_type, status, 
-              agent_id, sent_at, created_at
-            ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
-            [formattedPhone, message, messageType, "sent", userId],
-          );
         } else {
           results.failed++;
           results.errors.push({
@@ -863,28 +932,6 @@ const sendTargetedSMS = async (req, res) => {
             unit: tenant.unit_code,
             error: smsResult.error,
           });
-          results.details.push({
-            tenant: `${tenant.first_name} ${tenant.last_name}`,
-            phone: formattedPhone,
-            status: "failed",
-            error: smsResult.error,
-          });
-
-          // Log failed to sms_queue
-          await pool.query(
-            `INSERT INTO sms_queue (
-              recipient_phone, message, message_type, status, 
-              error_message, agent_id, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-            [
-              formattedPhone,
-              message,
-              messageType,
-              "failed",
-              smsResult.error,
-              userId,
-            ],
-          );
         }
       } catch (smsError) {
         results.failed++;
@@ -893,14 +940,28 @@ const sendTargetedSMS = async (req, res) => {
           unit: tenant.unit_code,
           error: smsError.message,
         });
-      }
 
-      // Rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 100));
+        // Log failed SMS
+        try {
+          await pool.query(
+            `INSERT INTO sms_queue (recipient_phone, message, message_type, status, error_message, agent_id, created_at)
+             VALUES ($1, $2, $3, 'failed', $4, $5, NOW())`,
+            [
+              tenant.phone_number,
+              message,
+              messageType,
+              smsError.message,
+              userId,
+            ],
+          );
+        } catch (logError) {
+          console.error("Failed to log SMS error:", logError);
+        }
+      }
     }
 
     console.log(
-      `✅ Targeted SMS complete: ${results.sent} sent, ${results.failed} failed`,
+      `✅ Targeted SMS complete: ${results.sent} sent, ${results.failed} failed, ${results.skipped} skipped (no phone)`,
     );
 
     res.json({
@@ -918,87 +979,14 @@ const sendTargetedSMS = async (req, res) => {
   }
 };
 
-// ============================================================
-// NEW: getTenantsByProperty - Get tenants for targeted SMS
-// ============================================================
-const getTenantsByProperty = async (req, res) => {
-  try {
-    const { propertyId } = req.params;
-    const userId = req.user.id;
+// =====================================================================
+// 4. NEW: Get SMS history with filters and pagination
+// =====================================================================
 
-    if (!propertyId) {
-      return res.status(400).json({
-        success: false,
-        message: "Property ID is required",
-      });
-    }
-
-    // Verify access to property
-    let accessCheck;
-    if (req.user.role === "admin") {
-      accessCheck = await pool.query(
-        "SELECT id FROM properties WHERE id = $1",
-        [propertyId],
-      );
-    } else {
-      accessCheck = await pool.query(
-        `SELECT p.id FROM properties p
-         JOIN agent_property_assignments apa ON p.id = apa.property_id
-         WHERE p.id = $1 AND apa.agent_id = $2 AND apa.is_active = true`,
-        [propertyId, userId],
-      );
-    }
-
-    if (accessCheck.rows.length === 0) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied to this property",
-      });
-    }
-
-    // Get all tenants in the property (with active allocations)
-    const tenantsQuery = await pool.query(
-      `SELECT DISTINCT 
-         t.id, 
-         t.first_name, 
-         t.last_name, 
-         t.phone_number,
-         t.national_id,
-         pu.unit_code,
-         pu.unit_number,
-         ta.is_active as allocation_active,
-         ta.monthly_rent
-       FROM tenants t
-       JOIN tenant_allocations ta ON t.id = ta.tenant_id
-       JOIN property_units pu ON ta.unit_id = pu.id
-       WHERE pu.property_id = $1 AND ta.is_active = true
-       ORDER BY pu.unit_number, t.first_name`,
-      [propertyId],
-    );
-
-    console.log(
-      `📋 Found ${tenantsQuery.rows.length} tenants in property ${propertyId}`,
-    );
-
-    res.json({
-      success: true,
-      data: tenantsQuery.rows,
-    });
-  } catch (error) {
-    console.error("❌ Get tenants by property error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error fetching tenants",
-      error: error.message,
-    });
-  }
-};
-
-// ============================================================
-// NEW: getSMSHistory - Get SMS history with filters
-// ============================================================
 const getSMSHistory = async (req, res) => {
   try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
     const {
       page = 1,
       limit = 20,
@@ -1008,100 +996,90 @@ const getSMSHistory = async (req, res) => {
       search,
     } = req.query;
 
-    const userId = req.user.id;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Build query with filters
-    let whereClause = "";
-    const queryParams = [];
-    let paramIndex = 1;
-
-    // Agent filter - only see their own SMS
-    if (req.user.role !== "admin") {
-      whereClause += ` AND sq.agent_id = $${paramIndex++}`;
-      queryParams.push(userId);
-    }
-
-    if (status) {
-      whereClause += ` AND sq.status = $${paramIndex++}`;
-      queryParams.push(status);
-    }
-
-    if (startDate) {
-      whereClause += ` AND sq.created_at >= $${paramIndex++}`;
-      queryParams.push(startDate);
-    }
-
-    if (endDate) {
-      whereClause += ` AND sq.created_at <= $${paramIndex++}::date + interval '1 day'`;
-      queryParams.push(endDate);
-    }
-
-    if (search) {
-      whereClause += ` AND (sq.recipient_phone ILIKE $${paramIndex} OR sq.message ILIKE $${paramIndex})`;
-      queryParams.push(`%${search}%`);
-      paramIndex++;
-    }
-
-    // Count query
-    const countQuery = `
-      SELECT COUNT(*) 
-      FROM sms_queue sq
-      WHERE 1=1 ${whereClause}
-    `;
-
-    const countResult = await pool.query(countQuery, queryParams);
-    const totalCount = parseInt(countResult.rows[0].count, 10);
-    const totalPages = Math.ceil(totalCount / parseInt(limit));
-
-    // Main query with tenant info
-    const mainQuery = `
+    let baseQuery = `
       SELECT 
         sq.id,
         sq.recipient_phone,
         sq.message,
         sq.message_type,
         sq.status,
-        sq.status as delivery_status,
         sq.attempts,
         sq.last_attempt_at,
         sq.sent_at,
         sq.created_at,
         sq.error_message,
-        sq.billing_month,
         sq.agent_id,
-        u.first_name as agent_first_name,
-        u.last_name as agent_last_name,
-        t.first_name as tenant_first_name,
-        t.last_name as tenant_last_name,
-        CONCAT(t.first_name, ' ', t.last_name) as tenant_name
+        CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
       FROM sms_queue sq
       LEFT JOIN users u ON sq.agent_id = u.id
-      LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number 
-                          OR sq.recipient_phone = CONCAT('254', SUBSTRING(t.phone_number FROM 2))
-      WHERE 1=1 ${whereClause}
-      ORDER BY sq.created_at DESC
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+      WHERE 1=1
     `;
 
+    const whereClauses = [];
+    const queryParams = [];
+    let paramIndex = 1;
+
+    // Agent isolation: agents only see their own sent SMS
+    if (userRole !== "admin") {
+      whereClauses.push(`sq.agent_id = $${paramIndex++}`);
+      queryParams.push(userId);
+    }
+
+    // Status filter
+    if (status) {
+      whereClauses.push(`sq.status = $${paramIndex++}`);
+      queryParams.push(status);
+    }
+
+    // Date range filters
+    if (startDate) {
+      whereClauses.push(`sq.created_at >= $${paramIndex++}`);
+      queryParams.push(startDate);
+    }
+
+    if (endDate) {
+      whereClauses.push(
+        `sq.created_at <= $${paramIndex++}::date + interval '1 day'`,
+      );
+      queryParams.push(endDate);
+    }
+
+    // Search filter (phone or message)
+    if (search) {
+      whereClauses.push(
+        `(sq.recipient_phone ILIKE $${paramIndex} OR sq.message ILIKE $${paramIndex})`,
+      );
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    // Add where clauses to query
+    if (whereClauses.length > 0) {
+      baseQuery += ` AND ${whereClauses.join(" AND ")}`;
+    }
+
+    // Count query
+    const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) as filtered`;
+    const countResult = await pool.query(countQuery, queryParams);
+    const totalCount = parseInt(countResult.rows[0].count, 10);
+
+    // Add ordering and pagination
+    baseQuery += ` ORDER BY sq.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     queryParams.push(parseInt(limit), offset);
 
-    const result = await pool.query(mainQuery, queryParams);
-
-    console.log(
-      `📜 SMS History: ${result.rows.length} messages (page ${page}/${totalPages})`,
-    );
+    const historyResult = await pool.query(baseQuery, queryParams);
 
     res.json({
       success: true,
       data: {
-        messages: result.rows,
+        history: historyResult.rows,
         pagination: {
           currentPage: parseInt(page),
-          totalPages,
+          totalPages: Math.ceil(totalCount / parseInt(limit)),
           totalCount,
-          hasNext: parseInt(page) < totalPages,
-          hasPrev: parseInt(page) > 1,
+          limit: parseInt(limit),
         },
       },
     });
@@ -1111,6 +1089,31 @@ const getSMSHistory = async (req, res) => {
       success: false,
       message: "Server error fetching SMS history",
       error: error.message,
+    });
+  }
+};
+
+
+// Health check endpoint
+const healthCheck = async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW() as time, COUNT(*) as notification_count FROM notifications');
+    
+    res.json({
+      success: true,
+      message: 'Notification service is healthy',
+      data: {
+        timestamp: result.rows[0].time,
+        totalNotifications: parseInt(result.rows[0].notification_count),
+        service: 'notifications'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Health check error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Notification service is unhealthy',
+      error: error.message
     });
   }
 };
@@ -1125,7 +1128,7 @@ const checkDeliveryStatus = async (req, res) => {
     if (!messageId) {
       return res.status(400).json({
         success: false,
-        message: "Message ID is required",
+        message: 'Message ID is required'
       });
     }
 
@@ -1137,49 +1140,42 @@ const checkDeliveryStatus = async (req, res) => {
     if (!dlrResult.success) {
       return res.status(400).json({
         success: false,
-        message: "Failed to check delivery status",
-        error: dlrResult.error,
+        message: 'Failed to check delivery status',
+        error: dlrResult.error
       });
     }
 
     // Parse Celcom DLR response
     // Response format: {"responses":[{"response-code":200,"message-id":"123","dlr-status":"DELIVERED","dlr-time":"2024-01-15 10:30:00"}]}
     const dlrData = dlrResult.data;
-    let status = "unknown";
+    let status = 'unknown';
     let deliveredAt = null;
     let reason = null;
 
     if (dlrData && dlrData.responses && dlrData.responses.length > 0) {
       const response = dlrData.responses[0];
-      const dlrStatus = response["dlr-status"] || response["status"];
-
+      const dlrStatus = response['dlr-status'] || response['status'];
+      
       // Map Celcom status to our status
-      if (dlrStatus === "DELIVERED" || dlrStatus === "DeliveredToTerminal") {
-        status = "delivered";
-        deliveredAt =
-          response["dlr-time"] ||
-          response["delivered-time"] ||
-          new Date().toISOString();
-      } else if (
-        dlrStatus === "EXPIRED" ||
-        dlrStatus === "REJECTED" ||
-        dlrStatus === "UNDELIVERED"
-      ) {
-        status = "failed";
+      if (dlrStatus === 'DELIVERED' || dlrStatus === 'DeliveredToTerminal') {
+        status = 'delivered';
+        deliveredAt = response['dlr-time'] || response['delivered-time'] || new Date().toISOString();
+      } else if (dlrStatus === 'EXPIRED' || dlrStatus === 'REJECTED' || dlrStatus === 'UNDELIVERED') {
+        status = 'failed';
         reason = dlrStatus;
-      } else if (dlrStatus === "ACCEPTED" || dlrStatus === "SENT") {
-        status = "sent";
-      } else if (dlrStatus === "PENDING" || dlrStatus === "BUFFERED") {
-        status = "pending";
+      } else if (dlrStatus === 'ACCEPTED' || dlrStatus === 'SENT') {
+        status = 'sent';
+      } else if (dlrStatus === 'PENDING' || dlrStatus === 'BUFFERED') {
+        status = 'pending';
       } else {
-        status = "unknown";
+        status = 'unknown';
         reason = `Unknown status: ${dlrStatus}`;
       }
     }
 
     // Update sms_queue with delivery status if we can find the record
     // Note: This is optional - depends on whether you store message_id in sms_queue
-
+    
     console.log(`📬 Delivery status for ${messageId}: ${status}`);
 
     res.json({
@@ -1189,15 +1185,16 @@ const checkDeliveryStatus = async (req, res) => {
         status,
         deliveredAt,
         reason,
-        rawResponse: dlrData,
-      },
+        rawResponse: dlrData
+      }
     });
+
   } catch (error) {
-    console.error("❌ Check delivery status error:", error);
+    console.error('❌ Check delivery status error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error checking delivery status",
-      error: error.message,
+      message: 'Server error checking delivery status',
+      error: error.message
     });
   }
 };
@@ -1208,13 +1205,13 @@ const checkDeliveryStatus = async (req, res) => {
 const getSMSStats = async (req, res) => {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === "admin";
+    const isAdmin = req.user.role === 'admin';
 
-    let agentFilter = "";
+    let agentFilter = '';
     const queryParams = [];
 
     if (!isAdmin) {
-      agentFilter = "WHERE sq.agent_id = $1";
+      agentFilter = 'WHERE sq.agent_id = $1';
       queryParams.push(userId);
     }
 
@@ -1236,19 +1233,18 @@ const getSMSStats = async (req, res) => {
 
     res.json({
       success: true,
-      data: result.rows[0],
+      data: result.rows[0]
     });
+
   } catch (error) {
-    console.error("❌ Get SMS stats error:", error);
+    console.error('❌ Get SMS stats error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error fetching SMS statistics",
-      error: error.message,
+      message: 'Server error fetching SMS statistics',
+      error: error.message
     });
   }
 };
-
-
 
 module.exports = {
   getNotifications,
@@ -1264,8 +1260,8 @@ module.exports = {
   sendBulkSMS,
   healthCheck,
   getPropertyTenants, // NEW
-  sendTargetedSMS,    // NEW
+  sendTargetedSMS, // NEW
   getSMSHistory,
+  checkDeliveryStatus,
   getSMSStats,
-  checkDeliveryStatus
 };
