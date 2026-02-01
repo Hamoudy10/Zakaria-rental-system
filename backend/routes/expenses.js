@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
+const NotificationService = require("../services/notificationService");
 
 // ==================== GET EXPENSE CATEGORIES ====================
 router.get('/categories', protect, async (req, res) => {
@@ -364,8 +365,8 @@ router.post('/', protect, async (req, res) => {
   const client = await pool.connect();
   
   try {
-    await client.query('BEGIN');
-    
+    await client.query("BEGIN");
+
     const {
       expense_date,
       amount,
@@ -382,57 +383,57 @@ router.post('/', protect, async (req, res) => {
       vendor_phone,
       notes,
       is_recurring,
-      recurring_frequency
+      recurring_frequency,
     } = req.body;
-    
-    console.log('📝 Creating expense:', { amount, category, description });
-    
+
+    console.log("📝 Creating expense:", { amount, category, description });
+
     // Validate required fields
     if (!amount || !description || !category) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: amount, description, category'
+        message: "Missing required fields: amount, description, category",
       });
     }
-    
+
     if (parseFloat(amount) <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Amount must be greater than 0'
+        message: "Amount must be greater than 0",
       });
     }
-    
+
     // If agent, verify they're assigned to the property
-    if (req.user.role === 'agent' && property_id) {
+    if (req.user.role === "agent" && property_id) {
       const assignmentCheck = await client.query(
         `SELECT 1 FROM agent_property_assignments 
          WHERE agent_id = $1 AND property_id = $2 AND is_active = true`,
-        [req.user.id, property_id]
+        [req.user.id, property_id],
       );
-      
+
       if (assignmentCheck.rows.length === 0) {
         return res.status(403).json({
           success: false,
-          message: 'You are not assigned to this property'
+          message: "You are not assigned to this property",
         });
       }
     }
-    
+
     // Verify unit belongs to property if both provided
     if (unit_id && property_id) {
       const unitCheck = await client.query(
-        'SELECT 1 FROM property_units WHERE id = $1 AND property_id = $2',
-        [unit_id, property_id]
+        "SELECT 1 FROM property_units WHERE id = $1 AND property_id = $2",
+        [unit_id, property_id],
       );
-      
+
       if (unitCheck.rows.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Unit does not belong to the specified property'
+          message: "Unit does not belong to the specified property",
         });
       }
     }
-    
+
     const result = await client.query(
       `INSERT INTO expenses (
         expense_date, amount, description, category, subcategory,
@@ -452,7 +453,7 @@ router.post('/', protect, async (req, res) => {
         unit_id || null,
         complaint_id || null,
         req.user.id,
-        payment_method || 'cash',
+        payment_method || "cash",
         receipt_number || null,
         receipt_image_url || null,
         vendor_name || null,
@@ -460,21 +461,56 @@ router.post('/', protect, async (req, res) => {
         notes || null,
         is_recurring || false,
         recurring_frequency || null,
-        'pending',
-        category // Use category as expense_type
-      ]
+        "pending",
+        category, // Use category as expense_type
+      ],
     );
-    
-    await client.query('COMMIT');
-    
-    console.log('✅ Expense created successfully:', result.rows[0].id);
-    
+
+    await client.query("COMMIT");
+
+    console.log("✅ Expense created successfully:", result.rows[0].id);
+
+    // ✅ Notify admins about new expense
+    try {
+      const expense = result.rows[0];
+      const amount = expense.amount;
+      const category = expense.category;
+      const description = expense.description;
+      const recorder = req.user;
+
+      // Get admin users
+      const adminUsers = await pool.query(
+        "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
+      );
+
+      // Get property name
+      let location =
+        expense.property_name || expense.unit_code || "System-wide";
+
+      for (const admin of adminUsers.rows) {
+        await NotificationService.createNotification({
+          userId: admin.id,
+          title: "New Expense Recorded",
+          message: `Expense of KSh ${amount.toLocaleString()} recorded for ${category} (${description}) at ${location}. Recorded by: ${recorder.first_name || "Agent"}`,
+          type: "expense_created",
+          relatedEntityType: "expense",
+          relatedEntityId: expense.id,
+        });
+      }
+
+      console.log("✅ New expense notifications sent to admins");
+    } catch (notificationError) {
+      console.error(
+        "⚠️ Failed to send expense notification:",
+        notificationError,
+      );
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Expense recorded successfully',
-      data: result.rows[0]
+      message: "Expense recorded successfully",
+      data: result.rows[0],
     });
-    
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('❌ Error creating expense:', error);
@@ -595,39 +631,39 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
   
   try {
-    await client.query('BEGIN');
-    
+    await client.query("BEGIN");
+
     const { id } = req.params;
     const { status, rejection_reason } = req.body;
-    
+
     console.log(`🔄 Updating expense ${id} status to ${status}`);
-    
-    if (!['approved', 'rejected', 'reimbursed'].includes(status)) {
+
+    if (!["approved", "rejected", "reimbursed"].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status. Must be: approved, rejected, or reimbursed'
+        message: "Invalid status. Must be: approved, rejected, or reimbursed",
       });
     }
-    
-    if (status === 'rejected' && !rejection_reason) {
+
+    if (status === "rejected" && !rejection_reason) {
       return res.status(400).json({
         success: false,
-        message: 'Rejection reason is required when rejecting an expense'
+        message: "Rejection reason is required when rejecting an expense",
       });
     }
-    
+
     const expenseCheck = await client.query(
-      'SELECT * FROM expenses WHERE id = $1',
-      [id]
+      "SELECT * FROM expenses WHERE id = $1",
+      [id],
     );
-    
+
     if (expenseCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Expense not found'
+        message: "Expense not found",
       });
     }
-    
+
     const result = await client.query(
       `UPDATE expenses 
        SET status = $1, 
@@ -637,19 +673,60 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
            updated_at = NOW()
        WHERE id = $4
        RETURNING *`,
-      [status, req.user.id, rejection_reason || null, id]
+      [status, req.user.id, rejection_reason || null, id],
     );
-    
-    await client.query('COMMIT');
-    
+
+    await client.query("COMMIT");
+
     console.log(`✅ Expense ${id} ${status}`);
-    
+
+    // ✅ Notify agent about expense approval/rejection
+    if (status === "approved" || status === "rejected") {
+      try {
+        const expense = result.rows[0];
+        const agentId = expense.recorded_by;
+
+        // Avoid notifying if self-approved
+        if (expense.recorded_by !== req.user.id) {
+          const agentName = expense.recorded_by_name || "Agent";
+          const amount = expense.amount;
+          const rejectionReason = rejection_reason || "";
+
+          if (status === "approved") {
+            await NotificationService.createNotification({
+              userId: agentId,
+              title: "Expense Approved",
+              message: `Your expense of KSh ${amount.toLocaleString()} for ${expense.category} has been approved.`,
+              type: "expense_approved",
+              relatedEntityType: "expense",
+              relatedEntityId: expense.id,
+            });
+          } else if (status === "rejected") {
+            await NotificationService.createNotification({
+              userId: agentId,
+              title: "Expense Rejected",
+              message: `Your expense of KSh ${amount.toLocaleString()} for ${expense.category} was rejected. Reason: ${rejectionReason}`,
+              type: "expense_rejected",
+              relatedEntityType: "expense",
+              relatedEntityId: expense.id,
+            });
+          }
+
+          console.log(`✅ Agent notified about expense ${status}`);
+        }
+      } catch (notificationError) {
+        console.error(
+          "⚠️ Failed to send expense status notification:",
+          notificationError,
+        );
+      }
+    }
+
     res.json({
       success: true,
       message: `Expense ${status} successfully`,
-      data: result.rows[0]
+      data: result.rows[0],
     });
-    
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('❌ Error updating expense status:', error);

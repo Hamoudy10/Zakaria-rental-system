@@ -1,6 +1,6 @@
 const pool = require('../config/database');
 const fs = require('fs');
-
+const NotificationService = require("../services/notificationService");
 // Get all tenants with agent data isolation
 const getTenants = async (req, res) => {
   try {
@@ -199,7 +199,7 @@ const createTenant = async (req, res) => {
   const client = await pool.connect();
   
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
     const {
       national_id,
@@ -213,51 +213,54 @@ const createTenant = async (req, res) => {
       lease_start_date,
       lease_end_date,
       monthly_rent,
-      security_deposit
+      security_deposit,
     } = req.body;
 
-    console.log('Creating tenant with data:', req.body);
+    console.log("Creating tenant with data:", req.body);
 
     // Validate required fields
     if (!national_id || !first_name || !last_name || !phone_number) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: national_id, first_name, last_name, phone_number'
+        message:
+          "Missing required fields: national_id, first_name, last_name, phone_number",
       });
     }
 
     // Format phone numbers
     const formattedPhone = formatPhoneNumber(phone_number);
-    const formattedEmergencyPhone = emergency_contact_phone ? formatPhoneNumber(emergency_contact_phone) : null;
+    const formattedEmergencyPhone = emergency_contact_phone
+      ? formatPhoneNumber(emergency_contact_phone)
+      : null;
 
-    console.log('Formatted phone:', formattedPhone);
+    console.log("Formatted phone:", formattedPhone);
 
     // Check if national ID already exists
     const existingNationalId = await client.query(
-      'SELECT id FROM tenants WHERE national_id = $1',
-      [national_id]
+      "SELECT id FROM tenants WHERE national_id = $1",
+      [national_id],
     );
-    
+
     if (existingNationalId.rows.length > 0) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
-        message: 'Tenant with this national ID already exists'
+        message: "Tenant with this national ID already exists",
       });
     }
 
     // Check if phone number already exists
     const existingPhone = await client.query(
-      'SELECT id FROM tenants WHERE phone_number = $1',
-      [formattedPhone]
+      "SELECT id FROM tenants WHERE phone_number = $1",
+      [formattedPhone],
     );
-    
+
     if (existingPhone.rows.length > 0) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
-        message: 'Tenant with this phone number already exists'
+        message: "Tenant with this phone number already exists",
       });
     }
 
@@ -276,19 +279,20 @@ const createTenant = async (req, res) => {
         formattedPhone,
         emergency_contact_name,
         formattedEmergencyPhone,
-        req.user.id
-      ]
+        req.user.id,
+      ],
     );
 
-    console.log('Tenant created:', tenantResult.rows[0]);
+    console.log("Tenant created:", tenantResult.rows[0]);
 
     // If unit_id is provided, create tenant allocation
     if (unit_id) {
       if (!lease_start_date || !monthly_rent) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         return res.status(400).json({
           success: false,
-          message: 'Missing required fields for allocation: lease_start_date, monthly_rent'
+          message:
+            "Missing required fields for allocation: lease_start_date, monthly_rent",
         });
       }
 
@@ -298,11 +302,11 @@ const createTenant = async (req, res) => {
         FROM property_units pu
         WHERE pu.id = $1
       `;
-      
+
       const unitCheckParams = [unit_id];
 
       // If user is agent, check if they're assigned to this property
-      if (req.user.role === 'agent') {
+      if (req.user.role === "agent") {
         unitCheckQuery += `
           AND EXISTS (
             SELECT 1 FROM agent_property_assignments apa 
@@ -317,20 +321,21 @@ const createTenant = async (req, res) => {
       const unitCheck = await client.query(unitCheckQuery, unitCheckParams);
 
       if (unitCheck.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(req.user.role === 'agent' ? 403 : 404).json({
+        await client.query("ROLLBACK");
+        return res.status(req.user.role === "agent" ? 403 : 404).json({
           success: false,
-          message: req.user.role === 'agent' 
-            ? 'Unit not found or you are not assigned to this property' 
-            : 'Unit not found'
+          message:
+            req.user.role === "agent"
+              ? "Unit not found or you are not assigned to this property"
+              : "Unit not found",
         });
       }
 
       if (unitCheck.rows[0].is_occupied) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         return res.status(400).json({
           success: false,
-          message: 'Unit is already occupied'
+          message: "Unit is already occupied",
         });
       }
 
@@ -346,14 +351,14 @@ const createTenant = async (req, res) => {
           lease_end_date,
           monthly_rent,
           security_deposit || 0,
-          req.user.id
-        ]
+          req.user.id,
+        ],
       );
 
       // Mark unit as occupied
       await client.query(
         `UPDATE property_units SET is_occupied = true WHERE id = $1`,
-        [unit_id]
+        [unit_id],
       );
 
       // Update property available units count
@@ -361,18 +366,38 @@ const createTenant = async (req, res) => {
         `UPDATE properties 
          SET available_units = available_units - 1 
          WHERE id = (SELECT property_id FROM property_units WHERE id = $1)`,
-        [unit_id]
+        [unit_id],
       );
     }
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
+
+    // ✅ Notify admins about new tenant registration
+    try {
+      const tenantName = `${tenantResult.rows[0].first_name} ${tenantResult.rows[0].last_name}`;
+      const tenantPhone = tenantResult.rows[0].phone_number;
+
+      await NotificationService.createAdminNotification(
+        "New Tenant Registered",
+        `${tenantName} has been registered in the system. Phone: ${tenantPhone}`,
+        "tenant_created",
+        tenantResult.rows[0].id,
+      );
+
+      console.log("✅ New tenant notification sent to all admins");
+    } catch (notificationError) {
+      console.error(
+        "⚠️ Failed to send tenant notification:",
+        notificationError,
+      );
+      // Don't throw - tenant creation was successful, notification failure shouldn't break it
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Tenant created successfully',
-      data: tenantResult.rows[0]
+      message: "Tenant created successfully",
+      data: tenantResult.rows[0],
     });
-
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Create tenant error:', error);
