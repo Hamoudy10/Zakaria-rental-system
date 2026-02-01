@@ -215,6 +215,22 @@ router.post('/broadcast', authMiddleware, requireAdmin, callController(notificat
 // Send bulk SMS to property tenants (admin or agent)
 router.post('/bulk-sms', authMiddleware, callController(notificationController.sendBulkSMS));
 
+// Create broadcast notification (admin only)
+router.post('/broadcast', authMiddleware, requireAdmin, callController(notificationController.createBroadcastNotification));
+
+// Send bulk SMS to property tenants (admin or agent)
+router.post('/bulk-sms', authMiddleware, callController(notificationController.sendBulkSMS));
+
+// NEW: Get tenants for a specific property (for targeted SMS selection)
+router.get('/property-tenants/:propertyId', authMiddleware, callController(notificationController.getPropertyTenants));
+
+// NEW: Send targeted SMS to selected tenants
+router.post('/targeted-sms', authMiddleware, callController(notificationController.sendTargetedSMS));
+
+// NEW: Get SMS history with filters and pagination
+router.get('/sms-history', authMiddleware, callController(notificationController.getSMSHistory));
+
+
 // =============================================
 // NOTIFICATION TYPE ROUTE
 // =============================================

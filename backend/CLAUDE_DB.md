@@ -359,3 +359,7 @@ AND column_name = 'status';
 
 -- Check indexes
 SELECT indexname FROM pg_indexes WHERE tablename IN ('users', 'chat_messages', 'chat_participants');
+
+## PERFORMANCE INDEXES
+- `idx_rent_payments_payment_date`: Optimized for dashboard filtering.
+- `idx_agent_property_assignments_agent`: Faster isolation queries.

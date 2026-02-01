@@ -381,3 +381,10 @@ sendTypingStop(conversationId)     // Stop typing indicator
 getTypingUsers(conversationId)     // Get who's typing
 isUserOnline(userId)               // Check online status
 uploadImage(file)                  // Upload chat image
+
+## RECENT UPDATES (v20)
+### Payment Management Diagnostics
+- **System Clock Indicator:** Added to header to detect device clock mismatches (e.g., 2026 vs 2025).
+- **All-Time Period Filter:** Added to allow bypass of monthly date filters during debugging.
+- **Timezone-Safe Dates:** Replaced `toISOString()` with local date construction to prevent 1-day shifts in API requests.
+- **Empty State Debugger:** Shows active filter parameters (startDate, endDate) when no records are found.

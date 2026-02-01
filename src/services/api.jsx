@@ -107,39 +107,54 @@ export const mpesaUtils = {
 // FIXED: Enhanced Notification API with all endpoints
 export const notificationAPI = {
   // Get user personal notifications
-  getNotifications: (params) => api.get('/notifications', { params }),
+  getNotifications: (params) => api.get("/notifications", { params }),
 
   // Get unread notification count
-  getUnreadCount: () => api.get('/notifications/unread-count'),
+  getUnreadCount: () => api.get("/notifications/unread-count"),
 
   // Get notification statistics
-  getNotificationStats: () => api.get('/notifications/stats'),
+  getNotificationStats: () => api.get("/notifications/stats"),
 
   // Mark specific notification as read
   markAsRead: (id) => api.put(`/notifications/${id}/read`),
 
   // Mark all user notifications as read
-  markAllAsRead: () => api.put('/notifications/read-all'),
+  markAllAsRead: () => api.put("/notifications/read-all"),
 
   // Create single notification
-  createNotification: (data) => api.post('/notifications', data),
+  createNotification: (data) => api.post("/notifications", data),
 
   // Create role-based broadcast (In-app)
-  createBroadcastNotification: (data) => api.post('/notifications/broadcast', data),
+  createBroadcastNotification: (data) =>
+    api.post("/notifications/broadcast", data),
 
   // Delete single notification
   deleteNotification: (id) => api.delete(`/notifications/${id}`),
 
   // Clear all read notifications
-  clearReadNotifications: () => api.delete('/notifications/clear-read'),
+  clearReadNotifications: () => api.delete("/notifications/clear-read"),
 
   // Admin/Agent: Send Bulk SMS to properties
-  sendBulkSMS: (data) => api.post('/notifications/bulk-sms', data),
+  sendBulkSMS: (data) => api.post("/notifications/bulk-sms", data),
 
   // Admin endpoints
-  getAdminNotifications: (params) => api.get('/notifications/admin/all', { params }),
+  getAdminNotifications: (params) =>
+    api.get("/notifications/admin/all", { params }),
 
-  clearUserNotifications: (userId) => api.delete(`/notifications/admin/clear-all/${userId}`)
+  clearUserNotifications: (userId) =>
+    api.delete(`/notifications/admin/clear-all/${userId}`),
+
+  // Get tenants for a specific property (for targeted SMS)
+  getPropertyTenants: (propertyId) =>
+    api.get(`/notifications/property-tenants/${propertyId}`),
+
+  // Send targeted SMS to selected tenants
+  sendTargetedSMS: (data) => api.post("/notifications/targeted-sms", data),
+  // Expected data format: { tenantIds: string[], message: string, messageType: string }
+
+  // Get SMS history with filters and pagination
+  getSMSHistory: (params) => api.get("/notifications/sms-history", { params }),
+  // Expected params: { page, limit, status, startDate, endDate, search }
 };
 
 // Enhanced Payment API with salary payments and paybill integration
