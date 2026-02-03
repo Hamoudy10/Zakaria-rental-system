@@ -1,55 +1,55 @@
 // backend/routes/expenses.js
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const pool = require('../config/database');
-const { protect, adminOnly } = require('../middleware/authMiddleware');
+const pool = require("../config/database");
+const { protect, adminOnly } = require("../middleware/authMiddleware");
 const NotificationService = require("../services/notificationService");
 
 // ==================== GET EXPENSE CATEGORIES ====================
-router.get('/categories', protect, async (req, res) => {
+router.get("/categories", protect, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT * FROM expense_categories 
       WHERE is_active = true 
       ORDER BY display_order ASC
     `);
-    
+
     res.json({
       success: true,
-      data: result.rows
+      data: result.rows,
     });
   } catch (error) {
-    console.error('Error fetching expense categories:', error);
+    console.error("Error fetching expense categories:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching expense categories',
-      error: error.message
+      message: "Error fetching expense categories",
+      error: error.message,
     });
   }
 });
 
 // ==================== GET ALL EXPENSES (Admin sees all, Agent sees own) ====================
-router.get('/', protect, async (req, res) => {
+router.get("/", protect, async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 20, 
-      startDate, 
-      endDate, 
-      category, 
-      propertyId, 
+    const {
+      page = 1,
+      limit = 20,
+      startDate,
+      endDate,
+      category,
+      propertyId,
       status,
-      recordedBy
+      recordedBy,
     } = req.query;
-    
+
     const offset = (page - 1) * limit;
     const params = [];
     let paramCount = 1;
-    
-    let whereClause = 'WHERE 1=1';
-    
+
+    let whereClause = "WHERE 1=1";
+
     // Agent can only see their own expenses
-    if (req.user.role === 'agent') {
+    if (req.user.role === "agent") {
       whereClause += ` AND e.recorded_by = $${paramCount}`;
       params.push(req.user.id);
       paramCount++;
@@ -59,41 +59,41 @@ router.get('/', protect, async (req, res) => {
       params.push(recordedBy);
       paramCount++;
     }
-    
+
     // Date range filter
     if (startDate) {
       whereClause += ` AND e.expense_date >= $${paramCount}`;
       params.push(startDate);
       paramCount++;
     }
-    
+
     if (endDate) {
       whereClause += ` AND e.expense_date <= $${paramCount}`;
       params.push(endDate);
       paramCount++;
     }
-    
+
     // Category filter
     if (category) {
       whereClause += ` AND e.category = $${paramCount}`;
       params.push(category);
       paramCount++;
     }
-    
+
     // Property filter
     if (propertyId) {
       whereClause += ` AND e.property_id = $${paramCount}`;
       params.push(propertyId);
       paramCount++;
     }
-    
+
     // Status filter
     if (status) {
       whereClause += ` AND e.status = $${paramCount}`;
       params.push(status);
       paramCount++;
     }
-    
+
     // Get total count
     const countQuery = `
       SELECT COUNT(*) as total 
@@ -102,7 +102,7 @@ router.get('/', protect, async (req, res) => {
     `;
     const countResult = await pool.query(countQuery, params);
     const total = parseInt(countResult.rows[0].total);
-    
+
     // Get expenses with pagination
     const query = `
       SELECT 
@@ -122,11 +122,11 @@ router.get('/', protect, async (req, res) => {
       ORDER BY e.expense_date DESC, e.created_at DESC
       LIMIT $${paramCount} OFFSET $${paramCount + 1}
     `;
-    
+
     params.push(parseInt(limit), offset);
-    
+
     const result = await pool.query(query, params);
-    
+
     res.json({
       success: true,
       data: result.rows,
@@ -134,104 +134,178 @@ router.get('/', protect, async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         total,
-        totalPages: Math.ceil(total / limit)
-      }
+        totalPages: Math.ceil(total / limit),
+      },
     });
   } catch (error) {
-    console.error('Error fetching expenses:', error);
+    console.error("Error fetching expenses:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching expenses',
-      error: error.message
+      message: "Error fetching expenses",
+      error: error.message,
     });
   }
 });
 
 // ==================== GET EXPENSE STATISTICS ====================
-router.get('/stats', protect, async (req, res) => {
+router.get("/stats", protect, async (req, res) => {
   try {
     const { startDate, endDate, propertyId } = req.query;
-    
-    let dateFilter = '';
-    let propertyFilter = '';
-    let agentFilter = '';
-    const params = [];
-    let paramCount = 1;
-    
+    const isAgent = req.user.role === "agent";
+    const userId = req.user.id;
+
+    // Build filter conditions for monthly stats (with date filter)
+    let monthlyDateFilter = "";
+    let monthlyParams = [];
+    let monthlyParamCount = 1;
+
     if (startDate && endDate) {
-      dateFilter = `AND expense_date BETWEEN $${paramCount} AND $${paramCount + 1}`;
-      params.push(startDate, endDate);
-      paramCount += 2;
+      monthlyDateFilter = `AND expense_date BETWEEN $${monthlyParamCount} AND $${monthlyParamCount + 1}`;
+      monthlyParams.push(startDate, endDate);
+      monthlyParamCount += 2;
     } else {
-      // Default to current month
-      dateFilter = `AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)`;
+      // Default to current month for monthly totals
+      monthlyDateFilter = `AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)`;
     }
-    
+
     if (propertyId) {
-      propertyFilter = `AND property_id = $${paramCount}`;
-      params.push(propertyId);
-      paramCount++;
+      monthlyDateFilter += ` AND property_id = $${monthlyParamCount}`;
+      monthlyParams.push(propertyId);
+      monthlyParamCount++;
     }
-    
-    // Agent can only see their own stats
-    if (req.user.role === 'agent') {
-      agentFilter = `AND recorded_by = $${paramCount}`;
-      params.push(req.user.id);
-      paramCount++;
+
+    if (isAgent) {
+      monthlyDateFilter += ` AND recorded_by = $${monthlyParamCount}`;
+      monthlyParams.push(userId);
+      monthlyParamCount++;
+    }
+
+    // Build filter conditions for ALL-TIME stats (no date filter) - for tab counts
+    let allTimeFilter = "WHERE 1=1";
+    let allTimeParams = [];
+    let allTimeParamCount = 1;
+
+    if (propertyId) {
+      allTimeFilter += ` AND property_id = $${allTimeParamCount}`;
+      allTimeParams.push(propertyId);
+      allTimeParamCount++;
+    }
+
+    if (isAgent) {
+      allTimeFilter += ` AND recorded_by = $${allTimeParamCount}`;
+      allTimeParams.push(userId);
+      allTimeParamCount++;
     }
 
     // ============ TODAY'S EXPENSES QUERY ============
-    // This query calculates expenses for today only (server's CURRENT_DATE)
-    // Uses inline values for property/agent filters to avoid parameter conflicts
+    let todayFilter = "WHERE DATE(expense_date) = CURRENT_DATE";
+    let todayParams = [];
+    let todayParamCount = 1;
+
+    if (propertyId) {
+      todayFilter += ` AND property_id = $${todayParamCount}`;
+      todayParams.push(propertyId);
+      todayParamCount++;
+    }
+
+    if (isAgent) {
+      todayFilter += ` AND recorded_by = $${todayParamCount}`;
+      todayParams.push(userId);
+      todayParamCount++;
+    }
+
     const todayQuery = `
       SELECT 
         COUNT(*) as today_count,
         COALESCE(SUM(amount), 0) as today_total
       FROM expenses
-      WHERE DATE(expense_date) = CURRENT_DATE
-        ${propertyId ? `AND property_id = '${propertyId}'` : ''}
-        ${req.user.role === 'agent' ? `AND recorded_by = '${req.user.id}'` : ''}
+      ${todayFilter}
     `;
-    // ================================================
-    
-    // Total expenses by status
-    const statusQuery = `
+
+    // ============ ALL-TIME STATUS COUNTS (FOR TAB BADGES) ============
+    // This query gets counts for ALL expenses regardless of date - used for tab counts
+    const allTimeStatusQuery = `
       SELECT 
         status,
         COUNT(*) as count,
         COALESCE(SUM(amount), 0) as total_amount
       FROM expenses
-      WHERE 1=1 ${dateFilter} ${propertyFilter} ${agentFilter}
+      ${allTimeFilter}
       GROUP BY status
     `;
-    
-    // Expenses by category
+
+    // ============ MONTHLY STATUS BREAKDOWN ============
+    // This query respects date filters - used for monthly totals display
+    const monthlyStatusQuery = `
+      SELECT 
+        status,
+        COUNT(*) as count,
+        COALESCE(SUM(amount), 0) as total_amount
+      FROM expenses
+      WHERE 1=1 ${monthlyDateFilter}
+      GROUP BY status
+    `;
+
+    // ============ EXPENSES BY CATEGORY (Monthly, Approved Only) ============
     const categoryQuery = `
       SELECT 
         category,
         COUNT(*) as count,
         COALESCE(SUM(amount), 0) as total_amount
       FROM expenses
-      WHERE status = 'approved' ${dateFilter} ${propertyFilter} ${agentFilter}
+      WHERE status = 'approved' ${monthlyDateFilter}
       GROUP BY category
       ORDER BY total_amount DESC
     `;
-    
-    // Monthly trend (last 6 months)
+
+    // ============ MONTHLY TREND (Last 6 months, Approved Only) ============
+    let trendFilter = `WHERE status = 'approved' 
+      AND expense_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '5 months')`;
+    let trendParams = [];
+    let trendParamCount = 1;
+
+    if (propertyId) {
+      trendFilter += ` AND property_id = $${trendParamCount}`;
+      trendParams.push(propertyId);
+      trendParamCount++;
+    }
+
+    if (isAgent) {
+      trendFilter += ` AND recorded_by = $${trendParamCount}`;
+      trendParams.push(userId);
+      trendParamCount++;
+    }
+
     const trendQuery = `
       SELECT 
         TO_CHAR(DATE_TRUNC('month', expense_date), 'YYYY-MM') as month,
         COUNT(*) as count,
         COALESCE(SUM(amount), 0) as total_amount
       FROM expenses
-      WHERE status = 'approved' 
-        AND expense_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '5 months')
-        ${propertyFilter} ${agentFilter}
+      ${trendFilter}
       GROUP BY DATE_TRUNC('month', expense_date)
       ORDER BY month ASC
     `;
-    
-    // Top properties by expense
+
+    // ============ TOP PROPERTIES BY EXPENSE (Monthly, Approved Only) ============
+    let topPropertiesFilter = `WHERE e.status = 'approved' AND e.property_id IS NOT NULL`;
+    let topPropertiesParams = [];
+    let topPropertiesParamCount = 1;
+
+    if (startDate && endDate) {
+      topPropertiesFilter += ` AND e.expense_date BETWEEN $${topPropertiesParamCount} AND $${topPropertiesParamCount + 1}`;
+      topPropertiesParams.push(startDate, endDate);
+      topPropertiesParamCount += 2;
+    } else {
+      topPropertiesFilter += ` AND DATE_TRUNC('month', e.expense_date) = DATE_TRUNC('month', CURRENT_DATE)`;
+    }
+
+    if (isAgent) {
+      topPropertiesFilter += ` AND e.recorded_by = $${topPropertiesParamCount}`;
+      topPropertiesParams.push(userId);
+      topPropertiesParamCount++;
+    }
+
     const propertyQuery = `
       SELECT 
         p.id,
@@ -241,75 +315,117 @@ router.get('/stats', protect, async (req, res) => {
         COALESCE(SUM(e.amount), 0) as total_amount
       FROM expenses e
       JOIN properties p ON e.property_id = p.id
-      WHERE e.status = 'approved' ${dateFilter} ${agentFilter}
+      ${topPropertiesFilter}
       GROUP BY p.id, p.name, p.property_code
       ORDER BY total_amount DESC
       LIMIT 5
     `;
-    
-    // Helper function to build params for each query based on what filters are active
-    const buildParams = (needsDateFilter, needsPropertyFilter, needsAgentFilter) => {
-      const p = [];
-      if (needsDateFilter && startDate && endDate) {
-        p.push(startDate, endDate);
-      }
-      if (needsPropertyFilter && propertyId) {
-        p.push(propertyId);
-      }
-      if (needsAgentFilter && req.user.role === 'agent') {
-        p.push(req.user.id);
-      }
-      return p;
-    };
 
-    const [todayResult, statusResult, categoryResult, trendResult, propertyResult] = await Promise.all([
-      pool.query(todayQuery), // No params needed - uses inline values for safety
-      pool.query(statusQuery, buildParams(true, true, true)),
-      pool.query(categoryQuery, buildParams(true, true, true)),
-      pool.query(trendQuery, buildParams(false, true, true)),
-      pool.query(propertyQuery, buildParams(true, false, true))
+    // Execute all queries in parallel
+    const [
+      todayResult,
+      allTimeStatusResult,
+      monthlyStatusResult,
+      categoryResult,
+      trendResult,
+      propertyResult,
+    ] = await Promise.all([
+      pool.query(todayQuery, todayParams),
+      pool.query(allTimeStatusQuery, allTimeParams),
+      pool.query(monthlyStatusQuery, monthlyParams),
+      pool.query(categoryQuery, monthlyParams),
+      pool.query(trendQuery, trendParams),
+      pool.query(propertyQuery, topPropertiesParams),
     ]);
-    
-    // Calculate totals from status breakdown
-    const totals = statusResult.rows.reduce((acc, row) => {
-      acc[row.status] = {
-        count: parseInt(row.count),
-        amount: parseFloat(row.total_amount)
-      };
-      acc.total += parseFloat(row.total_amount);
-      acc.totalCount += parseInt(row.count);
-      return acc;
-    }, { total: 0, totalCount: 0 });
-    
+
+    // Calculate monthly totals from monthly status breakdown
+    const monthlyTotals = monthlyStatusResult.rows.reduce(
+      (acc, row) => {
+        acc[row.status] = {
+          count: parseInt(row.count),
+          amount: parseFloat(row.total_amount),
+        };
+        acc.total += parseFloat(row.total_amount);
+        acc.totalCount += parseInt(row.count);
+        return acc;
+      },
+      { total: 0, totalCount: 0 },
+    );
+
+    // Calculate all-time totals for reference
+    const allTimeTotals = allTimeStatusResult.rows.reduce(
+      (acc, row) => {
+        acc[row.status] = {
+          count: parseInt(row.count),
+          amount: parseFloat(row.total_amount),
+        };
+        acc.total += parseFloat(row.total_amount);
+        acc.totalCount += parseInt(row.count);
+        return acc;
+      },
+      { total: 0, totalCount: 0 },
+    );
+
     res.json({
       success: true,
       data: {
-        // ============ TODAY'S STATS (NEW) ============
+        // Today's stats
         todayTotal: parseFloat(todayResult.rows[0].today_total) || 0,
         todayCount: parseInt(todayResult.rows[0].today_count) || 0,
-        // =============================================
-        totals,
-        byStatus: statusResult.rows,
-        byCategory: categoryResult.rows,
-        monthlyTrend: trendResult.rows,
-        topProperties: propertyResult.rows
-      }
+
+        // Monthly totals (for the "Total This Month" card)
+        totals: monthlyTotals,
+
+        // ALL-TIME status breakdown (for tab counts - pending, approved, rejected badges)
+        // This ensures tabs show correct counts regardless of date filters
+        byStatus: allTimeStatusResult.rows.map((row) => ({
+          status: row.status,
+          count: parseInt(row.count),
+          total_amount: parseFloat(row.total_amount),
+        })),
+
+        // All-time totals (for the "All" tab count)
+        allTimeTotals: allTimeTotals,
+
+        // Monthly breakdown by category (approved only)
+        byCategory: categoryResult.rows.map((row) => ({
+          category: row.category,
+          count: parseInt(row.count),
+          total_amount: parseFloat(row.total_amount),
+        })),
+
+        // 6-month trend (approved only)
+        monthlyTrend: trendResult.rows.map((row) => ({
+          month: row.month,
+          count: parseInt(row.count),
+          total_amount: parseFloat(row.total_amount),
+        })),
+
+        // Top properties by expense (monthly, approved only)
+        topProperties: propertyResult.rows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          property_code: row.property_code,
+          expense_count: parseInt(row.expense_count),
+          total_amount: parseFloat(row.total_amount),
+        })),
+      },
     });
   } catch (error) {
-    console.error('Error fetching expense stats:', error);
+    console.error("Error fetching expense stats:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching expense statistics',
-      error: error.message
+      message: "Error fetching expense statistics",
+      error: error.message,
     });
   }
 });
 
 // ==================== GET SINGLE EXPENSE ====================
-router.get('/:id', protect, async (req, res) => {
+router.get("/:id", protect, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     let query = `
       SELECT 
         e.*,
@@ -328,42 +444,42 @@ router.get('/:id', protect, async (req, res) => {
       LEFT JOIN complaints c ON e.complaint_id = c.id
       WHERE e.id = $1
     `;
-    
+
     const params = [id];
-    
+
     // Agent can only view their own expenses
-    if (req.user.role === 'agent') {
+    if (req.user.role === "agent") {
       query += ` AND e.recorded_by = $2`;
       params.push(req.user.id);
     }
-    
+
     const result = await pool.query(query, params);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Expense not found or access denied'
+        message: "Expense not found or access denied",
       });
     }
-    
+
     res.json({
       success: true,
-      data: result.rows[0]
+      data: result.rows[0],
     });
   } catch (error) {
-    console.error('Error fetching expense:', error);
+    console.error("Error fetching expense:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching expense',
-      error: error.message
+      message: "Error fetching expense",
+      error: error.message,
     });
   }
 });
 
 // ==================== CREATE EXPENSE ====================
-router.post('/', protect, async (req, res) => {
+router.post("/", protect, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
     await client.query("BEGIN");
 
@@ -473,9 +589,9 @@ router.post('/', protect, async (req, res) => {
     // ✅ Notify admins about new expense
     try {
       const expense = result.rows[0];
-      const amount = expense.amount;
-      const category = expense.category;
-      const description = expense.description;
+      const expenseAmount = expense.amount;
+      const expenseCategory = expense.category;
+      const expenseDescription = expense.description;
       const recorder = req.user;
 
       // Get admin users
@@ -483,15 +599,23 @@ router.post('/', protect, async (req, res) => {
         "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
       );
 
-      // Get property name
-      let location =
-        expense.property_name || expense.unit_code || "System-wide";
+      // Get property name if exists
+      let location = "General";
+      if (property_id) {
+        const propResult = await pool.query(
+          "SELECT name FROM properties WHERE id = $1",
+          [property_id],
+        );
+        if (propResult.rows.length > 0) {
+          location = propResult.rows[0].name;
+        }
+      }
 
       for (const admin of adminUsers.rows) {
         await NotificationService.createNotification({
           userId: admin.id,
           title: "New Expense Recorded",
-          message: `Expense of KSh ${amount.toLocaleString()} recorded for ${category} (${description}) at ${location}. Recorded by: ${recorder.first_name || "Agent"}`,
+          message: `Expense of KSh ${expenseAmount.toLocaleString()} recorded for ${expenseCategory} (${expenseDescription}) at ${location}. Recorded by: ${recorder.first_name || "Agent"}`,
           type: "expense_created",
           relatedEntityType: "expense",
           relatedEntityId: expense.id,
@@ -512,12 +636,12 @@ router.post('/', protect, async (req, res) => {
       data: result.rows[0],
     });
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error creating expense:', error);
+    await client.query("ROLLBACK");
+    console.error("❌ Error creating expense:", error);
     res.status(500).json({
       success: false,
-      message: 'Error creating expense',
-      error: error.message
+      message: "Error creating expense",
+      error: error.message,
     });
   } finally {
     client.release();
@@ -525,101 +649,112 @@ router.post('/', protect, async (req, res) => {
 });
 
 // ==================== UPDATE EXPENSE ====================
-router.put('/:id', protect, async (req, res) => {
+router.put("/:id", protect, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
-    await client.query('BEGIN');
-    
+    await client.query("BEGIN");
+
     const { id } = req.params;
     const updates = req.body;
-    
+
     console.log(`🔄 Updating expense ${id}`);
-    
+
     // Check if expense exists and user has permission
-    let checkQuery = 'SELECT * FROM expenses WHERE id = $1';
+    let checkQuery = "SELECT * FROM expenses WHERE id = $1";
     const checkParams = [id];
-    
-    if (req.user.role === 'agent') {
-      checkQuery += ' AND recorded_by = $2';
+
+    if (req.user.role === "agent") {
+      checkQuery += " AND recorded_by = $2";
       checkParams.push(req.user.id);
     }
-    
+
     const expenseCheck = await client.query(checkQuery, checkParams);
-    
+
     if (expenseCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Expense not found or access denied'
+        message: "Expense not found or access denied",
       });
     }
-    
+
     const expense = expenseCheck.rows[0];
-    
+
     // Agents cannot update approved/rejected expenses
-    if (req.user.role === 'agent' && expense.status !== 'pending') {
+    if (req.user.role === "agent" && expense.status !== "pending") {
       return res.status(403).json({
         success: false,
-        message: 'Cannot update expense that has been processed'
+        message: "Cannot update expense that has been processed",
       });
     }
-    
+
     // Build update query dynamically
     const allowedFields = [
-      'expense_date', 'amount', 'description', 'category', 'subcategory',
-      'property_id', 'unit_id', 'complaint_id', 'payment_method',
-      'receipt_number', 'receipt_image_url', 'vendor_name', 'vendor_phone',
-      'notes', 'is_recurring', 'recurring_frequency'
+      "expense_date",
+      "amount",
+      "description",
+      "category",
+      "subcategory",
+      "property_id",
+      "unit_id",
+      "complaint_id",
+      "payment_method",
+      "receipt_number",
+      "receipt_image_url",
+      "vendor_name",
+      "vendor_phone",
+      "notes",
+      "is_recurring",
+      "recurring_frequency",
     ];
-    
+
     const updateFields = [];
     const updateValues = [];
     let paramCount = 1;
-    
-    allowedFields.forEach(field => {
+
+    allowedFields.forEach((field) => {
       if (updates[field] !== undefined) {
         updateFields.push(`${field} = $${paramCount}`);
         updateValues.push(updates[field]);
         paramCount++;
       }
     });
-    
+
     if (updateFields.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'No valid fields to update'
+        message: "No valid fields to update",
       });
     }
-    
-    updateFields.push('updated_at = NOW()');
+
+    updateFields.push("updated_at = NOW()");
     updateValues.push(id);
-    
+
     const query = `
       UPDATE expenses 
-      SET ${updateFields.join(', ')}
+      SET ${updateFields.join(", ")}
       WHERE id = $${paramCount}
       RETURNING *
     `;
-    
+
     const result = await client.query(query, updateValues);
-    
-    await client.query('COMMIT');
-    
-    console.log('✅ Expense updated successfully');
-    
+
+    await client.query("COMMIT");
+
+    console.log("✅ Expense updated successfully");
+
     res.json({
       success: true,
-      message: 'Expense updated successfully',
-      data: result.rows[0]
+      message: "Expense updated successfully",
+      data: result.rows[0],
     });
-    
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error updating expense:', error);
+    await client.query("ROLLBACK");
+    console.error("❌ Error updating expense:", error);
     res.status(500).json({
       success: false,
-      message: 'Error updating expense',
-      error: error.message
+      message: "Error updating expense",
+      error: error.message,
     });
   } finally {
     client.release();
@@ -627,9 +762,9 @@ router.put('/:id', protect, async (req, res) => {
 });
 
 // ==================== APPROVE/REJECT EXPENSE (Admin only) ====================
-router.patch('/:id/status', protect, adminOnly, async (req, res) => {
+router.patch("/:id/status", protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
     await client.query("BEGIN");
 
@@ -688,15 +823,14 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
 
         // Avoid notifying if self-approved
         if (expense.recorded_by !== req.user.id) {
-          const agentName = expense.recorded_by_name || "Agent";
-          const amount = expense.amount;
-          const rejectionReason = rejection_reason || "";
+          const expenseAmount = expense.amount;
+          const rejectionReasonText = rejection_reason || "";
 
           if (status === "approved") {
             await NotificationService.createNotification({
               userId: agentId,
               title: "Expense Approved",
-              message: `Your expense of KSh ${amount.toLocaleString()} for ${expense.category} has been approved.`,
+              message: `Your expense of KSh ${expenseAmount.toLocaleString()} for ${expense.category} has been approved.`,
               type: "expense_approved",
               relatedEntityType: "expense",
               relatedEntityId: expense.id,
@@ -705,7 +839,7 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
             await NotificationService.createNotification({
               userId: agentId,
               title: "Expense Rejected",
-              message: `Your expense of KSh ${amount.toLocaleString()} for ${expense.category} was rejected. Reason: ${rejectionReason}`,
+              message: `Your expense of KSh ${expenseAmount.toLocaleString()} for ${expense.category} was rejected. Reason: ${rejectionReasonText}`,
               type: "expense_rejected",
               relatedEntityType: "expense",
               relatedEntityId: expense.id,
@@ -728,12 +862,12 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
       data: result.rows[0],
     });
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error updating expense status:', error);
+    await client.query("ROLLBACK");
+    console.error("❌ Error updating expense status:", error);
     res.status(500).json({
       success: false,
-      message: 'Error updating expense status',
-      error: error.message
+      message: "Error updating expense status",
+      error: error.message,
     });
   } finally {
     client.release();
@@ -741,28 +875,28 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
 });
 
 // ==================== BULK APPROVE EXPENSES (Admin only) ====================
-router.post('/bulk-approve', protect, adminOnly, async (req, res) => {
+router.post("/bulk-approve", protect, adminOnly, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
-    await client.query('BEGIN');
-    
+    await client.query("BEGIN");
+
     const { expenseIds, status } = req.body;
-    
+
     if (!expenseIds || !Array.isArray(expenseIds) || expenseIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'expenseIds array is required'
+        message: "expenseIds array is required",
       });
     }
-    
-    if (!['approved', 'rejected'].includes(status)) {
+
+    if (!["approved", "rejected"].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Status must be approved or rejected'
+        message: "Status must be approved or rejected",
       });
     }
-    
+
     const result = await client.query(
       `UPDATE expenses 
        SET status = $1, 
@@ -771,24 +905,23 @@ router.post('/bulk-approve', protect, adminOnly, async (req, res) => {
            updated_at = NOW()
        WHERE id = ANY($3) AND status = 'pending'
        RETURNING id`,
-      [status, req.user.id, expenseIds]
+      [status, req.user.id, expenseIds],
     );
-    
-    await client.query('COMMIT');
-    
+
+    await client.query("COMMIT");
+
     res.json({
       success: true,
       message: `${result.rows.length} expense(s) ${status}`,
-      data: { updatedCount: result.rows.length }
+      data: { updatedCount: result.rows.length },
     });
-    
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error bulk updating expenses:', error);
+    await client.query("ROLLBACK");
+    console.error("❌ Error bulk updating expenses:", error);
     res.status(500).json({
       success: false,
-      message: 'Error bulk updating expenses',
-      error: error.message
+      message: "Error bulk updating expenses",
+      error: error.message,
     });
   } finally {
     client.release();
@@ -796,52 +929,51 @@ router.post('/bulk-approve', protect, adminOnly, async (req, res) => {
 });
 
 // ==================== DELETE EXPENSE ====================
-router.delete('/:id', protect, async (req, res) => {
+router.delete("/:id", protect, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
-    await client.query('BEGIN');
-    
+    await client.query("BEGIN");
+
     const { id } = req.params;
-    
+
     console.log(`🗑️ Deleting expense ${id}`);
-    
+
     // Check if expense exists and user has permission
-    let checkQuery = 'SELECT * FROM expenses WHERE id = $1';
+    let checkQuery = "SELECT * FROM expenses WHERE id = $1";
     const checkParams = [id];
-    
-    if (req.user.role === 'agent') {
-      checkQuery += ' AND recorded_by = $2 AND status = $3';
-      checkParams.push(req.user.id, 'pending');
+
+    if (req.user.role === "agent") {
+      checkQuery += " AND recorded_by = $2 AND status = $3";
+      checkParams.push(req.user.id, "pending");
     }
-    
+
     const expenseCheck = await client.query(checkQuery, checkParams);
-    
+
     if (expenseCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Expense not found or cannot be deleted'
+        message: "Expense not found or cannot be deleted",
       });
     }
-    
-    await client.query('DELETE FROM expenses WHERE id = $1', [id]);
-    
-    await client.query('COMMIT');
-    
-    console.log('✅ Expense deleted successfully');
-    
+
+    await client.query("DELETE FROM expenses WHERE id = $1", [id]);
+
+    await client.query("COMMIT");
+
+    console.log("✅ Expense deleted successfully");
+
     res.json({
       success: true,
-      message: 'Expense deleted successfully'
+      message: "Expense deleted successfully",
     });
-    
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error deleting expense:', error);
+    await client.query("ROLLBACK");
+    console.error("❌ Error deleting expense:", error);
     res.status(500).json({
       success: false,
-      message: 'Error deleting expense',
-      error: error.message
+      message: "Error deleting expense",
+      error: error.message,
     });
   } finally {
     client.release();
@@ -849,24 +981,39 @@ router.delete('/:id', protect, async (req, res) => {
 });
 
 // ==================== GET NET PROFIT CALCULATION (Admin only) ====================
-router.get('/reports/net-profit', protect, adminOnly, async (req, res) => {
+router.get("/reports/net-profit", protect, adminOnly, async (req, res) => {
   try {
     const { startDate, endDate, propertyId } = req.query;
-    
-    let dateFilter = '';
-    let propertyFilter = '';
-    const params = [];
+
+    // Build date filter
+    let dateFilterRevenue = "";
+    let dateFilterExpense = "";
+    let revenueParams = [];
+    let expenseParams = [];
     let paramCount = 1;
-    
+
     if (startDate && endDate) {
-      params.push(startDate, endDate);
+      dateFilterRevenue = `AND payment_date BETWEEN $${paramCount} AND $${paramCount + 1}`;
+      dateFilterExpense = `AND expense_date BETWEEN $${paramCount} AND $${paramCount + 1}`;
+      revenueParams.push(startDate, endDate);
+      expenseParams.push(startDate, endDate);
       paramCount = 3;
+    } else {
+      dateFilterRevenue = `AND DATE_TRUNC('month', payment_date) = DATE_TRUNC('month', CURRENT_DATE)`;
+      dateFilterExpense = `AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)`;
     }
-    
+
+    // Build property filter
+    let propertyFilterRevenue = "";
+    let propertyFilterExpense = "";
+
     if (propertyId) {
-      propertyFilter = propertyId;
+      propertyFilterRevenue = ` AND property_id = $${paramCount}`;
+      propertyFilterExpense = ` AND property_id = $${paramCount}`;
+      revenueParams.push(propertyId);
+      expenseParams.push(propertyId);
     }
-    
+
     // Get total revenue (completed payments)
     const revenueQuery = `
       SELECT 
@@ -874,10 +1021,10 @@ router.get('/reports/net-profit', protect, adminOnly, async (req, res) => {
         COUNT(*) as payment_count
       FROM rent_payments
       WHERE status = 'completed'
-      ${startDate && endDate ? `AND payment_date BETWEEN $1 AND $2` : `AND DATE_TRUNC('month', payment_date) = DATE_TRUNC('month', CURRENT_DATE)`}
-      ${propertyId ? `AND property_id = $${paramCount}` : ''}
+      ${dateFilterRevenue}
+      ${propertyFilterRevenue}
     `;
-    
+
     // Get total approved expenses
     const expenseQuery = `
       SELECT 
@@ -885,10 +1032,10 @@ router.get('/reports/net-profit', protect, adminOnly, async (req, res) => {
         COUNT(*) as expense_count
       FROM expenses
       WHERE status = 'approved'
-      ${startDate && endDate ? `AND expense_date BETWEEN $1 AND $2` : `AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)`}
-      ${propertyId ? `AND property_id = $${paramCount}` : ''}
+      ${dateFilterExpense}
+      ${propertyFilterExpense}
     `;
-    
+
     // Get breakdown by category
     const categoryBreakdownQuery = `
       SELECT 
@@ -897,53 +1044,54 @@ router.get('/reports/net-profit', protect, adminOnly, async (req, res) => {
         COUNT(*) as count
       FROM expenses
       WHERE status = 'approved'
-      ${startDate && endDate ? `AND expense_date BETWEEN $1 AND $2` : `AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)`}
-      ${propertyId ? `AND property_id = $${paramCount}` : ''}
+      ${dateFilterExpense}
+      ${propertyFilterExpense}
       GROUP BY category
       ORDER BY total_amount DESC
     `;
-    
-    const revenueParams = startDate && endDate 
-      ? (propertyId ? [startDate, endDate, propertyId] : [startDate, endDate])
-      : (propertyId ? [propertyId] : []);
-    
+
     const [revenueResult, expenseResult, categoryResult] = await Promise.all([
       pool.query(revenueQuery, revenueParams),
-      pool.query(expenseQuery, revenueParams),
-      pool.query(categoryBreakdownQuery, revenueParams)
+      pool.query(expenseQuery, expenseParams),
+      pool.query(categoryBreakdownQuery, expenseParams),
     ]);
-    
+
     const totalRevenue = parseFloat(revenueResult.rows[0].total_revenue);
     const totalExpenses = parseFloat(expenseResult.rows[0].total_expenses);
     const netProfit = totalRevenue - totalExpenses;
-    const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(2) : 0;
-    
+    const profitMargin =
+      totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(2) : 0;
+
     res.json({
       success: true,
       data: {
         period: {
-          startDate: startDate || 'Current Month Start',
-          endDate: endDate || 'Current Date'
+          startDate: startDate || "Current Month Start",
+          endDate: endDate || "Current Date",
         },
         revenue: {
           total: totalRevenue,
-          paymentCount: parseInt(revenueResult.rows[0].payment_count)
+          paymentCount: parseInt(revenueResult.rows[0].payment_count),
         },
         expenses: {
           total: totalExpenses,
           expenseCount: parseInt(expenseResult.rows[0].expense_count),
-          byCategory: categoryResult.rows
+          byCategory: categoryResult.rows.map((row) => ({
+            category: row.category,
+            total_amount: parseFloat(row.total_amount),
+            count: parseInt(row.count),
+          })),
         },
         netProfit,
-        profitMargin: parseFloat(profitMargin)
-      }
+        profitMargin: parseFloat(profitMargin),
+      },
     });
   } catch (error) {
-    console.error('Error calculating net profit:', error);
+    console.error("Error calculating net profit:", error);
     res.status(500).json({
       success: false,
-      message: 'Error calculating net profit',
-      error: error.message
+      message: "Error calculating net profit",
+      error: error.message,
     });
   }
 });
