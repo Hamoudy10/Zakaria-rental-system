@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
 const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
+const AllocationIntegrityService = require('../services/allocationIntegrityService');
 
 console.log('Allocations routes loaded');
 
@@ -161,7 +162,102 @@ router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res
   }
 });
 
+// Allocation maintenance diagnostics (ADMIN ONLY) - must be above /:id route
+router.get(
+  '/maintenance/diagnostics',
+  authMiddleware,
+  requireRole(['admin']),
+  async (req, res) => {
+    try {
+      const diagnostics = await AllocationIntegrityService.getDiagnostics();
+      res.json({
+        success: true,
+        data: diagnostics,
+      });
+    } catch (error) {
+      console.error('Error running allocation diagnostics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to run allocation diagnostics',
+      });
+    }
+  },
+);
+
+router.post(
+  '/maintenance/reconcile',
+  authMiddleware,
+  requireRole(['admin']),
+  async (req, res) => {
+    try {
+      const { dryRun = false } = req.body || {};
+      const result = await AllocationIntegrityService.reconcileAllocations({
+        dryRun: Boolean(dryRun),
+      });
+
+      res.json({
+        success: true,
+        message: dryRun
+          ? 'Dry-run completed. No changes were committed.'
+          : 'Allocation data reconciled successfully.',
+        data: result,
+      });
+    } catch (error) {
+      console.error('Error reconciling allocations:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to reconcile allocation data',
+      });
+    }
+  },
+);
+
 // GET ALLOCATION BY ID
+// GET ALLOCATIONS BY TENANT (must be declared before /:id)
+router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', 'tenant']), async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    
+    // Authorization check - tenants can only see their own allocations
+    if (req.user.role === 'tenant' && req.user.id !== tenantId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+    
+    const result = await pool.query(`
+      SELECT 
+        ta.*,
+        p.name as property_name,
+        p.address as property_address,
+        pu.unit_number,
+        pu.unit_code,
+        pu.unit_type,
+        COALESCE(agent.first_name, 'System') as allocated_by_name
+      FROM tenant_allocations ta
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN users agent ON ta.allocated_by = agent.id
+      WHERE ta.tenant_id = $1
+      ORDER BY ta.allocation_date DESC
+    `, [tenantId]);
+    
+    res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching tenant allocations:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching tenant allocations',
+      error: error.message
+    });
+  }
+});
+
 router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
   try {
     const { id } = req.params;
@@ -213,51 +309,6 @@ router.get('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     res.status(500).json({
       success: false,
       message: 'Error fetching allocation',
-      error: error.message
-    });
-  }
-});
-
-// GET ALLOCATIONS BY TENANT
-router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', 'tenant']), async (req, res) => {
-  try {
-    const { tenantId } = req.params;
-    
-    // Authorization check - tenants can only see their own allocations
-    if (req.user.role === 'tenant' && req.user.id !== tenantId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-    }
-    
-    const result = await pool.query(`
-      SELECT 
-        ta.*,
-        p.name as property_name,
-        p.address as property_address,
-        pu.unit_number,
-        pu.unit_code,
-        pu.unit_type,
-        COALESCE(agent.first_name, 'System') as allocated_by_name
-      FROM tenant_allocations ta
-      LEFT JOIN property_units pu ON ta.unit_id = pu.id
-      LEFT JOIN properties p ON pu.property_id = p.id
-      LEFT JOIN users agent ON ta.allocated_by = agent.id
-      WHERE ta.tenant_id = $1
-      ORDER BY ta.allocation_date DESC
-    `, [tenantId]);
-    
-    res.json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows
-    });
-  } catch (error) {
-    console.error('Error fetching tenant allocations:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching tenant allocations',
       error: error.message
     });
   }
@@ -335,17 +386,36 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
       });
     }
     
+    // Attempt to auto-resolve stale allocations for this tenant
+    const cleanupResult = await AllocationIntegrityService.autoResolveTenantConflicts(
+      client,
+      tenant_id,
+    );
+
     // Check if tenant already has active allocation
     const existingAllocation = await client.query(
-      `SELECT id FROM tenant_allocations 
-       WHERE tenant_id = $1 AND is_active = true`,
-      [tenant_id]
+      `SELECT 
+         ta.id,
+         ta.unit_id,
+         pu.unit_code,
+         p.name AS property_name,
+         ta.lease_start_date,
+         ta.lease_end_date
+       FROM tenant_allocations ta
+       LEFT JOIN property_units pu ON pu.id = ta.unit_id
+       LEFT JOIN properties p ON p.id = pu.property_id
+       WHERE ta.tenant_id = $1 
+         AND ta.is_active = true`,
+      [tenant_id],
     );
     
     if (existingAllocation.rows.length > 0) {
-      return res.status(400).json({
+      await client.query('ROLLBACK');
+      return res.status(409).json({
         success: false,
-        message: 'Tenant already has an active allocation'
+        message: 'Tenant already has an active allocation',
+        conflictingAllocations: existingAllocation.rows,
+        autoResolvedAllocations: cleanupResult,
       });
     }
     
@@ -442,7 +512,10 @@ router.post('/', authMiddleware, requireRole(['admin', 'agent']), async (req, re
     res.status(201).json({
       success: true,
       message: 'Tenant allocated successfully',
-      data: allocationResult.rows[0]
+      data: {
+        ...allocationResult.rows[0],
+        autoResolvedAllocations: cleanupResult,
+      }
     });
   } catch (error) {
     await client.query('ROLLBACK');
