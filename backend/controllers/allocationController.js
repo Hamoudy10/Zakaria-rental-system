@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const NotificationService = require("../services/notificationService");
+const AllocationIntegrityService = require("../services/allocationIntegrityService");
 // @desc    Get all allocations
 // @route   GET /api/allocations
 // @access  Private (Admin, Agent)
@@ -159,17 +160,35 @@ const createAllocation = async (req, res) => {
       });
     }
 
+    const cleanupResult = await AllocationIntegrityService.autoResolveTenantConflicts(
+      client,
+      tenant_id,
+    );
+
     // Check if tenant already has active allocation
     const tenantCheck = await client.query(
-      `SELECT id FROM tenant_allocations 
-       WHERE tenant_id = $1 AND is_active = true`,
+      `SELECT 
+         ta.id,
+         ta.unit_id,
+         pu.unit_code,
+         p.name AS property_name,
+         ta.lease_start_date,
+         ta.lease_end_date
+       FROM tenant_allocations ta
+       LEFT JOIN property_units pu ON pu.id = ta.unit_id
+       LEFT JOIN properties p ON p.id = pu.property_id
+       WHERE ta.tenant_id = $1 
+         AND ta.is_active = true`,
       [tenant_id],
     );
 
     if (tenantCheck.rows.length > 0) {
-      return res.status(400).json({
+      await client.query("ROLLBACK");
+      return res.status(409).json({
         success: false,
         message: "Tenant already has an active allocation",
+        conflictingAllocations: tenantCheck.rows,
+        autoResolvedAllocations: cleanupResult,
       });
     }
 
@@ -297,7 +316,10 @@ const createAllocation = async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Allocation created successfully",
-      data: rows[0],
+      data: {
+        ...rows[0],
+        autoResolvedAllocations: cleanupResult,
+      },
     });
   } catch (error) {
     await client.query("ROLLBACK");

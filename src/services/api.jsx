@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 
 const API_BASE_URL =
   (import.meta.env.VITE_API_URL ||
@@ -384,6 +384,9 @@ export const allocationAPI = {
   updateAllocation: (id, updates) => api.put(`/allocations/${id}`, updates),
   deleteAllocation: (id) => api.delete(`/allocations/${id}`),
   deallocateTenant: (id) => api.put(`/allocations/${id}`, { is_active: false }),
+  runMaintenanceDiagnostics: () => api.get('/allocations/maintenance/diagnostics'),
+  reconcileAllocations: (options = {}) =>
+    api.post('/allocations/maintenance/reconcile', options),
   
   // Statistics and additional endpoints
   getAllocationStats: () => api.get('/allocations/stats/overview'),

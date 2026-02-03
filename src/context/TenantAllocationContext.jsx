@@ -187,6 +187,39 @@ export const AllocationProvider = ({ children }) => {
   // Clear error
   const clearError = useCallback(() => setError(null), []);
 
+  const runAllocationDiagnostics = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await allocationAPI.runMaintenanceDiagnostics();
+      return response.data?.data || response.data;
+    } catch (err) {
+      console.error('❌ Error running allocation diagnostics:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to run allocation diagnostics';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const reconcileAllocations = useCallback(async (options = {}) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await allocationAPI.reconcileAllocations(options);
+      await fetchAllocations();
+      return response.data?.data || response.data;
+    } catch (err) {
+      console.error('❌ Error reconciling allocations:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to reconcile allocations';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchAllocations]);
+
   const value = React.useMemo(() => ({
     // State
     allocations,
@@ -206,7 +239,9 @@ export const AllocationProvider = ({ children }) => {
     getAllocation,
     getTenantAllocations,
     getAllocationStats,
-    clearError
+    clearError,
+    runAllocationDiagnostics,
+    reconcileAllocations
   }), [
     allocations,
     loading,

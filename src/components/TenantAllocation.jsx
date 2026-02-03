@@ -15,7 +15,8 @@ const TenantAllocation = () => {
     allocateTenant, 
     deallocateTenant, 
     fetchAllocations,
-    clearError 
+    clearError,
+    reconcileAllocations: reconcileAllocationsAPI
   } = useAllocation()
   
   // NEW: Fetch all tenants
@@ -29,6 +30,10 @@ const TenantAllocation = () => {
   const [selectedTenantForAllocation, setSelectedTenantForAllocation] = useState(null)
   const [selectedUnit, setSelectedUnit] = useState('')
   const [allocationError, setAllocationError] = useState('')
+  const [conflictAllocations, setConflictAllocations] = useState([])
+  const [maintenanceRunning, setMaintenanceRunning] = useState(false)
+  const [maintenanceResult, setMaintenanceResult] = useState(null)
+  const [autoResolvedAllocations, setAutoResolvedAllocations] = useState(null)
   const [leaseData, setLeaseData] = useState({
     lease_start_date: '',
     lease_end_date: '',
@@ -132,6 +137,9 @@ const TenantAllocation = () => {
       setSelectedUnit('')
       setAllocationError('')
       clearError()
+      setConflictAllocations([])
+      setMaintenanceResult(null)
+      setAutoResolvedAllocations(null)
       setLeaseData({
         lease_start_date: '',
         lease_end_date: '',
@@ -189,13 +197,21 @@ const TenantAllocation = () => {
       setShowAllocationModal(false)
       await fetchAllocations()
       await fetchTenants()
+      setConflictAllocations([])
+      setMaintenanceResult(null)
+      setAutoResolvedAllocations(null)
       
       alert('Tenant allocated successfully!')
     } catch (error) {
       console.error('Error allocating tenant:', error)
-      
+      const conflictData = error.response?.data?.conflictingAllocations || []
+      if (conflictData.length > 0) {
+        setConflictAllocations(conflictData)
+      }
+      setAutoResolvedAllocations(error.response?.data?.autoResolvedAllocations || null)
+
       if (error.response?.data?.message?.includes('already has an active allocation')) {
-        setAllocationError('This tenant already has an active allocation.')
+        setAllocationError(error.response?.data?.message || 'This tenant already has an active allocation.')
       } else if (error.response?.data?.message?.includes('already occupied')) {
         setAllocationError('This unit is already occupied.')
       } else if (error.response?.data?.message) {
@@ -203,6 +219,26 @@ const TenantAllocation = () => {
       } else {
         setAllocationError('Failed to allocate tenant. Please try again.')
       }
+    }
+  }
+
+  const handleRunMaintenanceCleanup = async () => {
+    try {
+      setMaintenanceRunning(true)
+      setAllocationError('')
+      const result = await reconcileAllocationsAPI({})
+      setMaintenanceResult(result)
+      setConflictAllocations([])
+      setAutoResolvedAllocations(null)
+      await fetchAllocations()
+      await fetchTenants()
+      alert('Allocation data reconciled. Please try allocating the tenant again.')
+    } catch (error) {
+      console.error('Error running allocation maintenance:', error)
+      const message = error.response?.data?.message || 'Failed to reconcile allocations. Please try again.'
+      setAllocationError(message)
+    } finally {
+      setMaintenanceRunning(false)
     }
   }
 
@@ -336,6 +372,49 @@ const TenantAllocation = () => {
             className="float-right text-red-800 font-bold text-lg"
           >
             ×
+          </button>
+        </div>
+      )}
+
+      {conflictAllocations.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 text-yellow-900 px-4 py-4 rounded mb-4 text-sm space-y-3">
+          <div>
+            <p className="font-semibold">Tenant still has active allocation records:</p>
+            <ul className="mt-2 space-y-1">
+              {conflictAllocations.map((conflict) => (
+                <li key={conflict.id || `${conflict.unit_id}-${conflict.lease_start_date}`} className="flex justify-between text-xs md:text-sm">
+                  <span>
+                    {conflict.property_name || 'Unknown property'} • {conflict.unit_code || 'Unit'}
+                  </span>
+                  <span className="text-gray-600">
+                    Lease end: {formatDate(conflict.lease_end_date)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {autoResolvedAllocations?.deactivatedCount > 0 && (
+            <p className="text-xs text-yellow-800">
+              Auto-resolved {autoResolvedAllocations.deactivatedCount} stale allocation(s) in this request, but at least one active record remains.
+            </p>
+          )}
+
+          {maintenanceResult && (
+            <div className="text-xs text-yellow-800">
+              <p className="font-semibold">Last maintenance summary:</p>
+              <p>
+                Deactivated duplicates: {maintenanceResult.duplicatesDeactivated || 0}, closed stale allocations: {maintenanceResult.staleAllocationsClosed || 0}, units synced: {maintenanceResult.unitsUpdated || 0}
+              </p>
+            </div>
+          )}
+
+          <button
+            onClick={handleRunMaintenanceCleanup}
+            disabled={maintenanceRunning}
+            className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 disabled:opacity-70 disabled:cursor-not-allowed text-sm font-medium"
+          >
+            {maintenanceRunning ? 'Reconciling...' : 'Run Allocation Cleanup'}
           </button>
         </div>
       )}
