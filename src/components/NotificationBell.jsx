@@ -1,14 +1,6 @@
 // src/components/NotificationBell.jsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import {
-  Bell,
-  Check,
-  CheckCheck,
-  Trash2,
-  X,
-  MessageSquare,
-  Loader2,
-} from "lucide-react";
+import { Bell, Check, Trash2, X, MessageSquare, Loader2 } from "lucide-react";
 import { useNotification } from "../context/NotificationContext";
 import { useChat } from "../context/ChatContext";
 import { useNavigate } from "react-router-dom";
@@ -194,13 +186,46 @@ const NotificationItem = ({ notification, onMarkRead, onDelete, onClick }) => {
 };
 
 // ============================================
-// CHAT NOTIFICATION ITEM
+// CHAT NOTIFICATION ITEM - FIXED
 // ============================================
 const ChatNotificationItem = ({ conversation, onClick }) => {
+  // Get unread count from conversation
   const unreadCount = conversation.unread_count || 0;
-  const lastMessage = conversation.last_message;
-  const senderName =
-    conversation.other_participant_name || conversation.title || "Chat";
+
+  // Get display name - ChatContext uses 'display_name' or 'title'
+  // For direct chats: display_name contains the other person's name
+  // For groups: title contains the group name
+  const displayName =
+    conversation.display_name || conversation.title || "Unknown";
+
+  // Get last message - in ChatContext this is a STRING, not an object
+  // The conversation object has 'last_message' as the message text directly
+  const lastMessageText = conversation.last_message || "";
+
+  // Get timestamp - ChatContext uses 'last_message_at' or 'updated_at'
+  const timestamp =
+    conversation.last_message_at ||
+    conversation.updated_at ||
+    conversation.created_at;
+
+  // Get sender info if available (for group chats to show who sent the last message)
+  const lastSenderName = conversation.last_message_sender_name || null;
+
+  // Build the preview text
+  let previewText = lastMessageText;
+  if (lastSenderName && conversation.conversation_type === "group") {
+    previewText = `${lastSenderName}: ${lastMessageText}`;
+  }
+
+  // Handle image messages
+  if (!previewText && conversation.last_message_type === "image") {
+    previewText = "📷 Image";
+  }
+
+  // Fallback if no message
+  if (!previewText) {
+    previewText = "No messages yet";
+  }
 
   return (
     <div
@@ -213,37 +238,66 @@ const ChatNotificationItem = ({ conversation, onClick }) => {
     >
       {/* Unread indicator */}
       {unreadCount > 0 && (
-        <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-2 bg-green-500 rounded-full" />
+        <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
       )}
 
       <div className="flex items-start gap-3 pl-2">
-        {/* Icon */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-          <MessageSquare className="w-5 h-5 text-green-600" />
+        {/* Avatar/Icon */}
+        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-100 flex items-center justify-center overflow-hidden">
+          {conversation.profile_image ? (
+            <img
+              src={conversation.profile_image}
+              alt={displayName}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <MessageSquare className="w-5 h-5 text-green-600" />
+          )}
         </div>
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <p
-              className={`text-sm ${unreadCount > 0 ? "font-semibold text-gray-900" : "font-medium text-gray-700"}`}
+              className={`text-sm truncate ${unreadCount > 0 ? "font-semibold text-gray-900" : "font-medium text-gray-700"}`}
             >
-              {senderName}
+              {displayName}
             </p>
             {unreadCount > 0 && (
-              <span className="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                {unreadCount}
+              <span className="flex-shrink-0 bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded-full min-w-[20px] text-center">
+                {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
           </div>
-          {lastMessage && (
-            <p className="text-sm text-gray-600 line-clamp-1 mt-0.5">
-              {lastMessage.content || lastMessage.message_text || "New message"}
-            </p>
-          )}
-          <p className="text-xs text-gray-400 mt-1">
-            {formatTimeAgo(lastMessage?.created_at || conversation.updated_at)}
+
+          {/* Message preview */}
+          <p
+            className={`text-sm line-clamp-1 mt-0.5 ${unreadCount > 0 ? "text-gray-700 font-medium" : "text-gray-500"}`}
+          >
+            {previewText}
           </p>
+
+          {/* Timestamp */}
+          <p className="text-xs text-gray-400 mt-1">
+            {formatTimeAgo(timestamp)}
+          </p>
+        </div>
+
+        {/* Arrow indicator */}
+        <div className="flex-shrink-0 self-center">
+          <svg
+            className="w-4 h-4 text-gray-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 5l7 7-7 7"
+            />
+          </svg>
         </div>
       </div>
     </div>
@@ -270,17 +324,15 @@ const NotificationBell = () => {
     refreshNotifications,
   } = useNotification();
 
-  // Use ChatContext for chat notifications (safely handle if not available)
-  let chatContext = null;
-  try {
-    chatContext = useChat();
-  } catch {
-    // ChatContext not available
-  }
+  // Use ChatContext for chat notifications
+  const chatContext = useChat();
 
+  // Get chat data from context
   const chatUnreadCount = chatContext?.getTotalUnreadCount?.() || 0;
-  const recentChats =
-    chatContext?.conversations?.filter((c) => (c.unread_count || 0) > 0) || [];
+  const allConversations = chatContext?.conversations || [];
+
+  // Filter to only show conversations with unread messages
+  const unreadChats = allConversations.filter((c) => (c.unread_count || 0) > 0);
 
   // Local state
   const [isOpen, setIsOpen] = useState(false);
@@ -314,9 +366,11 @@ const NotificationBell = () => {
 
     if (newState) {
       // Refresh notifications when opening
-      refreshNotifications();
+      refreshNotifications?.();
+      // Also refresh conversations
+      chatContext?.loadConversations?.();
     }
-  }, [isOpen, refreshNotifications]);
+  }, [isOpen, refreshNotifications, chatContext]);
 
   // Handle mark single notification as read
   const handleMarkRead = useCallback(
@@ -369,7 +423,7 @@ const NotificationBell = () => {
       }
 
       // Navigate based on type
-      const { type, related_entity_type, related_entity_id } = notification;
+      const { type } = notification;
 
       switch (type) {
         case "payment_success":
@@ -411,22 +465,41 @@ const NotificationBell = () => {
     [navigate, handleMarkRead],
   );
 
-  // Handle chat notification click
+  // Handle chat notification click - FIXED to properly navigate and set active conversation
   const handleChatClick = useCallback(
     (conversation) => {
-      // Navigate to chat with this conversation
-      navigate("/chat", { state: { conversationId: conversation.id } });
+      console.log(
+        "📱 Chat notification clicked:",
+        conversation.id,
+        conversation.display_name || conversation.title,
+      );
+
+      // Set the active conversation in ChatContext so ChatModule opens it
+      if (chatContext?.setActiveConversation) {
+        chatContext.setActiveConversation(conversation);
+      }
+
+      // Navigate to chat page
+      // Some implementations use state, others use URL params
+      navigate("/chat", {
+        state: {
+          conversationId: conversation.id,
+          conversation: conversation,
+        },
+      });
+
+      // Close the dropdown
       setIsOpen(false);
     },
-    [navigate],
+    [navigate, chatContext],
   );
 
-  // Handle mark all chats as read
+  // Handle mark all chats as read - Navigate to chat to trigger mark as read
   const handleMarkAllChatsRead = useCallback(() => {
-    if (chatContext?.markAllAsRead) {
-      chatContext.markAllAsRead();
-    }
-  }, [chatContext]);
+    // Navigate to chat page which will handle marking messages as read
+    navigate("/chat");
+    setIsOpen(false);
+  }, [navigate]);
 
   // Get filtered notifications based on active tab
   const getDisplayNotifications = () => {
@@ -442,7 +515,6 @@ const NotificationBell = () => {
 
   const displayNotifications = getDisplayNotifications();
   const hasUnreadSystem = notifications.some((n) => !n.is_read);
-  const unreadCount = systemUnreadCount;
 
   return (
     <div className="relative">
@@ -465,7 +537,7 @@ const NotificationBell = () => {
             absolute -top-1 -right-1 min-w-[20px] h-5 px-1.5
             flex items-center justify-center
             bg-red-500 text-white text-xs font-bold rounded-full
-            ${totalUnreadCount > 0 ? "animate-pulse" : ""}
+            animate-pulse
           `}
           >
             {totalUnreadCount > 99 ? "99+" : totalUnreadCount}
@@ -479,7 +551,7 @@ const NotificationBell = () => {
           ref={dropdownRef}
           className="absolute right-0 mt-2 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 flex flex-col"
           style={{
-            maxHeight: "min(70vh, 600px)",
+            maxHeight: "min(75vh, 650px)",
             minHeight: "300px",
           }}
         >
@@ -488,7 +560,7 @@ const NotificationBell = () => {
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">Notifications</h3>
               <div className="flex items-center gap-2">
-                {hasUnreadSystem && (
+                {hasUnreadSystem && activeTab !== "chat" && (
                   <button
                     onClick={handleMarkAllRead}
                     disabled={processing}
@@ -583,35 +655,22 @@ const NotificationBell = () => {
               <>
                 {/* Chat Notifications (when 'all' or 'chat' tab) */}
                 {(activeTab === "all" || activeTab === "chat") &&
-                  recentChats.length > 0 && (
+                  unreadChats.length > 0 && (
                     <>
-                      {activeTab === "all" && (
-                        <div className="sticky top-0 z-10 px-4 py-2 bg-green-50 border-b border-green-100 flex items-center justify-between">
-                          <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
-                            Chat Messages ({chatUnreadCount})
-                          </span>
-                          <button
-                            onClick={handleMarkAllChatsRead}
-                            className="text-xs text-green-600 hover:underline"
-                          >
-                            Mark all read
-                          </button>
-                        </div>
-                      )}
-                      {activeTab === "chat" && (
-                        <div className="sticky top-0 z-10 px-4 py-2 bg-green-50 border-b border-green-100 flex items-center justify-between">
-                          <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
-                            Unread Conversations ({chatUnreadCount})
-                          </span>
-                          <button
-                            onClick={handleMarkAllChatsRead}
-                            className="text-xs text-green-600 hover:underline"
-                          >
-                            Mark all read
-                          </button>
-                        </div>
-                      )}
-                      {recentChats.map((conversation) => (
+                      <div className="sticky top-0 z-10 px-4 py-2 bg-green-50 border-b border-green-100 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
+                          {activeTab === "all"
+                            ? `Chat Messages (${chatUnreadCount})`
+                            : `Unread Conversations (${unreadChats.length})`}
+                        </span>
+                        <button
+                          onClick={handleMarkAllChatsRead}
+                          className="text-xs text-green-600 hover:underline"
+                        >
+                          Open Chat
+                        </button>
+                      </div>
+                      {unreadChats.map((conversation) => (
                         <ChatNotificationItem
                           key={conversation.id}
                           conversation={conversation}
@@ -622,22 +681,19 @@ const NotificationBell = () => {
                   )}
 
                 {/* System Notifications (when 'all' or 'system' tab) */}
-                {(activeTab === "all" || activeTab === "system") && (
-                  <>
-                    {activeTab === "all" && displayNotifications.length > 0 && (
-                      <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
-                        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
-                          System Notifications (
-                          {
-                            displayNotifications.filter((n) => !n.is_read)
-                              .length
-                          }
-                          )
-                        </span>
-                      </div>
-                    )}
-                    {activeTab === "system" &&
-                      displayNotifications.length > 0 && (
+                {(activeTab === "all" || activeTab === "system") &&
+                  displayNotifications.length > 0 && (
+                    <>
+                      {activeTab === "all" && (
+                        <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
+                          <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                            System Notifications (
+                            {notifications.filter((n) => !n.is_read).length}{" "}
+                            unread)
+                          </span>
+                        </div>
+                      )}
+                      {activeTab === "system" && (
                         <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
                           <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
                             All System Notifications (
@@ -645,22 +701,22 @@ const NotificationBell = () => {
                           </span>
                         </div>
                       )}
-                    {displayNotifications.map((notification) => (
-                      <NotificationItem
-                        key={notification.id}
-                        notification={notification}
-                        onMarkRead={handleMarkRead}
-                        onDelete={handleDelete}
-                        onClick={handleNotificationClick}
-                      />
-                    ))}
-                  </>
-                )}
+                      {displayNotifications.map((notification) => (
+                        <NotificationItem
+                          key={notification.id}
+                          notification={notification}
+                          onMarkRead={handleMarkRead}
+                          onDelete={handleDelete}
+                          onClick={handleNotificationClick}
+                        />
+                      ))}
+                    </>
+                  )}
 
-                {/* Empty State */}
-                {(activeTab === "system" || activeTab === "all") &&
+                {/* Empty States */}
+                {activeTab === "all" &&
                   displayNotifications.length === 0 &&
-                  recentChats.length === 0 && (
+                  unreadChats.length === 0 && (
                     <div className="flex flex-col items-center justify-center py-12 text-gray-500">
                       <Bell className="w-12 h-12 text-gray-300 mb-3" />
                       <p className="font-medium">No notifications</p>
@@ -670,11 +726,20 @@ const NotificationBell = () => {
                     </div>
                   )}
 
-                {activeTab === "chat" && recentChats.length === 0 && (
+                {activeTab === "chat" && unreadChats.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-12 text-gray-500">
                     <MessageSquare className="w-12 h-12 text-gray-300 mb-3" />
                     <p className="font-medium">No unread messages</p>
                     <p className="text-sm text-gray-400">Your inbox is empty</p>
+                    <button
+                      onClick={() => {
+                        navigate("/chat");
+                        setIsOpen(false);
+                      }}
+                      className="mt-4 text-sm text-green-600 hover:text-green-800 font-medium"
+                    >
+                      Open Chat →
+                    </button>
                   </div>
                 )}
 
@@ -692,15 +757,26 @@ const NotificationBell = () => {
 
           {/* Footer - Fixed at bottom */}
           <div className="flex-shrink-0 px-4 py-3 bg-gray-50 border-t border-gray-200 rounded-b-xl">
-            <button
-              onClick={() => {
-                navigate("/notifications");
-                setIsOpen(false);
-              }}
-              className="w-full text-center text-sm text-blue-600 hover:text-blue-800 font-medium"
-            >
-              View all notifications
-            </button>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => {
+                  navigate("/notifications");
+                  setIsOpen(false);
+                }}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                View all notifications
+              </button>
+              <button
+                onClick={() => {
+                  navigate("/chat");
+                  setIsOpen(false);
+                }}
+                className="text-sm text-green-600 hover:text-green-800 font-medium"
+              >
+                Open chat
+              </button>
+            </div>
           </div>
         </div>
       )}
