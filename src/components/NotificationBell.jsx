@@ -257,6 +257,7 @@ const NotificationBell = () => {
   const navigate = useNavigate();
   const dropdownRef = useRef(null);
   const buttonRef = useRef(null);
+  const scrollContainerRef = useRef(null);
 
   // Use NotificationContext for system notifications
   const {
@@ -269,8 +270,14 @@ const NotificationBell = () => {
     refreshNotifications,
   } = useNotification();
 
-  // Use ChatContext for chat notifications
-  const chatContext = useChat();
+  // Use ChatContext for chat notifications (safely handle if not available)
+  let chatContext = null;
+  try {
+    chatContext = useChat();
+  } catch {
+    // ChatContext not available
+  }
+
   const chatUnreadCount = chatContext?.getTotalUnreadCount?.() || 0;
   const recentChats =
     chatContext?.conversations?.filter((c) => (c.unread_count || 0) > 0) || [];
@@ -435,6 +442,7 @@ const NotificationBell = () => {
 
   const displayNotifications = getDisplayNotifications();
   const hasUnreadSystem = notifications.some((n) => !n.is_read);
+  const unreadCount = systemUnreadCount;
 
   return (
     <div className="relative">
@@ -469,11 +477,14 @@ const NotificationBell = () => {
       {isOpen && (
         <div
           ref={dropdownRef}
-          className="absolute right-0 mt-2 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden"
-          style={{ maxHeight: "calc(100vh - 100px)" }}
+          className="absolute right-0 mt-2 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 flex flex-col"
+          style={{
+            maxHeight: "min(70vh, 600px)",
+            minHeight: "300px",
+          }}
         >
-          {/* Header */}
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+          {/* Header - Fixed at top */}
+          <div className="flex-shrink-0 px-4 py-3 bg-gray-50 border-b border-gray-200 rounded-t-xl">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">Notifications</h3>
               <div className="flex items-center gap-2">
@@ -554,8 +565,15 @@ const NotificationBell = () => {
             </div>
           </div>
 
-          {/* Content */}
-          <div className="max-h-96 overflow-y-auto">
+          {/* Content - Scrollable */}
+          <div
+            ref={scrollContainerRef}
+            className="flex-1 overflow-y-auto overscroll-contain"
+            style={{
+              scrollbarWidth: "thin",
+              scrollbarColor: "#CBD5E1 #F1F5F9",
+            }}
+          >
             {loading && notifications.length === 0 ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
@@ -568,9 +586,22 @@ const NotificationBell = () => {
                   recentChats.length > 0 && (
                     <>
                       {activeTab === "all" && (
-                        <div className="px-4 py-2 bg-green-50 border-b border-green-100 flex items-center justify-between">
+                        <div className="sticky top-0 z-10 px-4 py-2 bg-green-50 border-b border-green-100 flex items-center justify-between">
                           <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
                             Chat Messages ({chatUnreadCount})
+                          </span>
+                          <button
+                            onClick={handleMarkAllChatsRead}
+                            className="text-xs text-green-600 hover:underline"
+                          >
+                            Mark all read
+                          </button>
+                        </div>
+                      )}
+                      {activeTab === "chat" && (
+                        <div className="sticky top-0 z-10 px-4 py-2 bg-green-50 border-b border-green-100 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
+                            Unread Conversations ({chatUnreadCount})
                           </span>
                           <button
                             onClick={handleMarkAllChatsRead}
@@ -593,12 +624,24 @@ const NotificationBell = () => {
                 {/* System Notifications (when 'all' or 'system' tab) */}
                 {(activeTab === "all" || activeTab === "system") && (
                   <>
-                    {activeTab === "all" &&
-                      displayNotifications.length > 0 &&
-                      recentChats.length > 0 && (
-                        <div className="px-4 py-2 bg-blue-50 border-b border-blue-100">
+                    {activeTab === "all" && displayNotifications.length > 0 && (
+                      <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
+                        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                          System Notifications (
+                          {
+                            displayNotifications.filter((n) => !n.is_read)
+                              .length
+                          }
+                          )
+                        </span>
+                      </div>
+                    )}
+                    {activeTab === "system" &&
+                      displayNotifications.length > 0 && (
+                        <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
                           <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
-                            System Notifications ({systemUnreadCount})
+                            All System Notifications (
+                            {displayNotifications.length})
                           </span>
                         </div>
                       )}
@@ -634,12 +677,21 @@ const NotificationBell = () => {
                     <p className="text-sm text-gray-400">Your inbox is empty</p>
                   </div>
                 )}
+
+                {activeTab === "system" &&
+                  displayNotifications.length === 0 && (
+                    <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+                      <Bell className="w-12 h-12 text-gray-300 mb-3" />
+                      <p className="font-medium">No system notifications</p>
+                      <p className="text-sm text-gray-400">All clear!</p>
+                    </div>
+                  )}
               </>
             )}
           </div>
 
-          {/* Footer */}
-          <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
+          {/* Footer - Fixed at bottom */}
+          <div className="flex-shrink-0 px-4 py-3 bg-gray-50 border-t border-gray-200 rounded-b-xl">
             <button
               onClick={() => {
                 navigate("/notifications");
@@ -652,6 +704,24 @@ const NotificationBell = () => {
           </div>
         </div>
       )}
+
+      {/* Custom scrollbar styles */}
+      <style>{`
+        .notification-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+        .notification-scroll::-webkit-scrollbar-track {
+          background: #F1F5F9;
+          border-radius: 3px;
+        }
+        .notification-scroll::-webkit-scrollbar-thumb {
+          background: #CBD5E1;
+          border-radius: 3px;
+        }
+        .notification-scroll::-webkit-scrollbar-thumb:hover {
+          background: #94A3B8;
+        }
+      `}</style>
     </div>
   );
 };
