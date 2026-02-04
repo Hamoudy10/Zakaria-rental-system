@@ -505,15 +505,24 @@ const createBroadcastNotification = async (req, res) => {
       title, 
       message, 
       type = 'announcement',
-      target_roles 
+      target_roles,
+      user_ids  // NEW: Support for specific user IDs
     } = req.body;
 
-    console.log('📢 Creating broadcast notification:', { title, type, target_roles });
+    console.log('📢 Creating broadcast notification:', { title, type, target_roles, user_ids });
 
-    if (!title || !message) {
+    // Validation
+    if (!title || !title.trim()) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: title, message'
+        message: 'Title is required'
+      });
+    }
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message is required'
       });
     }
 
@@ -524,28 +533,56 @@ const createBroadcastNotification = async (req, res) => {
       });
     }
 
-    let userQuery = 'SELECT id FROM users WHERE is_active = true';
-    const userParams = [];
+    let users = [];
 
-    if (target_roles && target_roles.length > 0) {
-      userQuery += ` AND role = ANY($${userParams.length + 1})`;
-      userParams.push(target_roles);
-    }
-
-    const usersResult = await pool.query(userQuery, userParams);
-    const users = usersResult.rows;
-
-    if (users.length === 0) {
+    // Determine recipients based on provided parameters
+    if (user_ids && Array.isArray(user_ids) && user_ids.length > 0) {
+      // Send to specific users
+      console.log(`📋 Sending to ${user_ids.length} specific users`);
+      
+      const usersResult = await pool.query(
+        'SELECT id FROM users WHERE id = ANY($1::uuid[]) AND is_active = true',
+        [user_ids]
+      );
+      users = usersResult.rows;
+      
+      if (users.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No valid users found with the provided IDs'
+        });
+      }
+    } else if (target_roles && Array.isArray(target_roles) && target_roles.length > 0) {
+      // Send to users by roles
+      console.log(`📋 Sending to roles: ${target_roles.join(', ')}`);
+      
+      const usersResult = await pool.query(
+        'SELECT id FROM users WHERE role = ANY($1) AND is_active = true',
+        [target_roles]
+      );
+      users = usersResult.rows;
+      
+      if (users.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No active users found for the specified roles'
+        });
+      }
+    } else {
+      // No recipients specified - return error
       return res.status(400).json({
         success: false,
-        message: 'No users found for the specified criteria'
+        message: 'Please specify target_roles or user_ids'
       });
     }
 
+    console.log(`📤 Found ${users.length} recipients`);
+
+    // Create notifications for all recipients
     const notificationsData = users.map(user => ({
       userId: user.id,
-      title,
-      message,
+      title: title.trim(),
+      message: message.trim(),
       type,
       relatedEntityType: 'broadcast'
     }));
@@ -556,9 +593,10 @@ const createBroadcastNotification = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: `Broadcast notification sent to ${createdNotifications.length} users`,
+      message: `Broadcast notification sent to ${createdNotifications.length} user(s)`,
       data: {
         sentCount: createdNotifications.length,
+        recipientType: user_ids ? 'specific' : 'roles',
         sampleNotification: createdNotifications[0]
       }
     });
