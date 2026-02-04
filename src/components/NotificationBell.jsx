@@ -1,90 +1,218 @@
-// src/components/NotificationBell.jsx
-import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Bell, Check, Trash2, X, MessageSquare, Loader2 } from "lucide-react";
-import { useNotification } from "../context/NotificationContext";
-import { useChat } from "../context/ChatContext";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  Bell,
+  Check,
+  CheckCheck,
+  Trash2,
+  X,
+  MessageCircle,
+  Loader,
+  ChevronRight,
+} from "lucide-react";
+import { useNotification } from "../context/NotificationContext";
+import { useAuth } from "../context/AuthContext";
 
-// ============================================
-// NOTIFICATION TYPE ICONS & COLORS
-// ============================================
-const getNotificationIcon = (type) => {
-  const icons = {
+// Try to import ChatContext, but don't fail if it doesn't exist
+let useChat = null;
+try {
+  const ChatContext = require("../context/ChatContext");
+  useChat = ChatContext.useChat;
+} catch (e) {
+  console.log("ChatContext not available");
+}
+
+// Notification type icons and colors
+const getNotificationStyle = (type) => {
+  const styles = {
     // Payment notifications
-    payment_success: "💰",
-    payment_received: "💵",
-    payment_failed: "❌",
-    payment_pending: "⏳",
-    payment_carry_forward: "➡️",
+    payment_success: {
+      icon: "💰",
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "border-green-200",
+    },
+    payment_received: {
+      icon: "💵",
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "border-green-200",
+    },
+    payment_failed: {
+      icon: "❌",
+      bg: "bg-red-100",
+      text: "text-red-800",
+      border: "border-red-200",
+    },
+    payment_pending: {
+      icon: "⏳",
+      bg: "bg-yellow-100",
+      text: "text-yellow-800",
+      border: "border-yellow-200",
+    },
+    payment_carry_forward: {
+      icon: "➡️",
+      bg: "bg-blue-100",
+      text: "text-blue-800",
+      border: "border-blue-200",
+    },
 
     // Salary notifications
-    salary_paid: "💵",
-    salary_processed: "✅",
+    salary_paid: {
+      icon: "💵",
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "border-green-200",
+    },
+    salary_processed: {
+      icon: "✅",
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "border-green-200",
+    },
 
     // Tenant notifications
-    tenant_created: "👤",
-    tenant_allocated: "🏠",
-    tenant_deallocated: "🚪",
+    tenant_created: {
+      icon: "👤",
+      bg: "bg-blue-100",
+      text: "text-blue-800",
+      border: "border-blue-200",
+    },
+    tenant_allocated: {
+      icon: "🏠",
+      bg: "bg-purple-100",
+      text: "text-purple-800",
+      border: "border-purple-200",
+    },
+    tenant_deallocated: {
+      icon: "🚪",
+      bg: "bg-orange-100",
+      text: "text-orange-800",
+      border: "border-orange-200",
+    },
 
     // Complaint notifications
-    complaint_created: "📝",
-    complaint_updated: "🔄",
-    complaint_resolved: "✅",
-    complaint_assigned: "👷",
+    complaint_created: {
+      icon: "📝",
+      bg: "bg-orange-100",
+      text: "text-orange-800",
+      border: "border-orange-200",
+    },
+    complaint_updated: {
+      icon: "🔄",
+      bg: "bg-blue-100",
+      text: "text-blue-800",
+      border: "border-blue-200",
+    },
+    complaint_resolved: {
+      icon: "✅",
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "border-green-200",
+    },
+    complaint_assigned: {
+      icon: "👷",
+      bg: "bg-indigo-100",
+      text: "text-indigo-800",
+      border: "border-indigo-200",
+    },
 
     // Water bill notifications
-    water_bill_created: "💧",
+    water_bill_created: {
+      icon: "💧",
+      bg: "bg-cyan-100",
+      text: "text-cyan-800",
+      border: "border-cyan-200",
+    },
 
     // Expense notifications
-    expense_created: "📋",
-    expense_approved: "✅",
-    expense_rejected: "❌",
+    expense_created: {
+      icon: "📊",
+      bg: "bg-amber-100",
+      text: "text-amber-800",
+      border: "border-amber-200",
+    },
+    expense_approved: {
+      icon: "✅",
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "border-green-200",
+    },
+    expense_rejected: {
+      icon: "❌",
+      bg: "bg-red-100",
+      text: "text-red-800",
+      border: "border-red-200",
+    },
 
     // Lease notifications
-    lease_expiring: "📅",
-    rent_overdue: "⚠️",
+    lease_expiring: {
+      icon: "📅",
+      bg: "bg-yellow-100",
+      text: "text-yellow-800",
+      border: "border-yellow-200",
+    },
+    rent_overdue: {
+      icon: "⚠️",
+      bg: "bg-red-100",
+      text: "text-red-800",
+      border: "border-red-200",
+    },
 
     // System notifications
-    announcement: "📢",
-    maintenance: "🔧",
-    emergency: "🚨",
-    system_alert: "⚙️",
-    broadcast: "📣",
+    announcement: {
+      icon: "📢",
+      bg: "bg-blue-100",
+      text: "text-blue-800",
+      border: "border-blue-200",
+    },
+    maintenance: {
+      icon: "🔧",
+      bg: "bg-gray-100",
+      text: "text-gray-800",
+      border: "border-gray-200",
+    },
+    emergency: {
+      icon: "🚨",
+      bg: "bg-red-100",
+      text: "text-red-800",
+      border: "border-red-200",
+    },
+    system_alert: {
+      icon: "⚙️",
+      bg: "bg-gray-100",
+      text: "text-gray-800",
+      border: "border-gray-200",
+    },
+    broadcast: {
+      icon: "📣",
+      bg: "bg-indigo-100",
+      text: "text-indigo-800",
+      border: "border-indigo-200",
+    },
 
-    // Chat
-    chat_message: "💬",
+    // Chat notifications
+    chat: {
+      icon: "💬",
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "border-green-200",
+    },
 
     // Default
-    default: "🔔",
+    default: {
+      icon: "🔔",
+      bg: "bg-gray-100",
+      text: "text-gray-800",
+      border: "border-gray-200",
+    },
   };
 
-  return icons[type] || icons.default;
+  return styles[type] || styles.default;
 };
 
-const getNotificationColor = (type) => {
-  const colors = {
-    payment_success: "bg-green-100 text-green-800",
-    payment_received: "bg-green-100 text-green-800",
-    payment_failed: "bg-red-100 text-red-800",
-    payment_pending: "bg-yellow-100 text-yellow-800",
-    salary_paid: "bg-blue-100 text-blue-800",
-    complaint_created: "bg-orange-100 text-orange-800",
-    complaint_resolved: "bg-green-100 text-green-800",
-    expense_rejected: "bg-red-100 text-red-800",
-    expense_approved: "bg-green-100 text-green-800",
-    lease_expiring: "bg-yellow-100 text-yellow-800",
-    rent_overdue: "bg-red-100 text-red-800",
-    emergency: "bg-red-100 text-red-800",
-    system_alert: "bg-gray-100 text-gray-800",
-  };
-
-  return colors[type] || "bg-blue-100 text-blue-800";
-};
-
-// ============================================
-// TIME FORMATTING
-// ============================================
-const formatTimeAgo = (timestamp) => {
+// Format timestamp
+const formatTimestamp = (timestamp) => {
   if (!timestamp) return "";
 
   try {
@@ -109,61 +237,64 @@ const formatTimeAgo = (timestamp) => {
   }
 };
 
-// ============================================
-// NOTIFICATION ITEM COMPONENT
-// ============================================
-const NotificationItem = ({ notification, onMarkRead, onDelete, onClick }) => {
-  const isUnread = !notification.is_read;
+// System Notification Item Component
+const SystemNotificationItem = ({
+  notification,
+  onMarkRead,
+  onDelete,
+  onClick,
+}) => {
+  const style = getNotificationStyle(notification.type);
 
   return (
     <div
-      className={`
-        relative px-4 py-3 border-b border-gray-100 last:border-b-0
-        hover:bg-gray-50 transition-colors cursor-pointer
-        ${isUnread ? "bg-blue-50/50" : ""}
-      `}
-      onClick={() => onClick?.(notification)}
+      className={`px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100 ${
+        !notification.is_read ? "bg-blue-50/50" : ""
+      }`}
+      onClick={() => onClick(notification)}
     >
-      {/* Unread indicator */}
-      {isUnread && (
-        <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-2 bg-blue-500 rounded-full" />
-      )}
-
-      <div className="flex items-start gap-3 pl-2">
+      <div className="flex items-start gap-3">
         {/* Icon */}
         <div
-          className={`
-          flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-lg
-          ${getNotificationColor(notification.type)}
-        `}
+          className={`w-10 h-10 rounded-full ${style.bg} flex items-center justify-center flex-shrink-0 text-lg`}
         >
-          {getNotificationIcon(notification.type)}
+          {style.icon}
         </div>
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <p
-            className={`text-sm ${isUnread ? "font-semibold text-gray-900" : "font-medium text-gray-700"}`}
-          >
-            {notification.title}
-          </p>
-          <p className="text-sm text-gray-600 line-clamp-2 mt-0.5">
+          <div className="flex items-start justify-between gap-2">
+            <p
+              className={`text-sm font-medium ${!notification.is_read ? "text-gray-900" : "text-gray-700"}`}
+            >
+              {notification.title}
+            </p>
+            <span className="text-xs text-gray-400 flex-shrink-0">
+              {formatTimestamp(notification.created_at)}
+            </span>
+          </div>
+          <p className="text-sm text-gray-600 mt-0.5 line-clamp-2">
             {notification.message}
           </p>
-          <p className="text-xs text-gray-400 mt-1">
-            {formatTimeAgo(notification.created_at)}
-          </p>
+
+          {/* Unread indicator */}
+          {!notification.is_read && (
+            <div className="flex items-center gap-2 mt-2">
+              <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+              <span className="text-xs text-blue-600 font-medium">New</span>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
-        <div className="flex-shrink-0 flex items-center gap-1">
-          {isUnread && (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {!notification.is_read && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onMarkRead?.(notification.id);
+                onMarkRead(notification.id);
               }}
-              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+              className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-full transition-colors"
               title="Mark as read"
             >
               <Check className="w-4 h-4" />
@@ -172,7 +303,7 @@ const NotificationItem = ({ notification, onMarkRead, onDelete, onClick }) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onDelete?.(notification.id);
+              onDelete(notification.id);
             }}
             className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
             title="Delete"
@@ -185,80 +316,89 @@ const NotificationItem = ({ notification, onMarkRead, onDelete, onClick }) => {
   );
 };
 
-// ============================================
-// CHAT NOTIFICATION ITEM - FIXED
-// ============================================
-const ChatNotificationItem = ({ conversation, onClick }) => {
-
-   console.log("🔍 DEBUG ChatNotificationItem:");
-   console.log("  conversation:", JSON.stringify(conversation, null, 2));
-   console.log("  currentUserId:", currentUserId);
-   console.log("  conversation.participants:", conversation.participants);
-   console.log("  conversation.last_message:", conversation.last_message);
-   console.log("  conversation.display_name:", conversation.display_name);
-  // Get unread count from conversation
+// Chat Notification Item Component
+const ChatNotificationItem = ({ conversation, onChatClick, currentUserId }) => {
   const unreadCount = conversation.unread_count || 0;
 
-  // Get display name - ChatContext uses 'display_name' or 'title'
-  // For direct chats: display_name contains the other person's name
-  // For groups: title contains the group name
-  const displayName =
-    conversation.display_name || conversation.title || "Unknown";
+  // Get the other participant from participants array
+  const otherParticipant = conversation.participants?.find(
+    (p) => p.id !== currentUserId,
+  );
 
-  // Get last message - in ChatContext this is a STRING, not an object
-  // The conversation object has 'last_message' as the message text directly
-  const lastMessageText = conversation.last_message || "";
-
-  // Get timestamp - ChatContext uses 'last_message_at' or 'updated_at'
-  const timestamp =
-    conversation.last_message_at ||
-    conversation.updated_at ||
-    conversation.created_at;
-
-  // Get sender info if available (for group chats to show who sent the last message)
-  const lastSenderName = conversation.last_message_sender_name || null;
-
-  // Build the preview text
-  let previewText = lastMessageText;
-  if (lastSenderName && conversation.conversation_type === "group") {
-    previewText = `${lastSenderName}: ${lastMessageText}`;
+  // Determine display name
+  let senderName = "Unknown";
+  if (conversation.conversation_type === "group" && conversation.title) {
+    senderName = conversation.title;
+  } else if (otherParticipant) {
+    senderName =
+      `${otherParticipant.first_name || ""} ${otherParticipant.last_name || ""}`.trim() ||
+      "Unknown";
+  } else if (conversation.display_name) {
+    senderName = conversation.display_name;
+  } else if (conversation.title) {
+    senderName = conversation.title;
   }
 
-  // Handle image messages
-  if (!previewText && conversation.last_message_type === "image") {
-    previewText = "📷 Image";
-  }
+  // Get profile image
+  const profileImage = otherParticipant?.profile_image || null;
 
-  // Fallback if no message
-  if (!previewText) {
-    previewText = "No messages yet";
-  }
+  // Get initials for avatar fallback
+  const getInitials = () => {
+    if (conversation.conversation_type === "group") {
+      return (conversation.title || "G").slice(0, 2).toUpperCase();
+    }
+    if (otherParticipant) {
+      return (
+        `${otherParticipant.first_name?.charAt(0) || ""}${otherParticipant.last_name?.charAt(0) || ""}`.toUpperCase() ||
+        "?"
+      );
+    }
+    return "?";
+  };
+
+  // Get message preview - last_message is a string, not an object
+  const messagePreview = conversation.last_message || "Start a conversation";
+
+  // Format time
+  const timeString = formatTimestamp(
+    conversation.last_message_at || conversation.updated_at,
+  );
 
   return (
     <div
-      className={`
-        relative px-4 py-3 border-b border-gray-100 last:border-b-0
-        hover:bg-gray-50 transition-colors cursor-pointer
-        ${unreadCount > 0 ? "bg-green-50/50" : ""}
-      `}
-      onClick={() => onClick?.(conversation)}
+      className={`px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100 ${
+        unreadCount > 0 ? "bg-green-50/50" : ""
+      }`}
+      onClick={() => onChatClick(conversation)}
     >
-      {/* Unread indicator */}
-      {unreadCount > 0 && (
-        <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-      )}
-
-      <div className="flex items-start gap-3 pl-2">
-        {/* Avatar/Icon */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-100 flex items-center justify-center overflow-hidden">
-          {conversation.profile_image ? (
+      <div className="flex items-center gap-3">
+        {/* Avatar */}
+        <div className="relative flex-shrink-0">
+          {profileImage ? (
             <img
-              src={conversation.profile_image}
-              alt={displayName}
-              className="w-full h-full object-cover"
+              src={profileImage}
+              alt={senderName}
+              className="w-12 h-12 rounded-full object-cover"
+              onError={(e) => {
+                e.target.style.display = "none";
+                e.target.nextSibling.style.display = "flex";
+              }}
             />
-          ) : (
-            <MessageSquare className="w-5 h-5 text-green-600" />
+          ) : null}
+          <div
+            className={`w-12 h-12 rounded-full bg-green-500 flex items-center justify-center text-white font-semibold text-sm ${profileImage ? "hidden" : ""}`}
+          >
+            {getInitials()}
+          </div>
+
+          {/* Online indicator */}
+          {conversation.is_online && (
+            <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+          )}
+
+          {/* Unread pulse */}
+          {unreadCount > 0 && (
+            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
           )}
         </div>
 
@@ -266,105 +406,100 @@ const ChatNotificationItem = ({ conversation, onClick }) => {
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <p
-              className={`text-sm truncate ${unreadCount > 0 ? "font-semibold text-gray-900" : "font-medium text-gray-700"}`}
+              className={`text-sm font-semibold truncate ${unreadCount > 0 ? "text-gray-900" : "text-gray-700"}`}
             >
-              {displayName}
+              {senderName}
             </p>
+            <span
+              className={`text-xs flex-shrink-0 ${unreadCount > 0 ? "text-green-600 font-medium" : "text-gray-400"}`}
+            >
+              {timeString}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 mt-0.5">
+            <p
+              className={`text-sm truncate ${unreadCount > 0 ? "text-gray-800 font-medium" : "text-gray-500"}`}
+            >
+              {messagePreview}
+            </p>
+
+            {/* Unread badge */}
             {unreadCount > 0 && (
-              <span className="flex-shrink-0 bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded-full min-w-[20px] text-center">
+              <span className="bg-green-500 text-white text-xs rounded-full px-2 py-0.5 font-bold flex-shrink-0 min-w-[20px] text-center">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
           </div>
-
-          {/* Message preview */}
-          <p
-            className={`text-sm line-clamp-1 mt-0.5 ${unreadCount > 0 ? "text-gray-700 font-medium" : "text-gray-500"}`}
-          >
-            {previewText}
-          </p>
-
-          {/* Timestamp */}
-          <p className="text-xs text-gray-400 mt-1">
-            {formatTimeAgo(timestamp)}
-          </p>
         </div>
 
-        {/* Arrow indicator */}
-        <div className="flex-shrink-0 self-center">
-          <svg
-            className="w-4 h-4 text-gray-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 5l7 7-7 7"
-            />
-          </svg>
-        </div>
+        {/* Arrow */}
+        <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
       </div>
     </div>
   );
 };
 
-// ============================================
-// MAIN NOTIFICATION BELL COMPONENT
-// ============================================
+// Main NotificationBell Component
 const NotificationBell = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const dropdownRef = useRef(null);
-  const buttonRef = useRef(null);
   const scrollContainerRef = useRef(null);
 
-  // Use NotificationContext for system notifications
+  // Notification context
+  const notificationContext = useNotification();
   const {
-    notifications,
-    unreadCount: systemUnreadCount,
-    loading,
+    notifications = [],
+    unreadCount = 0,
+    loading = false,
     markAsRead,
     markAllAsRead,
     deleteNotification,
     refreshNotifications,
-  } = useNotification();
+  } = notificationContext || {};
 
-  // Use ChatContext for chat notifications
-  const chatContext = useChat();
+  // Chat context (optional)
+  let chatContext = null;
+  try {
+    if (useChat) {
+      chatContext = useChat();
+    }
+  } catch (e) {
+    // ChatContext not available or not within provider
+  }
 
-  // Get chat data from context
+  const conversations = chatContext?.conversations || [];
   const chatUnreadCount = chatContext?.getTotalUnreadCount?.() || 0;
-  const allConversations = chatContext?.conversations || [];
-
-  // Filter to only show conversations with unread messages
-  const unreadChats = allConversations.filter((c) => (c.unread_count || 0) > 0);
 
   // Local state
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("all"); // 'all', 'system', 'chat'
-  const [processing, setProcessing] = useState(false);
 
-  // Total unread count (system + chat)
-  const totalUnreadCount = systemUnreadCount + chatUnreadCount;
+  // Total unread count
+  const totalUnread = (unreadCount || 0) + chatUnreadCount;
+
+  // Get unread conversations
+  const unreadConversations = conversations.filter(
+    (c) => (c.unread_count || 0) > 0,
+  );
 
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target) &&
-        buttonRef.current &&
-        !buttonRef.current.contains(event.target)
-      ) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsOpen(false);
       }
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
 
   // Handle toggle dropdown
   const handleToggle = useCallback(() => {
@@ -372,186 +507,143 @@ const NotificationBell = () => {
     setIsOpen(newState);
 
     if (newState) {
-      // Refresh notifications when opening
+      // Refresh data when opening
       refreshNotifications?.();
-      // Also refresh conversations
       chatContext?.loadConversations?.();
     }
   }, [isOpen, refreshNotifications, chatContext]);
 
-  // Handle mark single notification as read
-  const handleMarkRead = useCallback(
-    async (id) => {
-      try {
-        setProcessing(true);
-        await markAsRead(id);
-      } catch (error) {
-        console.error("Failed to mark as read:", error);
-      } finally {
-        setProcessing(false);
-      }
-    },
-    [markAsRead],
-  );
-
-  // Handle mark all as read
-  const handleMarkAllRead = useCallback(async () => {
-    try {
-      setProcessing(true);
-      await markAllAsRead();
-    } catch (error) {
-      console.error("Failed to mark all as read:", error);
-    } finally {
-      setProcessing(false);
-    }
-  }, [markAllAsRead]);
-
-  // Handle delete notification
-  const handleDelete = useCallback(
-    async (id) => {
-      try {
-        setProcessing(true);
-        await deleteNotification(id);
-      } catch (error) {
-        console.error("Failed to delete notification:", error);
-      } finally {
-        setProcessing(false);
-      }
-    },
-    [deleteNotification],
-  );
-
-  // Handle notification click (navigate to related entity)
+  // Handle system notification click
   const handleNotificationClick = useCallback(
     (notification) => {
-      // Mark as read first
+      // Mark as read
       if (!notification.is_read) {
-        handleMarkRead(notification.id);
+        markAsRead?.(notification.id);
       }
 
-      // Navigate based on type
-      const { type } = notification;
+      // Navigate based on notification type
+      const basePath = `/${user?.role}`;
+      let targetPath = basePath;
 
-      switch (type) {
+      switch (notification.type) {
         case "payment_success":
         case "payment_received":
         case "payment_failed":
         case "payment_pending":
-          navigate("/payments");
+          targetPath = `${basePath}/payments`;
           break;
         case "complaint_created":
         case "complaint_updated":
         case "complaint_resolved":
         case "complaint_assigned":
-          navigate("/complaints");
+          targetPath = `${basePath}/complaints`;
           break;
         case "tenant_created":
         case "tenant_allocated":
         case "tenant_deallocated":
-          navigate("/tenants");
+          targetPath = `${basePath}/tenants`;
           break;
         case "expense_created":
         case "expense_approved":
         case "expense_rejected":
-          navigate("/expenses");
+          targetPath = `${basePath}/expenses`;
           break;
         case "water_bill_created":
-          navigate("/water-bills");
+          targetPath = `${basePath}/water-bills`;
           break;
         case "lease_expiring":
         case "rent_overdue":
-          navigate("/allocations");
+          targetPath = `${basePath}/allocations`;
           break;
         default:
-          // Just close the dropdown
-          break;
+          targetPath = `${basePath}/notifications`;
       }
 
       setIsOpen(false);
+      navigate(targetPath);
     },
-    [navigate, handleMarkRead],
+    [navigate, markAsRead, user?.role],
   );
 
-  // Handle chat notification click - FIXED to properly navigate and set active conversation
+  // Handle chat notification click
   const handleChatClick = useCallback(
     (conversation) => {
-      console.log(
-        "📱 Chat notification clicked:",
-        conversation.id,
-        conversation.display_name || conversation.title,
-      );
-
-      console.log("🔍 DEBUG handleChatClick:");
-      console.log("  user:", user);
-      console.log("  user?.role:", user?.role);
-      console.log("  chatPath:", `/${user?.role}/chat`);
-      // Set the active conversation in ChatContext so ChatModule opens it
+      // Set active conversation in ChatContext BEFORE navigating
       if (chatContext?.setActiveConversation) {
         chatContext.setActiveConversation(conversation);
       }
 
-      // Navigate to chat page
-      // Some implementations use state, others use URL params
-      navigate("/chat", {
+      // Navigate to chat page with the correct path based on user role
+      const chatPath = `/${user?.role}/chat`;
+      navigate(chatPath, {
         state: {
           conversationId: conversation.id,
           conversation: conversation,
         },
       });
 
-      // Close the dropdown
       setIsOpen(false);
     },
-    [navigate, chatContext],
+    [navigate, chatContext, user?.role],
   );
 
-  // Handle mark all chats as read - Navigate to chat to trigger mark as read
-  const handleMarkAllChatsRead = useCallback(() => {
-    // Navigate to chat page which will handle marking messages as read
-    navigate("/chat");
-    setIsOpen(false);
-  }, [navigate]);
+  // Handle mark all as read
+  const handleMarkAllAsRead = useCallback(async () => {
+    await markAllAsRead?.();
+  }, [markAllAsRead]);
 
-  // Get filtered notifications based on active tab
-  const getDisplayNotifications = () => {
-    switch (activeTab) {
-      case "system":
-        return notifications;
-      case "chat":
-        return []; // Chat items are rendered separately
-      default: // 'all'
-        return notifications;
+  // Handle delete notification
+  const handleDelete = useCallback(
+    async (id) => {
+      await deleteNotification?.(id);
+    },
+    [deleteNotification],
+  );
+
+  // Navigate to full notifications page
+  const handleViewAll = useCallback(() => {
+    setIsOpen(false);
+    navigate(`/${user?.role}/notifications`);
+  }, [navigate, user?.role]);
+
+  // Navigate to chat page
+  const handleOpenChat = useCallback(() => {
+    setIsOpen(false);
+    navigate(`/${user?.role}/chat`);
+  }, [navigate, user?.role]);
+
+  // Filter notifications based on active tab
+  const getFilteredContent = () => {
+    if (activeTab === "chat") {
+      return { type: "chat", items: unreadConversations };
+    } else if (activeTab === "system") {
+      return { type: "system", items: notifications };
+    } else {
+      // All tab - combine both
+      return {
+        type: "all",
+        systemItems: notifications,
+        chatItems: unreadConversations,
+      };
     }
   };
 
-  const displayNotifications = getDisplayNotifications();
-  const hasUnreadSystem = notifications.some((n) => !n.is_read);
+  const filteredContent = getFilteredContent();
 
   return (
-    <div className="relative">
+    <div className="relative" ref={dropdownRef}>
       {/* Bell Button */}
       <button
-        ref={buttonRef}
         onClick={handleToggle}
-        className={`
-          relative p-2 rounded-full transition-all duration-200
-          ${isOpen ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100 text-gray-600"}
-        `}
+        className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         aria-label="Notifications"
       >
         <Bell className="w-6 h-6" />
 
         {/* Badge */}
-        {totalUnreadCount > 0 && (
-          <span
-            className={`
-            absolute -top-1 -right-1 min-w-[20px] h-5 px-1.5
-            flex items-center justify-center
-            bg-red-500 text-white text-xs font-bold rounded-full
-            animate-pulse
-          `}
-          >
-            {totalUnreadCount > 99 ? "99+" : totalUnreadCount}
+        {totalUnread > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 animate-pulse">
+            {totalUnread > 99 ? "99+" : totalUnread}
           </span>
         )}
       </button>
@@ -559,256 +651,274 @@ const NotificationBell = () => {
       {/* Dropdown */}
       {isOpen && (
         <div
-          ref={dropdownRef}
-          className="absolute right-0 mt-2 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 flex flex-col"
-          style={{
-            maxHeight: "min(75vh, 650px)",
-            minHeight: "300px",
-          }}
+          className="absolute right-0 mt-2 w-96 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden"
+          style={{ maxHeight: "min(70vh, 600px)", minHeight: "300px" }}
         >
-          {/* Header - Fixed at top */}
-          <div className="flex-shrink-0 px-4 py-3 bg-gray-50 border-b border-gray-200 rounded-t-xl">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-gray-900">Notifications</h3>
-              <div className="flex items-center gap-2">
-                {hasUnreadSystem && activeTab !== "chat" && (
-                  <button
-                    onClick={handleMarkAllRead}
-                    disabled={processing}
-                    className="text-sm text-blue-600 hover:text-blue-800 hover:underline disabled:opacity-50"
-                  >
-                    Mark all read
-                  </button>
-                )}
+          <div
+            className="flex flex-col h-full"
+            style={{ maxHeight: "min(70vh, 600px)" }}
+          >
+            {/* Header - Fixed */}
+            <div className="flex-shrink-0 px-4 py-3 bg-gray-50 border-b border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Notifications
+                </h3>
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                  className="p-1 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-200 transition-colors"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex gap-1 bg-gray-200 p-1 rounded-lg">
+                <button
+                  onClick={() => setActiveTab("all")}
+                  className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    activeTab === "all"
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  All
+                  {totalUnread > 0 && (
+                    <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
+                      {totalUnread}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab("system")}
+                  className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    activeTab === "system"
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  System
+                  {unreadCount > 0 && (
+                    <span className="ml-1.5 bg-blue-500 text-white text-xs rounded-full px-1.5 py-0.5">
+                      {unreadCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab("chat")}
+                  className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    activeTab === "chat"
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  Chat
+                  {chatUnreadCount > 0 && (
+                    <span className="ml-1.5 bg-green-500 text-white text-xs rounded-full px-1.5 py-0.5">
+                      {chatUnreadCount}
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
 
-            {/* Tabs */}
-            <div className="flex gap-1 mt-3">
-              <button
-                onClick={() => setActiveTab("all")}
-                className={`
-                  flex-1 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors
-                  ${
-                    activeTab === "all"
-                      ? "bg-white text-blue-600 shadow-sm"
-                      : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
-                  }
-                `}
-              >
-                All
-                {totalUnreadCount > 0 && (
-                  <span className="ml-1.5 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">
-                    {totalUnreadCount}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => setActiveTab("system")}
-                className={`
-                  flex-1 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors
-                  ${
-                    activeTab === "system"
-                      ? "bg-white text-blue-600 shadow-sm"
-                      : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
-                  }
-                `}
-              >
-                System
-                {systemUnreadCount > 0 && (
-                  <span className="ml-1.5 bg-blue-500 text-white text-xs px-1.5 py-0.5 rounded-full">
-                    {systemUnreadCount}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => setActiveTab("chat")}
-                className={`
-                  flex-1 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors
-                  ${
-                    activeTab === "chat"
-                      ? "bg-white text-green-600 shadow-sm"
-                      : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
-                  }
-                `}
-              >
-                Chat
-                {chatUnreadCount > 0 && (
-                  <span className="ml-1.5 bg-green-500 text-white text-xs px-1.5 py-0.5 rounded-full">
-                    {chatUnreadCount}
-                  </span>
-                )}
-              </button>
+            {/* Content - Scrollable */}
+            <div
+              ref={scrollContainerRef}
+              className="flex-1 overflow-y-auto overscroll-contain"
+              style={{
+                minHeight: "200px",
+                scrollbarWidth: "thin",
+                scrollbarColor: "#CBD5E1 #F1F5F9",
+              }}
+            >
+              {loading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader className="w-8 h-8 text-blue-500 animate-spin" />
+                </div>
+              ) : (
+                <>
+                  {/* All Tab */}
+                  {activeTab === "all" && (
+                    <>
+                      {filteredContent.systemItems?.length === 0 &&
+                      filteredContent.chatItems?.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                            <Bell className="w-8 h-8 text-gray-400" />
+                          </div>
+                          <p className="text-gray-500 text-sm">
+                            No notifications
+                          </p>
+                          <p className="text-gray-400 text-xs mt-1">
+                            You're all caught up!
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          {/* Chat notifications section */}
+                          {filteredContent.chatItems?.length > 0 && (
+                            <>
+                              <div className="sticky top-0 z-10 px-4 py-2 bg-green-50 border-b border-green-100">
+                                <div className="flex items-center gap-2">
+                                  <MessageCircle className="w-4 h-4 text-green-600" />
+                                  <span className="text-sm font-medium text-green-800">
+                                    Unread Messages ({chatUnreadCount})
+                                  </span>
+                                </div>
+                              </div>
+                              {filteredContent.chatItems.map((conversation) => (
+                                <ChatNotificationItem
+                                  key={conversation.id}
+                                  conversation={conversation}
+                                  onChatClick={handleChatClick}
+                                  currentUserId={user?.id}
+                                />
+                              ))}
+                            </>
+                          )}
+
+                          {/* System notifications section */}
+                          {filteredContent.systemItems?.length > 0 && (
+                            <>
+                              <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Bell className="w-4 h-4 text-blue-600" />
+                                    <span className="text-sm font-medium text-blue-800">
+                                      System Notifications
+                                    </span>
+                                  </div>
+                                  {unreadCount > 0 && (
+                                    <button
+                                      onClick={handleMarkAllAsRead}
+                                      className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                                    >
+                                      <CheckCheck className="w-3 h-3" />
+                                      Mark all read
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              {filteredContent.systemItems.map(
+                                (notification) => (
+                                  <SystemNotificationItem
+                                    key={notification.id}
+                                    notification={notification}
+                                    onMarkRead={markAsRead}
+                                    onDelete={handleDelete}
+                                    onClick={handleNotificationClick}
+                                  />
+                                ),
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {/* System Tab */}
+                  {activeTab === "system" && (
+                    <>
+                      {filteredContent.items?.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                            <Bell className="w-8 h-8 text-gray-400" />
+                          </div>
+                          <p className="text-gray-500 text-sm">
+                            No system notifications
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          {/* Mark all read button */}
+                          {unreadCount > 0 && (
+                            <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
+                              <button
+                                onClick={handleMarkAllAsRead}
+                                className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                              >
+                                <CheckCheck className="w-4 h-4" />
+                                Mark all as read
+                              </button>
+                            </div>
+                          )}
+
+                          {filteredContent.items.map((notification) => (
+                            <SystemNotificationItem
+                              key={notification.id}
+                              notification={notification}
+                              onMarkRead={markAsRead}
+                              onDelete={handleDelete}
+                              onClick={handleNotificationClick}
+                            />
+                          ))}
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {/* Chat Tab */}
+                  {activeTab === "chat" && (
+                    <>
+                      {filteredContent.items?.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                            <MessageCircle className="w-8 h-8 text-green-500" />
+                          </div>
+                          <p className="text-gray-500 text-sm">
+                            No unread messages
+                          </p>
+                          <p className="text-gray-400 text-xs mt-1">
+                            You're all caught up!
+                          </p>
+                          <button
+                            onClick={handleOpenChat}
+                            className="mt-4 text-green-600 hover:text-green-800 text-sm font-medium flex items-center gap-1"
+                          >
+                            Open Chat <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        filteredContent.items.map((conversation) => (
+                          <ChatNotificationItem
+                            key={conversation.id}
+                            conversation={conversation}
+                            onChatClick={handleChatClick}
+                            currentUserId={user?.id}
+                          />
+                        ))
+                      )}
+                    </>
+                  )}
+                </>
+              )}
             </div>
-          </div>
 
-          {/* Content - Scrollable */}
-          <div
-            ref={scrollContainerRef}
-            className="flex-1 overflow-y-auto overscroll-contain"
-            style={{
-              scrollbarWidth: "thin",
-              scrollbarColor: "#CBD5E1 #F1F5F9",
-            }}
-          >
-            {loading && notifications.length === 0 ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                <span className="ml-2 text-gray-500">Loading...</span>
-              </div>
-            ) : (
-              <>
-                {/* Chat Notifications (when 'all' or 'chat' tab) */}
-                {(activeTab === "all" || activeTab === "chat") &&
-                  unreadChats.length > 0 && (
-                    <>
-                      <div className="sticky top-0 z-10 px-4 py-2 bg-green-50 border-b border-green-100 flex items-center justify-between">
-                        <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
-                          {activeTab === "all"
-                            ? `Chat Messages (${chatUnreadCount})`
-                            : `Unread Conversations (${unreadChats.length})`}
-                        </span>
-                        <button
-                          onClick={handleMarkAllChatsRead}
-                          className="text-xs text-green-600 hover:underline"
-                        >
-                          Open Chat
-                        </button>
-                      </div>
-                      {unreadChats.map((conversation) => (
-                        <ChatNotificationItem
-                          key={conversation.id}
-                          conversation={conversation}
-                          onClick={handleChatClick}
-                        />
-                      ))}
-                    </>
-                  )}
-
-                {/* System Notifications (when 'all' or 'system' tab) */}
-                {(activeTab === "all" || activeTab === "system") &&
-                  displayNotifications.length > 0 && (
-                    <>
-                      {activeTab === "all" && (
-                        <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
-                          <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
-                            System Notifications (
-                            {notifications.filter((n) => !n.is_read).length}{" "}
-                            unread)
-                          </span>
-                        </div>
-                      )}
-                      {activeTab === "system" && (
-                        <div className="sticky top-0 z-10 px-4 py-2 bg-blue-50 border-b border-blue-100">
-                          <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
-                            All System Notifications (
-                            {displayNotifications.length})
-                          </span>
-                        </div>
-                      )}
-                      {displayNotifications.map((notification) => (
-                        <NotificationItem
-                          key={notification.id}
-                          notification={notification}
-                          onMarkRead={handleMarkRead}
-                          onDelete={handleDelete}
-                          onClick={handleNotificationClick}
-                        />
-                      ))}
-                    </>
-                  )}
-
-                {/* Empty States */}
-                {activeTab === "all" &&
-                  displayNotifications.length === 0 &&
-                  unreadChats.length === 0 && (
-                    <div className="flex flex-col items-center justify-center py-12 text-gray-500">
-                      <Bell className="w-12 h-12 text-gray-300 mb-3" />
-                      <p className="font-medium">No notifications</p>
-                      <p className="text-sm text-gray-400">
-                        You're all caught up!
-                      </p>
-                    </div>
-                  )}
-
-                {activeTab === "chat" && unreadChats.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-gray-500">
-                    <MessageSquare className="w-12 h-12 text-gray-300 mb-3" />
-                    <p className="font-medium">No unread messages</p>
-                    <p className="text-sm text-gray-400">Your inbox is empty</p>
-                    <button
-                      onClick={() => {
-                        navigate("/chat");
-                        setIsOpen(false);
-                      }}
-                      className="mt-4 text-sm text-green-600 hover:text-green-800 font-medium"
-                    >
-                      Open Chat →
-                    </button>
-                  </div>
+            {/* Footer - Fixed */}
+            <div className="flex-shrink-0 px-4 py-3 bg-gray-50 border-t border-gray-200">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={handleViewAll}
+                  className="flex-1 text-center text-sm text-blue-600 hover:text-blue-800 font-medium py-2 rounded-lg hover:bg-blue-50 transition-colors"
+                >
+                  View all notifications
+                </button>
+                {(user?.role === "admin" || user?.role === "agent") && (
+                  <button
+                    onClick={handleOpenChat}
+                    className="flex-1 text-center text-sm text-green-600 hover:text-green-800 font-medium py-2 rounded-lg hover:bg-green-50 transition-colors flex items-center justify-center gap-1"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    Open Chat
+                  </button>
                 )}
-
-                {activeTab === "system" &&
-                  displayNotifications.length === 0 && (
-                    <div className="flex flex-col items-center justify-center py-12 text-gray-500">
-                      <Bell className="w-12 h-12 text-gray-300 mb-3" />
-                      <p className="font-medium">No system notifications</p>
-                      <p className="text-sm text-gray-400">All clear!</p>
-                    </div>
-                  )}
-              </>
-            )}
-          </div>
-
-          {/* Footer - Fixed at bottom */}
-          <div className="flex-shrink-0 px-4 py-3 bg-gray-50 border-t border-gray-200 rounded-b-xl">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => {
-                  navigate("/notifications");
-                  setIsOpen(false);
-                }}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-              >
-                View all notifications
-              </button>
-              <button
-                onClick={() => {
-                  navigate("/chat");
-                  setIsOpen(false);
-                }}
-                className="text-sm text-green-600 hover:text-green-800 font-medium"
-              >
-                Open chat
-              </button>
+              </div>
             </div>
           </div>
         </div>
       )}
-
-      {/* Custom scrollbar styles */}
-      <style>{`
-        .notification-scroll::-webkit-scrollbar {
-          width: 6px;
-        }
-        .notification-scroll::-webkit-scrollbar-track {
-          background: #F1F5F9;
-          border-radius: 3px;
-        }
-        .notification-scroll::-webkit-scrollbar-thumb {
-          background: #CBD5E1;
-          border-radius: 3px;
-        }
-        .notification-scroll::-webkit-scrollbar-thumb:hover {
-          background: #94A3B8;
-        }
-      `}</style>
     </div>
   );
 };
