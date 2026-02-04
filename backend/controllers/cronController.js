@@ -443,6 +443,9 @@ const triggerAgentBillingSMS = async (req, res) => {
 
 // Get SMS History with robust filtering
 const getSMSHistory = async (req, res) => {
+  console.log("📥 getSMSHistory called with query params:", req.query);
+  console.log("🔐 User:", req.user.id, "Role:", req.user.role);
+
   try {
     const {
       status,
@@ -454,30 +457,42 @@ const getSMSHistory = async (req, res) => {
     } = req.query;
     const userId = req.user.id;
     const userRole = req.user.role;
+
     const offset = (page - 1) * limit;
 
+    // Build WHERE clause and params separately
     let whereConditions = ["1=1"];
     const params = [];
 
+    // Add agent property filtering for non-admin users
+    // CRITICAL FIX: Allow agents to see their OWN sent SMS (agent_id = userId)
+    // even if the property link is broken (e.g. tenant deleted or moved)
     if (userRole !== "admin") {
-      whereConditions.push(
-        `p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $${params.length + 1}::uuid AND is_active = true)`,
-      );
-      params.push(userId);
+      whereConditions.push(`(
+        p.id IN (
+          SELECT property_id FROM agent_property_assignments 
+          WHERE agent_id = $${params.length + 1}::uuid AND is_active = true
+        ) OR sq.agent_id = $${params.length + 1}::uuid
+      )`);
+      params.push(userId); // Used twice
     }
 
+    // Add filters
     if (status) {
       whereConditions.push(`sq.status = $${params.length + 1}`);
       params.push(status);
     }
+
     if (property_id) {
       whereConditions.push(`p.id = $${params.length + 1}::uuid`);
       params.push(property_id);
     }
+
     if (start_date) {
       whereConditions.push(`sq.created_at >= $${params.length + 1}`);
       params.push(start_date);
     }
+
     if (end_date) {
       whereConditions.push(`sq.created_at <= $${params.length + 1}`);
       params.push(end_date);
@@ -485,6 +500,7 @@ const getSMSHistory = async (req, res) => {
 
     const whereClause = "WHERE " + whereConditions.join(" AND ");
 
+    // Count query
     const countQuery = `
       SELECT COUNT(DISTINCT sq.id) as count
       FROM sms_queue sq
@@ -494,18 +510,40 @@ const getSMSHistory = async (req, res) => {
       LEFT JOIN properties p ON pu.property_id = p.id
       ${whereClause}
     `;
+
+    console.log("📊 Count query:", countQuery);
+    console.log("📊 Query params:", params);
+
     const countResult = await pool.query(countQuery, params);
     const totalCount = parseInt(countResult.rows[0].count);
 
+    console.log("✅ Total count:", totalCount);
+
+    // Main query
     const mainQuery = `
-      SELECT sq.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name
+      SELECT 
+        sq.id,
+        sq.recipient_phone,
+        sq.message,
+        sq.message_type,
+        sq.status,
+        sq.attempts,
+        sq.last_attempt_at,
+        sq.sent_at,
+        sq.created_at,
+        t.first_name, 
+        t.last_name,
+        pu.unit_code,
+        p.name as property_name
       FROM sms_queue sq
       LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       ${whereClause}
-      ORDER BY sq.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      ORDER BY sq.created_at DESC 
+      LIMIT $${params.length + 1} 
+      OFFSET $${params.length + 2}
     `;
 
     const paginationParams = [...params, limit, offset];
