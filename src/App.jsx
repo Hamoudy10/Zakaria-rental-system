@@ -155,7 +155,7 @@ const Layout = ({ children }) => {
               {/* Logo/Brand */}
               <div className="flex-shrink-0">
                 <h1 className="text-lg font-bold text-blue-800 whitespace-nowrap truncate  max-w-full sm:max-w-[250px] md:max-w-[300px]">
-                  Zakaria Housing Agency Limited
+                  Zakaria House Agency Ltd
                 </h1>
               </div>
             </div>
