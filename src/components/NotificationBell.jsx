@@ -189,6 +189,13 @@ const NotificationItem = ({ notification, onMarkRead, onDelete, onClick }) => {
 // CHAT NOTIFICATION ITEM - FIXED
 // ============================================
 const ChatNotificationItem = ({ conversation, onClick }) => {
+
+   console.log("🔍 DEBUG ChatNotificationItem:");
+   console.log("  conversation:", JSON.stringify(conversation, null, 2));
+   console.log("  currentUserId:", currentUserId);
+   console.log("  conversation.participants:", conversation.participants);
+   console.log("  conversation.last_message:", conversation.last_message);
+   console.log("  conversation.display_name:", conversation.display_name);
   // Get unread count from conversation
   const unreadCount = conversation.unread_count || 0;
 
@@ -474,6 +481,10 @@ const NotificationBell = () => {
         conversation.display_name || conversation.title,
       );
 
+      console.log("🔍 DEBUG handleChatClick:");
+      console.log("  user:", user);
+      console.log("  user?.role:", user?.role);
+      console.log("  chatPath:", `/${user?.role}/chat`);
       // Set the active conversation in ChatContext so ChatModule opens it
       if (chatContext?.setActiveConversation) {
         chatContext.setActiveConversation(conversation);
