@@ -1,7 +1,7 @@
 # BACKEND ARCHITECTURE - EXPRESS/NODE.JS
 
 ## TECH STACK
-Express 4.22 | PostgreSQL (pg pool) | JWT | bcryptjs | Socket.io | node-cron | Cloudinary
+Express 4.22 | PostgreSQL (pg pool) | JWT | bcryptjs | Socket.io | node-cron | Cloudinary | multer-storage-cloudinary
 
 ## ARCHITECTURE
 ```
@@ -12,16 +12,15 @@ Routes → Middleware → Controllers → Services → Database (pg pool)
 
 ### Middleware Pattern
 ```javascript
-// authMiddleware.js
-const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
-router.get('/admin-only', authMiddleware, requireRole(['admin']), handler);
+const { authMiddleware, requireAdmin } = require('../middleware/authMiddleware');
+router.get('/admin-only', authMiddleware, requireAdmin, handler);
 router.get('/agent-or-admin', authMiddleware, requireRole(['agent', 'admin']), handler);
 ```
 
 ### JWT Flow
 1. Extract from `Authorization: Bearer <token>`
 2. Verify with `jsonwebtoken.verify()`
-3. Attach `req.user = { id, role, ... }`
+3. Attach `req.user = { id, role, first_name, last_name, ... }`
 
 ## CONTROLLER PATTERN
 ```javascript
@@ -54,7 +53,6 @@ WHERE property_id IN (
 
 ### Admin-Aware Endpoints
 ```javascript
-// Controller logic
 if (req.user.role === 'admin') {
   // Skip agent filter, return all data
 } else {
@@ -69,14 +67,29 @@ if (req.user.role === 'admin') {
 - `allocatePayment()`: Arrears → Water → Rent → Advance
 - `generateMonthlyBills()`: Bulk billing
 
+### notificationService.js
+- `createNotification()`: Single user notification
+- `createBulkNotifications()`: Multiple users
+- `createPaymentNotification()`: Payment success with allocations
+- `createComplaintNotification()`: Complaint events
+- `createExpenseNotification()`: Expense events
+
+### allocationIntegrityService.js
+- `getDiagnostics()`: Find data inconsistencies
+- `autoResolveTenantConflicts()`: Clean up stale allocations
+- `reconcileAllocations()`: Full system reconciliation
+- `forceDeactivateAllocation()`: Emergency cleanup
+
 ### cronService.js
 - Monthly billing (configurable day, default 28th at 9:00 AM)
 - SMS queue processing with rate limiting
-- Skip tenants with advance payments
+- Lease expiry checks (8:00 AM daily)
+- Overdue rent checks (10:00 AM daily)
 
 ### smsService.js
 - Celcom SMS provider integration
 - Queue-based retry (max 3 attempts)
+- Phone format: `2547XXXXXXXX`
 
 ## CLOUDINARY UPLOAD
 
@@ -88,12 +101,6 @@ const storage = new CloudinaryStorage({
   params: { folder: 'zakaria_rental/id_images' }
 });
 // Returns file.path = Cloudinary URL
-```
-
-### Controller
-```javascript
-const imageUrl = req.files['id_front_image'][0].path; // Cloudinary URL
-await pool.query('UPDATE tenants SET id_front_image = $1', [imageUrl]);
 ```
 
 ## PAYMENT ALLOCATION LOGIC
@@ -116,45 +123,108 @@ const allocatePayment = (amount, arrearsDue, waterDue, rentDue) => {
 };
 ```
 
-## CARRY-FORWARD LOGIC
-```javascript
-// For each future month until remaining exhausted:
-const allocationAmount = Math.min(remaining, monthlyRent - alreadyPaid);
-// Insert with is_advance_payment = true, original_payment_id = sourceId
-remaining -= allocationAmount;
-```
-
 ## ROUTE ORDER (CRITICAL)
 ```javascript
 // ✅ CORRECT - specific before generic
+router.get('/stats', getStats);           // Static routes first
 router.get('/balance/:tenantId', getBalance);
-router.get('/:id', getById);
+router.get('/:id', getById);              // Parameterized routes last
 
 // ❌ WRONG - generic catches all
 router.get('/:id', getById);
-router.get('/balance/:tenantId', getBalance); // Never reached
+router.get('/stats', getStats);           // Never reached!
+```
+
+## BOOLEAN COERCION (CRITICAL)
+```javascript
+// In updateAllocation controller
+if (is_active !== undefined) {
+  // Coerce to boolean - handles string "false", boolean false, number 0
+  is_active = is_active === true || is_active === 'true' || is_active === 1;
+}
 ```
 
 ## KEY ROUTES
 
+### Allocations
 | Route | Purpose |
 |-------|---------|
-| `/api/tenants/:id/upload-id` | Cloudinary ID upload |
-| `/api/allocations` | Tenant-unit CRUD |
-| `/api/payments` | Payment CRUD with allocation |
-| `/api/agent-properties/my-tenants` | Agent-scoped tenants |
-| `/api/agent-properties/water-bills/balance/:tenantId` | Water balance |
-| `/api/cron/agent/trigger-billing` | Agent SMS trigger |
+| GET /allocations | Get all allocations |
+| POST /allocations | Create allocation |
+| PUT /allocations/:id | Update allocation (with boolean coercion) |
+| DELETE /allocations/:id | Delete allocation |
+| GET /allocations/maintenance/diagnostics | Run diagnostics |
+| POST /allocations/maintenance/reconcile | Reconcile all |
 
-## RECENT FIXES
+### Expenses
+| Route | Purpose |
+|-------|---------|
+| GET /expenses/categories | Get categories |
+| GET /expenses | Get expenses (agent isolation) |
+| GET /expenses/stats | Get stats (byStatus = ALL-TIME, totals = monthly) |
+| POST /expenses | Create expense |
+| PATCH /expenses/:id/status | Approve/reject (admin) |
+| POST /expenses/bulk-approve | Bulk approve (admin) |
+| GET /expenses/reports/net-profit | Net profit report |
 
-| Issue | Solution |
-|-------|----------|
-| Duplicate messages | Removed redundant socket emission loop |
-| SMS History 500 | Build count query separately, add `::uuid` cast |
-| Notification FK error | Use `req.user.id` not `tenant_id` |
-| Allocation 500 | Fixed WHERE clause, removed `updated_at` column |
-| Carry-forward bug | Insert `allocationAmount` not total `amount` |
+### Notifications
+| Route | Purpose |
+|-------|---------|
+| GET /notifications | Get user notifications |
+| GET /notifications/unread-count | Get unread count |
+| PUT /notifications/:id/read | Mark as read |
+| PUT /notifications/read-all | Mark all as read |
+| POST /notifications/broadcast | Create broadcast (admin) |
+| POST /notifications/bulk-sms | Send bulk SMS |
+| POST /notifications/targeted-sms | Send targeted SMS |
+| GET /notifications/sms-history | Get SMS history |
+
+### Properties
+| Route | Purpose |
+|-------|---------|
+| GET /properties/showcase/list | List all for showcase (no assignment check) |
+| GET /properties/showcase/:id | Get showcase details |
+| POST /properties/:id/images | Upload property images |
+| POST /units/:id/images | Upload unit images |
+
+## EXPENSE STATS ENDPOINT FIX
+```javascript
+// byStatus query - NO date filter (ALL-TIME for tab counts)
+const allTimeStatusQuery = `
+  SELECT status, COUNT(*) as count, COALESCE(SUM(amount), 0) as total_amount
+  FROM expenses
+  WHERE 1=1 ${propertyFilter} ${agentFilter}
+  GROUP BY status
+`;
+
+// totals query - WITH date filter (monthly for cards)
+const monthlyQuery = `
+  SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+  FROM expenses
+  WHERE 1=1 ${dateFilter} ${propertyFilter} ${agentFilter}
+`;
+```
+
+## ALLOCATION CONTROLLER FIXES
+```javascript
+// 1. Boolean coercion
+if (is_active !== undefined) {
+  is_active = is_active === true || is_active === 'true' || is_active === 1;
+}
+
+// 2. Accurate property count (use subquery, not increment/decrement)
+await client.query(`
+  UPDATE properties 
+  SET available_units = (
+    SELECT COUNT(*) FROM property_units 
+    WHERE property_id = properties.id AND is_active = true AND is_occupied = false
+  )
+  WHERE id = $1
+`, [property_id]);
+
+// 3. Auto-cleanup stale allocations
+const cleanupResult = await AllocationIntegrityService.autoResolveTenantConflicts(client, tenant_id);
+```
 
 ## ERROR HANDLING
 ```javascript
@@ -165,6 +235,7 @@ router.get('/balance/:tenantId', getBalance); // Never reached
 401 // Unauthorized
 403 // Forbidden (role)
 404 // Not found
+429 // Rate limited
 500 // Server error
 
 // Response Format
@@ -175,289 +246,29 @@ router.get('/balance/:tenantId', getBalance); // Never reached
 ```
 DATABASE_URL, JWT_SECRET, FRONTEND_URL
 CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+SMS_API_KEY, SMS_PARTNER_ID, SMS_SENDER_ID, SMS_BASE_URL
 ```
-## USERS TABLE UPDATE
 
-### profile_image Column
-```sql
-profile_image VARCHAR(500) DEFAULT NULL
--- Stores Cloudinary URL for user profile image
-
----
-
-## Backend `backend/claude.md`
-
-```markdown
-## CORS CONFIGURATION FOR VERCEL
-
-### Required Origins
+## CORS CONFIGURATION
 ```javascript
-const cors = require('cors');
-
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'http://localhost:3000',
-    'https://zakaria-rental-system.vercel.app',  // Production (HTTPS required!)
+    'https://zakaria-rental-system.vercel.app',
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+```
 
----
-
-### For BACKEND backend/claude.md - Add this section:
-
-```markdown
-## COMPLAINT STEPS ENDPOINTS
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/complaints/:id/steps` | Get all steps |
-| POST | `/complaints/:id/steps` | Add single step |
-| PATCH | `/complaints/:id/steps/:stepId` | Toggle completion |
-
----
-
-## For Backend `backend/claude.md` - No changes needed
-
-The backend `/api/admin/company-info` endpoint already works correctly. The fix was on the frontend mapping.
-
----
-
-## Quick Reference - Copy this to any relevant file:
-
-```markdown
-## JSPDF-AUTOTABLE v5.x FIX
-
-### Problem
-`doc.autoTable is not a function` with dynamic imports
-
-### Solution
-```javascript
-const autoTableModule = await import('jspdf-autotable');
-const autoTable = autoTableModule.default;
-autoTable(doc, { ...options }); // doc as first argument, NOT doc.autoTable()
-
----
-
-## Backend `backend/claude.md` - Add this section:
-
-```markdown
-## ADMIN DASHBOARD CONTROLLER (v19)
-
-### File: controllers/dashboardController.js
-
-### Endpoints
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET | `/admin/dashboard/stats` | Legacy stats (backward compatible) |
-| GET | `/admin/dashboard/comprehensive-stats` | Detailed dashboard data |
-| GET | `/admin/dashboard/recent-activities` | Last 10 system activities |
-| GET | `/admin/dashboard/top-properties` | Top 6 properties by revenue |
-
-### Schema Constraints
-- `properties` has NO `is_active` column - dont filter by it
-- Use `raised_at` for complaints (not `created_at`)
-- Use `allocation_date` for tenant_allocations (not `created_at`)
-- Use `sent_at` for SMS sent today count
-- Payment status enum: `pending`, `completed`, `failed`, `overdue`
-- Return `pendingPayments` (not `processingPayments`)
-
-### Route Registration (adminRoutes.js)
-``javascript
-router.get('/dashboard/comprehensive-stats', protect, adminOnly, dashboardController.getComprehensiveStats);
-
----
-
-## For `backend/claude.md` (Add at the end)
-
-```markdown
-## PROPERTY IMAGE MANAGEMENT (v4.0 - Option A)
-
-### Architecture
-Single `property_images` table stores both property and unit images. Differentiation is handled by the `unit_id` column:
-- `unit_id = NULL` → Property showcase image
-- `unit_id = UUID` → Unit walkthrough image
-
-### Routes (properties.js)
-
-#### Property Images
-```javascript
-// Upload property images
-router.post('/:id/images', protect, adminOnly, uploadPropertyImages, async (req, res) => {
-  // INSERT INTO property_images (property_id, image_url, ...) 
-  // unit_id is NOT set (defaults to NULL)
-});
-
-// Delete property image
-router.delete('/:id/images/:imageId', protect, adminOnly, async (req, res) => {
-  // DELETE FROM property_images WHERE id = $1 AND property_id = $2
-});
-
-zakaria_rental/
-├── property_images/
-│   └── {property_id}/
-│       └── image-{timestamp}.jpg
-└── unit_images/
-    └── {unit_id}/
-        └── image-{timestamp}.jpg
-
-## MARKETING & SHOWCASE ENDPOINTS
-| Method | Route | Scope |
-|--------|-------|-------|
-| GET | `/api/properties/showcase/list` | List names/codes of all buildings |
-| GET | `/api/properties/showcase/:id` | Full marketing data (Images + Units) |
-
-### Implementation Note
-These endpoints return public building data and images to Agents without requiring assignment in `agent_property_assignments`, enabling cross-portfolio marketing.
-## EXPENSE ROUTES (backend/routes/expenses.js)
-
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| GET | `/expenses/categories` | All | Get expense categories |
-| GET | `/expenses` | All | Get expenses (agents see own) |
-| GET | `/expenses/stats` | All | Get expense statistics |
-| GET | `/expenses/:id` | All | Get single expense |
-| POST | `/expenses` | All | Create expense |
-| PUT | `/expenses/:id` | All | Update expense |
-| PATCH | `/expenses/:id/status` | Admin | Approve/reject expense |
-| POST | `/expenses/bulk-approve` | Admin | Bulk status update |
-| DELETE | `/expenses/:id` | All | Delete expense |
-| GET | `/expenses/reports/net-profit` | Admin | Net profit calculation |
-
----
-
-## For **Backend `backend/claude.md`** (Add at the end)
-
-``markdown
-## PUBLIC COMPANY INFO ENDPOINT (v5.2)
-
-### Purpose
-Provide company branding for Login page without requiring authentication.
-
-### Route
-``javascript
-// In adminRoutes.js - NO AUTH MIDDLEWARE
-router.get('/public/company-info', adminSettingsController.getPublicCompanyInfo);
-
----
-
-### 3. BACKEND `backend/claude.md` - Add at the end:
-
-``markdown
-## WHATSAPP-STYLE CHAT BACKEND (v6.0)
-
-### Chat Controller Endpoints
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/chat/available-users` | All users except current (with online status) |
-| GET | `/chat/conversations` | User's conversations |
-| GET | `/chat/recent-chats` | Conversations with last message & unread count |
-| POST | `/chat/conversations` | Create direct or group conversation |
-| GET | `/chat/conversations/:id/messages` | Get messages with read status |
-| POST | `/chat/messages/send` | Send text or image message |
-| POST | `/chat/messages/mark-read` | Mark messages as read |
-| POST | `/chat/messages/mark-delivered` | Mark messages as delivered |
-| POST | `/chat/status/online` | Update user online status |
-| GET | `/chat/status/online-users` | Get all online users |
-| GET | `/chat/unread-count` | Total unread message count |
-| GET | `/chat/search` | Search messages |
-| POST | `/chat/upload-image` | Upload chat image to Cloudinary |
-
-### Socket Events (Backend chatService.js)
+## SOCKET.IO EVENTS
 | Event | Direction | Purpose |
 |-------|-----------|---------|
 | `connection` | Receive | User connected - join rooms, set online |
 | `disconnect` | Receive | User disconnected - set offline |
-| `join_conversation` | Receive | Join specific conversation room |
-| `leave_conversation` | Receive | Leave conversation room |
-| `typing_start` | Receive | Broadcast typing to conversation |
-| `typing_stop` | Receive | Broadcast stop typing |
-| `messages_read` | Receive | Update read receipts |
-| `user_online` | Receive | Explicit online status |
-| `user_offline` | Receive | Explicit offline status |
 | `new_message` | Emit | Broadcast new message to room |
 | `user_typing` | Emit | Notify typing in conversation |
+| `typing_stop` | Emit | Notify stop typing |
 | `user_online_status` | Emit | Broadcast online/offline change |
-| `messages_read_receipt' | Emit | Notify sender of read status |
-
-### Message Status Flow
-
- Storage: zakaria_rental/chat_images
- Max size: 5MB
-Formats: JPEG, PNG, GIF, WebP
-Transformation: 800x800 limit, auto quality
-
-## CELCOM SMS INTEGRATION (v6.0)
-
-### Configuration
-- **Provider:** Celcom Africa
-- **Method:** POST (JSON)
-- **Endpoint:** https://isms.celcomafrica.com/api/services/sendsms/
-
-### Environment Variables
-| Variable | Description |
-|----------|-------------|
-| `SMS_API_KEY` | Celcom API Key |
-| `SMS_PARTNER_ID` | Celcom Partner ID |
-| `SMS_SENDER_ID` | Approved Shortcode/Sender ID |
-| `SMS_BASE_URL` | https://isms.celcomafrica.com/api/services/sendsms/ |
-
-### Logic Workflow
-1. **Format:** Phone numbers are converted to `2547XXXXXXXX`.
-2. **Payload:** Body includes `apikey`, `partnerID`, `message`, `shortcode`, `mobile`, and `pass_type: 'plain'`.
-3. **Validation:** Success is confirmed if `response.data.responses[0]['response-code'] === 200`.
-4. **Queueing:** Failed attempts are saved to `sms_queue` for 3 retries (via `cronService`).
-## RECENT UPDATES (v20)
-### Agent Isolation in Payments
-- **getAllPayments:** Implemented strict role-based filtering. 
-- Agents are restricted to payments from properties assigned to them via the `agent_property_assignments` table.
-- Admin users retain global visibility.
-## NOTIFICATION SYSTEM ARCHITECTURE
-
-### NotificationService Location
-`backend/services/notificationService.js`
-
-### Core Methods
-| Method | Purpose | Parameters |
-|--------|---------|------------|
-| `createNotification()` | Single user notification | `{ userId, title, message, type, relatedEntityType?, relatedEntityId? }` |
-| `createBulkNotifications()` | Multiple users | `Array<notificationData>` |
-| `markAsRead()` | Mark single as read | `notificationId, userId` |
-| `markAllAsRead()` | Mark all as read | `userId` |
-| `getUnreadCount()` | Get unread count | `userId` |
-| `getUserNotifications()` | Get with pagination | `userId, limit, offset` |
-| `cleanupOldNotifications()` | Delete old read notifications | `daysOld = 90` |
-
-### Event-Specific Methods
-| Method | Used By | Purpose |
-|--------|---------|---------|
-| `createTenantCreatedNotification()` | `tenantController.createTenant` | Notify admins of new tenant |
-| `createAllocationNotification()` | `allocationController` | Notify on allocate/deallocate |
-| `createComplaintNotification()` | `complaintController` | Notify on complaint events |
-| `createWaterBillNotification()` | `waterBillController` | Notify on water bill creation |
-| `createExpenseNotification()` | `expenses route` | Notify on expense events |
-| `createLeaseExpiryNotification()` | `cronService` | Notify on expiring leases |
-| `createOverdueRentNotification()` | `cronService` | Notify on overdue rent |
-| `createPaymentNotification()` | `paymentController` | Notify on payment success |
-| `createPaymentFailureNotification()` | `paymentController` | Notify on payment failure |
-| `createSalaryNotification()` | `paymentController` | Notify on salary payment |
-| `createAdminNotification()` | Various | Notify all admins |
-| `createPropertyNotification()` | Various | Notify property admins + agents |
-
-### Controller Integration Pattern
-``javascript
-// Import at top of controller
-const NotificationService = require('../services/notificationService');
-
-// After successful database operation
-try {
-  await NotificationService.createXxxNotification({
-    // notification data
-  });
-  console.log('✅ Notification sent');
-} catch (notificationError) {
-  // Log but don't throw - notification failure shouldn't break main flow
-  console.error('Notification failed:', notificationError);
-}
+| `messages_read_receipt` | Emit | Notify sender of read status |

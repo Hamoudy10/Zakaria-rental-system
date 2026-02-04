@@ -1,13 +1,13 @@
 # ZAKARIA RENTAL SYSTEM - PROJECT CONTEXT
 
 ## OVERVIEW
-Full-stack rental management platform for Kenya with multi-role access (Admin/Agent/Tenant), M-Pesa payments, automated billing, SMS notifications, and real-time chat.
+Full-stack rental management platform for Kenya with multi-role access (Admin/Agent/Tenant), M-Pesa payments, automated billing, SMS notifications, real-time chat, and expense tracking.
 
 ## DEPLOYMENT
-- **Frontend:** React + Vite (localhost:5173 dev)
+- **Frontend:** React + Vite on Vercel (https://zakaria-rental-system.vercel.app)
 - **Backend:** Express on Render (https://zakaria-rental-system.onrender.com)
 - **Database:** PostgreSQL on Supabase
-- **Storage:** Cloudinary (ID images)
+- **Storage:** Cloudinary (ID images, profile images, chat images)
 - **Auth:** JWT (Header: `Authorization: Bearer <token>`)
 
 ## TECH STACK
@@ -22,16 +22,24 @@ Full-stack rental management platform for Kenya with multi-role access (Admin/Ag
 2. **Payment Allocation:** Arrears → Water → Rent → Advance (strict order)
 3. **Agent Isolation:** Agents only see assigned properties via `agent_property_assignments` table
 4. **M-Pesa Integration:** Phone format conversion (07xx → 2547xx)
-5. **Real-time Chat:** Socket.io rooms per conversation
+5. **Real-time Chat:** Socket.io rooms per conversation, WhatsApp-style UI
+6. **Expense Tracking:** Agent expense recording with admin approval workflow
+7. **Notification System:** In-app notifications + SMS with polling
 
 ## KEY ENTITIES
-- **users:** System users (admin/agent roles)
+- **users:** System users (admin/agent roles) with profile_image, is_online, last_seen
 - **tenants:** Renters (separate from users table)
-- **properties / property_units:** Buildings and units
-- **tenant_allocations:** Tenant↔Unit links with arrears tracking
+- **properties / property_units:** Buildings and units with image galleries
+- **tenant_allocations:** Tenant↔Unit links with arrears tracking, updated_at column
 - **rent_payments:** M-Pesa transactions with allocation splits
 - **water_bills:** Monthly water charges (unique per tenant/month)
 - **sms_queue:** SMS retry system
+- **expenses:** Agent expense records with approval workflow
+- **expense_categories:** Dynamic category list
+- **notifications:** User notifications with read status
+- **chat_conversations / chat_messages / chat_participants:** Chat system
+- **complaints / complaint_steps:** Complaint management with resolution workflow
+- **property_images:** Unified table for property and unit images (Option A architecture)
 
 ## CRITICAL PATTERNS
 
@@ -46,31 +54,24 @@ Full-stack rental management platform for Kenya with multi-role access (Admin/Ag
 ### Unit Features
 - Store as JSON Object `{}`, NOT Array `[]`
 
-### Route Order
+### Route Order (CRITICAL)
 - Specific routes (`/balance/:id`) MUST come before generic (`/:id`)
 
-## RECENT CRITICAL FIXES (v10-17)
-
-| Issue | Fix |
-|-------|-----|
-| Cloudinary Integration | Replaced local filesystem with `multer-storage-cloudinary` |
-| Allocation Display | API returns `tenant_full_name` directly (not from users table) |
-| Payment Crash | Added optional chaining for `pagination?.totalCount` |
-| Carry-Forward Bug | Now allocates `monthly_rent` per month, not total balance |
-| SMS History 500 | Fixed UUID/BIGINT type mismatch in SQL query |
-| Water Balance | New endpoint calculates `Billed - Paid` from payments |
+### Boolean Coercion (CRITICAL)
+- Always coerce: `is_active = is_active === true || is_active === 'true' || is_active === 1`
 
 ## FILE STRUCTURE
 ```
 ├── src/
-│   ├── components/     # TenantManagement, AgentSMSManagement, AgentReports
-│   ├── context/        # AuthContext, PropertyContext, PaymentContext, ChatContext
+│   ├── components/     # UI Components (TenantManagement, ChatModule, NotificationBell, etc.)
+│   ├── context/        # AuthContext, PropertyContext, PaymentContext, ChatContext, NotificationContext
 │   ├── services/       # api.jsx, ChatService.js
+│   ├── pages/          # AdminDashboard, AgentDashboard, TenantDashboard
 │   └── utils/          # pdfExport.js, excelExport.js
 └── backend/
     ├── controllers/    # Business logic
     ├── routes/         # API endpoints
-    ├── services/       # billingService, smsService
+    ├── services/       # billingService, smsService, notificationService, allocationIntegrityService
     └── middleware/     # authMiddleware, uploadMiddleware (Cloudinary)
 ```
 
@@ -79,294 +80,144 @@ Full-stack rental management platform for Kenya with multi-role access (Admin/Ag
 2. All agent queries join `agent_property_assignments`
 3. Controllers check role: Admin = all data, Agent = filtered
 4. Notifications reference `users.id`, NOT `tenants.id`
+5. tenant_allocations has `updated_at` column (added via migration)
 
-## RECENT UPDATES (Profile Image Upload)
-
-| Feature | Implementation |
-|---------|---------------|
-| Profile Image Upload | Drag & drop with Cloudinary storage |
-| Image Storage | `zakaria_rental/profile_images` folder |
-| File Validation | JPEG, PNG, WebP only, max 5MB |
-| API Endpoint | `PUT /api/auth/profile` (multipart/form-data) |
-| Delete Endpoint | `DELETE /api/auth/profile/image` |
-
-## PROFILE IMAGE DISPLAY (App.jsx)
-
-### SimpleUserAvatar Component
-Reusable avatar component with profile image + fallback to initials.
-
-```jsx
-<SimpleUserAvatar user={user} size="md" /> // sm, md, lg, xl
-
-## SYSTEM SETTINGS - ADMIN PROFILE IMAGE UPLOAD
-
-### Features
-- Drag & drop profile image upload
-- Click to upload alternative
-- Image preview before saving
-- Delete existing image
-- Fallback to initials
-- Auto-refresh header avatar after save
-
-### Uses AuthContext Methods
-- `updateUserProfile(formData)` - Save profile with image
-- `refreshUser()` - Refresh user state after save
-
-### Cloudinary Storage
-- Folder: `zakaria_rental/profile_images`
-- Max size: 5MB
-- Formats: JPEG, PNG, WebP
-## PDF & EXCEL EXPORT WITH COMPANY BRANDING
-
-### Features
-- Company logo from Cloudinary displayed on documents
-- Company name, address, phone, email in header
-- Professional styling with blue theme
-- Automatic totals calculation
-- Page numbers (PDF)
-- 5-minute caching for company info
-
-### Files
-- `src/utils/pdfExport.js` - PDF generation with jsPDF + autoTable
-- `src/utils/excelExport.js` - Excel generation with ExcelJS
-
-### API Dependency
-- `GET /api/admin/company-info` - Fetches company branding
-
-### Cache Control
-```javascript
-import { clearCompanyInfoCache } from '../utils/pdfExport';
-clearCompanyInfoCache(); // Call when company info is updated
 ## VERCEL DEPLOYMENT (Frontend)
-
-### Configuration
-- **URL:** https://zakaria-rental-system.vercel.app
-- **Framework:** Vite
-- **Auto-deploy:** On push to main branch
-
-### vercel.json
 ```json
+// vercel.json
 {
   "rewrites": [{ "source": "/(.*)", "destination": "/" }],
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite"
 }
-## COMPLAINT MANAGEMENT SYSTEM
+```
 
-### Features
+## CELCOM SMS INTEGRATION
+- **Provider:** Celcom Africa
+- **Method:** POST (JSON)
+- **Endpoint:** https://isms.celcomafrica.com/api/services/sendsms/
+- **Phone Format:** `2547XXXXXXXX`
+- **Validation:** `response.data.responses[0]['response-code'] === 200`
+
+---
+
+# FEATURE MODULES
+
+## 1. PROFILE IMAGE UPLOAD
+- Drag & drop with Cloudinary storage
+- Folder: `zakaria_rental/profile_images`
+- File Validation: JPEG, PNG, WebP only, max 5MB
+- API: `PUT /api/auth/profile` (multipart/form-data), `DELETE /api/auth/profile/image`
+
+## 2. PDF & EXCEL EXPORT WITH COMPANY BRANDING
+- Company logo from Cloudinary displayed on documents
+- Company name, address, phone, email in header
+- API: `GET /api/admin/company-info` (5-minute caching)
+- Files: `src/utils/pdfExport.js`, `src/utils/excelExport.js`
+
+## 3. COMPLAINT MANAGEMENT SYSTEM
 - Multi-category complaints (JSONB storage)
-- Step-based servicing workflow
-- Progress tracking with checkable steps
+- Step-based servicing workflow with progress tracking
 - PDF export with company branding
-- Edit complaint functionality
+- Tables: `complaints`, `complaint_steps`
 
-### Database Tables
-- `complaints` - Main complaints table (added `categories` JSONB column)
-- `complaint_steps` - Resolution steps for each complaint
+## 4. ADMIN DASHBOARD (Comprehensive Stats)
+- Endpoint: `GET /api/admin/dashboard/comprehensive-stats`
+- Schema Notes:
+  - `properties` table has NO `is_active` column
+  - `complaints` uses `raised_at` (not `created_at`)
+  - `tenant_allocations` uses `allocation_date` (not `created_at`)
+  - `payment_status` enum: `pending`, `completed`, `failed`, `overdue` (no `processing`)
 
-### Workflow
+## 5. PROPERTY & UNIT IMAGE MANAGEMENT (Option A)
+- Single `property_images` table for both property and unit images
+- Differentiation: `unit_id = NULL` → property image, `unit_id = UUID` → unit image
+- Cloudinary folders: `zakaria_rental/property_images/`, `zakaria_rental/unit_images/`
 
-### PDF Export
-- Uses jsPDF + jspdf-autotable (dynamic import)
-- Requires: `npm install jspdf jspdf-autotable`
-## COMPLAINT PDF EXPORT (v18)
+## 6. AGENT PROPERTY SHOWCASE
+- Agents can access any property for showcasing (bypasses assignment checks)
+- Endpoint: `GET /api/properties/showcase` (unassigned access for marketing)
+- Route specificity: `/showcase/*` routes before `/:id` routes
 
-### Features
-- Company branding (name, address, phone, email, logo)
-- Logo loaded from Cloudinary and embedded in PDF
-- Complaints table with all details
-- Detailed steps section on separate page
-- Page numbers and footer on all pages
+## 7. EXPENSE TRACKING MODULE
+- Categories: Maintenance, Repairs, Utilities, Security, Cleaning, Supplies, Professional Services, Insurance, Taxes, Marketing, Salaries, Transportation, Miscellaneous
+- Approval workflow: pending → approved/rejected → reimbursed
+- Stats endpoint returns `byStatus` array for ALL-TIME counts (tab badges) and `totals` for monthly
 
-### Key Fix: jspdf-autotable v5.x Dynamic Import
-``javascript
-// CORRECT way to use with dynamic imports:
-const autoTableModule = await import('jspdf-autotable');
-const autoTable = autoTableModule.default;
-autoTable(doc, { startY: 55, head: [...], body: [...] }); // doc as first arg
-companyName = data.name || data.company_name || 'Default';
-companyLogo = data.logo || data.company_logo || null;
-## ADMIN DASHBOARD REDESIGN (v19)
+## 8. WHATSAPP-STYLE CHAT SYSTEM
+- User-specific conversation isolation
+- Features: Direct messaging, group chats, online status, typing indicators, read receipts, image messages
+- Socket events: `new_message`, `user_typing`, `messages_read`, `user_online_status`
+- Database: `chat_conversations`, `chat_messages`, `chat_participants`, `chat_message_reads`
 
-### New Endpoint
-- `GET /api/admin/dashboard/comprehensive-stats` - Detailed dashboard statistics
+## 9. NOTIFICATION SYSTEM
+- Types: payment_success/failed/pending, tenant_created/allocated/deallocated, complaint_created/updated/resolved, water_bill_created, expense_created/approved/rejected, lease_expiring, rent_overdue, announcement, maintenance, emergency, system_alert, broadcast
+- Polling with exponential backoff (30s - 5min)
+- Scheduled jobs: 8AM (expiring leases), 10AM (overdue rent), 9AM billing day (monthly bills), every 5min (SMS queue)
 
-### Database Schema Notes
-- `properties` table has NO `is_active` column
-- `complaints` uses `raised_at` (not `created_at`)
-- `tenant_allocations` uses `allocation_date` (not `created_at`)
-- `payment_status` enum: `pending`, `completed`, `failed`, `overdue` (no `processing`)
-- `unit_type` enum: `bedsitter`, `studio`, `one_bedroom`, `two_bedroom`, `three_bedroom`, `shop`, `hall`
+## 10. TENANT ALLOCATION SYSTEM
+- Soft delete pattern with `is_active` flag
+- Auto-cleanup via `AllocationIntegrityService`
+- Property count sync: Uses subquery for accurate `available_units` count
+- `updated_at` column required (added via migration)
 
-### Comprehensive Stats Response Structure
-``javascript
-{
-  property: { totalProperties, totalUnits, occupiedUnits, vacantUnits, occupancyRate },
-  tenant: { totalTenants, activeTenants, newThisMonth, tenantsWithArrears, totalArrears },
-  financial: { revenueThisMonth, revenueThisYear, expectedMonthlyRent, collectionRate, pendingPaymentsAmount, outstandingWater },
-  agent: { totalAgents, activeAgents, assignedProperties, unassignedProperties },
-  complaint: { openComplaints, inProgressComplaints, resolvedComplaints, resolvedThisMonth },
-  sms: { totalSent, sentToday, failedCount, pendingCount },
-  payment: { paymentsToday, amountToday, paymentsThisWeek, paymentsThisMonth, failedPayments, pendingPayments },
-  unitTypeBreakdown: [{ unitType, total, occupied, vacant }],
-  monthlyTrend: [{ month, revenue, paymentCount }]
-}
-## PROPERTY & UNIT IMAGE MANAGEMENT (v4.0 - Option A)
+---
 
-### Overview
-Redesigned Property Management module with unified image architecture. Both property showcase photos and unit walkthrough photos are stored in a single `property_images` table, distinguished by the `unit_id` column.
+# RECENT UPDATES (Current Session)
 
-### Features Implemented
-| Feature | Description |
-|---------|-------------|
-| Simplified Property Form | Removed `unit_type` from property creation (types managed at unit level) |
-| Property Showcase Gallery | High-end Option C UI for building-level marketing photos |
-| Unit Walkthrough Gallery | Dedicated media curation for each individual unit |
-| Client-Side Segregation | Frontend filters images by `unit_id` (NULL = property, populated = unit) |
+## 1. TENANT ALLOCATION BUG FIX
+**Problem:** Deallocation silently failed because code referenced `updated_at` column that didn't exist.
 
-### Database Schema (Option A - Single Table)
-``sql
--- property_images table structure (handles BOTH property and unit images)
-id UUID PRIMARY KEY
-property_id UUID NOT NULL REFERENCES properties(id)
-unit_id UUID REFERENCES property_units(id) -- NULL = property image, NOT NULL = unit image
-image_url VARCHAR NOT NULL
-image_type VARCHAR DEFAULT 'general'
-caption VARCHAR
-display_order INTEGER DEFAULT 0
-uploaded_by UUID REFERENCES users(id)
-uploaded_at TIMESTAMP DEFAULT NOW()
-## AGENT PROPERTY SHOWCASE (v4.5)
-### Features
-- **Visual Marketing:** Agents can access any property for showcasing, regardless of assignment.
-- **Showcase Tab:** Default landing tab in Agent Dashboard for property tours.
-- **Unified Assets:** Combines Building Showcase (Option C UI) and Unit Walkthroughs into a single view.
+**Solution:**
+- Added `updated_at` column to `tenant_allocations` table via SQL migration
+- Added auto-update trigger for `updated_at`
+- Fixed boolean coercion in `allocationController.js`
+- Enhanced `allocationIntegrityService.js` with better auto-cleanup
 
-### Critical Backend Adjustments
-- **Route Specificity:** Showcase routes (`/showcase/*`) are placed above generic `/:id` routes in `properties.js` to prevent 404 shadowing.
-- **Unassigned Access:** New endpoint `GET /api/properties/showcase` bypasses agent assignment checks for marketing data only.
-## EXPENSE TRACKING MODULE (v5.0)
-
-### Features
-- Daily expense recording by agents
-- Category-based expense classification
-- Property and unit association
-- Approval workflow (pending → approved/rejected)
-- Net profit calculation for admin dashboard
-- Receipt tracking with vendor information
-
-### Database Tables
-- `expenses` - Main expense records
-- `expense_categories` - Dynamic category list
-
-### Expense Categories
-Maintenance, Repairs, Utilities, Security, Cleaning, Supplies, Professional Services, Insurance, Taxes, Marketing, Salaries, Transportation, Miscellaneous
-
-### Approval Flow
-1. Agent records expense → Status: `pending`
-2. Admin reviews → Status: `approved` or `rejected`
-3. Optional: `reimbursed` status for cash advances
-
-### Net Profit 
-## EXPENSE TRACKING - TODAY'S STATS (v5.1)
-
-### Backend Fix
-- `/expenses/stats` endpoint now returns `todayTotal` and `todayCount`
-- Calculates expenses where `DATE(expense_date) = CURRENT_DATE`
-- Respects agent isolation (agents see only their own expenses)
-
-### Response Structure
-``javascript
-{
-  success: true,
-  data: {
-    todayTotal: 10000,      // Sum of today's expenses
-    todayCount: 1,          // Count of today's expenses
-    totals: { ... },
-    byStatus: [...],
-    byCategory: [...],
-    monthlyTrend: [...],
-    topProperties: [...]
-  }
-}
-## WHATSAPP-STYLE CHAT SYSTEM (v6.0)
-
-### Overview
-Complete redesign of the internal messaging system with WhatsApp-like UI and features. User-specific conversation isolation (not role-based grouping).
-
-### Features Implemented
-| Feature | Description |
-|---------|-------------|
-| User Isolation | Each user sees only their own conversations |
-| Direct Messaging | 1:1 chats between any two users |
-| Group Chats | Multi-participant conversations with custom titles |
-| Online Status | Green dot indicator with pulse animation |
-| Last Seen | "last seen today at 3:45 PM" format |
-| Typing Indicators | "John is typing..." with animated dots |
-| Read Receipts | Single ✓ (sent), Double ✓✓ (delivered), Blue ✓✓ (read) |
-| Profile Avatars | User profile images in chat bubbles |
-| Image Messages | Send images via Cloudinary upload |
-| Unread Badges | Count badges on conversation list |
-| Real-time Updates | Socket.io for instant messaging |
-
-### Database Columns Added
+**SQL Migration:**
 ```sql
--- Users table
-ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT false;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP;
+ALTER TABLE tenant_allocations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+UPDATE tenant_allocations SET updated_at = COALESCE(allocation_date, NOW()) WHERE updated_at IS NULL;
+CREATE OR REPLACE FUNCTION update_tenant_allocations_timestamp() RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER trigger_update_tenant_allocations_timestamp BEFORE UPDATE ON tenant_allocations FOR EACH ROW EXECUTE FUNCTION update_tenant_allocations_timestamp();
+```
 
--- Chat messages table
-ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'sent';
-## NOTIFICATION SYSTEM (v7.0)
+## 2. EXPENSE STATS FIX
+**Problem:** Expense stats showed 0 counts because `byStatus` query filtered by current month only.
 
-### Overview
-Comprehensive notification system that alerts users about all system events including payments, tenants, allocations, complaints, water bills, expenses, and scheduled reminders.
+**Solution:**
+- `byStatus` now returns ALL-TIME counts (for tab badges)
+- `totals` returns monthly totals (for cards)
+- Added `allTimeTotals` for "All" tab count
+- Updated both `AdminExpenseManagement.jsx` and `AgentExpenseManagement.jsx`
 
-### Notification Types
-| Type | Event | Recipients |
-|------|-------|------------|
-| `payment_success` | Payment completed | Tenant |
-| `payment_received` | Payment received | Admin + Agent |
-| `payment_failed` | Payment failed | Tenant + Admin |
-| `payment_pending` | STK push initiated | Tenant |
-| `payment_carry_forward` | Advance payment applied | Tenant |
-| `salary_paid` | Salary processed | Agent |
-| `salary_processed` | Salary confirmation | Admin |
-| `tenant_created` | New tenant registered | All Admins |
-| `tenant_allocated` | Tenant assigned to unit | Admin + Agent |
-| `tenant_deallocated` | Tenant removed from unit | Admin + Agent |
-| `complaint_created` | New complaint filed | Admin + Agent |
-| `complaint_updated` | Complaint status changed | Tenant |
-| `complaint_resolved` | Complaint resolved | Tenant + Admin |
-| `complaint_assigned` | Complaint assigned | Agent |
-| `water_bill_created` | Water bill added | Admin + Agent |
-| `expense_created` | Expense recorded | All Admins |
-| `expense_approved` | Expense approved | Recording Agent |
-| `expense_rejected` | Expense rejected | Recording Agent |
-| `lease_expiring` | Lease expires in 30 days | Admin + Agent |
-| `rent_overdue` | Rent payment overdue | Admin + Agent |
-| `announcement` | General announcement | Target users |
-| `maintenance` | Maintenance notice | Target users |
-| `emergency` | Emergency alert | All users |
-| `system_alert` | System notification | Admins |
-| `broadcast` | Admin broadcast | Target roles |
+## 3. NOTIFICATION BELL COMPLETE REWRITE
+**Problems:**
+- Had duplicate state management (didn't use NotificationContext)
+- Chat messages showed "New Message" instead of actual content
+- Sender name showed "Unknown"
+- Navigation to chat didn't work
 
-### Scheduled Jobs (Cron)
-| Time | Job | Description |
-|------|-----|-------------|
-| 8:00 AM daily | `checkExpiringLeases()` | Check leases expiring in 30 days |
-| 10:00 AM daily | `checkOverdueRent()` | Check for overdue rent payments |
-| 9:00 AM (billing day) | `sendMonthlyBills()` | Send monthly billing SMS |
-| Every 5 min | `processQueuedSMS()` | Process SMS queue |
+**Solutions:**
+- Uses NotificationContext as single source of truth
+- Properly reads `conversation.participants` array to find other participant
+- Correctly passes `currentUserId` to find the "other" participant
+- Gets sender name: `otherParticipant.first_name + otherParticipant.last_name`
+- Gets message from `conversation.last_message` (it's a string, not object)
+- Click marks chat as read (calls `loadMessages` + `loadConversations`)
+- Proper scrollable dropdown with flexbox layout
+- Three tabs: All, System, Chat
 
-### Integration Points
-| Controller | Events Triggered |
-|------------|------------------|
-| `tenantController` | `tenant_created` |
-| `allocationController` | `tenant_allocated`, `tenant_deallocated` |
-| `complaintController` | `complaint_created`, `complaint_updated`, `complaint_resolved`, `complaint_assigned` |
-| `waterBillController` | `water_bill_created` |
-| `paymentController` | `payment_success`, `payment_failed`, `payment_pending`, `payment_carry_forward`, `payment_received` |
-| `expenses route` | `expense_created`, `expense_approved`, `expense_rejected` |
-| `cronService` | `lease_expiring`, `rent_overdue` |
+## 4. CHAT MODULE NAVIGATION STATE HANDLING
+**Added:** `useLocation` to handle incoming navigation state from NotificationBell
+```javascript
+useEffect(() => {
+  const state = location.state;
+  if (state?.conversationId && state?.conversation) {
+    setActiveConversation(state.conversation);
+    window.history.replaceState({}, document.title);
+  }
+}, [location.state, setActiveConversation, activeConversation?.id]);
+```
