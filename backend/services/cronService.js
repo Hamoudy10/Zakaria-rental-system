@@ -3,6 +3,8 @@ const pool = require('../config/database');
 const BillingService = require('./billingService');
 const SMSService = require('./smsService');
 const NotificationService = require('./notificationService');
+const MessagingService = require("./messagingservice");
+const WhatsAppService = require("./whatsappService");
 
 class CronService {
   constructor() {
@@ -339,41 +341,84 @@ class CronService {
         skipped: billingResult.skipped,
       });
 
-      // Send SMS for each bill
+      // Send SMS + WhatsApp for each bill
       const results = {
         total: billingResult.bills.length,
         success: 0,
         failed: 0,
+        whatsapp_queued: 0,
         failedDetails: [],
       };
 
-      // Rate limiting: 5 SMS per second
-      const rateLimitDelay = 200; // 200ms between SMS
+      // Rate limiting: 5 messages per second
+      const rateLimitDelay = 200; // 200ms between messages
 
       for (let i = 0; i < billingResult.bills.length; i++) {
         const bill = billingResult.bills[i];
 
         try {
           console.log(
-            `📱 Sending bill to ${bill.tenantName} (${bill.unitCode})...`,
+            `📱 Queueing bill for ${bill.tenantName} (${bill.unitCode})...`,
           );
 
-          // Send SMS via queue
+          const smsMessage = this.createBillMessage(bill, config);
+
+          // Build WhatsApp template params for monthly_bill_cron
+          const billItems = [];
+          if (bill.rentDue > 0) {
+            billItems.push(`🏠 Rent: KSh ${this.formatAmount(bill.rentDue)}`);
+          }
+          if (bill.waterDue > 0) {
+            billItems.push(`🚰 Water: KSh ${this.formatAmount(bill.waterDue)}`);
+          }
+          if (bill.arrearsDue > 0) {
+            billItems.push(
+              `📝 Arrears: KSh ${this.formatAmount(bill.arrearsDue)}`,
+            );
+          }
+          const billItemsText =
+            billItems.length > 0 ? billItems.join("\n") : "No charges";
+          const totalDue = bill.rentDue + bill.waterDue + bill.arrearsDue;
+
+          const whatsappParams = [
+            bill.tenantName,
+            bill.targetMonth,
+            bill.unitCode,
+            billItemsText,
+            this.formatAmount(totalDue),
+            config.paybillNumber,
+            config.companyName,
+          ];
+
+          // Queue SMS
           await pool.query(
             `INSERT INTO sms_queue 
             (recipient_phone, message, message_type, status, billing_month, created_at)
             VALUES ($1, $2, $3, $4, $5, NOW())`,
             [
               bill.tenantPhone,
-              this.createBillMessage(bill, config),
+              smsMessage,
               "bill_notification",
               "pending",
               currentMonth,
             ],
           );
 
+          // Queue WhatsApp
+          if (WhatsAppService.configured) {
+            await WhatsAppService.queueMessage(
+              bill.tenantPhone,
+              "monthly_bill_cron",
+              whatsappParams,
+              "bill_notification",
+              smsMessage,
+              null,
+            );
+            results.whatsapp_queued++;
+          }
+
           results.success++;
-          console.log(`✅ Queued bill for ${bill.tenantName}`);
+          console.log(`✅ Queued bill for ${bill.tenantName} (SMS + WhatsApp)`);
         } catch (error) {
           console.error(
             `❌ Failed to queue bill for ${bill.tenantName}:`,
@@ -569,12 +614,20 @@ class CronService {
         },
       );
 
-      // Also process SMS queue every 5 minutes
+      // Process SMS + WhatsApp queues every 5 minutes
       cron.schedule(
         "*/5 * * * *",
         async () => {
-          console.log("🔄 Processing SMS queue...");
-          await SMSService.processQueuedSMS();
+          console.log("🔄 Processing messaging queues (SMS + WhatsApp)...");
+          try {
+            const results = await MessagingService.processQueues();
+            console.log("✅ Queue processing results:", {
+              sms: results.sms,
+              whatsapp: results.whatsapp,
+            });
+          } catch (queueError) {
+            console.error("❌ Queue processing error:", queueError.message);
+          }
         },
         {
           scheduled: true,
@@ -633,8 +686,10 @@ class CronService {
       isRunning: this.isRunning,
       lastRun: this.lastRun,
       jobActive: this.job ? true : false,
-      leaseExpiryCheck: "Daily at 8:00 AM", // NEW
-      overdueRentCheck: "Daily at 10:00 AM"
+      leaseExpiryCheck: "Daily at 8:00 AM",
+      overdueRentCheck: "Daily at 10:00 AM",
+      queueProcessing: "Every 5 minutes (SMS + WhatsApp)",
+      whatsappConfigured: WhatsAppService.configured,
     };
   }
 

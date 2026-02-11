@@ -3,7 +3,8 @@ const axios = require('axios');
 const moment = require('moment');
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
-const SMSService = require('../services/smsService');
+const SMSService = require("../services/smsService");
+const MessagingService = require("../services/messagingservice");
 
 // ==================== UTILITY HELPERS ====================
 
@@ -371,55 +372,68 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
     const tenantPhone = unit.tenant_phone;
     const unitCode = unit.unit_code;
     const month = trackingResult.targetMonth;
-    const balance = trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
+    const balance =
+      trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
 
-    console.log('📱 Preparing SMS notifications:', {
+    console.log("📱 Preparing SMS + WhatsApp notifications:", {
       tenantName,
       tenantPhone,
       unitCode,
       amount: payment.amount,
       balance,
-      month
+      month,
     });
 
     const wbRes = await pool.query(
       `SELECT amount FROM water_bills WHERE tenant_id = $1 AND bill_month = $2 LIMIT 1`,
-      [unit.tenant_id, `${month}-01`]
+      [unit.tenant_id, `${month}-01`],
     );
     const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
 
-    const tenantSMSResult = await SMSService.sendPaymentConfirmation(
+    // Send tenant notification via SMS + WhatsApp in parallel
+    const tenantResult = await MessagingService.sendPaymentConfirmation(
       tenantPhone,
       tenantName,
       payment.amount,
       unitCode,
       balance,
       month,
-      waterAmount
     );
 
-    console.log('✅ Tenant SMS result:', tenantSMSResult);
+    console.log("✅ Tenant messaging result:", {
+      sms: tenantResult.sms?.success ? "✅" : "❌",
+      whatsapp: tenantResult.whatsapp?.success
+        ? "✅"
+        : tenantResult.whatsapp?.skipped
+          ? "⏭️"
+          : "❌",
+    });
 
+    // Send admin notifications via SMS + WhatsApp in parallel
     const adminUsers = await pool.query(
-      'SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL',
-      ['admin']
+      "SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL",
+      ["admin"],
     );
 
     console.log(`👨‍💼 Found ${adminUsers.rows.length} admins to notify`);
 
-    const adminSMSResults = [];
     for (const admin of adminUsers.rows) {
-      const adminResult = await SMSService.sendAdminAlert(
+      const adminResult = await MessagingService.sendAdminAlert(
         admin.phone_number,
         tenantName,
         payment.amount,
         unitCode,
         balance,
-        month
+        month,
       );
-      adminSMSResults.push(adminResult);
+
+      console.log(`👨‍💼 Admin (${admin.phone_number}) messaging:`, {
+        sms: adminResult.sms?.success ? "✅" : "❌",
+        whatsapp: adminResult.whatsapp?.success ? "✅" : "⏭️",
+      });
     }
 
+    // Log to payment_notifications table
     await pool.query(
       `INSERT INTO payment_notifications 
         (payment_id, recipient_id, message_type, message_content, mpesa_code, amount, 
@@ -428,24 +442,20 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
       [
         payment.id,
         unit.tenant_id,
-        'payment_confirmation',
+        "payment_confirmation",
         `Payment of KSh ${payment.amount} confirmed for ${unitCode}`,
         payment.mpesa_receipt_number,
         payment.amount,
         payment.payment_date,
         unit.property_name,
         unitCode,
-        tenantSMSResult.success
-      ]
+        tenantResult.sms?.success || tenantResult.whatsapp?.success,
+      ],
     );
 
-    console.log('✅ Paybill SMS notifications processed', {
-      tenantSMS: tenantSMSResult.success,
-      adminSMS: adminSMSResults.filter(r => r.success).length
-    });
-
+    console.log("✅ Paybill SMS + WhatsApp notifications processed");
   } catch (error) {
-    console.error('❌ Error sending paybill SMS notifications:', error);
+    console.error("❌ Error sending paybill notifications:", error);
   }
 };
 
@@ -1044,32 +1054,41 @@ const sendBalanceReminders = async (req, res) => {
         const gracePeriodEnd = new Date(dueDate);
         gracePeriodEnd.setDate(gracePeriodEnd.getDate() + unit.grace_period_days);
 
-        if (currentDate > dueDate && currentDate <= gracePeriodEnd) {
-          const smsResult = await SMSService.sendBalanceReminder(
-            unit.tenant_phone,
-            `${unit.tenant_first_name} ${unit.tenant_last_name}`,
-            unit.unit_code,
-            unit.balance,
-            currentMonth,
-            gracePeriodEnd.toISOString().slice(0, 10)
-          );
+                if (currentDate > dueDate && currentDate <= gracePeriodEnd) {
+                  const msgResult = await MessagingService.sendBalanceReminder(
+                    unit.tenant_phone,
+                    `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+                    unit.unit_code,
+                    unit.balance,
+                    currentMonth,
+                    gracePeriodEnd.toISOString().slice(0, 10),
+                  );
 
-          results.details.push({
-            unit_code: unit.unit_code,
-            tenant_name: `${unit.tenant_first_name} ${unit.tenant_last_name}`,
-            balance: unit.balance,
-            sms_sent: smsResult.success,
-            error: smsResult.error
-          });
+                  // Consider success if either channel succeeded
+                  const anySent =
+                    msgResult.sms?.success || msgResult.whatsapp?.success;
 
-          if (smsResult.success) {
-            results.sms_sent++;
-          } else {
-            results.errors++;
-          }
+                  results.details.push({
+                    unit_code: unit.unit_code,
+                    tenant_name: `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+                    balance: unit.balance,
+                    sms_sent: msgResult.sms?.success || false,
+                    whatsapp_sent: msgResult.whatsapp?.success || false,
+                    error: !anySent
+                      ? msgResult.sms?.error || msgResult.whatsapp?.error
+                      : null,
+                  });
 
-          console.log(`✅ Balance reminder sent for ${unit.unit_code}: ${smsResult.success ? 'Success' : 'Failed'}`);
-        }
+                  if (anySent) {
+                    results.sms_sent++;
+                  } else {
+                    results.errors++;
+                  }
+
+                  console.log(
+                    `✅ Balance reminder for ${unit.unit_code}: SMS=${msgResult.sms?.success ? "✅" : "❌"}, WhatsApp=${msgResult.whatsapp?.success ? "✅" : "⏭️"}`,
+                  );
+                }
       } catch (error) {
         console.error(`❌ Error sending reminder for ${unit.unit_code}:`, error);
         results.errors++;
@@ -1499,80 +1518,86 @@ const handleMpesaCallback = async (req, res) => {
 
     if (resultCode === 0) {
       const callbackMetadata = stkCallback.CallbackMetadata?.Item;
-      
+
       if (!callbackMetadata) {
-        console.log('❌ No callback metadata found');
+        console.log("❌ No callback metadata found");
         await pool.query(
-          'UPDATE rent_payments SET status = $1, failure_reason = $2 WHERE id = $3',
-          ['failed', 'No callback metadata received', payment.id]
+          "UPDATE rent_payments SET status = $1, failure_reason = $2 WHERE id = $3",
+          ["failed", "No callback metadata received", payment.id],
         );
 
         try {
           await NotificationService.createNotification({
             userId: payment.tenant_id,
-            title: 'Payment Failed',
-            message: 'Payment failed: No confirmation received from M-Pesa',
-            type: 'payment_failed',
-            relatedEntityType: 'rent_payment',
-            relatedEntityId: payment.id
+            title: "Payment Failed",
+            message: "Payment failed: No confirmation received from M-Pesa",
+            type: "payment_failed",
+            relatedEntityType: "rent_payment",
+            relatedEntityId: payment.id,
           });
 
-          const adminUsers = await pool.query('SELECT id FROM users WHERE role = $1', ['admin']);
+          const adminUsers = await pool.query(
+            "SELECT id FROM users WHERE role = $1",
+            ["admin"],
+          );
           for (const admin of adminUsers.rows) {
             await NotificationService.createNotification({
               userId: admin.id,
-              title: 'Payment Failure Alert',
+              title: "Payment Failure Alert",
               message: `Payment failed for tenant ${payment.first_name} ${payment.last_name}. Reason: No M-Pesa confirmation received.`,
-              type: 'payment_failed',
-              relatedEntityType: 'rent_payment',
-              relatedEntityId: payment.id
+              type: "payment_failed",
+              relatedEntityType: "rent_payment",
+              relatedEntityId: payment.id,
             });
           }
         } catch (notificationError) {
-          console.error('Failed to create failure notification:', notificationError);
+          console.error(
+            "Failed to create failure notification:",
+            notificationError,
+          );
         }
 
-        return res.status(200).json({ 
-          ResultCode: 0, 
-          ResultDesc: 'Success' 
+        return res.status(200).json({
+          ResultCode: 0,
+          ResultDesc: "Success",
         });
       }
 
       let amount, mpesaReceiptNumber, transactionDate, phoneNumber;
 
       if (Array.isArray(callbackMetadata)) {
-        callbackMetadata.forEach(item => {
+        callbackMetadata.forEach((item) => {
           switch (item.Name) {
-            case 'Amount':
+            case "Amount":
               amount = item.Value;
               break;
-            case 'MpesaReceiptNumber':
+            case "MpesaReceiptNumber":
               mpesaReceiptNumber = item.Value;
               break;
-            case 'TransactionDate':
+            case "TransactionDate":
               transactionDate = item.Value;
               break;
-            case 'PhoneNumber':
+            case "PhoneNumber":
               phoneNumber = item.Value;
               break;
           }
         });
       }
 
-      console.log('✅ Payment successful:', {
+      console.log("✅ Payment successful:", {
         receipt: mpesaReceiptNumber,
         amount: amount,
         phone: phoneNumber,
-        transactionDate: transactionDate
+        transactionDate: transactionDate,
       });
 
       const paymentDate = new Date();
       const trackingResult = await trackRentPayment(
-        payment.tenant_id, 
-        payment.unit_id, 
-        amount || payment.amount, 
+        payment.tenant_id,
+        payment.unit_id,
+        amount || payment.amount,
         paymentDate,
-        payment.payment_month.toISOString().slice(0, 7)
+        payment.payment_month.toISOString().slice(0, 7),
       );
 
       await pool.query(
@@ -1589,14 +1614,16 @@ const handleMpesaCallback = async (req, res) => {
           paymentDate,
           payment.tenant_id,
           trackingResult.allocatedAmount,
-          payment.id
-        ]
+          payment.id,
+        ],
       );
 
-      console.log('✅ Payment completed in database');
+      console.log("✅ Payment completed in database");
 
       if (trackingResult.carryForwardAmount > 0) {
-        console.log(`🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`);
+        console.log(
+          `🔄 Processing carry-forward: KSh ${trackingResult.carryForwardAmount}`,
+        );
         const carryForwardPayments = await recordCarryForward(
           payment.tenant_id,
           payment.unit_id,
@@ -1605,64 +1632,68 @@ const handleMpesaCallback = async (req, res) => {
           paymentDate,
           mpesaReceiptNumber,
           phoneNumber,
-          payment.tenant_id
+          payment.tenant_id,
         );
-        
+
         for (const carryForwardPayment of carryForwardPayments) {
-          await sendPaymentNotifications(carryForwardPayment, trackingResult, true);
+          await sendPaymentNotifications(
+            carryForwardPayment,
+            trackingResult,
+            true,
+          );
         }
       }
 
       await sendPaymentNotifications(payment, trackingResult, false);
 
-       // ✅ ADD THIS: Send SMS confirmation to tenant
+      // ✅ Send SMS + WhatsApp confirmation to tenant and admins
       try {
         const tenantName = `${payment.first_name} ${payment.last_name}`;
         const unitCode = payment.unit_code;
         const month = payment.payment_month.toISOString().slice(0, 7);
-        const balance = trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
-        
-        // Get water bill amount for this month
-        const wbRes = await pool.query(
-          `SELECT amount FROM water_bills WHERE tenant_id = $1 AND bill_month = $2 LIMIT 1`,
-          [payment.tenant_id, `${month}-01`]
-        );
-        const waterAmount = wbRes.rows[0] ? parseFloat(wbRes.rows[0].amount) : 0;
+        const balance =
+          trackingResult.remainingForTargetMonth -
+          trackingResult.allocatedAmount;
 
-        // Send SMS to tenant
-        await SMSService.sendPaymentConfirmation(
+        // Send to tenant via SMS + WhatsApp in parallel
+        const tenantResult = await MessagingService.sendPaymentConfirmation(
           phoneNumber || payment.phone_number,
           tenantName,
           amount || payment.amount,
           unitCode,
           balance,
           month,
-          waterAmount
         );
 
-        // Send SMS to admins
+        console.log("✅ Tenant messaging (M-Pesa callback):", {
+          sms: tenantResult.sms?.success ? "✅" : "❌",
+          whatsapp: tenantResult.whatsapp?.success ? "✅" : "⏭️",
+        });
+
+        // Send to admins via SMS + WhatsApp in parallel
         const adminUsers = await pool.query(
-          'SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL',
-          ['admin']
+          "SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL",
+          ["admin"],
         );
 
         for (const admin of adminUsers.rows) {
-          await SMSService.sendAdminAlert(
+          await MessagingService.sendAdminAlert(
             admin.phone_number,
             tenantName,
             amount || payment.amount,
             unitCode,
             balance,
-            month
+            month,
           );
         }
 
-        console.log('✅ SMS notifications sent for M-Pesa callback payment');
-      } catch (smsError) {
-        console.error('❌ Failed to send SMS notifications:', smsError);
-        // Don't throw - payment was successful, SMS failure shouldn't break the flow
+        console.log(
+          "✅ SMS + WhatsApp notifications sent for M-Pesa callback payment",
+        );
+      } catch (msgError) {
+        console.error("❌ Failed to send notifications:", msgError);
+        // Don't throw - payment was successful, notification failure shouldn't break the flow
       }
-
     } else {
       const failureReason = stkCallback.ResultDesc || 'Payment failed';
       await pool.query(

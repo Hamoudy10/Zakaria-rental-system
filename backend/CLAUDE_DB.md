@@ -418,3 +418,38 @@ ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 's
 8. **payment_status** enum has NO 'processing' value
 9. **unit_type** enum includes 'shop' and 'hall'
 10. Unit code generated: `{property_code}-{unit_number}`
+## WHATSAPP TABLES
+
+### whatsapp_queue
+```sql
+id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+recipient_phone VARCHAR(20) NOT NULL
+template_name VARCHAR(100) NOT NULL          -- Meta template name (e.g., 'payment_confirmation')
+template_params JSONB DEFAULT '[]'           -- Array of parameter values
+fallback_message TEXT                        -- Plain text fallback (SMS reference)
+message_type VARCHAR(50) DEFAULT 'general'   -- welcome, payment_confirmation, bill_notification, etc.
+status VARCHAR(20) DEFAULT 'pending'         -- pending, sent, failed, skipped
+whatsapp_message_id VARCHAR(255)             -- Meta message ID for tracking
+attempts INTEGER DEFAULT 0
+max_attempts INTEGER DEFAULT 3
+error_message TEXT
+agent_id UUID REFERENCES users(id)
+sent_at TIMESTAMP
+last_attempt_at TIMESTAMP
+created_at TIMESTAMP DEFAULT NOW()
+id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+phone_number VARCHAR(20) NOT NULL
+template_name VARCHAR(100) NOT NULL
+template_params JSONB DEFAULT '[]'
+message_type VARCHAR(50)
+status VARCHAR(20) DEFAULT 'sent'            -- sent, failed, skipped
+whatsapp_message_id VARCHAR(255)
+error_message TEXT
+sent_at TIMESTAMP DEFAULT NOW()
+CREATE INDEX idx_whatsapp_queue_status ON whatsapp_queue(status) WHERE status = 'pending';
+CREATE INDEX idx_whatsapp_queue_created ON whatsapp_queue(created_at);
+CREATE INDEX idx_whatsapp_queue_recipient ON whatsapp_queue(recipient_phone);
+CREATE INDEX idx_whatsapp_queue_template ON whatsapp_queue(template_name);
+CREATE INDEX idx_whatsapp_notifications_phone ON whatsapp_notifications(phone_number);
+CREATE INDEX idx_whatsapp_notifications_status ON whatsapp_notifications(status);
+CREATE INDEX idx_whatsapp_notifications_sent ON whatsapp_notifications(sent_at);

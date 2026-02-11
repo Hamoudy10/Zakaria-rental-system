@@ -272,3 +272,41 @@ app.use(cors({
 | `typing_stop` | Emit | Notify stop typing |
 | `user_online_status` | Emit | Broadcast online/offline change |
 | `messages_read_receipt` | Emit | Notify sender of read status |
+
+---
+
+## 2. Backend `claude.md` (`/backend/claude.md`) — Add to the bottom
+
+```markdown
+## WHATSAPP SERVICE (Meta Cloud API)
+
+### whatsappService.js
+- Singleton class mirroring `smsService.js` method signatures
+- Uses Meta Cloud API template messages
+- 11 template methods matching every SMS message type
+- Queue system: `queueMessage()`, `queueForRetry()`, `processQueue()`
+- Logging to `whatsapp_notifications` table
+- Error handling for Meta-specific codes:
+  - `131026`: Recipient not on WhatsApp → marked as `skipped`
+  - `131047`: Template required (24h window)
+  - `131048`: Rate limited
+  - `132000`: Template not found
+  - `132001`: Parameter count mismatch
+- Webhook support: `processWebhook()` for delivery status updates
+- Rate limit: 300ms between queued messages
+
+### messagingService.js
+- Unified entry point for all messaging (SMS + WhatsApp)
+- `sendParallel(smsFn, whatsappFn)` — core engine using `Promise.all`
+- Same method signatures as `smsService.js` — drop-in replacement
+- Methods: `sendWelcomeMessage`, `sendPaymentConfirmation`, `sendEnhancedPaymentConfirmation`, `sendBillNotification`, `sendBalanceReminder`, `sendAdminAlert`, `sendAdminPaymentAlert`, `sendAdvancePaymentNotification`, `sendMaintenanceUpdate`, `sendAnnouncement`, `sendRawMessage`
+- Queue methods: `queueBillMessage()` (queues to both tables), `processQueues()` (processes both queues)
+- Statistics: `getStatistics()`, `getServiceStatus()` (combined from both channels)
+- `isWhatsAppAvailable(phone)` — checks local records for previously skipped numbers
+
+### Modified Controllers
+- **paymentController.js**: `sendPaybillSMSNotifications()`, `handleMpesaCallback()`, `sendBalanceReminders()` use `MessagingService` instead of direct `SMSService`
+- **notificationController.js**: `sendBulkSMS()`, `sendTargetedSMS()` use `MessagingService.sendRawMessage()`, response includes `whatsapp_sent` and `whatsapp_failed` counts
+- **cronService.js**: `sendMonthlyBills()` queues to both `sms_queue` + `whatsapp_queue`, cron processes both queues via `MessagingService.processQueues()`
+
+### Environment Variables
