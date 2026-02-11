@@ -221,3 +221,107 @@ useEffect(() => {
   }
 }, [location.state, setActiveConversation, activeConversation?.id]);
 ```
+## 11. WHATSAPP BUSINESS API INTEGRATION
+
+### Overview
+All SMS messages in the system are now also sent via WhatsApp (Meta Cloud API) in parallel. SMS always sends as the default/fallback. WhatsApp sends simultaneously if configured and recipient has WhatsApp.
+
+### Architecture
+
+### Provider
+- **WhatsApp:** Meta Cloud API (WhatsApp Business Platform)
+- **Free Tier:** 1,000 service conversations/month
+- **Endpoint:** `https://graph.facebook.com/{version}/{phone_number_id}/messages`
+- **Auth:** Bearer token in Authorization header
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `backend/services/whatsappService.js` | WhatsApp Cloud API integration, template messaging, queue, retry |
+| `backend/services/messagingService.js` | Unified wrapper — sends SMS + WhatsApp in parallel via `Promise.all` |
+
+### Modified Files
+| File | Change |
+|------|--------|
+| `backend/controllers/paymentController.js` | `sendPaybillSMSNotifications()`, `handleMpesaCallback()`, `sendBalanceReminders()` now use `MessagingService` |
+| `backend/controllers/notificationController.js` | `sendBulkSMS()`, `sendTargetedSMS()` now use `MessagingService.sendRawMessage()` |
+| `backend/services/cronService.js` | Monthly billing queues to both `sms_queue` + `whatsapp_queue`, queue processing runs both queues |
+
+### Database Tables
+| Table | Purpose |
+|-------|---------|
+| `whatsapp_queue` | Queue for WhatsApp messages with retry (max 3 attempts), status: pending/sent/failed/skipped |
+| `whatsapp_notifications` | Log of all WhatsApp send attempts for tracking/statistics |
+
+### WhatsApp Templates (11 Meta-approved templates)
+| Template Name | Used For |
+|--------------|----------|
+| `rental_welcome` | New tenant welcome |
+| `payment_confirmation` | Payment received |
+| `payment_confirmation_detailed` | Payment with breakdown |
+| `bill_notification` | Monthly bill |
+| `balance_reminder` | Balance reminder |
+| `admin_payment_alert` | Admin payment alert |
+| `admin_payment_alert_detailed` | Admin detailed alert |
+| `advance_payment` | Advance payment notice |
+| `maintenance_update` | Maintenance update |
+| `general_announcement` | Bulk/targeted messages |
+| `monthly_bill_cron` | Cron monthly billing |
+
+### Sending Strategy
+- **Parallel:** SMS + WhatsApp sent simultaneously via `Promise.all`
+- **SMS always sends** regardless of WhatsApp result
+- **WhatsApp failure never blocks SMS**
+- **Not on WhatsApp (error 131026):** Marked as `skipped`, SMS still delivers
+- **WhatsApp not configured:** Cleanly skipped, SMS-only mode
+
+### Environment Variables
+
+### Provider
+- **WhatsApp:** Meta Cloud API (WhatsApp Business Platform)
+- **Free Tier:** 1,000 service conversations/month
+- **Endpoint:** `https://graph.facebook.com/{version}/{phone_number_id}/messages`
+- **Auth:** Bearer token in Authorization header
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `backend/services/whatsappService.js` | WhatsApp Cloud API integration, template messaging, queue, retry |
+| `backend/services/messagingService.js` | Unified wrapper — sends SMS + WhatsApp in parallel via `Promise.all` |
+
+### Modified Files
+| File | Change |
+|------|--------|
+| `backend/controllers/paymentController.js` | `sendPaybillSMSNotifications()`, `handleMpesaCallback()`, `sendBalanceReminders()` now use `MessagingService` |
+| `backend/controllers/notificationController.js` | `sendBulkSMS()`, `sendTargetedSMS()` now use `MessagingService.sendRawMessage()` |
+| `backend/services/cronService.js` | Monthly billing queues to both `sms_queue` + `whatsapp_queue`, queue processing runs both queues |
+
+### Database Tables
+| Table | Purpose |
+|-------|---------|
+| `whatsapp_queue` | Queue for WhatsApp messages with retry (max 3 attempts), status: pending/sent/failed/skipped |
+| `whatsapp_notifications` | Log of all WhatsApp send attempts for tracking/statistics |
+
+### WhatsApp Templates (11 Meta-approved templates)
+| Template Name | Used For |
+|--------------|----------|
+| `rental_welcome` | New tenant welcome |
+| `payment_confirmation` | Payment received |
+| `payment_confirmation_detailed` | Payment with breakdown |
+| `bill_notification` | Monthly bill |
+| `balance_reminder` | Balance reminder |
+| `admin_payment_alert` | Admin payment alert |
+| `admin_payment_alert_detailed` | Admin detailed alert |
+| `advance_payment` | Advance payment notice |
+| `maintenance_update` | Maintenance update |
+| `general_announcement` | Bulk/targeted messages |
+| `monthly_bill_cron` | Cron monthly billing |
+
+### Sending Strategy
+- **Parallel:** SMS + WhatsApp sent simultaneously via `Promise.all`
+- **SMS always sends** regardless of WhatsApp result
+- **WhatsApp failure never blocks SMS**
+- **Not on WhatsApp (error 131026):** Marked as `skipped`, SMS still delivers
+- **WhatsApp not configured:** Cleanly skipped, SMS-only mode
+
+### Environment Variables

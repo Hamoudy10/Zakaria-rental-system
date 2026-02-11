@@ -2,6 +2,7 @@
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
 const SMSService = require('../services/smsService');
+const MessagingService = require("../services/messagingservice");
 
 // Rate limiting to prevent excessive API calls
 const userRequestTimestamps = new Map();
@@ -617,7 +618,11 @@ const sendBulkSMS = async (req, res) => {
     const { propertyId, message, messageType = "announcement" } = req.body;
     const userId = req.user.id;
 
-    console.log("📱 Sending bulk SMS:", { propertyId, messageType, userId });
+    console.log("📱 Sending bulk SMS + WhatsApp:", {
+      propertyId,
+      messageType,
+      userId,
+    });
 
     if (!propertyId || !message) {
       return res.status(400).json({
@@ -677,26 +682,27 @@ const sendBulkSMS = async (req, res) => {
       });
     }
 
-    console.log(
-      `📤 Sending SMS to ${tenants.length} tenants in ${property.name}`,
-    );
+    console.log(`📤 Sending to ${tenants.length} tenants in ${property.name}`);
 
-    // Send SMS to each tenant and log individually
     const results = {
       total: tenants.length,
       sent: 0,
       failed: 0,
       errors: [],
+      whatsapp_sent: 0,
+      whatsapp_failed: 0,
     };
 
     for (const tenant of tenants) {
       try {
-        const smsResult = await SMSService.sendSMS(
+        // Send via both SMS + WhatsApp in parallel
+        const msgResult = await MessagingService.sendRawMessage(
           tenant.phone_number,
           message,
+          messageType,
         );
 
-        // Log each SMS to the queue
+        // Log SMS to sms_queue
         await pool.query(
           `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
@@ -704,28 +710,38 @@ const sendBulkSMS = async (req, res) => {
             tenant.phone_number,
             message,
             messageType,
-            smsResult.success ? "sent" : "failed",
+            msgResult.sms?.success ? "sent" : "failed",
             userId,
-            smsResult.success ? new Date() : null,
+            msgResult.sms?.success ? new Date() : null,
           ],
         );
 
-        if (smsResult.success) {
+        // Track SMS result
+        if (msgResult.sms?.success) {
           results.sent++;
         } else {
           results.failed++;
           results.errors.push({
             tenant: `${tenant.first_name} ${tenant.last_name}`,
             unit: tenant.unit_code,
-            error: smsResult.error,
+            error: msgResult.sms?.error || "SMS failed",
+            channel: "sms",
           });
         }
-      } catch (smsError) {
+
+        // Track WhatsApp result
+        if (msgResult.whatsapp?.success) {
+          results.whatsapp_sent++;
+        } else if (!msgResult.whatsapp?.skipped) {
+          results.whatsapp_failed++;
+        }
+      } catch (sendError) {
         results.failed++;
         results.errors.push({
           tenant: `${tenant.first_name} ${tenant.last_name}`,
           unit: tenant.unit_code,
-          error: smsError.message,
+          error: sendError.message,
+          channel: "both",
         });
 
         // Log failed SMS
@@ -737,7 +753,7 @@ const sendBulkSMS = async (req, res) => {
               tenant.phone_number,
               message,
               messageType,
-              smsError.message,
+              sendError.message,
               userId,
             ],
           );
@@ -748,25 +764,23 @@ const sendBulkSMS = async (req, res) => {
     }
 
     console.log(
-      `✅ Bulk SMS complete: ${results.sent} sent, ${results.failed} failed`,
+      `✅ Bulk messaging complete: SMS=${results.sent} sent/${results.failed} failed, WhatsApp=${results.whatsapp_sent} sent/${results.whatsapp_failed} failed`,
     );
 
     res.json({
       success: true,
-      message: `SMS sent to ${results.sent} of ${results.total} tenants`,
+      message: `Messages sent to ${results.sent} of ${results.total} tenants via SMS. ${results.whatsapp_sent} also received WhatsApp.`,
       data: results,
     });
   } catch (error) {
-    console.error("❌ Send bulk SMS error:", error);
+    console.error("❌ Send bulk messaging error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error sending bulk SMS",
+      message: "Server error sending bulk messages",
       error: error.message,
     });
   }
-};
-
-// =====================================================================
+};// =====================================================================
 // 2. NEW: Get tenants for a specific property
 // =====================================================================
 
@@ -851,7 +865,7 @@ const sendTargetedSMS = async (req, res) => {
     const { tenantIds, message, messageType = "announcement" } = req.body;
     const userId = req.user.id;
 
-    console.log("📱 Sending targeted SMS:", {
+    console.log("📱 Sending targeted SMS + WhatsApp:", {
       tenantCount: tenantIds?.length,
       messageType,
       userId,
@@ -927,27 +941,28 @@ const sendTargetedSMS = async (req, res) => {
       });
     }
 
-    console.log(
-      `📤 Sending SMS to ${tenantsWithPhones.length} selected tenants`,
-    );
+    console.log(`📤 Sending to ${tenantsWithPhones.length} selected tenants`);
 
-    // Send SMS to each tenant
     const results = {
       total: tenantsWithPhones.length,
       sent: 0,
       failed: 0,
       skipped: tenants.length - tenantsWithPhones.length,
       errors: [],
+      whatsapp_sent: 0,
+      whatsapp_failed: 0,
     };
 
     for (const tenant of tenantsWithPhones) {
       try {
-        const smsResult = await SMSService.sendSMS(
+        // Send via both SMS + WhatsApp in parallel
+        const msgResult = await MessagingService.sendRawMessage(
           tenant.phone_number,
           message,
+          messageType,
         );
 
-        // Log to sms_queue
+        // Log SMS to sms_queue
         await pool.query(
           `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
@@ -955,28 +970,38 @@ const sendTargetedSMS = async (req, res) => {
             tenant.phone_number,
             message,
             messageType,
-            smsResult.success ? "sent" : "failed",
+            msgResult.sms?.success ? "sent" : "failed",
             userId,
-            smsResult.success ? new Date() : null,
+            msgResult.sms?.success ? new Date() : null,
           ],
         );
 
-        if (smsResult.success) {
+        // Track SMS result
+        if (msgResult.sms?.success) {
           results.sent++;
         } else {
           results.failed++;
           results.errors.push({
             tenant: `${tenant.first_name} ${tenant.last_name}`,
             unit: tenant.unit_code,
-            error: smsResult.error,
+            error: msgResult.sms?.error || "SMS failed",
+            channel: "sms",
           });
         }
-      } catch (smsError) {
+
+        // Track WhatsApp result
+        if (msgResult.whatsapp?.success) {
+          results.whatsapp_sent++;
+        } else if (!msgResult.whatsapp?.skipped) {
+          results.whatsapp_failed++;
+        }
+      } catch (sendError) {
         results.failed++;
         results.errors.push({
           tenant: `${tenant.first_name} ${tenant.last_name}`,
           unit: tenant.unit_code,
-          error: smsError.message,
+          error: sendError.message,
+          channel: "both",
         });
 
         // Log failed SMS
@@ -988,7 +1013,7 @@ const sendTargetedSMS = async (req, res) => {
               tenant.phone_number,
               message,
               messageType,
-              smsError.message,
+              sendError.message,
               userId,
             ],
           );
@@ -999,19 +1024,19 @@ const sendTargetedSMS = async (req, res) => {
     }
 
     console.log(
-      `✅ Targeted SMS complete: ${results.sent} sent, ${results.failed} failed, ${results.skipped} skipped (no phone)`,
+      `✅ Targeted messaging complete: SMS=${results.sent} sent/${results.failed} failed, WhatsApp=${results.whatsapp_sent} sent/${results.whatsapp_failed} failed`,
     );
 
     res.json({
       success: true,
-      message: `SMS sent to ${results.sent} of ${results.total} tenants`,
+      message: `Messages sent to ${results.sent} of ${results.total} tenants via SMS. ${results.whatsapp_sent} also received WhatsApp.`,
       data: results,
     });
   } catch (error) {
-    console.error("❌ Send targeted SMS error:", error);
+    console.error("❌ Send targeted messaging error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error sending targeted SMS",
+      message: "Server error sending targeted messages",
       error: error.message,
     });
   }

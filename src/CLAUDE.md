@@ -220,3 +220,32 @@ const autoTable = autoTableModule.default;
 const doc = new jsPDF('landscape', 'mm', 'a4');
 autoTable(doc, { startY: 55, head: [[...]], body: [...] }); // doc as first arg
 ```
+
+---
+
+## 4. Frontend `claude.md` (`/src/claude.md`) — Add to the bottom
+
+```markdown
+## WHATSAPP INTEGRATION (Backend Only)
+
+WhatsApp messaging is handled entirely on the backend. No frontend changes required.
+
+### What Frontend Users See
+- Bulk SMS and Targeted SMS endpoints now return additional fields in response:
+  - `whatsapp_sent`: Number of successful WhatsApp deliveries
+  - `whatsapp_failed`: Number of failed WhatsApp deliveries
+- All existing SMS functionality continues to work unchanged
+- Response format from `sendBulkSMS` and `sendTargetedSMS`:
+```javascript
+{
+  success: true,
+  message: "Messages sent to 5 of 5 tenants via SMS. 3 also received WhatsApp.",
+  data: {
+    total: 5,
+    sent: 5,           // SMS sent count
+    failed: 0,         // SMS failed count
+    whatsapp_sent: 3,  // WhatsApp sent count
+    whatsapp_failed: 0,// WhatsApp failed count
+    errors: []
+  }
+}
