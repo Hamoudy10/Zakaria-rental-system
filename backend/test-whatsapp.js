@@ -2,7 +2,7 @@
 // Run with: node backend/test-whatsapp.js
 
 require("dotenv").config();
-const WhatsAppService = require("./services/whatsappServices");
+const WhatsAppService = require("./services/whatsappService");
 
 async function testWhatsApp() {
   console.log("\n========== WHATSAPP SERVICE TEST ==========\n");
