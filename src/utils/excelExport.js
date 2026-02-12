@@ -1,675 +1,818 @@
-// src/utils/excelExport.js
-// COMPLETE EXCEL EXPORT UTILITY - Handles all report types including tenant payment status
+// src/utils/excelExport.js - UPDATED VERSION WITH PAYMENT MANAGEMENT SUPPORT
+// This is the complete file with the new cases added for unpaid_tenants and paid_tenants
+
+import ExcelJS from 'exceljs';
+import { API } from '../services/api';
+
+// Default company branding (fallback)
+const DEFAULT_COMPANY = {
+  name: 'Rental Management System',
+  email: '',
+  phone: '',
+  address: '',
+  logo: ''
+};
+
+// Cache for company info
+let cachedCompanyInfo = null;
+let cacheTimestamp = null;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Export data to Excel
- * @param {Object} config - Export configuration
- * @param {string} config.reportType - Type of report (payments, tenants, unpaid_tenants, paid_tenants, etc.)
- * @param {Array} config.data - Data to export
- * @param {Object} config.filters - Applied filters
- * @param {Object} config.companyInfo - Company information
- * @param {Object} config.user - Current user
- * @param {string} config.title - Report title
+ * Validate company info has all required fields
  */
-export const exportToExcel = async (config) => {
-  const { reportType, data, filters, companyInfo, user, title } = config;
+const isValidCompanyInfo = (info) => {
+  if (!info || typeof info !== 'object') return false;
+  return info.name && (info.email || info.phone || info.address || info.logo);
+};
 
-  if (!data || data.length === 0) {
-    throw new Error("No data to export");
-  }
-
-  try {
-    // Try to use ExcelJS if available
-    let useExcelJS = false;
-    let ExcelJS;
-
-    try {
-      ExcelJS = await import("exceljs");
-      useExcelJS = true;
-    } catch (e) {
-      console.log("ExcelJS not available, falling back to CSV export");
-    }
-
-    if (useExcelJS && ExcelJS.default) {
-      return await exportWithExcelJS(ExcelJS.default, config);
+/**
+ * Fetch company info from API with caching
+ */
+const fetchCompanyInfo = async () => {
+  const now = Date.now();
+  
+  if (cachedCompanyInfo && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION)) {
+    if (isValidCompanyInfo(cachedCompanyInfo)) {
+      console.log('📦 Using cached company info for Excel:', cachedCompanyInfo);
+      return cachedCompanyInfo;
     } else {
-      // Fallback to CSV export
-      return await exportToCSV(config);
+      console.log('⚠️ Cached data is incomplete, refetching...');
+    }
+  }
+  
+  try {
+    console.log('🔄 Fetching company info from API for Excel...');
+    const response = await API.settings.getCompanyInfo();
+    console.log('📥 API Response:', response.data);
+    
+    if (response.data?.success && response.data?.data) {
+      const companyData = response.data.data;
+      
+      cachedCompanyInfo = {
+        name: companyData.name || DEFAULT_COMPANY.name,
+        email: companyData.email || '',
+        phone: companyData.phone || '',
+        address: companyData.address || '',
+        logo: companyData.logo || ''
+      };
+      
+      cacheTimestamp = now;
+      console.log('✅ Company info fetched and cached for Excel:', cachedCompanyInfo);
+      return cachedCompanyInfo;
+    } else {
+      console.warn('⚠️ API returned unexpected structure:', response.data);
     }
   } catch (error) {
-    console.error("❌ Excel export error:", error);
-    // Fallback to CSV
-    console.log("Falling back to CSV export...");
-    return await exportToCSV(config);
+    console.error('❌ Could not fetch company info for Excel:', error.message);
+  }
+  
+  console.log('⚠️ Using default company info for Excel');
+  return DEFAULT_COMPANY;
+};
+
+/**
+ * Fetch image as base64 for Excel embedding
+ */
+const fetchImageAsBase64 = async (imageUrl) => {
+  if (!imageUrl) return null;
+  
+  try {
+    console.log('🔄 Loading logo for Excel from:', imageUrl);
+    
+    const response = await fetch(imageUrl, {
+      mode: 'cors',
+      cache: 'force-cache'
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    
+    console.log('✅ Logo loaded for Excel');
+    return {
+      buffer: arrayBuffer,
+      extension: 'png'
+    };
+  } catch (error) {
+    console.warn('Could not load logo for Excel:', error);
+    return null;
   }
 };
 
 /**
- * Export using ExcelJS library
+ * Add company header with logo to worksheet
  */
-async function exportWithExcelJS(ExcelJS, config) {
-  const { reportType, data, filters, companyInfo, user, title } = config;
-
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = companyInfo?.name || "Zakaria Housing Agency";
-  workbook.lastModifiedBy =
-    `${user?.first_name || ""} ${user?.last_name || ""}`.trim() || "System";
-  workbook.created = new Date();
-  workbook.modified = new Date();
-
-  const worksheet = workbook.addWorksheet(title?.substring(0, 31) || "Report");
-
-  // ========================================
-  // HEADER SECTION
-  // ========================================
-
-  // Company name
-  worksheet.mergeCells("A1:H1");
-  const companyCell = worksheet.getCell("A1");
-  companyCell.value = companyInfo?.name || "Zakaria Housing Agency";
-  companyCell.font = {
-    name: "Arial",
-    size: 16,
-    bold: true,
-    color: { argb: "FF2C3E50" },
-  };
-  companyCell.alignment = { horizontal: "center", vertical: "middle" };
-  worksheet.getRow(1).height = 30;
-
-  // Report title
-  worksheet.mergeCells("A2:H2");
-  const titleCell = worksheet.getCell("A2");
-  titleCell.value =
-    title || `${reportType?.replace(/_/g, " ").toUpperCase()} REPORT`;
-  titleCell.font = {
-    name: "Arial",
-    size: 12,
-    bold: true,
-    color: { argb: "FF34495E" },
-  };
-  titleCell.alignment = { horizontal: "center", vertical: "middle" };
-  worksheet.getRow(2).height = 25;
-
-  // Generation info
-  worksheet.mergeCells("A3:D3");
-  const dateCell = worksheet.getCell("A3");
-  dateCell.value = `Generated: ${new Date().toLocaleString("en-GB")}`;
-  dateCell.font = { name: "Arial", size: 9, color: { argb: "FF7F8C8D" } };
-
-  worksheet.mergeCells("E3:H3");
-  const userCell = worksheet.getCell("E3");
-  userCell.value = `By: ${user?.first_name || ""} ${user?.last_name || ""} (${user?.role || "User"})`;
-  userCell.font = { name: "Arial", size: 9, color: { argb: "FF7F8C8D" } };
-  userCell.alignment = { horizontal: "right" };
-
-  // Filters row
-  if (filters) {
-    const filterParts = [];
-    if (filters.month) filterParts.push(`Month: ${filters.month}`);
-    if (filters.period)
-      filterParts.push(`Period: ${filters.period.replace("_", " ")}`);
-    if (filters.startDate && filters.endDate) {
-      filterParts.push(`Date: ${filters.startDate} to ${filters.endDate}`);
-    }
-
-    if (filterParts.length > 0) {
-      worksheet.mergeCells("A4:H4");
-      const filterCell = worksheet.getCell("A4");
-      filterCell.value = `Filters: ${filterParts.join(" | ")}`;
-      filterCell.font = {
-        name: "Arial",
-        size: 9,
-        italic: true,
-        color: { argb: "FF7F8C8D" },
-      };
+const addCompanyHeader = async (workbook, worksheet, companyInfo, columnCount) => {
+  const lastCol = String.fromCharCode(64 + Math.min(columnCount, 26));
+  let currentRow = 1;
+  
+  // Try to add logo
+  if (companyInfo.logo) {
+    try {
+      const logoData = await fetchImageAsBase64(companyInfo.logo);
+      
+      if (logoData) {
+        const imageId = workbook.addImage({
+          buffer: logoData.buffer,
+          extension: logoData.extension,
+        });
+        
+        // Add image to worksheet (centered)
+        const logoCol = Math.floor(columnCount / 2);
+        worksheet.addImage(imageId, {
+          tl: { col: logoCol - 0.5, row: 0 },
+          ext: { width: 60, height: 60 }
+        });
+        
+        // Add empty rows for logo space (increased spacing)
+        worksheet.addRow([]);
+        worksheet.addRow([]);
+        worksheet.addRow([]);
+        worksheet.addRow([]); // Extra row for spacing
+        currentRow = 5;
+        
+        // Set row heights for logo area
+        worksheet.getRow(1).height = 20;
+        worksheet.getRow(2).height = 20;
+        worksheet.getRow(3).height = 20;
+        worksheet.getRow(4).height = 10; // Spacer row
+        
+        console.log('✅ Logo added to Excel');
+      }
+    } catch (error) {
+      console.warn('Could not add logo to Excel:', error);
     }
   }
+  
+  // Company Name (with spacing from logo)
+  const nameRow = worksheet.addRow([companyInfo.name || DEFAULT_COMPANY.name]);
+  nameRow.font = { size: 16, bold: true, color: { argb: 'FF1E40AF' } };
+  nameRow.alignment = { horizontal: 'center', vertical: 'middle' };
+  nameRow.height = 28;
+  worksheet.mergeCells(`A${currentRow}:${lastCol}${currentRow}`);
+  currentRow++;
+  
+  // Address line
+  if (companyInfo.address) {
+    const addressRow = worksheet.addRow([companyInfo.address]);
+    addressRow.font = { size: 10, color: { argb: 'FF6B7280' } };
+    addressRow.alignment = { horizontal: 'center' };
+    addressRow.height = 18;
+    worksheet.mergeCells(`A${currentRow}:${lastCol}${currentRow}`);
+    currentRow++;
+  }
+  
+  // Contact Info line (Phone & Email)
+  const contactParts = [];
+  if (companyInfo.phone) contactParts.push(`Tel: ${companyInfo.phone}`);
+  if (companyInfo.email) contactParts.push(`Email: ${companyInfo.email}`);
+  
+  if (contactParts.length > 0) {
+    const contactRow = worksheet.addRow([contactParts.join('  |  ')]);
+    contactRow.font = { size: 10, color: { argb: 'FF6B7280' } };
+    contactRow.alignment = { horizontal: 'center' };
+    contactRow.height = 18;
+    worksheet.mergeCells(`A${currentRow}:${lastCol}${currentRow}`);
+    currentRow++;
+  }
+  
+  // Empty row for spacing
+  const spacerRow = worksheet.addRow([]);
+  spacerRow.height = 12;
+  currentRow++;
+  
+  return currentRow;
+};
 
+/**
+ * Add report metadata
+ */
+const addReportMetadata = (worksheet, title, user, filters, dataLength, columnCount, startRow) => {
+  const lastCol = String.fromCharCode(64 + Math.min(columnCount, 26));
+  let currentRow = startRow;
+  
+  // Report Title
+  const titleRow = worksheet.addRow([title]);
+  titleRow.font = { size: 14, bold: true };
+  titleRow.alignment = { horizontal: 'center' };
+  titleRow.height = 24;
+  worksheet.mergeCells(`A${currentRow}:${lastCol}${currentRow}`);
+  currentRow++;
+  
+  // Empty row
+  worksheet.addRow([]);
+  currentRow++;
+  
+  // Metadata rows
+  const userName = user?.first_name && user?.last_name 
+    ? `${user.first_name} ${user.last_name}`
+    : 'System User';
+  const userRole = user?.role || 'user';
+  
+  const metaRow1 = worksheet.addRow(['Generated by:', `${userName} (${userRole})`]);
+  metaRow1.getCell(1).font = { bold: true };
+  currentRow++;
+  
+  const metaRow2 = worksheet.addRow(['Generated on:', new Date().toLocaleString('en-GB')]);
+  metaRow2.getCell(1).font = { bold: true };
+  currentRow++;
+  
+  const metaRow3 = worksheet.addRow(['Total Records:', dataLength]);
+  metaRow3.getCell(1).font = { bold: true };
+  currentRow++;
+  
+  // Date range if present
+  if (filters?.startDate || filters?.endDate) {
+    const dateRange = `${filters.startDate || 'Start'} to ${filters.endDate || 'Present'}`;
+    const metaRow4 = worksheet.addRow(['Date Range:', dateRange]);
+    metaRow4.getCell(1).font = { bold: true };
+    currentRow++;
+  }
+  
+  // Search filter if present
+  if (filters?.search) {
+    const metaRow5 = worksheet.addRow(['Search Filter:', filters.search]);
+    metaRow5.getCell(1).font = { bold: true };
+    currentRow++;
+  }
+  
   // Empty row before data
-  const dataStartRow = 6;
+  worksheet.addRow([]);
+  currentRow++;
+  
+  return currentRow;
+};
 
-  // ========================================
-  // TABLE DATA BASED ON REPORT TYPE
-  // ========================================
-  const { headers, rows, columnWidths } = getExcelTableConfig(reportType, data);
-
-  // Add headers
-  const headerRow = worksheet.getRow(dataStartRow);
-  headers.forEach((header, index) => {
-    const cell = headerRow.getCell(index + 1);
-    cell.value = header;
-    cell.font = {
-      name: "Arial",
-      size: 10,
-      bold: true,
-      color: { argb: "FFFFFFFF" },
-    };
+/**
+ * Style the header row
+ */
+const styleHeaderRow = (row) => {
+  row.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FF34495E" },
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E40AF' }
     };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
     cell.border = {
-      top: { style: "thin", color: { argb: "FF34495E" } },
-      bottom: { style: "thin", color: { argb: "FF34495E" } },
-      left: { style: "thin", color: { argb: "FF34495E" } },
-      right: { style: "thin", color: { argb: "FF34495E" } },
+      top: { style: 'thin', color: { argb: 'FF1E40AF' } },
+      left: { style: 'thin', color: { argb: 'FF1E40AF' } },
+      bottom: { style: 'thin', color: { argb: 'FF1E40AF' } },
+      right: { style: 'thin', color: { argb: 'FF1E40AF' } }
     };
   });
-  headerRow.height = 25;
+  row.height = 22;
+};
 
-  // Add data rows
-  rows.forEach((rowData, rowIndex) => {
-    const row = worksheet.getRow(dataStartRow + 1 + rowIndex);
-    rowData.forEach((value, colIndex) => {
-      const cell = row.getCell(colIndex + 1);
-      cell.value = value;
-      cell.font = { name: "Arial", size: 9 };
-      cell.alignment = { vertical: "middle", wrapText: true };
-      cell.border = {
-        top: { style: "thin", color: { argb: "FFBDC3C7" } },
-        bottom: { style: "thin", color: { argb: "FFBDC3C7" } },
-        left: { style: "thin", color: { argb: "FFBDC3C7" } },
-        right: { style: "thin", color: { argb: "FFBDC3C7" } },
+/**
+ * Style data rows
+ */
+const styleDataRow = (row, isAlternate) => {
+  row.eachCell((cell) => {
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+    };
+    
+    if (isAlternate) {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF8FAFC' }
       };
+    }
+  });
+};
 
-      // Alternate row colors
-      if (rowIndex % 2 === 1) {
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFF8F9FA" },
-        };
-      }
+/**
+ * Add totals row
+ */
+const addTotalsRow = (worksheet, totals) => {
+  worksheet.addRow([]);
+  
+  Object.entries(totals).forEach(([label, value]) => {
+    const row = worksheet.addRow([label, value]);
+    row.getCell(1).font = { bold: true };
+    row.getCell(2).font = { bold: true, color: { argb: 'FF1E40AF' } };
+  });
+};
 
-      // Right-align currency columns
-      if (typeof value === "string" && value.startsWith("KSh")) {
-        cell.alignment = { horizontal: "right", vertical: "middle" };
+/**
+ * Add footer
+ */
+const addFooter = (worksheet, companyName, columnCount) => {
+  const lastCol = String.fromCharCode(64 + Math.min(columnCount, 26));
+  
+  worksheet.addRow([]);
+  
+  const footerRow = worksheet.addRow([`${companyName} - Confidential Report`]);
+  footerRow.font = { italic: true, color: { argb: 'FF9CA3AF' }, size: 9 };
+  footerRow.alignment = { horizontal: 'center' };
+  worksheet.mergeCells(`A${footerRow.number}:${lastCol}${footerRow.number}`);
+};
+
+/**
+ * Main Excel export function
+ */
+export const exportToExcel = async (config) => {
+  const {
+    reportType,
+    data,
+    filters = {},
+    companyInfo: providedCompanyInfo,
+    user,
+    title = 'Report'
+  } = config;
+
+  if (!data || data.length === 0) {
+    alert('No data available to export. Please generate a report first.');
+    return false;
+  }
+
+  try {
+    console.log('📊 Starting Excel export...');
+    console.log('📋 Provided company info:', providedCompanyInfo);
+    
+    // Fetch fresh company info if provided is incomplete
+    let companyInfo;
+    if (providedCompanyInfo && isValidCompanyInfo(providedCompanyInfo) && providedCompanyInfo.logo) {
+      console.log('✅ Using provided company info (complete)');
+      companyInfo = providedCompanyInfo;
+    } else {
+      console.log('🔄 Fetching company info (provided was incomplete or missing)');
+      companyInfo = await fetchCompanyInfo();
+    }
+    
+    console.log('📋 Final company info for Excel export:', companyInfo);
+
+    // Create workbook
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = companyInfo.name || DEFAULT_COMPANY.name;
+    workbook.lastModifiedBy = user ? `${user.first_name} ${user.last_name}` : 'System';
+    workbook.created = new Date();
+    workbook.modified = new Date();
+    
+    // Create worksheet
+    const sheetName = title.substring(0, 31).replace(/[\\/*?:\[\]]/g, '');
+    const worksheet = workbook.addWorksheet(sheetName);
+    
+    // Prepare data
+    const { headers, rows, columnFormats } = prepareExcelData(reportType, data);
+    const columnCount = headers.length;
+    
+    // Add company header with logo
+    let currentRow = await addCompanyHeader(workbook, worksheet, companyInfo, columnCount);
+    
+    // Add report metadata
+    currentRow = addReportMetadata(worksheet, title, user, filters, data.length, columnCount, currentRow);
+    
+    // Add table headers
+    const headerRow = worksheet.addRow(headers);
+    styleHeaderRow(headerRow);
+    
+    // Add data rows
+    rows.forEach((rowData, index) => {
+      const row = worksheet.addRow(rowData);
+      styleDataRow(row, index % 2 === 1);
+      
+      // Apply column-specific formatting
+      if (columnFormats) {
+        Object.entries(columnFormats).forEach(([colIndex, format]) => {
+          const cell = row.getCell(parseInt(colIndex) + 1);
+          if (format.numFmt) cell.numFmt = format.numFmt;
+          if (format.alignment) cell.alignment = format.alignment;
+        });
       }
     });
-    row.height = 20;
-  });
+    
+    // Calculate and add totals
+    const totals = calculateTotals(reportType, data);
+    if (totals) {
+      addTotalsRow(worksheet, totals);
+    }
+    
+    // Add footer
+    addFooter(worksheet, companyInfo.name || DEFAULT_COMPANY.name, columnCount);
+    
+    // Auto-fit columns
+    worksheet.columns.forEach((column, index) => {
+      let maxLength = headers[index]?.length || 10;
+      
+      rows.forEach(row => {
+        const cellValue = row[index];
+        const cellLength = cellValue ? cellValue.toString().length : 0;
+        if (cellLength > maxLength) {
+          maxLength = cellLength;
+        }
+      });
+      
+      column.width = Math.min(Math.max(maxLength + 2, 10), 40);
+    });
+    
+    // Generate and download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    });
+    
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `${reportType}_report_${timestamp}.xlsx`;
+    
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    
+    console.log('✅ Excel exported successfully:', filename);
+    return true;
 
-  // Set column widths
-  columnWidths.forEach((width, index) => {
-    worksheet.getColumn(index + 1).width = width;
-  });
-
-  // ========================================
-  // SUMMARY SECTION
-  // ========================================
-  const summaryStartRow = dataStartRow + rows.length + 3;
-
-  if (reportType === "unpaid_tenants" || reportType === "paid_tenants") {
-    addExcelTenantSummary(worksheet, data, summaryStartRow, reportType);
-  } else if (reportType === "payments") {
-    addExcelPaymentSummary(worksheet, data, summaryStartRow);
+  } catch (error) {
+    console.error('❌ Excel export failed:', error);
+    alert(`Export failed: ${error.message}`);
+    return false;
   }
-
-  // Generate and download file
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
-  const url = window.URL.createObjectURL(blob);
-
-  const link = document.createElement("a");
-  const fileName = `${reportType}_report_${new Date().toISOString().split("T")[0]}.xlsx`;
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
-
-  console.log(`✅ Excel exported successfully: ${fileName}`);
-  return { success: true, fileName };
-}
+};
 
 /**
- * Fallback CSV export
+ * Prepare data for Excel based on report type
  */
-async function exportToCSV(config) {
-  const { reportType, data, title } = config;
-
-  const { headers, rows } = getExcelTableConfig(reportType, data);
-
-  // Build CSV content
-  let csvContent = "";
-
-  // Add headers
-  csvContent += headers.map((h) => `"${h}"`).join(",") + "\n";
-
-  // Add rows
-  rows.forEach((row) => {
-    csvContent +=
-      row
-        .map((cell) => {
-          const value = cell === null || cell === undefined ? "" : String(cell);
-          // Escape quotes and wrap in quotes
-          return `"${value.replace(/"/g, '""')}"`;
-        })
-        .join(",") + "\n";
-  });
-
-  // Download CSV
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = window.URL.createObjectURL(blob);
-
-  const link = document.createElement("a");
-  const fileName = `${reportType}_report_${new Date().toISOString().split("T")[0]}.csv`;
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
-
-  console.log(`✅ CSV exported successfully: ${fileName}`);
-  return { success: true, fileName };
-}
-
-/**
- * Get Excel table configuration based on report type
- */
-function getExcelTableConfig(reportType, data) {
+const prepareExcelData = (reportType, data) => {
   let headers = [];
   let rows = [];
-  let columnWidths = [];
+  let columnFormats = {};
 
   switch (reportType) {
-    case "unpaid_tenants":
-    case "paid_tenants":
-      // Check if data uses object keys (from handleExportTenantStatus)
-      if (data[0] && data[0]["Tenant Name"] !== undefined) {
-        headers = [
-          "Tenant Name",
-          "Property",
-          "Unit",
-          "Phone",
-          "Monthly Rent",
-          "Rent Paid",
-          "Rent Due",
-          "Water Bill",
-          "Arrears",
-          "Total Due",
-          "Advance",
-          "Status",
+    case 'tenants':
+      headers = ['#', 'First Name', 'Last Name', 'Phone', 'National ID', 'Property', 'Unit', 'Rent (KSh)', 'Status'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.first_name || '',
+        item.last_name || '',
+        formatPhone(item.phone_number),
+        item.national_id || 'N/A',
+        item.property_name || 'N/A',
+        item.unit_code || 'N/A',
+        parseFloat(item.rent_amount || item.monthly_rent) || 0,
+        item.is_active ? 'Active' : 'Inactive'
+      ]);
+      columnFormats = {
+        7: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
+      break;
+
+    // NEW: Unpaid Tenants Report (for PaymentManagement component)
+    case 'unpaid_tenants':
+      headers = ['#', 'First Name', 'Last Name', 'Phone', 'Property', 'Unit', 'Rent Due', 'Water Due', 'Arrears', 'Total Due', 'Last Payment Date'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.first_name || '',
+        item.last_name || '',
+        formatPhone(item.phone_number),
+        item.property_name || 'N/A',
+        item.unit_code || 'N/A',
+        parseFloat(item.rent_due) || 0,
+        parseFloat(item.water_due) || 0,
+        parseFloat(item.arrears) || 0,
+        parseFloat(item.total_due) || 0,
+        formatDate(item.last_payment_date)
+      ]);
+      columnFormats = {
+        6: { numFmt: '#,##0', alignment: { horizontal: 'right' } },
+        7: { numFmt: '#,##0', alignment: { horizontal: 'right' } },
+        8: { numFmt: '#,##0', alignment: { horizontal: 'right' } },
+        9: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
+      break;
+
+    // NEW: Paid Tenants Report (for PaymentManagement component)
+    case 'paid_tenants':
+      headers = ['#', 'First Name', 'Last Name', 'Phone', 'Property', 'Unit', 'Amount Paid', 'Advance Payment', 'Payment Date', 'Receipt No.', 'Status'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.first_name || '',
+        item.last_name || '',
+        formatPhone(item.phone_number),
+        item.property_name || 'N/A',
+        item.unit_code || 'N/A',
+        parseFloat(item.amount_paid || item.rent_paid) || 0,
+        parseFloat(item.advance_payment) || 0,
+        formatDate(item.last_payment_date || item.payment_date),
+        item.mpesa_receipt_number || 'N/A',
+        'Paid'
+      ]);
+      columnFormats = {
+        6: { numFmt: '#,##0', alignment: { horizontal: 'right' } },
+        7: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
+      break;
+
+    case 'payments':
+      headers = ['#', 'Receipt No.', 'Tenant Name', 'Phone', 'Amount (KSh)', 'Month', 'M-Pesa Code', 'Status', 'Date'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.id?.substring(0, 8) || 'N/A',
+        item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
+        formatPhone(item.phone_number),
+        parseFloat(item.amount) || 0,
+        formatMonth(item.payment_month),
+        item.mpesa_receipt_number || 'N/A',
+        capitalizeFirst(item.status) || 'Pending',
+        formatDate(item.created_at || item.payment_date)
+      ]);
+      columnFormats = {
+        4: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
+      break;
+
+    case 'properties':
+      headers = ['#', 'Code', 'Property Name', 'Address', 'County', 'Town', 'Total Units', 'Occupied', 'Available', 'Occupancy %'];
+      rows = data.map((item, index) => {
+        const total = item.total_units || item.unit_count || 0;
+        const occupied = item.occupied_units || 0;
+        const available = item.available_units || item.available_units_count || 0;
+        const occupancyRate = total > 0 ? (occupied / total) : 0;
+        
+        return [
+          index + 1,
+          item.property_code || 'N/A',
+          item.name || 'N/A',
+          item.address || 'N/A',
+          item.county || 'N/A',
+          item.town || 'N/A',
+          total,
+          occupied,
+          available,
+          occupancyRate
         ];
-        rows = data.map((row) => [
-          row["Tenant Name"] || "N/A",
-          row["Property"] || "N/A",
-          row["Unit"] || "N/A",
-          row["Phone"] || "N/A",
-          formatCurrency(row["Monthly Rent"]),
-          formatCurrency(row["Rent Paid"]),
-          formatCurrency(row["Rent Due"]),
-          formatCurrency(row["Water Bill"]),
-          formatCurrency(row["Arrears"]),
-          formatCurrency(row["Total Due"]),
-          formatCurrency(row["Advance"]),
-          row["Status"] || "N/A",
-        ]);
-      } else {
-        // Raw data format
-        headers = [
-          "Tenant Name",
-          "Property",
-          "Unit",
-          "Phone",
-          "Monthly Rent",
-          "Rent Paid",
-          "Rent Due",
-          "Water Bill",
-          "Arrears",
-          "Total Due",
-          "Advance",
-          "Status",
-        ];
-        rows = data.map((row) => [
-          row.tenant_name ||
-            `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
-            "N/A",
-          row.property_name || "N/A",
-          row.unit_code || "N/A",
-          formatPhone(row.phone_number),
-          formatCurrency(row.monthly_rent),
-          formatCurrency(row.rent_paid),
-          formatCurrency(row.rent_due),
-          formatCurrency(row.water_bill),
-          formatCurrency(row.arrears),
-          formatCurrency(row.total_due),
-          formatCurrency(row.advance_amount),
-          row.total_due <= 0 ? "Paid" : "Unpaid",
-        ]);
-      }
-      columnWidths = [25, 20, 15, 15, 15, 15, 15, 15, 15, 15, 15, 12];
+      });
+      columnFormats = {
+        9: { numFmt: '0%', alignment: { horizontal: 'center' } }
+      };
       break;
 
-    case "payments":
-      headers = [
-        "Tenant",
-        "Property",
-        "Unit",
-        "Amount",
-        "Receipt",
-        "Payment Month",
-        "Date",
-        "Status",
-      ];
-      rows = data.map((row) => [
-        row.tenant_name ||
-          `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
-          "N/A",
-        row.property_name || "N/A",
-        row.unit_code || "N/A",
-        formatCurrency(row.amount),
-        row.mpesa_receipt_number || row.mpesa_transaction_id || "N/A",
-        row.payment_month || "N/A",
-        formatDate(row.payment_date || row.created_at),
-        row.status || "N/A",
+    case 'complaints':
+      headers = ['#', 'Title', 'Description', 'Property', 'Unit', 'Tenant', 'Priority', 'Status', 'Date Raised', 'Date Resolved'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.title || 'N/A',
+        truncateText(item.description, 50),
+        item.property_name || 'N/A',
+        item.unit_code || 'N/A',
+        item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
+        capitalizeFirst(item.priority) || 'Medium',
+        capitalizeFirst(item.status) || 'Open',
+        formatDate(item.created_at || item.raised_at),
+        formatDate(item.resolved_at)
       ]);
-      columnWidths = [25, 25, 15, 18, 20, 15, 15, 15];
       break;
 
-    case "tenants":
-      headers = [
-        "Name",
-        "Phone",
-        "Email",
-        "Property",
-        "Unit",
-        "Monthly Rent",
-        "Lease Start",
-        "Status",
-      ];
-      rows = data.map((row) => [
-        row.tenant_name ||
-          `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
-          "N/A",
-        formatPhone(row.phone_number),
-        row.email || "N/A",
-        row.property_name || "N/A",
-        row.unit_code || "N/A",
-        formatCurrency(row.monthly_rent || row.rent_amount),
-        formatDate(row.lease_start_date || row.allocation_date),
-        row.is_active ? "Active" : row.status || "Inactive",
+    case 'water':
+      headers = ['#', 'Tenant Name', 'Phone', 'Property', 'Unit', 'Amount (KSh)', 'Bill Month', 'Status', 'Notes'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
+        formatPhone(item.phone_number),
+        item.property_name || 'N/A',
+        item.unit_code || 'N/A',
+        parseFloat(item.amount) || 0,
+        formatMonth(item.bill_month),
+        capitalizeFirst(item.status) || 'Pending',
+        item.notes || ''
       ]);
-      columnWidths = [25, 15, 25, 25, 15, 18, 15, 12];
+      columnFormats = {
+        5: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
       break;
 
-    case "sms":
-      headers = [
-        "Recipient",
-        "Message",
-        "Type",
-        "Channel",
-        "Status",
-        "Sent By",
-        "Date",
-      ];
-      rows = data.map((row) => [
-        formatPhone(row.recipient_phone),
-        row.message || row.template_name || "N/A",
-        row.message_type || "General",
-        row.channel || "SMS",
-        row.status || "Pending",
-        row.sent_by_name || "System",
-        formatDate(row.created_at),
+    case 'sms':
+      headers = ['#', 'Recipient Phone', 'Message', 'Type', 'Status', 'Attempts', 'Error', 'Date'];
+      rows = data.map((item, index) => [
+        index + 1,
+        formatPhone(item.recipient_phone || item.phone_number),
+        truncateText(item.message, 60),
+        item.message_type || 'General',
+        capitalizeFirst(item.status) || 'Pending',
+        item.attempts || 0,
+        item.error_message || '',
+        formatDate(item.created_at)
       ]);
-      columnWidths = [15, 50, 18, 12, 12, 20, 15];
       break;
 
-    case "water":
-      headers = [
-        "Tenant",
-        "Property",
-        "Unit",
-        "Amount",
-        "Bill Month",
-        "Status",
-        "Created",
-      ];
-      rows = data.map((row) => [
-        row.tenant_name ||
-          `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
-          "N/A",
-        row.property_name || "N/A",
-        row.unit_code || "N/A",
-        formatCurrency(row.amount),
-        row.bill_month || "N/A",
-        row.status || "Pending",
-        formatDate(row.created_at),
+    case 'revenue':
+      headers = ['#', 'Month', 'Total Revenue (KSh)', 'Payment Count', 'Properties', 'Tenants', 'Average Payment (KSh)'];
+      rows = data.map((item, index) => [
+        index + 1,
+        formatMonth(item.month),
+        parseFloat(item.total_revenue) || 0,
+        item.payment_count || 0,
+        item.property_count || 0,
+        item.tenant_count || 0,
+        parseFloat(item.average_payment) || 0
       ]);
-      columnWidths = [25, 25, 15, 18, 15, 15, 15];
+      columnFormats = {
+        2: { numFmt: '#,##0', alignment: { horizontal: 'right' } },
+        6: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
       break;
 
-    case "complaints":
-      headers = [
-        "Title",
-        "Description",
-        "Property",
-        "Unit",
-        "Priority",
-        "Status",
-        "Raised Date",
-      ];
-      rows = data.map((row) => [
-        row.title || "N/A",
-        (row.description || "").substring(0, 100) || "N/A",
-        row.property_name || "N/A",
-        row.unit_code || "N/A",
-        row.priority || "Medium",
-        row.status || "Open",
-        formatDate(row.raised_at || row.created_at),
+    case 'expenses':
+      headers = ['#', 'Date', 'Category', 'Subcategory', 'Description', 'Property', 'Unit', 'Amount (KSh)', 'Payment Method', 'Vendor', 'Receipt No.', 'Status', 'Recorded By', 'Notes'];
+      rows = data.map((item, index) => [
+        index + 1,
+        formatDate(item.expense_date),
+        item.category || 'N/A',
+        item.subcategory || '',
+        item.description || 'N/A',
+        item.property_name || 'General',
+        item.unit_code || '',
+        parseFloat(item.amount) || 0,
+        capitalizeFirst(item.payment_method) || 'Cash',
+        item.vendor_name || '',
+        item.receipt_number || '',
+        capitalizeFirst(item.status) || 'Pending',
+        item.recorded_by_name || 'N/A',
+        item.notes || ''
       ]);
-      columnWidths = [30, 50, 25, 15, 15, 15, 15];
-      break;
-
-    case "properties":
-      headers = [
-        "Code",
-        "Name",
-        "Address",
-        "County",
-        "Town",
-        "Total Units",
-        "Occupied",
-        "Available",
-      ];
-      rows = data.map((row) => [
-        row.property_code || "N/A",
-        row.name || "N/A",
-        row.address || "N/A",
-        row.county || "N/A",
-        row.town || "N/A",
-        row.total_units || row.unit_count || 0,
-        row.occupied_units || 0,
-        row.available_units || 0,
-      ]);
-      columnWidths = [12, 25, 30, 15, 15, 12, 12, 12];
-      break;
-
-    case "revenue":
-      headers = [
-        "Month",
-        "Total Revenue",
-        "Payment Count",
-        "Properties",
-        "Tenants",
-        "Avg Payment",
-      ];
-      rows = data.map((row) => [
-        row.month || "N/A",
-        formatCurrency(row.total_revenue),
-        row.payment_count || 0,
-        row.property_count || 0,
-        row.tenant_count || 0,
-        formatCurrency(row.average_payment),
-      ]);
-      columnWidths = [15, 20, 15, 15, 15, 20];
+      columnFormats = {
+        7: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
       break;
 
     default:
-      // Generic table for unknown report types
-      if (data.length > 0) {
-        const firstRow = data[0];
-        headers = Object.keys(firstRow);
-        rows = data.map((row) =>
-          headers.map((key) => {
-            const value = row[key];
-            if (value === null || value === undefined) return "N/A";
-            if (typeof value === "number") return value.toLocaleString();
-            return String(value);
-          }),
-        );
-        columnWidths = headers.map(() => 20);
-      }
-      break;
+      headers = ['#', 'Name', 'Description', 'Date', 'Amount (KSh)', 'Status'];
+      rows = data.map((item, index) => [
+        index + 1,
+        item.name || item.first_name || item.tenant_name || item.title || 'N/A',
+        truncateText(item.description || item.notes || '', 40),
+        formatDate(item.created_at),
+        parseFloat(item.amount) || 0,
+        capitalizeFirst(item.status) || 'Active'
+      ]);
+      columnFormats = {
+        4: { numFmt: '#,##0', alignment: { horizontal: 'right' } }
+      };
   }
 
-  return { headers, rows, columnWidths };
-}
+  return { headers, rows, columnFormats };
+};
 
 /**
- * Add tenant summary to Excel
+ * Calculate totals for the report
  */
-function addExcelTenantSummary(worksheet, data, startRow, reportType) {
-  let totalExpected = 0;
-  let totalPaid = 0;
-  let totalOutstanding = 0;
+const calculateTotals = (reportType, data) => {
+  switch (reportType) {
+    // NEW: Unpaid Tenants Totals
+    case 'unpaid_tenants':
+      const totalUnpaidRent = data.reduce((sum, item) => sum + (parseFloat(item.rent_due) || 0), 0);
+      const totalUnpaidWater = data.reduce((sum, item) => sum + (parseFloat(item.water_due) || 0), 0);
+      const totalArrears = data.reduce((sum, item) => sum + (parseFloat(item.arrears) || 0), 0);
+      const totalDue = data.reduce((sum, item) => sum + (parseFloat(item.total_due) || 0), 0);
+      return {
+        'Total Rent Due': `KSh ${totalUnpaidRent.toLocaleString()}`,
+        'Total Water Due': `KSh ${totalUnpaidWater.toLocaleString()}`,
+        'Total Arrears': `KSh ${totalArrears.toLocaleString()}`,
+        'Grand Total Due': `KSh ${totalDue.toLocaleString()}`,
+        'Unpaid Tenants': `${data.length}`
+      };
+      
+    // NEW: Paid Tenants Totals  
+    case 'paid_tenants':
+      const totalPaid = data.reduce((sum, item) => sum + (parseFloat(item.amount_paid || item.rent_paid) || 0), 0);
+      const totalAdvance = data.reduce((sum, item) => sum + (parseFloat(item.advance_payment) || 0), 0);
+      const tenantsWithAdvance = data.filter(item => (parseFloat(item.advance_payment) || 0) > 0).length;
+      return {
+        'Total Paid': `KSh ${totalPaid.toLocaleString()}`,
+        'Total Advance': `KSh ${totalAdvance.toLocaleString()}`,
+        'Paid Tenants': `${data.length}`,
+        'With Advance': `${tenantsWithAdvance} tenants`
+      };
+      
+    case 'payments':
+      const totalPayments = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const completedCount = data.filter(item => item.status === 'completed').length;
+      return {
+        'Total Amount': `KSh ${totalPayments.toLocaleString()}`,
+        'Completed Payments': `${completedCount} of ${data.length}`
+      };
+      
+    case 'revenue':
+      const totalRevenue = data.reduce((sum, item) => sum + (parseFloat(item.total_revenue) || 0), 0);
+      const totalPaymentCount = data.reduce((sum, item) => sum + (item.payment_count || 0), 0);
+      return {
+        'Total Revenue': `KSh ${totalRevenue.toLocaleString()}`,
+        'Total Payments': totalPaymentCount.toLocaleString()
+      };
+      
+    case 'tenants':
+      const totalRent = data.reduce((sum, item) => sum + (parseFloat(item.rent_amount || item.monthly_rent) || 0), 0);
+      const activeCount = data.filter(item => item.is_active).length;
+      return {
+        'Total Monthly Rent': `KSh ${totalRent.toLocaleString()}`,
+        'Active Tenants': `${activeCount} of ${data.length}`
+      };
+      
+    case 'water':
+      const totalWater = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      return {
+        'Total Water Bills': `KSh ${totalWater.toLocaleString()}`
+      };
+      
+    case 'properties':
+      const totalUnits = data.reduce((sum, item) => sum + (item.total_units || item.unit_count || 0), 0);
+      const occupiedUnits = data.reduce((sum, item) => sum + (item.occupied_units || 0), 0);
+      const overallOccupancy = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
+      return {
+        'Total Units': totalUnits.toLocaleString(),
+        'Occupied Units': occupiedUnits.toLocaleString(),
+        'Overall Occupancy': `${overallOccupancy}%`
+      };
 
-  data.forEach((row) => {
-    const monthlyRent = parseCurrencyValue(
-      row["Monthly Rent"] || row.monthly_rent || 0,
-    );
-    const rentPaid = parseCurrencyValue(row["Rent Paid"] || row.rent_paid || 0);
-    const totalDue = parseCurrencyValue(row["Total Due"] || row.total_due || 0);
-
-    totalExpected += monthlyRent;
-    totalPaid += rentPaid;
-    totalOutstanding += totalDue;
-  });
-
-  // Summary header
-  const headerCell = worksheet.getCell(`A${startRow}`);
-  headerCell.value = "SUMMARY";
-  headerCell.font = {
-    name: "Arial",
-    size: 11,
-    bold: true,
-    color: { argb: "FF2C3E50" },
-  };
-
-  // Summary data
-  const summaryData = [
-    ["Total Tenants:", data.length],
-    ["Total Expected:", formatCurrency(totalExpected)],
-    ["Total Paid:", formatCurrency(totalPaid)],
-    ["Total Outstanding:", formatCurrency(totalOutstanding)],
-  ];
-
-  summaryData.forEach((row, index) => {
-    const labelCell = worksheet.getCell(`A${startRow + 1 + index}`);
-    labelCell.value = row[0];
-    labelCell.font = { name: "Arial", size: 9, bold: true };
-
-    const valueCell = worksheet.getCell(`B${startRow + 1 + index}`);
-    valueCell.value = row[1];
-    valueCell.font = { name: "Arial", size: 9 };
-  });
-}
-
-/**
- * Add payment summary to Excel
- */
-function addExcelPaymentSummary(worksheet, data, startRow) {
-  const totalAmount = data.reduce(
-    (sum, row) => sum + parseFloat(row.amount || 0),
-    0,
-  );
-  const completedCount = data.filter(
-    (row) => row.status === "completed",
-  ).length;
-
-  // Summary header
-  const headerCell = worksheet.getCell(`A${startRow}`);
-  headerCell.value = "SUMMARY";
-  headerCell.font = {
-    name: "Arial",
-    size: 11,
-    bold: true,
-    color: { argb: "FF2C3E50" },
-  };
-
-  // Summary data
-  const summaryData = [
-    ["Total Transactions:", data.length],
-    ["Completed:", completedCount],
-    ["Total Amount:", formatCurrency(totalAmount)],
-  ];
-
-  summaryData.forEach((row, index) => {
-    const labelCell = worksheet.getCell(`A${startRow + 1 + index}`);
-    labelCell.value = row[0];
-    labelCell.font = { name: "Arial", size: 9, bold: true };
-
-    const valueCell = worksheet.getCell(`B${startRow + 1 + index}`);
-    valueCell.value = row[1];
-    valueCell.font = { name: "Arial", size: 9 };
-  });
-}
-
-// ========================================
-// HELPER FUNCTIONS
-// ========================================
-
-/**
- * Parse currency string or number to numeric value
- */
-function parseCurrencyValue(value) {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    // Remove KSh, commas, spaces and parse
-    const cleaned = value.replace(/[KSh,\s]/g, "").trim();
-    return parseFloat(cleaned) || 0;
+    case 'expenses':
+      const totalExpenses = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const approvedExpenses = data.filter(item => item.status === 'approved');
+      const approvedTotal = approvedExpenses.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const pendingCount = data.filter(item => item.status === 'pending').length;
+      const rejectedCount = data.filter(item => item.status === 'rejected').length;
+      return {
+        'Total Expenses': `KSh ${totalExpenses.toLocaleString()}`,
+        'Approved Total': `KSh ${approvedTotal.toLocaleString()}`,
+        'Pending Approval': `${pendingCount} expense(s)`,
+        'Rejected': `${rejectedCount} expense(s)`
+      };
+      
+    default:
+      return null;
   }
-  return 0;
-}
+};
 
-function formatCurrency(amount) {
-  // If already formatted as string with KSh, return as-is
-  if (typeof amount === "string" && amount.includes("KSh")) {
-    return amount;
-  }
-  // If it's a formatted number string like "15,000", extract the number
-  if (typeof amount === "string" && amount.includes(",")) {
-    const cleaned = amount.replace(/[^0-9.-]/g, "");
-    const num = parseFloat(cleaned) || 0;
-    return `KSh ${num.toLocaleString("en-KE")}`;
-  }
-  // Regular number parsing
-  const num = parseFloat(amount) || 0;
-  return `KSh ${num.toLocaleString("en-KE")}`;
-}
+/* ---------------- Helper Functions ---------------- */
 
-function formatDate(dateString) {
-  if (!dateString) return "N/A";
+const formatPhone = (phone) => {
+  if (!phone) return 'N/A';
+  if (phone.startsWith('254')) {
+    return '0' + phone.substring(3);
+  }
+  return phone;
+};
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return 'N/A';
   try {
-    return new Date(dateString).toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
     });
   } catch {
-    return "N/A";
+    return 'N/A';
   }
-}
+};
 
-function formatPhone(phone) {
-  if (!phone) return "N/A";
-  return phone.toString().replace(/^254/, "0");
-}
+const formatMonth = (monthStr) => {
+  if (!monthStr) return 'N/A';
+  try {
+    if (monthStr.match(/^\d{4}-\d{2}$/)) {
+      const [year, month] = monthStr.split('-');
+      const date = new Date(year, parseInt(month) - 1);
+      return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+    }
+    const date = new Date(monthStr);
+    return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  } catch {
+    return monthStr;
+  }
+};
 
-export default exportToExcel;
+const truncateText = (text, maxLength) => {
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength - 3) + '...';
+};
+
+const capitalizeFirst = (str) => {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+};
+
+/**
+ * Clear cached company info
+ */
+export const clearCompanyInfoCache = () => {
+  cachedCompanyInfo = null;
+  cacheTimestamp = null;
+  cachedLogoBase64 = null;
+  cachedLogoUrl = null;
+  console.log('🗑️ Excel company info cache cleared');
+};
