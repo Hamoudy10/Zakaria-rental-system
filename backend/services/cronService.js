@@ -3,7 +3,7 @@ const pool = require('../config/database');
 const BillingService = require('./billingService');
 const SMSService = require('./smsService');
 const NotificationService = require('./notificationService');
-const MessagingService = require("./messagingservice");
+const MessagingService = require("./messagingService");
 const WhatsAppService = require("./whatsappService");
 
 class CronService {

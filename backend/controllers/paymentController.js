@@ -4,7 +4,7 @@ const moment = require('moment');
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
 const SMSService = require("../services/smsService");
-const MessagingService = require("../services/messagingservice");
+const MessagingService = require("../services/messagingService");
 
 // ==================== UTILITY HELPERS ====================
 
