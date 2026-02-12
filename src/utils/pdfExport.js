@@ -1,875 +1,616 @@
 // src/utils/pdfExport.js
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import { API } from '../services/api';
-
-// Default company branding (fallback)
-const DEFAULT_COMPANY = {
-  name: 'Rental Management System',
-  email: '',
-  phone: '',
-  address: '',
-  logo: ''
-};
-
-// Cache for company info to avoid repeated API calls
-let cachedCompanyInfo = null;
-let cacheTimestamp = null;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
-// Cache for logo base64
-let cachedLogoBase64 = null;
-let cachedLogoUrl = null;
+// COMPLETE PDF EXPORT UTILITY - Handles all report types including tenant payment status
 
 /**
- * Validate company info has all required fields
- */
-const isValidCompanyInfo = (info) => {
-  if (!info || typeof info !== 'object') return false;
-  return info.name && (info.email || info.phone || info.address || info.logo);
-};
-
-/**
- * Fetch company info from API with caching
- */
-const fetchCompanyInfo = async () => {
-  const now = Date.now();
-  
-  if (cachedCompanyInfo && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION)) {
-    if (isValidCompanyInfo(cachedCompanyInfo)) {
-      console.log('📦 Using cached company info:', cachedCompanyInfo);
-      return cachedCompanyInfo;
-    } else {
-      console.log('⚠️ Cached data is incomplete, refetching...');
-    }
-  }
-  
-  try {
-    console.log('🔄 Fetching company info from API...');
-    const response = await API.settings.getCompanyInfo();
-    console.log('📥 API Response:', response.data);
-    
-    if (response.data?.success && response.data?.data) {
-      const companyData = response.data.data;
-      
-      cachedCompanyInfo = {
-        name: companyData.name || DEFAULT_COMPANY.name,
-        email: companyData.email || '',
-        phone: companyData.phone || '',
-        address: companyData.address || '',
-        logo: companyData.logo || ''
-      };
-      
-      cacheTimestamp = now;
-      console.log('✅ Company info fetched and cached:', cachedCompanyInfo);
-      return cachedCompanyInfo;
-    } else {
-      console.warn('⚠️ API returned unexpected structure:', response.data);
-    }
-  } catch (error) {
-    console.error('❌ Could not fetch company info:', error.message);
-  }
-  
-  console.log('⚠️ Using default company info');
-  return DEFAULT_COMPANY;
-};
-
-/**
- * Create a circular image from a base64 image
- */
-const createCircularImage = (base64Image) => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    
-    img.onload = () => {
-      try {
-        const size = Math.min(img.width, img.height);
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        
-        const ctx = canvas.getContext('2d');
-        
-        // Create circular clipping path
-        ctx.beginPath();
-        ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
-        ctx.closePath();
-        ctx.clip();
-        
-        // Draw image centered in the circle
-        const offsetX = (img.width - size) / 2;
-        const offsetY = (img.height - size) / 2;
-        ctx.drawImage(img, offsetX, offsetY, size, size, 0, 0, size, size);
-        
-        // Add subtle border
-        ctx.strokeStyle = '#1E40AF';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(size / 2, size / 2, size / 2 - 1, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        const circularDataUrl = canvas.toDataURL('image/png');
-        console.log('✅ Circular logo created');
-        resolve(circularDataUrl);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    
-    img.onerror = () => {
-      reject(new Error('Failed to load image for circular crop'));
-    };
-    
-    img.src = base64Image;
-  });
-};
-
-/**
- * Convert image URL to base64 for PDF embedding
- */
-const getImageAsBase64 = async (imageUrl, makeCircular = true) => {
-  if (!imageUrl) {
-    console.log('⚠️ No logo URL provided');
-    return null;
-  }
-  
-  // Return cached logo if URL matches
-  if (cachedLogoBase64 && cachedLogoUrl === imageUrl) {
-    console.log('✅ Using cached logo base64');
-    return cachedLogoBase64;
-  }
-  
-  console.log('🔄 Loading logo from:', imageUrl);
-  
-  try {
-    // Method 1: Using fetch with CORS
-    const response = await fetch(imageUrl, {
-      mode: 'cors',
-      cache: 'force-cache'
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    const blob = await response.blob();
-    
-    const base64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error('FileReader failed'));
-      reader.readAsDataURL(blob);
-    });
-    
-    // Make the image circular
-    let finalImage = base64;
-    if (makeCircular) {
-      try {
-        finalImage = await createCircularImage(base64);
-      } catch (circleError) {
-        console.warn('Could not create circular image, using original:', circleError);
-      }
-    }
-    
-    cachedLogoBase64 = finalImage;
-    cachedLogoUrl = imageUrl;
-    console.log('✅ Logo loaded successfully via fetch');
-    return finalImage;
-    
-  } catch (fetchError) {
-    console.warn('Fetch method failed:', fetchError.message);
-    
-    // Method 2: Using Image element (fallback)
-    try {
-      return await loadImageViaElement(imageUrl, makeCircular);
-    } catch (imgError) {
-      console.warn('Image element method also failed:', imgError.message);
-      return null;
-    }
-  }
-};
-
-/**
- * Alternative method to load image using Image element
- */
-const loadImageViaElement = (imageUrl, makeCircular = true) => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    
-    img.onload = async () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        
-        let dataUrl = canvas.toDataURL('image/png');
-        
-        // Make circular if requested
-        if (makeCircular) {
-          try {
-            dataUrl = await createCircularImage(dataUrl);
-          } catch (circleError) {
-            console.warn('Could not create circular image:', circleError);
-          }
-        }
-        
-        cachedLogoBase64 = dataUrl;
-        cachedLogoUrl = imageUrl;
-        console.log('✅ Logo loaded successfully via Image element');
-        resolve(dataUrl);
-      } catch (canvasError) {
-        reject(canvasError);
-      }
-    };
-    
-    img.onerror = () => {
-      reject(new Error('Image failed to load'));
-    };
-    
-    img.src = imageUrl + (imageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
-  });
-};
-
-/**
- * Add company header with logo to PDF document
- */
-const addCompanyHeader = async (doc, companyInfo, pageWidth) => {
-  let yPos = 10;
-  const centerX = pageWidth / 2;
-  let logoAdded = false;
-  
-  // Try to add logo
-  if (companyInfo.logo) {
-    try {
-      console.log('🖼️ Attempting to add logo to PDF...');
-      const logoBase64 = await getImageAsBase64(companyInfo.logo, true);
-      
-      if (logoBase64) {
-        // Logo dimensions (circular, so width = height)
-        const logoSize = 28;
-        const logoX = centerX - (logoSize / 2);
-        
-        // Add the circular logo
-        doc.addImage(logoBase64, 'PNG', logoX, yPos, logoSize, logoSize);
-        
-        // Add spacing after logo (increased from 4 to 8)
-        yPos += logoSize + 8;
-        logoAdded = true;
-        console.log('✅ Circular logo added to PDF');
-      }
-    } catch (error) {
-      console.warn('⚠️ Could not add logo to PDF:', error.message);
-    }
-  }
-  
-  // If no logo, add some spacing
-  if (!logoAdded) {
-    yPos += 8;
-  }
-  
-  // Company Name (with extra spacing from logo)
-  doc.setFontSize(18);
-  doc.setTextColor(30, 64, 175); // Blue color
-  doc.setFont('helvetica', 'bold');
-  doc.text(companyInfo.name || DEFAULT_COMPANY.name, centerX, yPos, { align: 'center' });
-  yPos += 8; // Increased spacing after company name
-  
-  // Contact Information
-  doc.setFontSize(9);
-  doc.setTextColor(100, 100, 100);
-  doc.setFont('helvetica', 'normal');
-  
-  // Address line
-  if (companyInfo.address) {
-    doc.text(companyInfo.address, centerX, yPos, { align: 'center' });
-    yPos += 5;
-  }
-  
-  // Phone and Email line
-  const contactParts = [];
-  if (companyInfo.phone) contactParts.push(`Tel: ${companyInfo.phone}`);
-  if (companyInfo.email) contactParts.push(`Email: ${companyInfo.email}`);
-  
-  if (contactParts.length > 0) {
-    doc.text(contactParts.join('  |  '), centerX, yPos, { align: 'center' });
-    yPos += 5;
-  }
-  
-  // Divider line (with more spacing)
-  yPos += 4;
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.5);
-  doc.line(14, yPos, pageWidth - 14, yPos);
-  yPos += 6;
-  
-  return yPos;
-};
-
-/**
- * Add report title and metadata
- */
-const addReportMetadata = (doc, title, user, filters, dataLength, startY) => {
-  let yPos = startY;
-  const pageWidth = doc.internal.pageSize.getWidth();
-  
-  // Report Title
-  doc.setFontSize(14);
-  doc.setTextColor(0, 0, 0);
-  doc.setFont('helvetica', 'bold');
-  doc.text(title, pageWidth / 2, yPos, { align: 'center' });
-  yPos += 10;
-  
-  // Metadata
-  doc.setFontSize(9);
-  doc.setTextColor(80, 80, 80);
-  doc.setFont('helvetica', 'normal');
-  
-  const userName = user?.first_name && user?.last_name 
-    ? `${user.first_name} ${user.last_name}`
-    : 'System User';
-  const userRole = user?.role ? `(${user.role})` : '';
-  
-  // Left side metadata
-  doc.text(`Generated by: ${userName} ${userRole}`, 14, yPos);
-  
-  // Right side - date
-  const dateStr = new Date().toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-  doc.text(`Date: ${dateStr}`, pageWidth - 14, yPos, { align: 'right' });
-  yPos += 5;
-  
-  // Records count
-  doc.text(`Total Records: ${dataLength}`, 14, yPos);
-  
-  // Date range filter if present
-  if (filters?.startDate || filters?.endDate) {
-    const dateRange = `Period: ${filters.startDate || 'Start'} to ${filters.endDate || 'Present'}`;
-    doc.text(dateRange, pageWidth - 14, yPos, { align: 'right' });
-  }
-  yPos += 5;
-  
-  // Search filter if present
-  if (filters?.search) {
-    doc.text(`Search Filter: "${filters.search}"`, 14, yPos);
-    yPos += 5;
-  }
-  
-  // Property filter if present
-  if (filters?.propertyId) {
-    doc.text(`Property Filter Applied`, 14, yPos);
-    yPos += 5;
-  }
-  
-  yPos += 3;
-  
-  return yPos;
-};
-
-/**
- * Add footer to each page
- */
-const addPageFooter = (doc, companyName, pageNumber, totalPages) => {
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  
-  doc.setFontSize(8);
-  doc.setTextColor(150, 150, 150);
-  doc.setFont('helvetica', 'italic');
-  
-  // Company name on left
-  doc.text(`${companyName} - Confidential`, 14, pageHeight - 10);
-  
-  // Page number on right
-  doc.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - 14, pageHeight - 10, { align: 'right' });
-};
-
-/**
- * Main PDF export function
+ * Export data to PDF
+ * @param {Object} config - Export configuration
+ * @param {string} config.reportType - Type of report (payments, tenants, unpaid_tenants, paid_tenants, etc.)
+ * @param {Array} config.data - Data to export
+ * @param {Object} config.filters - Applied filters
+ * @param {Object} config.companyInfo - Company information
+ * @param {Object} config.user - Current user
+ * @param {string} config.title - Report title
  */
 export const exportToPDF = async (config) => {
-  const {
-    reportType,
-    data,
-    filters = {},
-    companyInfo: providedCompanyInfo,
-    user,
-    title = 'Report'
-  } = config;
+  const { reportType, data, filters, companyInfo, user, title } = config;
 
   if (!data || data.length === 0) {
-    alert('No data available to export. Please generate a report first.');
-    return false;
+    throw new Error("No data to export");
   }
 
   try {
-    console.log('📄 Starting PDF export...');
-    console.log('📋 Provided company info:', providedCompanyInfo);
-    
-    // Fetch fresh company info if provided is incomplete
-    let companyInfo;
-    if (providedCompanyInfo && isValidCompanyInfo(providedCompanyInfo) && providedCompanyInfo.logo) {
-      console.log('✅ Using provided company info (complete)');
-      companyInfo = providedCompanyInfo;
-    } else {
-      console.log('🔄 Fetching company info (provided was incomplete or missing)');
-      companyInfo = await fetchCompanyInfo();
-    }
-    
-    console.log('📋 Final company info for export:', companyInfo);
-    
-    const doc = new jsPDF();
+    // Dynamic import jsPDF
+    const jspdfModule = await import("jspdf");
+    const jsPDF = jspdfModule.jsPDF || jspdfModule.default;
+
+    // Dynamic import autoTable
+    const autoTableModule = await import("jspdf-autotable");
+    const autoTable = autoTableModule.default;
+
+    // Create new document
+    const doc = new jsPDF("landscape", "mm", "a4");
     const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
 
-    // Add company header with logo
-    let yPos = await addCompanyHeader(doc, companyInfo, pageWidth);
-    
-    // Add report title and metadata
-    yPos = addReportMetadata(doc, title, user, filters, data.length, yPos);
+    // ========================================
+    // HEADER SECTION
+    // ========================================
+    let yPosition = 15;
 
-    // Prepare table data
-    const { headers, rows, columnStyles } = prepareTableData(reportType, data);
+    // Company logo (if available)
+    if (companyInfo?.logo) {
+      try {
+        doc.addImage(companyInfo.logo, "PNG", 14, 10, 25, 25);
+        yPosition = 40;
+      } catch (e) {
+        console.warn("Could not add company logo:", e);
+      }
+    }
 
-    // Calculate totals for financial reports
-    const totals = calculateTotals(reportType, data);
+    // Company name
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(44, 62, 80);
+    doc.text(
+      companyInfo?.name || "Zakaria Housing Agency",
+      pageWidth / 2,
+      yPosition,
+      { align: "center" },
+    );
+    yPosition += 8;
 
-    // Store company name for footer
-    const companyName = companyInfo.name || DEFAULT_COMPANY.name;
+    // Company contact info
+    if (companyInfo?.address || companyInfo?.phone || companyInfo?.email) {
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 100, 100);
+      const contactInfo = [
+        companyInfo.address,
+        companyInfo.phone,
+        companyInfo.email,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      doc.text(contactInfo, pageWidth / 2, yPosition, { align: "center" });
+      yPosition += 6;
+    }
+
+    // Report title
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(52, 73, 94);
+    doc.text(
+      title || `${reportType.replace(/_/g, " ").toUpperCase()} REPORT`,
+      pageWidth / 2,
+      yPosition + 5,
+      { align: "center" },
+    );
+    yPosition += 12;
+
+    // Divider line
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.5);
+    doc.line(14, yPosition, pageWidth - 14, yPosition);
+    yPosition += 5;
+
+    // Filter info and generation details
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100, 100, 100);
+
+    const generatedDate = new Date().toLocaleString("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    doc.text(`Generated: ${generatedDate}`, 14, yPosition);
+    doc.text(
+      `Generated by: ${user?.first_name || ""} ${user?.last_name || ""} (${user?.role || "User"})`,
+      pageWidth - 14,
+      yPosition,
+      { align: "right" },
+    );
+    yPosition += 5;
+
+    // Filter summary
+    const filterParts = [];
+    if (filters?.month) filterParts.push(`Month: ${filters.month}`);
+    if (filters?.propertyId) filterParts.push(`Property: Filtered`);
+    if (filters?.period)
+      filterParts.push(`Period: ${filters.period.replace("_", " ")}`);
+    if (filters?.startDate && filters?.endDate) {
+      filterParts.push(
+        `Date Range: ${filters.startDate} to ${filters.endDate}`,
+      );
+    }
+
+    if (filterParts.length > 0) {
+      doc.text(`Filters: ${filterParts.join(" | ")}`, 14, yPosition);
+      yPosition += 5;
+    }
+
+    yPosition += 5;
+
+    // ========================================
+    // TABLE DATA BASED ON REPORT TYPE
+    // ========================================
+    const { head, body, columnStyles } = getTableConfig(reportType, data);
 
     // Generate table
     autoTable(doc, {
-      head: [headers],
-      body: rows,
-      startY: yPos,
-      margin: { left: 14, right: 14, bottom: 25 },
-      headStyles: {
-        fillColor: [30, 64, 175],
-        textColor: [255, 255, 255],
-        fontSize: 9,
-        fontStyle: 'bold',
-        halign: 'center',
-        cellPadding: 3
-      },
-      bodyStyles: { 
+      startY: yPosition,
+      head: [head],
+      body: body,
+      theme: "grid",
+      styles: {
         fontSize: 8,
-        cellPadding: 2.5,
-        lineColor: [220, 220, 220],
-        lineWidth: 0.1
+        cellPadding: 3,
+        overflow: "linebreak",
+        halign: "left",
       },
-      alternateRowStyles: { 
-        fillColor: [248, 250, 252] 
+      headStyles: {
+        fillColor: [52, 73, 94],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+        halign: "center",
+      },
+      alternateRowStyles: {
+        fillColor: [248, 249, 250],
       },
       columnStyles: columnStyles,
-      theme: 'striped',
-      showHead: 'everyPage',
+      margin: { left: 14, right: 14 },
       didDrawPage: (data) => {
+        // Footer on each page
         const pageCount = doc.internal.getNumberOfPages();
-        addPageFooter(doc, companyName, data.pageNumber, pageCount);
-      }
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text(
+          `Page ${data.pageNumber} of ${pageCount}`,
+          pageWidth / 2,
+          pageHeight - 10,
+          { align: "center" },
+        );
+        doc.text(
+          companyInfo?.name || "Zakaria Housing Agency",
+          14,
+          pageHeight - 10,
+        );
+      },
     });
 
-    // Add totals row if applicable
-    if (totals) {
-      const finalY = doc.lastAutoTable?.finalY || 200;
-      
-      if (finalY < doc.internal.pageSize.getHeight() - 40) {
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(30, 64, 175);
-        
-        let totalY = finalY + 8;
-        
-        Object.entries(totals).forEach(([label, value]) => {
-          doc.text(`${label}: ${value}`, 14, totalY);
-          totalY += 6;
-        });
-      }
+    // ========================================
+    // SUMMARY SECTION (if applicable)
+    // ========================================
+    const finalY = doc.lastAutoTable.finalY + 10;
+
+    if (reportType === "unpaid_tenants" || reportType === "paid_tenants") {
+      addTenantStatusSummary(doc, data, finalY, reportType);
+    } else if (reportType === "payments") {
+      addPaymentSummary(doc, data, finalY);
     }
 
-    // Generate filename
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `${reportType}_report_${timestamp}.pdf`;
-    
     // Save the PDF
-    doc.save(filename);
-    
-    console.log('✅ PDF exported successfully:', filename);
-    return true;
+    const fileName = `${reportType}_report_${new Date().toISOString().split("T")[0]}.pdf`;
+    doc.save(fileName);
 
+    console.log(`✅ PDF exported successfully: ${fileName}`);
+    return { success: true, fileName };
   } catch (error) {
-    console.error('❌ PDF export failed:', error);
-    alert(`Export failed: ${error.message}`);
-    return false;
+    console.error("❌ PDF export error:", error);
+    throw new Error(`PDF export failed: ${error.message}`);
   }
 };
 
 /**
- * Prepare table data based on report type
+ * Get table configuration based on report type
  */
-const prepareTableData = (reportType, data) => {
-  let headers = [];
-  let rows = [];
+function getTableConfig(reportType, data) {
+  let head = [];
+  let body = [];
   let columnStyles = {};
 
   switch (reportType) {
-    case 'tenants':
-      headers = ['#', 'Tenant Name', 'Phone', 'Property', 'Unit', 'Rent (KSh)', 'Status'];
-      rows = data.map((item, index) => [
-        index + 1,
-        `${item.first_name || ''} ${item.last_name || ''}`.trim() || item.name || 'N/A',
-        formatPhone(item.phone_number),
-        item.property_name || 'N/A',
-        item.unit_code || 'N/A',
-        formatCurrency(item.rent_amount || item.monthly_rent),
-        item.is_active ? 'Active' : 'Inactive'
-      ]);
-      columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        5: { halign: 'right' },
-        6: { halign: 'center' }
-      };
-      break;
-
-    case 'payments':
-      headers = ['#', 'Receipt No.', 'Tenant', 'Amount (KSh)', 'Month', 'Status', 'Date'];
-      rows = data.map((item, index) => [
-        index + 1,
-        item.mpesa_receipt_number || item.id?.substring(0, 8) || 'N/A',
-        item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
-        formatCurrency(item.amount),
-        formatMonth(item.payment_month),
-        item.status || 'Pending',
-        formatDate(item.created_at)
-      ]);
-      columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        3: { halign: 'right' },
-        5: { halign: 'center' },
-        6: { halign: 'center' }
-      };
-      break;
-
-    case 'properties':
-      headers = ['#', 'Code', 'Property Name', 'Address', 'Total Units', 'Occupied', 'Available', 'Occupancy'];
-      rows = data.map((item, index) => {
-        const total = item.total_units || item.unit_count || 0;
-        const occupied = item.occupied_units || 0;
-        const available = item.available_units || item.available_units_count || 0;
-        const occupancyRate = total > 0 ? Math.round((occupied / total) * 100) : 0;
-        
-        return [
-          index + 1,
-          item.property_code || 'N/A',
-          item.name || 'N/A',
-          item.address || 'N/A',
-          total,
-          occupied,
-          available,
-          `${occupancyRate}%`
+    case "unpaid_tenants":
+    case "paid_tenants":
+      // Check if data uses object keys (from handleExportTenantStatus)
+      if (data[0] && data[0]["Tenant Name"] !== undefined) {
+        head = [
+          "Tenant Name",
+          "Property",
+          "Unit",
+          "Phone",
+          "Monthly Rent",
+          "Rent Paid",
+          "Rent Due",
+          "Water Bill",
+          "Arrears",
+          "Total Due",
+          "Status",
         ];
-      });
+        body = data.map((row) => [
+          row["Tenant Name"] || "N/A",
+          row["Property"] || "N/A",
+          row["Unit"] || "N/A",
+          row["Phone"] || "N/A",
+          formatCurrency(row["Monthly Rent"]),
+          formatCurrency(row["Rent Paid"]),
+          formatCurrency(row["Rent Due"]),
+          formatCurrency(row["Water Bill"]),
+          formatCurrency(row["Arrears"]),
+          formatCurrency(row["Total Due"]),
+          row["Status"] || "N/A",
+        ]);
+      } else {
+        // Raw data format
+        head = [
+          "Tenant Name",
+          "Property",
+          "Unit",
+          "Phone",
+          "Monthly Rent",
+          "Rent Paid",
+          "Rent Due",
+          "Water Bill",
+          "Arrears",
+          "Total Due",
+          "Status",
+        ];
+        body = data.map((row) => [
+          row.tenant_name ||
+            `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
+            "N/A",
+          row.property_name || "N/A",
+          row.unit_code || "N/A",
+          formatPhone(row.phone_number),
+          formatCurrency(row.monthly_rent),
+          formatCurrency(row.rent_paid),
+          formatCurrency(row.rent_due),
+          formatCurrency(row.water_bill),
+          formatCurrency(row.arrears),
+          formatCurrency(row.total_due),
+          row.total_due <= 0 ? "Paid" : "Unpaid",
+        ]);
+      }
       columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        4: { halign: 'center' },
-        5: { halign: 'center' },
-        6: { halign: 'center' },
-        7: { halign: 'center' }
+        0: { cellWidth: 35 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 20 },
+        3: { cellWidth: 25 },
+        4: { cellWidth: 25, halign: "right" },
+        5: { cellWidth: 25, halign: "right" },
+        6: { cellWidth: 25, halign: "right" },
+        7: { cellWidth: 25, halign: "right" },
+        8: { cellWidth: 25, halign: "right" },
+        9: { cellWidth: 25, halign: "right" },
+        10: { cellWidth: 20, halign: "center" },
       };
       break;
 
-    case 'complaints':
-      headers = ['#', 'Title', 'Property', 'Unit', 'Priority', 'Status', 'Date'];
-      rows = data.map((item, index) => [
-        index + 1,
-        truncateText(item.title, 30),
-        item.property_name || 'N/A',
-        item.unit_code || 'N/A',
-        capitalizeFirst(item.priority) || 'Medium',
-        capitalizeFirst(item.status) || 'Open',
-        formatDate(item.created_at || item.raised_at)
+    case "payments":
+      head = [
+        "Tenant",
+        "Property",
+        "Unit",
+        "Amount",
+        "Receipt",
+        "Month",
+        "Date",
+        "Status",
+      ];
+      body = data.map((row) => [
+        row.tenant_name ||
+          `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
+          "N/A",
+        row.property_name || "N/A",
+        row.unit_code || "N/A",
+        formatCurrency(row.amount),
+        row.mpesa_receipt_number || row.mpesa_transaction_id || "N/A",
+        row.payment_month || "N/A",
+        formatDate(row.payment_date || row.created_at),
+        row.status || "N/A",
       ]);
       columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        4: { halign: 'center' },
-        5: { halign: 'center' },
-        6: { halign: 'center' }
+        0: { cellWidth: 40 },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 20 },
+        3: { cellWidth: 30, halign: "right" },
+        4: { cellWidth: 35 },
+        5: { cellWidth: 25 },
+        6: { cellWidth: 25 },
+        7: { cellWidth: 20, halign: "center" },
       };
       break;
 
-    case 'water':
-      headers = ['#', 'Tenant', 'Property', 'Unit', 'Amount (KSh)', 'Bill Month', 'Status'];
-      rows = data.map((item, index) => [
-        index + 1,
-        item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A',
-        item.property_name || 'N/A',
-        item.unit_code || 'N/A',
-        formatCurrency(item.amount),
-        formatMonth(item.bill_month),
-        item.status || 'Pending'
+    case "tenants":
+      head = [
+        "Name",
+        "Phone",
+        "Property",
+        "Unit",
+        "Rent",
+        "Lease Start",
+        "Status",
+      ];
+      body = data.map((row) => [
+        row.tenant_name ||
+          `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
+          "N/A",
+        formatPhone(row.phone_number),
+        row.property_name || "N/A",
+        row.unit_code || "N/A",
+        formatCurrency(row.monthly_rent || row.rent_amount),
+        formatDate(row.lease_start_date || row.allocation_date),
+        row.is_active ? "Active" : row.status || "Inactive",
       ]);
       columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        4: { halign: 'right' },
-        5: { halign: 'center' },
-        6: { halign: 'center' }
+        0: { cellWidth: 45 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 25 },
+        4: { cellWidth: 30, halign: "right" },
+        5: { cellWidth: 30 },
+        6: { cellWidth: 25, halign: "center" },
       };
       break;
 
-    case 'sms':
-      headers = ['#', 'Recipient', 'Message', 'Type', 'Status', 'Attempts', 'Date'];
-      rows = data.map((item, index) => [
-        index + 1,
-        formatPhone(item.recipient_phone || item.phone_number),
-        truncateText(item.message, 40),
-        item.message_type || 'General',
-        capitalizeFirst(item.status) || 'Pending',
-        item.attempts || 0,
-        formatDate(item.created_at)
+    case "sms":
+      head = ["Recipient", "Message", "Type", "Channel", "Status", "Date"];
+      body = data.map((row) => [
+        formatPhone(row.recipient_phone),
+        (row.message || "").substring(0, 50) +
+          (row.message?.length > 50 ? "..." : ""),
+        row.message_type || "General",
+        row.channel || "SMS",
+        row.status || "Pending",
+        formatDate(row.created_at),
       ]);
       columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        4: { halign: 'center' },
-        5: { halign: 'center' },
-        6: { halign: 'center' }
+        0: { cellWidth: 30 },
+        1: { cellWidth: 80 },
+        2: { cellWidth: 30 },
+        3: { cellWidth: 25 },
+        4: { cellWidth: 25, halign: "center" },
+        5: { cellWidth: 30 },
       };
       break;
 
-    case 'revenue':
-      headers = ['#', 'Month', 'Total Revenue (KSh)', 'Payments', 'Properties', 'Tenants', 'Avg Payment (KSh)'];
-      rows = data.map((item, index) => [
-        index + 1,
-        formatMonth(item.month),
-        formatCurrency(item.total_revenue),
-        item.payment_count || 0,
-        item.property_count || 0,
-        item.tenant_count || 0,
-        formatCurrency(item.average_payment)
+    case "water":
+      head = ["Tenant", "Property", "Unit", "Amount", "Bill Month", "Status"];
+      body = data.map((row) => [
+        row.tenant_name ||
+          `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
+          "N/A",
+        row.property_name || "N/A",
+        row.unit_code || "N/A",
+        formatCurrency(row.amount),
+        row.bill_month || "N/A",
+        row.status || "Pending",
       ]);
       columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        1: { halign: 'center' },
-        2: { halign: 'right' },
-        3: { halign: 'center' },
-        4: { halign: 'center' },
-        5: { halign: 'center' },
-        6: { halign: 'right' }
+        0: { cellWidth: 45 },
+        1: { cellWidth: 45 },
+        2: { cellWidth: 25 },
+        3: { cellWidth: 35, halign: "right" },
+        4: { cellWidth: 35 },
+        5: { cellWidth: 30, halign: "center" },
       };
       break;
 
-    // Add this case in the prepareTableData function's switch statement
-
-    case 'expenses':
-      headers = ['#', 'Date', 'Category', 'Description', 'Property', 'Amount (KSh)', 'Payment', 'Status'];
-      rows = data.map((item, index) => [
-        index + 1,
-        formatDate(item.expense_date),
-        item.category || 'N/A',
-        truncateText(item.description, 25),
-        item.property_name || 'General',
-        formatCurrency(item.amount),
-        capitalizeFirst(item.payment_method) || 'Cash',
-        capitalizeFirst(item.status) || 'Pending'
+    case "complaints":
+      head = ["Title", "Property", "Unit", "Priority", "Status", "Date"];
+      body = data.map((row) => [
+        row.title || "N/A",
+        row.property_name || "N/A",
+        row.unit_code || "N/A",
+        row.priority || "Medium",
+        row.status || "Open",
+        formatDate(row.raised_at || row.created_at),
       ]);
       columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        1: { halign: 'center' },
-        5: { halign: 'right' },
-        7: { halign: 'center' }
+        0: { cellWidth: 60 },
+        1: { cellWidth: 45 },
+        2: { cellWidth: 25 },
+        3: { cellWidth: 25, halign: "center" },
+        4: { cellWidth: 30, halign: "center" },
+        5: { cellWidth: 30 },
+      };
+      break;
+
+    case "properties":
+      head = [
+        "Code",
+        "Name",
+        "Address",
+        "Total Units",
+        "Occupied",
+        "Available",
+      ];
+      body = data.map((row) => [
+        row.property_code || "N/A",
+        row.name || "N/A",
+        row.address || "N/A",
+        row.total_units || row.unit_count || 0,
+        row.occupied_units || 0,
+        row.available_units || 0,
+      ]);
+      columnStyles = {
+        0: { cellWidth: 25 },
+        1: { cellWidth: 50 },
+        2: { cellWidth: 70 },
+        3: { cellWidth: 30, halign: "center" },
+        4: { cellWidth: 30, halign: "center" },
+        5: { cellWidth: 30, halign: "center" },
+      };
+      break;
+
+    case "revenue":
+      head = [
+        "Month",
+        "Total Revenue",
+        "Payments",
+        "Properties",
+        "Tenants",
+        "Avg Payment",
+      ];
+      body = data.map((row) => [
+        row.month || "N/A",
+        formatCurrency(row.total_revenue),
+        row.payment_count || 0,
+        row.property_count || 0,
+        row.tenant_count || 0,
+        formatCurrency(row.average_payment),
+      ]);
+      columnStyles = {
+        0: { cellWidth: 35 },
+        1: { cellWidth: 40, halign: "right" },
+        2: { cellWidth: 30, halign: "center" },
+        3: { cellWidth: 30, halign: "center" },
+        4: { cellWidth: 30, halign: "center" },
+        5: { cellWidth: 40, halign: "right" },
       };
       break;
 
     default:
-      headers = ['#', 'Name', 'Description', 'Date', 'Amount (KSh)', 'Status'];
-      rows = data.map((item, index) => [
-        index + 1,
-        item.name || item.first_name || item.tenant_name || item.title || 'N/A',
-        truncateText(item.description || item.notes || '', 30),
-        formatDate(item.created_at),
-        formatCurrency(item.amount),
-        capitalizeFirst(item.status) || 'Active'
-      ]);
-      columnStyles = {
-        0: { halign: 'center', cellWidth: 10 },
-        4: { halign: 'right' },
-        5: { halign: 'center' }
-      };
+      // Generic table for unknown report types
+      if (data.length > 0) {
+        const firstRow = data[0];
+        head = Object.keys(firstRow).slice(0, 8); // Limit to 8 columns
+        body = data.map((row) =>
+          head.map((key) => {
+            const value = row[key];
+            if (typeof value === "number") {
+              return value.toLocaleString();
+            }
+            return String(value || "N/A").substring(0, 40);
+          }),
+        );
+      }
+      break;
   }
 
-  rows = rows.map(row => {
-    const paddedRow = [...row];
-    while (paddedRow.length < headers.length) {
-      paddedRow.push('N/A');
-    }
-    return paddedRow.slice(0, headers.length);
+  return { head, body, columnStyles };
+}
+
+/**
+ * Parse currency string or number to numeric value
+ */
+function parseCurrencyValue(value) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    // Remove KSh, commas, spaces and parse
+    const cleaned = value.replace(/[KSh,\s]/g, "").trim();
+    return parseFloat(cleaned) || 0;
+  }
+  return 0;
+}
+
+/**
+ * Add tenant status summary to PDF
+ */
+function addTenantStatusSummary(doc, data, yPosition, reportType) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // Calculate summary
+  let totalExpected = 0;
+  let totalPaid = 0;
+  let totalOutstanding = 0;
+
+  data.forEach((row) => {
+    const monthlyRent = parseCurrencyValue(
+      row["Monthly Rent"] || row.monthly_rent || 0,
+    );
+    const rentPaid = parseCurrencyValue(row["Rent Paid"] || row.rent_paid || 0);
+    const totalDue = parseCurrencyValue(row["Total Due"] || row.total_due || 0);
+
+    totalExpected += monthlyRent;
+    totalPaid += rentPaid;
+    totalOutstanding += totalDue;
   });
 
-  return { headers, rows, columnStyles };
-};
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(52, 73, 94);
+  doc.text("SUMMARY", 14, yPosition);
+
+  yPosition += 7;
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(60, 60, 60);
+
+  const summaryData = [
+    ["Total Tenants:", data.length.toString()],
+    ["Total Expected:", formatCurrency(totalExpected)],
+    ["Total Paid:", formatCurrency(totalPaid)],
+    ["Total Outstanding:", formatCurrency(totalOutstanding)],
+  ];
+
+  summaryData.forEach(([label, value], index) => {
+    doc.text(label, 14, yPosition + index * 5);
+    doc.text(value, 60, yPosition + index * 5);
+  });
+}
 
 /**
- * Calculate totals for financial reports
+ * Add payment summary to PDF
  */
-const calculateTotals = (reportType, data) => {
-  switch (reportType) {
-    case 'payments':
-      const totalPayments = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
-      const completedPayments = data.filter(item => item.status === 'completed').length;
-      return {
-        'Total Amount': `KSh ${totalPayments.toLocaleString()}`,
-        'Completed Payments': `${completedPayments} of ${data.length}`
-      };
-      
-    case 'revenue':
-      const totalRevenue = data.reduce((sum, item) => sum + (parseFloat(item.total_revenue) || 0), 0);
-      const totalPaymentCount = data.reduce((sum, item) => sum + (item.payment_count || 0), 0);
-      return {
-        'Total Revenue': `KSh ${totalRevenue.toLocaleString()}`,
-        'Total Payments': totalPaymentCount.toLocaleString()
-      };
-      
-    case 'tenants':
-      const totalRent = data.reduce((sum, item) => sum + (parseFloat(item.rent_amount || item.monthly_rent) || 0), 0);
-      const activeTenants = data.filter(item => item.is_active).length;
-      return {
-        'Total Monthly Rent': `KSh ${totalRent.toLocaleString()}`,
-        'Active Tenants': `${activeTenants} of ${data.length}`
-      };
-      
-    case 'water':
-      const totalWater = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
-      return {
-        'Total Water Bills': `KSh ${totalWater.toLocaleString()}`
-      };
-      
-    case 'properties':
-      const totalUnits = data.reduce((sum, item) => sum + (item.total_units || item.unit_count || 0), 0);
-      const occupiedUnits = data.reduce((sum, item) => sum + (item.occupied_units || 0), 0);
-      const overallOccupancy = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
-      return {
-        'Total Units': totalUnits.toLocaleString(),
-        'Occupied Units': occupiedUnits.toLocaleString(),
-        'Overall Occupancy': `${overallOccupancy}%`
-      };
+function addPaymentSummary(doc, data, yPosition) {
+  const totalAmount = data.reduce(
+    (sum, row) => sum + parseFloat(row.amount || 0),
+    0,
+  );
+  const completedCount = data.filter(
+    (row) => row.status === "completed",
+  ).length;
 
-    // Add this case in the calculateTotals function's switch statement
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(52, 73, 94);
+  doc.text("SUMMARY", 14, yPosition);
 
-    case 'expenses':
-      const totalExpenses = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
-      const approvedExpenses = data.filter(item => item.status === 'approved');
-      const approvedTotal = approvedExpenses.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
-      const pendingCount = data.filter(item => item.status === 'pending').length;
-      return {
-        'Total Expenses': `KSh ${totalExpenses.toLocaleString()}`,
-        'Approved Total': `KSh ${approvedTotal.toLocaleString()}`,
-        'Pending Approval': `${pendingCount} expense(s)`
-      };
-      
-    default:
-      return null;
+  yPosition += 7;
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+
+  doc.text(`Total Transactions: ${data.length}`, 14, yPosition);
+  doc.text(`Completed: ${completedCount}`, 14, yPosition + 5);
+  doc.text(`Total Amount: ${formatCurrency(totalAmount)}`, 14, yPosition + 10);
+}
+
+// ========================================
+// HELPER FUNCTIONS
+// ========================================
+
+function formatCurrency(amount) {
+  // If already formatted as string with KSh, return as-is
+  if (typeof amount === "string" && amount.includes("KSh")) {
+    return amount;
   }
-};
-
-/* ---------------- Helper Functions ---------------- */
-
-const formatCurrency = (amount) => {
+  // If it's a formatted number string like "15,000", extract the number
+  if (typeof amount === "string" && amount.includes(",")) {
+    const cleaned = amount.replace(/[^0-9.-]/g, "");
+    const num = parseFloat(cleaned) || 0;
+    return `KSh ${num.toLocaleString("en-KE")}`;
+  }
+  // Regular number parsing
   const num = parseFloat(amount) || 0;
-  return num.toLocaleString('en-KE');
-};
+  return `KSh ${num.toLocaleString("en-KE")}`;
+}
 
-const formatDate = (dateStr) => {
-  if (!dateStr) return 'N/A';
+function formatDate(dateString) {
+  if (!dateString) return "N/A";
   try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric'
+    return new Date(dateString).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
     });
   } catch {
-    return 'N/A';
+    return "N/A";
   }
-};
+}
 
-const formatMonth = (monthStr) => {
-  if (!monthStr) return 'N/A';
-  try {
-    if (monthStr.match(/^\d{4}-\d{2}$/)) {
-      const [year, month] = monthStr.split('-');
-      const date = new Date(year, parseInt(month) - 1);
-      return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-    }
-    const date = new Date(monthStr);
-    return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-  } catch {
-    return monthStr;
-  }
-};
+function formatPhone(phone) {
+  if (!phone) return "N/A";
+  return phone.toString().replace(/^254/, "0");
+}
 
-const formatPhone = (phone) => {
-  if (!phone) return 'N/A';
-  if (phone.startsWith('254')) {
-    return '0' + phone.substring(3);
-  }
-  return phone;
-};
-
-const truncateText = (text, maxLength) => {
-  if (!text) return 'N/A';
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength - 3) + '...';
-};
-
-const capitalizeFirst = (str) => {
-  if (!str) return '';
-  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
-};
-
-/**
- * Clear cached company info (call when company info is updated)
- */
-export const clearCompanyInfoCache = () => {
-  cachedCompanyInfo = null;
-  cacheTimestamp = null;
-  cachedLogoBase64 = null;
-  cachedLogoUrl = null;
-  console.log('🗑️ Company info cache cleared');
-};
-
-/**
- * Pre-load company logo (call on app init for faster exports)
- */
-export const preloadCompanyLogo = async () => {
-  try {
-    const companyInfo = await fetchCompanyInfo();
-    if (companyInfo.logo) {
-      await getImageAsBase64(companyInfo.logo, true);
-      console.log('✅ Company logo pre-loaded');
-    }
-  } catch (error) {
-    console.warn('Could not pre-load company logo:', error);
-  }
-};
-
-/**
- * Debug helper - check if autoTable is working
- */
-export const checkAutoTable = () => {
-  try {
-    const doc = new jsPDF();
-    autoTable(doc, { head: [['Test']], body: [['Test']] });
-    console.log('✅ autoTable is working correctly');
-    return true;
-  } catch (error) {
-    console.error('❌ autoTable check failed:', error);
-    return false;
-  }
-};
+export default exportToPDF;
