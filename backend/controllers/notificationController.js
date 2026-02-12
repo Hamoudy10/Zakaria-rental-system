@@ -2,7 +2,7 @@
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
 const SMSService = require('../services/smsService');
-const MessagingService = require("../services/messagingservice");
+const MessagingService = require("../services/messagingService");
 
 // Rate limiting to prevent excessive API calls
 const userRequestTimestamps = new Map();
