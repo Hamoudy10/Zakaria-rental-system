@@ -229,7 +229,7 @@ router.get('/tenants/:propertyId', authMiddleware, callController(notificationCo
 router.post('/targeted-sms', authMiddleware, callController(notificationController.sendTargetedSMS));
 
 // NEW: Get SMS history with filters and pagination
-router.get('/sms-history', authMiddleware, callController(notificationController.getSMSHistory));
+router.get('/sms-history', authMiddleware, callController(notificationController.getMessagingHistory));
 
 // Check delivery status for a specific message
 router.get('/delivery-status/:messageId', authMiddleware, callController(notificationController.checkDeliveryStatus));

@@ -1,89 +1,166 @@
-// /src/components/AgentReports.jsx - FIXED DATA EXTRACTION & ERROR HANDLING
-import React, { useState, useEffect } from 'react';
-import api, { API } from '../services/api';
-import { useAuth } from '../context/AuthContext';
-import { 
-  Users, CreditCard, TrendingUp, Building, 
-  AlertCircle, Droplets, MessageSquare, 
-  FileText, FileSpreadsheet, Calendar, 
-  Filter, Search, AlertTriangle, RefreshCw
-} from 'lucide-react';
-import { exportToPDF } from '../utils/pdfExport';
-import { exportToExcel } from '../utils/excelExport';
+// /src/components/AgentReports.jsx - FIXED SMS/WHATSAPP REPORT WITH PROPER API CALLS
+import React, { useState, useEffect } from "react";
+import api, { API } from "../services/api";
+import { useAuth } from "../context/AuthContext";
+import {
+  Users,
+  CreditCard,
+  TrendingUp,
+  Building,
+  AlertCircle,
+  Droplets,
+  MessageSquare,
+  FileText,
+  FileSpreadsheet,
+  Calendar,
+  Filter,
+  Search,
+  AlertTriangle,
+  RefreshCw,
+  Phone,
+  MessageCircle,
+  CheckCircle,
+  Clock,
+  XCircle,
+  SkipForward,
+} from "lucide-react";
+import { exportToPDF } from "../utils/pdfExport";
+import { exportToExcel } from "../utils/excelExport";
 
 const AgentReports = () => {
   const { user } = useAuth();
-  const [activeReport, setActiveReport] = useState('tenants');
+  const [activeReport, setActiveReport] = useState("tenants");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState([]);
   const [filters, setFilters] = useState({
-    startDate: '',
-    endDate: '',
-    propertyId: '',
-    status: '',
-    search: ''
+    startDate: "",
+    endDate: "",
+    propertyId: "",
+    status: "",
+    search: "",
   });
+
+  // SMS/WhatsApp specific filters
+  const [messagingFilters, setMessagingFilters] = useState({
+    status: "all",
+    channel: "all",
+  });
+  const [messagingSummary, setMessagingSummary] = useState({
+    totalCount: 0,
+    channelCounts: { sms: 0, whatsapp: 0 },
+    statusCounts: { sent: 0, pending: 0, failed: 0, skipped: 0 },
+  });
+
   const [companyInfo, setCompanyInfo] = useState({
-    name: 'Zakaria Housing Agency Limited',
-    logo: null
+    name: "Zakaria Housing Agency Limited",
+    logo: null,
   });
   const [apiErrors, setApiErrors] = useState([]);
   const [availableProperties, setAvailableProperties] = useState([]);
 
   const reportTypes = [
-    { id: 'tenants', name: 'Tenants Report', icon: Users, color: 'bg-blue-500' },
-    { id: 'payments', name: 'Payments Report', icon: CreditCard, color: 'bg-green-500' },
-    { id: 'revenue', name: 'Revenue Report', icon: TrendingUp, color: 'bg-purple-500' },
-    { id: 'properties', name: 'Properties Report', icon: Building, color: 'bg-orange-500' },
-    { id: 'complaints', name: 'Complaints Report', icon: AlertCircle, color: 'bg-red-500' },
-    { id: 'water', name: 'Water Bills Report', icon: Droplets, color: 'bg-cyan-500' },
-    { id: 'sms', name: 'SMS Report', icon: MessageSquare, color: 'bg-indigo-500' },
+    {
+      id: "tenants",
+      name: "Tenants Report",
+      icon: Users,
+      color: "bg-blue-500",
+    },
+    {
+      id: "payments",
+      name: "Payments Report",
+      icon: CreditCard,
+      color: "bg-green-500",
+    },
+    {
+      id: "revenue",
+      name: "Revenue Report",
+      icon: TrendingUp,
+      color: "bg-purple-500",
+    },
+    {
+      id: "properties",
+      name: "Properties Report",
+      icon: Building,
+      color: "bg-orange-500",
+    },
+    {
+      id: "complaints",
+      name: "Complaints Report",
+      icon: AlertCircle,
+      color: "bg-red-500",
+    },
+    {
+      id: "water",
+      name: "Water Bills Report",
+      icon: Droplets,
+      color: "bg-cyan-500",
+    },
+    {
+      id: "sms",
+      name: "SMS/WhatsApp Report",
+      icon: MessageSquare,
+      color: "bg-indigo-500",
+    },
   ];
 
   // Helper function to extract array from various response formats
   const extractDataArray = (response, reportType) => {
     console.log(`🔍 Extracting data for ${reportType}:`, response);
-    
+
     if (!response?.data?.success) {
       console.warn(`⚠️ Response not successful for ${reportType}`);
       return [];
     }
-    
+
     const responseData = response.data.data;
-    
+
     // If it's already an array, return it
     if (Array.isArray(responseData)) {
-      console.log(`✅ Direct array found for ${reportType}:`, responseData.length, 'items');
+      console.log(
+        `✅ Direct array found for ${reportType}:`,
+        responseData.length,
+        "items",
+      );
       return responseData;
     }
-    
+
     // If it's an object, try to find the array inside
-    if (typeof responseData === 'object' && responseData !== null) {
-      console.log(`🔎 Searching for array in object for ${reportType}:`, Object.keys(responseData));
-      
+    if (typeof responseData === "object" && responseData !== null) {
+      console.log(
+        `🔎 Searching for array in object for ${reportType}:`,
+        Object.keys(responseData),
+      );
+
       // Check for common array keys based on report type
       const possibleKeys = {
-        'payments': ['payments', 'data', 'records'],
-        'tenants': ['tenants', 'data', 'records'],
-        'properties': ['properties', 'data', 'records'],
-        'complaints': ['complaints', 'data', 'records'],
-        'water': ['waterBills', 'bills', 'data', 'records'],
-        'sms': ['messages', 'sms', 'data', 'records'],
-        'revenue': ['revenue', 'data', 'records']
+        payments: ["payments", "data", "records"],
+        tenants: ["tenants", "data", "records"],
+        properties: ["properties", "data", "records"],
+        complaints: ["complaints", "data", "records"],
+        water: ["waterBills", "bills", "data", "records"],
+        sms: ["messages", "history", "sms", "data", "records"],
+        revenue: ["revenue", "data", "records"],
       };
-      
-      const keysToCheck = possibleKeys[reportType] || ['data', 'records'];
-      
+
+      const keysToCheck = possibleKeys[reportType] || ["data", "records"];
+
       for (const key of keysToCheck) {
         if (Array.isArray(responseData[key])) {
-          console.log(`✅ Found array in key '${key}' for ${reportType}:`, responseData[key].length, 'items');
+          console.log(
+            `✅ Found array in key '${key}' for ${reportType}:`,
+            responseData[key].length,
+            "items",
+          );
           return responseData[key];
         }
       }
-      
-      console.warn(`⚠️ No array found in expected keys for ${reportType}. Available keys:`, Object.keys(responseData));
+
+      console.warn(
+        `⚠️ No array found in expected keys for ${reportType}. Available keys:`,
+        Object.keys(responseData),
+      );
     }
-    
+
     return [];
   };
 
@@ -95,19 +172,22 @@ const AgentReports = () => {
         if (response.data?.success && response.data?.data) {
           const info = response.data.data;
           setCompanyInfo({
-            name: info.name || 'Zakaria Housing Agency Limited',
+            name: info.name || "Zakaria Housing Agency Limited",
             logo: info.logo || null,
-            email: info.email || '',
-            phone: info.phone || '',
-            address: info.address || ''
+            email: info.email || "",
+            phone: info.phone || "",
+            address: info.address || "",
           });
         }
       } catch (error) {
-        console.warn('Could not fetch company info:', error);
-        setCompanyInfo(prev => ({ ...prev, name: 'Zakaria Housing Agency Limited' }));
+        console.warn("Could not fetch company info:", error);
+        setCompanyInfo((prev) => ({
+          ...prev,
+          name: "Zakaria Housing Agency Limited",
+        }));
       }
     };
-    
+
     fetchCompanyInfo();
   }, []);
 
@@ -120,84 +200,32 @@ const AgentReports = () => {
           setAvailableProperties(response.data.data);
         }
       } catch (error) {
-        console.error('Failed to fetch agent properties:', error);
+        console.error("Failed to fetch agent properties:", error);
         setAvailableProperties([]);
       }
     };
-    
+
     fetchAgentProperties();
   }, []);
 
   // Safe API call wrapper
   const safeAPICall = async (apiFunction, fallbackData = []) => {
     try {
-      if (typeof apiFunction === 'function') {
-        console.log('🔗 Making API call...');
+      if (typeof apiFunction === "function") {
+        console.log("🔗 Making API call...");
         const response = await apiFunction();
-        console.log('✅ API Response:', response);
+        console.log("✅ API Response:", response);
         return response;
       }
-      throw new Error('API function not available');
+      throw new Error("API function not available");
     } catch (error) {
-      console.error('❌ API call failed:', error);
-      return { 
-        data: { 
-          success: false, 
-          message: error.message, 
-          data: fallbackData 
-        } 
-      };
-    }
-  };
-
-  // Direct API call with fetch for endpoints not in API service
-  // ✅ FIXED: Use same base URL pattern as api.jsx
-  const directAPICall = async (endpoint, method = 'GET', params = {}) => {
-    try {
-      // ✅ FIXED: Always append /api to match api.jsx pattern
-      const baseURL = (import.meta.env.VITE_API_URL || 'https://zakaria-rental-system.onrender.com') + '/api';
-      const token = localStorage.getItem('token');
-      
-      let url = `${baseURL}${endpoint}`;
-      
-      // Add query params for GET requests
-      if (method === 'GET' && Object.keys(params).length > 0) {
-        // Filter out empty params
-        const filteredParams = Object.fromEntries(
-          Object.entries(params).filter(([_, v]) => v !== '' && v !== null && v !== undefined)
-        );
-        if (Object.keys(filteredParams).length > 0) {
-          const queryParams = new URLSearchParams(filteredParams).toString();
-          url = `${url}?${queryParams}`;
-        }
-      }
-      
-      const options = {
-        method,
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      };
-      
-      if (method !== 'GET' && Object.keys(params).length > 0) {
-        options.body = JSON.stringify(params);
-      }
-      
-      console.log(`🌐 ${method} ${url}`);
-      const response = await fetch(url, options);
-      const data = await response.json();
-      
-      console.log(`📦 Response for ${endpoint}:`, data);
-      return { data };
-    } catch (error) {
-      console.error(`❌ Direct API call failed for ${endpoint}:`, error);
-      return { 
-        data: { 
-          success: false, 
+      console.error("❌ API call failed:", error);
+      return {
+        data: {
+          success: false,
           message: error.message,
-          data: [] 
-        } 
+          data: fallbackData,
+        },
       };
     }
   };
@@ -205,42 +233,47 @@ const AgentReports = () => {
   // Helper to calculate revenue from payments
   const calculateRevenue = (payments) => {
     if (!Array.isArray(payments)) {
-      console.warn('⚠️ calculateRevenue received non-array:', payments);
+      console.warn("⚠️ calculateRevenue received non-array:", payments);
       return [];
     }
-    
+
     const revenueByMonth = payments.reduce((acc, payment) => {
-      const month = payment.payment_month || 
-                   payment.created_at?.substring(0, 7) || 
-                   new Date().toISOString().substring(0, 7);
-      
+      const month =
+        payment.payment_month ||
+        payment.created_at?.substring(0, 7) ||
+        new Date().toISOString().substring(0, 7);
+
       if (!acc[month]) {
         acc[month] = {
           month,
           total_revenue: 0,
           payment_count: 0,
           properties: new Set(),
-          tenants: new Set()
+          tenants: new Set(),
         };
       }
-      
+
       acc[month].total_revenue += parseFloat(payment.amount || 0);
       acc[month].payment_count += 1;
-      
-      if (payment.property_name) acc[month].properties.add(payment.property_name);
+
+      if (payment.property_name)
+        acc[month].properties.add(payment.property_name);
       if (payment.tenant_name || payment.first_name) {
-        const tenantName = payment.tenant_name || `${payment.first_name || ''} ${payment.last_name || ''}`.trim();
+        const tenantName =
+          payment.tenant_name ||
+          `${payment.first_name || ""} ${payment.last_name || ""}`.trim();
         if (tenantName) acc[month].tenants.add(tenantName);
       }
-      
+
       return acc;
     }, {});
-    
-    return Object.values(revenueByMonth).map(item => ({
+
+    return Object.values(revenueByMonth).map((item) => ({
       ...item,
       property_count: item.properties.size,
       tenant_count: item.tenants.size,
-      average_payment: item.payment_count > 0 ? item.total_revenue / item.payment_count : 0
+      average_payment:
+        item.payment_count > 0 ? item.total_revenue / item.payment_count : 0,
     }));
   };
 
@@ -255,103 +288,217 @@ const AgentReports = () => {
     return params;
   };
 
-  // Fetch report data based on active report
-  const fetchReportData = async () => {
+  // Fetch SMS/WhatsApp history using the correct endpoint
+  const fetchMessagingHistory = async () => {
     setLoading(true);
     setApiErrors([]);
-    
+
     try {
-      console.log('📥 Fetching report data for:', activeReport);
-      
+      console.log("📱 Fetching messaging history...");
+
+      const params = {
+        ...buildFilterParams(),
+        limit: 100, // Get more records for reports
+      };
+
+      // Add messaging-specific filters
+      if (messagingFilters.status && messagingFilters.status !== "all") {
+        params.status = messagingFilters.status;
+      }
+      if (messagingFilters.channel && messagingFilters.channel !== "all") {
+        params.channel = messagingFilters.channel;
+      }
+
+      // Use the correct endpoint: /notifications/sms-history
+      // The API.notifications.getSMSHistory points to this endpoint
+      const response = await API.notifications.getSMSHistory(params);
+
+      console.log("📦 Messaging history response:", response);
+
+      if (response?.data?.success) {
+        // Extract messages array - could be 'messages' or 'history'
+        const messages =
+          response.data.data?.messages || response.data.data?.history || [];
+        setData(messages);
+
+        // Set summary if available
+        if (response.data.data?.summary) {
+          setMessagingSummary(response.data.data.summary);
+        } else {
+          // Calculate summary from data
+          const statusCounts = { sent: 0, pending: 0, failed: 0, skipped: 0 };
+          const channelCounts = { sms: 0, whatsapp: 0 };
+
+          messages.forEach((msg) => {
+            if (msg.status && statusCounts[msg.status] !== undefined) {
+              statusCounts[msg.status]++;
+            }
+            if (msg.channel === "whatsapp") {
+              channelCounts.whatsapp++;
+            } else {
+              channelCounts.sms++;
+            }
+          });
+
+          setMessagingSummary({
+            totalCount: messages.length,
+            statusCounts,
+            channelCounts,
+          });
+        }
+
+        console.log(`✅ Loaded ${messages.length} messaging records`);
+      } else {
+        console.warn(
+          "❌ Messaging history fetch failed:",
+          response?.data?.message,
+        );
+        setData([]);
+        setApiErrors((prev) => [
+          ...prev,
+          `sms report: ${response?.data?.message || "API endpoint may not exist"}`,
+        ]);
+      }
+    } catch (error) {
+      console.error("❌ Messaging history error:", error);
+      setData([]);
+      setApiErrors((prev) => [...prev, `Error: ${error.message}`]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch report data based on active report
+  const fetchReportData = async () => {
+    // Special handling for SMS/WhatsApp report
+    if (activeReport === "sms") {
+      await fetchMessagingHistory();
+      return;
+    }
+
+    setLoading(true);
+    setApiErrors([]);
+
+    try {
+      console.log("📥 Fetching report data for:", activeReport);
+
       let response;
       const params = buildFilterParams();
 
       switch (activeReport) {
-        case 'tenants':
-          // Use axios instance directly for consistency
+        case "tenants":
           try {
-            response = await api.get('/agent-properties/my-tenants', { params });
+            response = await api.get("/agent-properties/my-tenants", {
+              params,
+            });
             response = { data: response.data };
           } catch (err) {
-            console.error('Tenants API error:', err);
-            response = { data: { success: false, message: err.response?.data?.message || err.message, data: [] } };
+            console.error("Tenants API error:", err);
+            response = {
+              data: {
+                success: false,
+                message: err.response?.data?.message || err.message,
+                data: [],
+              },
+            };
           }
           break;
-          
-        case 'payments':
+
+        case "payments":
           response = await safeAPICall(() => API.payments.getPayments(params));
           break;
-          
-        case 'properties':
-          response = await safeAPICall(() => API.properties.getAgentProperties());
+
+        case "properties":
+          response = await safeAPICall(() =>
+            API.properties.getAgentProperties(),
+          );
           break;
-          
-        case 'complaints':
-          // Use axios instance directly for consistency
+
+        case "complaints":
           try {
-            response = await api.get('/agent-properties/my-complaints', { params });
+            response = await api.get("/agent-properties/my-complaints", {
+              params,
+            });
             response = { data: response.data };
           } catch (err) {
-            console.error('Complaints API error:', err);
-            response = { data: { success: false, message: err.response?.data?.message || err.message, data: [] } };
+            console.error("Complaints API error:", err);
+            response = {
+              data: {
+                success: false,
+                message: err.response?.data?.message || err.message,
+                data: [],
+              },
+            };
           }
           break;
-          
-        case 'water':
-          // Use axios instance directly for consistency
+
+        case "water":
           try {
-            response = await api.get('/agent-properties/water-bills', { params });
+            response = await api.get("/agent-properties/water-bills", {
+              params,
+            });
             response = { data: response.data };
           } catch (err) {
-            console.error('Water bills API error:', err);
-            response = { data: { success: false, message: err.response?.data?.message || err.message, data: [] } };
+            console.error("Water bills API error:", err);
+            response = {
+              data: {
+                success: false,
+                message: err.response?.data?.message || err.message,
+                data: [],
+              },
+            };
           }
           break;
-          
-        case 'sms':
-          response = await safeAPICall(() => API.billing.getSMSHistory(params));
-          break;
-          
-        case 'revenue':
-          // Calculate revenue from payments data
-          const paymentsResponse = await safeAPICall(() => API.payments.getPayments(params));
+
+        case "revenue":
+          const paymentsResponse = await safeAPICall(() =>
+            API.payments.getPayments(params),
+          );
           if (paymentsResponse.data?.success) {
-            const paymentsArray = extractDataArray(paymentsResponse, 'payments');
+            const paymentsArray = extractDataArray(
+              paymentsResponse,
+              "payments",
+            );
             const revenueData = calculateRevenue(paymentsArray);
             response = { data: { success: true, data: revenueData } };
           } else {
             response = { data: { success: false, data: [] } };
           }
           break;
-          
+
         default:
           response = { data: { success: true, data: [] } };
       }
 
-      console.log('📦 Raw response for', activeReport, ':', response);
+      console.log("📦 Raw response for", activeReport, ":", response);
 
       if (response?.data?.success) {
-        // Extract array from response using helper function
         const extractedData = extractDataArray(response, activeReport);
         setData(extractedData);
-        console.log(`✅ Loaded ${extractedData.length} records for ${activeReport} report`);
+        console.log(
+          `✅ Loaded ${extractedData.length} records for ${activeReport} report`,
+        );
       } else {
-        console.warn('❌ Report fetch failed:', response?.data?.message || 'Unknown error');
+        console.warn(
+          "❌ Report fetch failed:",
+          response?.data?.message || "Unknown error",
+        );
         setData([]);
-        setApiErrors(prev => [...prev, 
-          `${activeReport} report: ${response?.data?.message || 'API endpoint may not exist'}`
+        setApiErrors((prev) => [
+          ...prev,
+          `${activeReport} report: ${response?.data?.message || "API endpoint may not exist"}`,
         ]);
       }
     } catch (error) {
-      console.error('❌ Fetch error:', error);
+      console.error("❌ Fetch error:", error);
       setData([]);
-      setApiErrors(prev => [...prev, `Error: ${error.message}`]);
+      setApiErrors((prev) => [...prev, `Error: ${error.message}`]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Fetch data when report type or filters change
+  // Fetch data when report type changes
   useEffect(() => {
     fetchReportData();
   }, [activeReport]);
@@ -361,47 +508,189 @@ const AgentReports = () => {
     const timer = setTimeout(() => {
       fetchReportData();
     }, 500);
-    
+
     return () => clearTimeout(timer);
   }, [filters]);
 
+  // Fetch when messaging filters change (only for SMS report)
+  useEffect(() => {
+    if (activeReport === "sms") {
+      fetchMessagingHistory();
+    }
+  }, [messagingFilters]);
+
   const handleExport = async (format) => {
     if (!Array.isArray(data) || data.length === 0) {
-      alert('No data to export. Please wait for data to load or check if the report has any records.');
+      alert(
+        "No data to export. Please wait for data to load or check if the report has any records.",
+      );
       return;
     }
 
     try {
-      const reportTitle = reportTypes.find(r => r.id === activeReport)?.name;
-      
-      if (format === 'pdf') {
+      const reportTitle = reportTypes.find((r) => r.id === activeReport)?.name;
+
+      if (format === "pdf") {
         await exportToPDF({
           reportType: activeReport,
           data: data,
           filters: filters,
           companyInfo: companyInfo,
           user: user,
-          title: reportTitle
+          title: reportTitle,
         });
-      } else if (format === 'excel') {
+      } else if (format === "excel") {
         await exportToExcel({
           reportType: activeReport,
           data: data,
           filters: filters,
           companyInfo: companyInfo,
           user: user,
-          title: reportTitle
+          title: reportTitle,
         });
       }
     } catch (error) {
-      console.error('Export error:', error);
-      alert(`Export failed: ${error.message}\n\nPlease check that jspdf-autotable is installed:\nnpm install jspdf-autotable`);
+      console.error("Export error:", error);
+      alert(
+        `Export failed: ${error.message}\n\nPlease check that jspdf-autotable is installed:\nnpm install jspdf-autotable`,
+      );
     }
+  };
+
+  // Render messaging status filter tabs
+  const renderMessagingFilters = () => {
+    const statusTabs = [
+      {
+        id: "all",
+        label: "All",
+        icon: MessageSquare,
+        count: messagingSummary.totalCount,
+      },
+      {
+        id: "sent",
+        label: "Sent",
+        icon: CheckCircle,
+        count: messagingSummary.statusCounts?.sent || 0,
+        color: "text-green-600",
+      },
+      {
+        id: "pending",
+        label: "Pending",
+        icon: Clock,
+        count: messagingSummary.statusCounts?.pending || 0,
+        color: "text-yellow-600",
+      },
+      {
+        id: "failed",
+        label: "Failed",
+        icon: XCircle,
+        count: messagingSummary.statusCounts?.failed || 0,
+        color: "text-red-600",
+      },
+      {
+        id: "skipped",
+        label: "Skipped",
+        icon: SkipForward,
+        count: messagingSummary.statusCounts?.skipped || 0,
+        color: "text-gray-500",
+      },
+    ];
+
+    const channelTabs = [
+      { id: "all", label: "All Channels", icon: MessageSquare },
+      {
+        id: "sms",
+        label: "SMS Only",
+        icon: Phone,
+        count: messagingSummary.channelCounts?.sms || 0,
+      },
+      {
+        id: "whatsapp",
+        label: "WhatsApp Only",
+        icon: MessageCircle,
+        count: messagingSummary.channelCounts?.whatsapp || 0,
+      },
+    ];
+
+    return (
+      <div className="mb-4 space-y-3">
+        {/* Status Tabs */}
+        <div className="flex flex-wrap gap-2">
+          <span className="text-sm font-medium text-gray-500 self-center mr-2">
+            Status:
+          </span>
+          {statusTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() =>
+                setMessagingFilters((prev) => ({ ...prev, status: tab.id }))
+              }
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                messagingFilters.status === tab.id
+                  ? "bg-indigo-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              <tab.icon
+                className={`w-4 h-4 ${messagingFilters.status !== tab.id && tab.color ? tab.color : ""}`}
+              />
+              {tab.label}
+              <span
+                className={`ml-1 px-1.5 py-0.5 rounded-full text-xs ${
+                  messagingFilters.status === tab.id
+                    ? "bg-white/20 text-white"
+                    : "bg-gray-200 text-gray-600"
+                }`}
+              >
+                {tab.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Channel Tabs */}
+        <div className="flex flex-wrap gap-2">
+          <span className="text-sm font-medium text-gray-500 self-center mr-2">
+            Channel:
+          </span>
+          {channelTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() =>
+                setMessagingFilters((prev) => ({ ...prev, channel: tab.id }))
+              }
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                messagingFilters.channel === tab.id
+                  ? "bg-indigo-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+              {tab.count !== undefined && (
+                <span
+                  className={`ml-1 px-1.5 py-0.5 rounded-full text-xs ${
+                    messagingFilters.channel === tab.id
+                      ? "bg-white/20 text-white"
+                      : "bg-gray-200 text-gray-600"
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   const renderFilters = () => {
     return (
       <div className="bg-gray-50 p-4 rounded-lg mb-6">
+        {/* Messaging-specific filters for SMS report */}
+        {activeReport === "sms" && renderMessagingFilters()}
+
         <div className="flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[200px]">
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -411,31 +700,37 @@ const AgentReports = () => {
               <input
                 type="date"
                 value={filters.startDate}
-                onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                onChange={(e) =>
+                  setFilters({ ...filters, startDate: e.target.value })
+                }
                 className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               />
               <span className="self-center">to</span>
               <input
                 type="date"
                 value={filters.endDate}
-                onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                onChange={(e) =>
+                  setFilters({ ...filters, endDate: e.target.value })
+                }
                 className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
           </div>
-          
-          {availableProperties.length > 0 && (
+
+          {availableProperties.length > 0 && activeReport !== "sms" && (
             <div className="flex-1 min-w-[200px]">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Property
               </label>
               <select
                 value={filters.propertyId}
-                onChange={(e) => setFilters({ ...filters, propertyId: e.target.value })}
+                onChange={(e) =>
+                  setFilters({ ...filters, propertyId: e.target.value })
+                }
                 className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               >
                 <option value="">All Properties</option>
-                {availableProperties.map(prop => (
+                {availableProperties.map((prop) => (
                   <option key={prop.id} value={prop.id}>
                     {prop.name} ({prop.property_code})
                   </option>
@@ -443,7 +738,7 @@ const AgentReports = () => {
               </select>
             </div>
           )}
-          
+
           <div className="flex-1 min-w-[200px]">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Search
@@ -452,36 +747,193 @@ const AgentReports = () => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
               <input
                 type="text"
-                placeholder="Search..."
+                placeholder={
+                  activeReport === "sms"
+                    ? "Search phone or message..."
+                    : "Search..."
+                }
                 value={filters.search}
-                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                onChange={(e) =>
+                  setFilters({ ...filters, search: e.target.value })
+                }
                 className="block w-full pl-10 rounded-md border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
           </div>
-          
+
           <button
             onClick={fetchReportData}
             disabled={loading}
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </button>
-          
+
           <button
-            onClick={() => setFilters({
-              startDate: '',
-              endDate: '',
-              propertyId: '',
-              status: '',
-              search: ''
-            })}
+            onClick={() => {
+              setFilters({
+                startDate: "",
+                endDate: "",
+                propertyId: "",
+                status: "",
+                search: "",
+              });
+              setMessagingFilters({ status: "all", channel: "all" });
+            }}
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
           >
             Clear Filters
           </button>
         </div>
+      </div>
+    );
+  };
+
+  // Render SMS/WhatsApp Table
+  const renderMessagingTable = () => {
+    return (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Channel
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Recipient
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Message
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Type
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Sent By
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Date
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {data.map((item, index) => {
+              const isWhatsApp =
+                item.channel === "whatsapp" || item.template_name;
+
+              return (
+                <tr key={item.id || index} className="hover:bg-gray-50">
+                  {/* Channel */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium w-fit ${
+                        isWhatsApp
+                          ? "bg-green-100 text-green-800"
+                          : "bg-blue-100 text-blue-800"
+                      }`}
+                    >
+                      {isWhatsApp ? (
+                        <>
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          WhatsApp
+                        </>
+                      ) : (
+                        <>
+                          <Phone className="w-3.5 h-3.5" />
+                          SMS
+                        </>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Recipient */}
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                    {item.recipient_phone?.replace(/^254/, "0") || "N/A"}
+                  </td>
+
+                  {/* Message */}
+                  <td className="px-4 py-3 text-sm text-gray-900 max-w-xs">
+                    <div className="truncate" title={item.message}>
+                      {item.message || item.template_name || "N/A"}
+                    </div>
+                    {item.template_name && (
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        Template: {item.template_name}
+                      </div>
+                    )}
+                  </td>
+
+                  {/* Type */}
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                    <span className="capitalize">
+                      {item.message_type?.replace(/_/g, " ") || "General"}
+                    </span>
+                  </td>
+
+                  {/* Status */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span
+                      className={`px-2 py-1 inline-flex items-center gap-1 text-xs font-semibold rounded-full ${
+                        item.status === "sent"
+                          ? "bg-green-100 text-green-800"
+                          : item.status === "pending"
+                            ? "bg-yellow-100 text-yellow-800"
+                            : item.status === "skipped"
+                              ? "bg-gray-100 text-gray-600"
+                              : "bg-red-100 text-red-800"
+                      }`}
+                    >
+                      {item.status === "sent" && (
+                        <CheckCircle className="w-3 h-3" />
+                      )}
+                      {item.status === "pending" && (
+                        <Clock className="w-3 h-3" />
+                      )}
+                      {item.status === "failed" && (
+                        <XCircle className="w-3 h-3" />
+                      )}
+                      {item.status === "skipped" && (
+                        <SkipForward className="w-3 h-3" />
+                      )}
+                      {item.status || "Pending"}
+                    </span>
+                    {item.error_message && item.status === "failed" && (
+                      <div
+                        className="text-xs text-red-500 mt-1 max-w-[200px] truncate"
+                        title={item.error_message}
+                      >
+                        {item.error_message}
+                      </div>
+                    )}
+                  </td>
+
+                  {/* Sent By */}
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                    {item.sent_by_name || "System"}
+                  </td>
+
+                  {/* Date */}
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                    <div>
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleDateString()
+                        : "N/A"}
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleTimeString()
+                        : ""}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     );
   };
@@ -513,7 +965,9 @@ const AgentReports = () => {
           </div>
           {apiErrors.length > 0 && (
             <div className="mt-4 p-3 bg-red-50 rounded-lg text-left max-w-md mx-auto">
-              <div className="text-sm font-medium text-red-800">Debug Info:</div>
+              <div className="text-sm font-medium text-red-800">
+                Debug Info:
+              </div>
               <div className="text-xs text-red-600 mt-1">
                 {apiErrors.map((error, idx) => (
                   <div key={idx}>• {error}</div>
@@ -525,47 +979,69 @@ const AgentReports = () => {
       );
     }
 
+    // Use specialized table for SMS/WhatsApp
+    if (activeReport === "sms") {
+      return renderMessagingTable();
+    }
+
     // Render different tables based on report type
     switch (activeReport) {
-      case 'tenants':
+      case "tenants":
         return (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rent</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tenant Name
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Phone
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Property
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Unit
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Rent
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.first_name || item.name} {item.last_name || ''}
+                      {item.first_name || item.name} {item.last_name || ""}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.phone_number?.replace(/^254/, '0') || 'N/A'}
+                      {item.phone_number?.replace(/^254/, "0") || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.property_name || 'N/A'}
+                      {item.property_name || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.unit_code || 'N/A'}
+                      {item.unit_code || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      KSh {(parseFloat(item.rent_amount || item.monthly_rent) || 0).toLocaleString()}
+                      KSh{" "}
+                      {(
+                        parseFloat(item.rent_amount || item.monthly_rent) || 0
+                      ).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.is_active || item.status === 'active' 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {item.is_active ? 'Active' : (item.status || 'Inactive')}
+                      <span
+                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          item.is_active || item.status === "active"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {item.is_active ? "Active" : item.status || "Inactive"}
                       </span>
                     </td>
                   </tr>
@@ -575,48 +1051,68 @@ const AgentReports = () => {
           </div>
         );
 
-      case 'payments':
+      case "payments":
         return (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Receipt</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Month</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Receipt
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tenant
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Month
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.mpesa_receipt_number || item.id?.substring(0, 8) || 'N/A'}
+                      {item.mpesa_receipt_number ||
+                        item.id?.substring(0, 8) ||
+                        "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A'}
+                      {item.tenant_name ||
+                        `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+                        "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       KSh {(parseFloat(item.amount) || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.payment_month || 'N/A'}
+                      {item.payment_month || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.status === 'completed' 
-                          ? 'bg-green-100 text-green-800'
-                          : item.status === 'pending'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {item.status || 'Pending'}
+                      <span
+                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          item.status === "completed"
+                            ? "bg-green-100 text-green-800"
+                            : item.status === "pending"
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {item.status || "Pending"}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleDateString()
+                        : "N/A"}
                     </td>
                   </tr>
                 ))}
@@ -624,19 +1120,31 @@ const AgentReports = () => {
             </table>
           </div>
         );
-        
-      case 'properties':
+
+      case "properties":
         return (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property Code</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Address</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Units</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Occupied</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Available</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Property Code
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Property Name
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Address
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Total Units
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Occupied
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Available
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -649,7 +1157,7 @@ const AgentReports = () => {
                       {item.name}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.address || 'N/A'}
+                      {item.address || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.total_units || item.unit_count || 0}
@@ -667,56 +1175,74 @@ const AgentReports = () => {
           </div>
         );
 
-      case 'complaints':
+      case "complaints":
         return (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Title
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Property
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Unit
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Priority
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.title || 'N/A'}
+                      {item.title || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.property_name || 'N/A'}
+                      {item.property_name || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.unit_code || 'N/A'}
+                      {item.unit_code || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.priority === 'high' 
-                          ? 'bg-red-100 text-red-800'
-                          : item.priority === 'medium'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-green-100 text-green-800'
-                      }`}>
-                        {item.priority || 'Medium'}
+                      <span
+                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          item.priority === "high"
+                            ? "bg-red-100 text-red-800"
+                            : item.priority === "medium"
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-green-100 text-green-800"
+                        }`}
+                      >
+                        {item.priority || "Medium"}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.status === 'resolved' 
-                          ? 'bg-green-100 text-green-800'
-                          : item.status === 'in_progress'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {item.status || 'Open'}
+                      <span
+                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          item.status === "resolved"
+                            ? "bg-green-100 text-green-800"
+                            : item.status === "in_progress"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-yellow-100 text-yellow-800"
+                        }`}
+                      >
+                        {item.status || "Open"}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleDateString()
+                        : "N/A"}
                     </td>
                   </tr>
                 ))}
@@ -725,45 +1251,61 @@ const AgentReports = () => {
           </div>
         );
 
-      case 'water':
+      case "water":
         return (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bill Month</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tenant
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Property
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Unit
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Bill Month
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.tenant_name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'N/A'}
+                      {item.tenant_name ||
+                        `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+                        "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.property_name || 'N/A'}
+                      {item.property_name || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.unit_code || 'N/A'}
+                      {item.unit_code || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       KSh {(parseFloat(item.amount) || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.bill_month || 'N/A'}
+                      {item.bill_month || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.status === 'paid' 
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {item.status || 'Pending'}
+                      <span
+                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          item.status === "paid"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-yellow-100 text-yellow-800"
+                        }`}
+                      >
+                        {item.status || "Pending"}
                       </span>
                     </td>
                   </tr>
@@ -773,74 +1315,41 @@ const AgentReports = () => {
           </div>
         );
 
-      case 'sms':
+      case "revenue":
         return (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Recipient</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
-                  <tr key={item.id || index}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.recipient_phone?.replace(/^254/, '0') || 'N/A'}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-900 max-w-xs truncate">
-                      {item.message || 'N/A'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.message_type || 'General'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.status === 'sent' 
-                          ? 'bg-green-100 text-green-800'
-                          : item.status === 'pending'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {item.status || 'Pending'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-
-      case 'revenue':
-        return (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Month</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Revenue</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payments</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Properties</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenants</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Payment</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Month
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Total Revenue
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Payments
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Properties
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tenants
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Avg Payment
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {data.slice(0, 10).map((item, index) => (
                   <tr key={index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.month || 'N/A'}
+                      {item.month || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
-                      KSh {(parseFloat(item.total_revenue) || 0).toLocaleString()}
+                      KSh{" "}
+                      {(parseFloat(item.total_revenue) || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.payment_count || 0}
@@ -852,7 +1361,8 @@ const AgentReports = () => {
                       {item.tenant_count || 0}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      KSh {(parseFloat(item.average_payment) || 0).toLocaleString()}
+                      KSh{" "}
+                      {(parseFloat(item.average_payment) || 0).toLocaleString()}
                     </td>
                   </tr>
                 ))}
@@ -860,19 +1370,28 @@ const AgentReports = () => {
             </table>
           </div>
         );
-        
+
       default:
-        // Generic table for other reports
         return (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    ID
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Name
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -882,21 +1401,29 @@ const AgentReports = () => {
                       {item.id?.substring(0, 8) || index + 1}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.name || item.first_name || item.tenant_name || 'N/A'}
+                      {item.name ||
+                        item.first_name ||
+                        item.tenant_name ||
+                        "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.status === 'completed' || item.status === 'active' 
-                          ? 'bg-green-100 text-green-800'
-                          : item.status === 'pending'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {item.status || 'Active'}
+                      <span
+                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          item.status === "completed" ||
+                          item.status === "active"
+                            ? "bg-green-100 text-green-800"
+                            : item.status === "pending"
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {item.status || "Active"}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleDateString()
+                        : "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       KSh {(parseFloat(item.amount) || 0).toLocaleString()}
@@ -911,23 +1438,33 @@ const AgentReports = () => {
   };
 
   const getReportStats = () => {
-    // Safety check: ensure data is an array
     if (!Array.isArray(data)) {
-      console.warn('⚠️ getReportStats: data is not an array:', data);
+      console.warn("⚠️ getReportStats: data is not an array:", data);
       return { count: 0, totalAmount: 0 };
     }
-    
+
     const count = data.length;
     let totalAmount = 0;
-    
-    if (activeReport === 'payments' || activeReport === 'revenue') {
-      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.amount || item.total_revenue) || 0), 0);
-    } else if (activeReport === 'tenants') {
-      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.rent_amount || item.monthly_rent) || 0), 0);
-    } else if (activeReport === 'water') {
-      totalAmount = data.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+
+    if (activeReport === "payments" || activeReport === "revenue") {
+      totalAmount = data.reduce(
+        (sum, item) =>
+          sum + (parseFloat(item.amount || item.total_revenue) || 0),
+        0,
+      );
+    } else if (activeReport === "tenants") {
+      totalAmount = data.reduce(
+        (sum, item) =>
+          sum + (parseFloat(item.rent_amount || item.monthly_rent) || 0),
+        0,
+      );
+    } else if (activeReport === "water") {
+      totalAmount = data.reduce(
+        (sum, item) => sum + (parseFloat(item.amount) || 0),
+        0,
+      );
     }
-    
+
     return { count, totalAmount };
   };
 
@@ -949,27 +1486,27 @@ const AgentReports = () => {
             </div>
           )}
         </div>
-        
+
         <div className="flex gap-3 mt-4 md:mt-0">
           <button
-            onClick={() => handleExport('pdf')}
+            onClick={() => handleExport("pdf")}
             disabled={!Array.isArray(data) || data.length === 0 || loading}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
               !Array.isArray(data) || data.length === 0 || loading
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                : 'bg-red-600 text-white hover:bg-red-700'
+                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                : "bg-red-600 text-white hover:bg-red-700"
             }`}
           >
             <FileText className="w-4 h-4" />
             Export PDF
           </button>
           <button
-            onClick={() => handleExport('excel')}
+            onClick={() => handleExport("excel")}
             disabled={!Array.isArray(data) || data.length === 0 || loading}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
               !Array.isArray(data) || data.length === 0 || loading
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                : 'bg-green-600 text-white hover:bg-green-700'
+                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                : "bg-green-600 text-white hover:bg-green-700"
             }`}
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -989,12 +1526,14 @@ const AgentReports = () => {
               activeReport === report.id
                 ? `${report.color} text-white border-transparent shadow-md`
                 : loading
-                ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-                : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                  ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
+                  : "bg-white text-gray-700 border-gray-200 hover:border-gray-300 hover:shadow-sm"
             }`}
           >
             <report.icon className="w-5 h-5 mb-2" />
-            <span className="text-xs font-medium text-center">{report.name}</span>
+            <span className="text-xs font-medium text-center">
+              {report.name}
+            </span>
           </button>
         ))}
       </div>
@@ -1006,22 +1545,80 @@ const AgentReports = () => {
           <div className="text-2xl font-bold mt-1">{stats.count}</div>
           <div className="text-xs text-gray-400 mt-1">in this report</div>
         </div>
-        {(activeReport === 'payments' || activeReport === 'revenue' || activeReport === 'tenants' || activeReport === 'water') && (
-          <div className="bg-white p-4 rounded-lg border border-gray-200">
-            <div className="text-sm text-gray-500">Total Amount</div>
-            <div className="text-2xl font-bold mt-1 text-green-600">
-              KSh {stats.totalAmount.toLocaleString()}
+
+        {/* Show channel breakdown for SMS report */}
+        {activeReport === "sms" ? (
+          <>
+            <div className="bg-white p-4 rounded-lg border border-gray-200">
+              <div className="text-sm text-gray-500">By Channel</div>
+              <div className="flex gap-4 mt-2">
+                <div className="flex items-center gap-1.5">
+                  <Phone className="w-4 h-4 text-blue-600" />
+                  <span className="font-bold">
+                    {messagingSummary.channelCounts?.sms || 0}
+                  </span>
+                  <span className="text-xs text-gray-500">SMS</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <MessageCircle className="w-4 h-4 text-green-600" />
+                  <span className="font-bold">
+                    {messagingSummary.channelCounts?.whatsapp || 0}
+                  </span>
+                  <span className="text-xs text-gray-500">WhatsApp</span>
+                </div>
+              </div>
             </div>
-            <div className="text-xs text-gray-400 mt-1">sum of all amounts</div>
-          </div>
+            <div className="bg-white p-4 rounded-lg border border-gray-200">
+              <div className="text-sm text-gray-500">Delivery Status</div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <span className="flex items-center gap-1 text-sm">
+                  <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+                  <span className="font-medium">
+                    {messagingSummary.statusCounts?.sent || 0}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1 text-sm">
+                  <Clock className="w-3.5 h-3.5 text-yellow-600" />
+                  <span className="font-medium">
+                    {messagingSummary.statusCounts?.pending || 0}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1 text-sm">
+                  <XCircle className="w-3.5 h-3.5 text-red-600" />
+                  <span className="font-medium">
+                    {messagingSummary.statusCounts?.failed || 0}
+                  </span>
+                </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {(activeReport === "payments" ||
+              activeReport === "revenue" ||
+              activeReport === "tenants" ||
+              activeReport === "water") && (
+              <div className="bg-white p-4 rounded-lg border border-gray-200">
+                <div className="text-sm text-gray-500">Total Amount</div>
+                <div className="text-2xl font-bold mt-1 text-green-600">
+                  KSh {stats.totalAmount.toLocaleString()}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  sum of all amounts
+                </div>
+              </div>
+            )}
+            <div className="bg-white p-4 rounded-lg border border-gray-200">
+              <div className="text-sm text-gray-500">Generated By</div>
+              <div className="text-lg font-medium mt-1">
+                {user?.first_name} {user?.last_name}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">
+                {user?.role || "agent"}
+              </div>
+            </div>
+          </>
         )}
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <div className="text-sm text-gray-500">Generated By</div>
-          <div className="text-lg font-medium mt-1">
-            {user?.first_name} {user?.last_name}
-          </div>
-          <div className="text-xs text-gray-400 mt-1">{user?.role || 'agent'}</div>
-        </div>
       </div>
 
       {/* Filters */}
@@ -1032,26 +1629,28 @@ const AgentReports = () => {
         <div className="border-b border-gray-200 px-6 py-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">
-              {reportTypes.find(r => r.id === activeReport)?.name}
+              {reportTypes.find((r) => r.id === activeReport)?.name}
             </h2>
             <div className="text-sm text-gray-500">
-              Generated: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
+              Generated: {new Date().toLocaleDateString()}{" "}
+              {new Date().toLocaleTimeString()}
             </div>
           </div>
         </div>
-        
-        <div className="p-6">
-          {renderTable()}
-        </div>
-        
+
+        <div className="p-6">{renderTable()}</div>
+
         {/* Export info footer */}
         <div className="border-t border-gray-200 px-6 py-4 bg-gray-50">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-500">
-              {Array.isArray(data) ? data.length : 0} records • Export to PDF or Excel
+              {Array.isArray(data) ? data.length : 0} records • Export to PDF or
+              Excel
             </div>
             <div className="text-xs text-gray-400">
-              Showing first {Math.min(Array.isArray(data) ? data.length : 0, 10)} of {Array.isArray(data) ? data.length : 0} records
+              {activeReport === "sms"
+                ? `Showing ${Math.min(Array.isArray(data) ? data.length : 0, 100)} messages`
+                : `Showing first ${Math.min(Array.isArray(data) ? data.length : 0, 10)} of ${Array.isArray(data) ? data.length : 0} records`}
             </div>
           </div>
         </div>

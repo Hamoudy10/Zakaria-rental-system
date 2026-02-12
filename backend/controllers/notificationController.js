@@ -1042,11 +1042,7 @@ const sendTargetedSMS = async (req, res) => {
   }
 };
 
-// =====================================================================
-// 4. NEW: Get SMS history with filters and pagination
-// =====================================================================
-
-const getSMSHistory = async (req, res) => {
+const getMessagingHistory = async (req, res) => {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
@@ -1054,6 +1050,7 @@ const getSMSHistory = async (req, res) => {
       page = 1,
       limit = 20,
       status,
+      channel, // 'sms', 'whatsapp', or 'all'
       startDate,
       endDate,
       search,
@@ -1061,83 +1058,212 @@ const getSMSHistory = async (req, res) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    let baseQuery = `
-      SELECT 
-        sq.id,
-        sq.recipient_phone,
-        sq.message,
-        sq.message_type,
-        sq.status,
-        sq.attempts,
-        sq.last_attempt_at,
-        sq.sent_at,
-        sq.created_at,
-        sq.error_message,
-        sq.agent_id,
-        CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
-      FROM sms_queue sq
-      LEFT JOIN users u ON sq.agent_id = u.id
-      WHERE 1=1
-    `;
+    // Build WHERE clauses for both queries
+    const buildWhereClauses = (tableAlias, paramStartIndex) => {
+      const whereClauses = [];
+      const queryParams = [];
+      let paramIndex = paramStartIndex;
 
-    const whereClauses = [];
-    const queryParams = [];
-    let paramIndex = 1;
+      // Agent isolation: agents only see their own sent messages
+      if (userRole !== "admin") {
+        whereClauses.push(`${tableAlias}.agent_id = $${paramIndex++}`);
+        queryParams.push(userId);
+      }
 
-    // Agent isolation: agents only see their own sent SMS
-    if (userRole !== "admin") {
-      whereClauses.push(`sq.agent_id = $${paramIndex++}`);
-      queryParams.push(userId);
+      // Status filter
+      if (status && status !== "all") {
+        whereClauses.push(`${tableAlias}.status = $${paramIndex++}`);
+        queryParams.push(status);
+      }
+
+      // Date range filters
+      if (startDate) {
+        whereClauses.push(`${tableAlias}.created_at >= $${paramIndex++}`);
+        queryParams.push(startDate);
+      }
+
+      if (endDate) {
+        whereClauses.push(
+          `${tableAlias}.created_at <= $${paramIndex++}::date + interval '1 day'`,
+        );
+        queryParams.push(endDate);
+      }
+
+      // Search filter
+      if (search) {
+        whereClauses.push(
+          `(${tableAlias}.recipient_phone ILIKE $${paramIndex} OR ${tableAlias}.message ILIKE $${paramIndex})`,
+        );
+        queryParams.push(`%${search}%`);
+        paramIndex++;
+      }
+
+      return { whereClauses, queryParams, nextParamIndex: paramIndex };
+    };
+
+    // Determine which tables to query based on channel filter
+    const includesSMS = !channel || channel === "all" || channel === "sms";
+    const includesWhatsApp =
+      !channel || channel === "all" || channel === "whatsapp";
+
+    let queries = [];
+    let allParams = [];
+    let currentParamIndex = 1;
+
+    // SMS Query
+    if (includesSMS) {
+      const smsWhere = buildWhereClauses("sq", currentParamIndex);
+      const smsWhereClause =
+        smsWhere.whereClauses.length > 0
+          ? `WHERE ${smsWhere.whereClauses.join(" AND ")}`
+          : "";
+
+      queries.push(`
+        SELECT 
+          sq.id,
+          sq.recipient_phone,
+          sq.message,
+          sq.message_type,
+          sq.status,
+          sq.attempts,
+          sq.last_attempt_at,
+          sq.sent_at,
+          sq.created_at,
+          sq.error_message,
+          sq.agent_id,
+          'sms' as channel,
+          NULL as template_name,
+          CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
+        FROM sms_queue sq
+        LEFT JOIN users u ON sq.agent_id = u.id
+        ${smsWhereClause}
+      `);
+
+      allParams = [...allParams, ...smsWhere.queryParams];
+      currentParamIndex = smsWhere.nextParamIndex;
     }
 
-    // Status filter
-    if (status) {
-      whereClauses.push(`sq.status = $${paramIndex++}`);
-      queryParams.push(status);
+    // WhatsApp Query
+    if (includesWhatsApp) {
+      const waWhere = buildWhereClauses("wq", currentParamIndex);
+      const waWhereClause =
+        waWhere.whereClauses.length > 0
+          ? `WHERE ${waWhere.whereClauses.join(" AND ")}`
+          : "";
+
+      queries.push(`
+        SELECT 
+          wq.id,
+          wq.recipient_phone,
+          wq.fallback_message as message,
+          wq.message_type,
+          wq.status,
+          wq.attempts,
+          wq.last_attempt_at,
+          wq.sent_at,
+          wq.created_at,
+          wq.error_message,
+          wq.agent_id,
+          'whatsapp' as channel,
+          wq.template_name,
+          CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
+        FROM whatsapp_queue wq
+        LEFT JOIN users u ON wq.agent_id = u.id
+        ${waWhereClause}
+      `);
+
+      allParams = [...allParams, ...waWhere.queryParams];
+      currentParamIndex = waWhere.nextParamIndex;
     }
 
-    // Date range filters
-    if (startDate) {
-      whereClauses.push(`sq.created_at >= $${paramIndex++}`);
-      queryParams.push(startDate);
+    // If no queries (shouldn't happen), return empty
+    if (queries.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          messages: [],
+          pagination: {
+            currentPage: 1,
+            totalPages: 0,
+            totalCount: 0,
+            limit: parseInt(limit),
+          },
+        },
+      });
     }
 
-    if (endDate) {
-      whereClauses.push(
-        `sq.created_at <= $${paramIndex++}::date + interval '1 day'`,
-      );
-      queryParams.push(endDate);
-    }
-
-    // Search filter (phone or message)
-    if (search) {
-      whereClauses.push(
-        `(sq.recipient_phone ILIKE $${paramIndex} OR sq.message ILIKE $${paramIndex})`,
-      );
-      queryParams.push(`%${search}%`);
-      paramIndex++;
-    }
-
-    // Add where clauses to query
-    if (whereClauses.length > 0) {
-      baseQuery += ` AND ${whereClauses.join(" AND ")}`;
-    }
+    // Combine queries with UNION ALL
+    const combinedQuery = queries.join(" UNION ALL ");
 
     // Count query
-    const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) as filtered`;
-    const countResult = await pool.query(countQuery, queryParams);
+    const countQuery = `SELECT COUNT(*) FROM (${combinedQuery}) as combined`;
+    const countResult = await pool.query(countQuery, allParams);
     const totalCount = parseInt(countResult.rows[0].count, 10);
 
     // Add ordering and pagination
-    baseQuery += ` ORDER BY sq.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-    queryParams.push(parseInt(limit), offset);
+    const paginatedQuery = `
+      SELECT * FROM (${combinedQuery}) as combined
+      ORDER BY created_at DESC
+      LIMIT $${currentParamIndex++} OFFSET $${currentParamIndex++}
+    `;
+    allParams.push(parseInt(limit), offset);
 
-    const historyResult = await pool.query(baseQuery, queryParams);
+    const historyResult = await pool.query(paginatedQuery, allParams);
+
+    // Get channel-specific counts for summary
+    let channelCounts = { sms: 0, whatsapp: 0 };
+
+    if (includesSMS && includesWhatsApp) {
+      // Count per channel
+      const channelCountQuery = `
+        SELECT channel, COUNT(*) as count
+        FROM (${combinedQuery.replace(/LIMIT.*$/, "")}) as combined
+        GROUP BY channel
+      `;
+      try {
+        const channelCountResult = await pool.query(
+          channelCountQuery,
+          allParams.slice(0, -2),
+        );
+        channelCountResult.rows.forEach((row) => {
+          channelCounts[row.channel] = parseInt(row.count);
+        });
+      } catch (e) {
+        // Ignore count errors, just show messages
+        console.warn("Channel count query failed:", e.message);
+      }
+    }
+
+    // Get status counts
+    let statusCounts = { sent: 0, pending: 0, failed: 0, skipped: 0 };
+    const statusCountQuery = `
+      SELECT status, COUNT(*) as count
+      FROM (${combinedQuery.replace(/LIMIT.*$/, "")}) as combined
+      GROUP BY status
+    `;
+    try {
+      const statusCountResult = await pool.query(
+        statusCountQuery,
+        allParams.slice(0, -2),
+      );
+      statusCountResult.rows.forEach((row) => {
+        if (row.status) {
+          statusCounts[row.status] = parseInt(row.count);
+        }
+      });
+    } catch (e) {
+      console.warn("Status count query failed:", e.message);
+    }
 
     res.json({
       success: true,
       data: {
-        history: historyResult.rows,
+        messages: historyResult.rows,
+        summary: {
+          totalCount,
+          channelCounts,
+          statusCounts,
+        },
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalCount / parseInt(limit)),
@@ -1147,15 +1273,14 @@ const getSMSHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ Get SMS history error:", error);
+    console.error("❌ Get messaging history error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error fetching SMS history",
+      message: "Server error fetching messaging history",
       error: error.message,
     });
   }
 };
-
 
 // Health check endpoint
 const healthCheck = async (req, res) => {
@@ -1397,7 +1522,7 @@ module.exports = {
   healthCheck,
   getPropertyTenants, // NEW
   sendTargetedSMS, // NEW
-  getSMSHistory,
+  getMessagingHistory, // NEW
   getTenantsByProperty,
   checkDeliveryStatus,
   getSMSStats,
