@@ -37,19 +37,13 @@ class WhatsAppService {
   // PHONE NUMBER FORMATTING
   // ============================================================
 
-  /**
-   * Format phone number for WhatsApp (international format without +)
-   * WhatsApp requires: 2547XXXXXXXX (no + prefix)
-   */
   formatPhoneNumber(phone) {
     if (!phone) {
       throw new Error("Phone number is required");
     }
 
-    // Remove all non-digit characters (including +)
     let cleaned = phone.toString().replace(/\D/g, "");
 
-    // Handle Kenyan formats
     if (cleaned.startsWith("0") && cleaned.length === 10) {
       cleaned = "254" + cleaned.substring(1);
     } else if (cleaned.startsWith("7") && cleaned.length === 9) {
@@ -61,9 +55,6 @@ class WhatsAppService {
     return cleaned;
   }
 
-  /**
-   * Validate Kenyan phone number for WhatsApp
-   */
   validatePhoneNumber(phone) {
     try {
       const formatted = this.formatPhoneNumber(phone);
@@ -77,17 +68,11 @@ class WhatsAppService {
   // FORMATTING HELPERS
   // ============================================================
 
-  /**
-   * Format amount with thousands separator
-   */
   formatAmount(amount) {
     const num = parseFloat(amount) || 0;
     return num.toLocaleString("en-KE");
   }
 
-  /**
-   * Get ordinal suffix for day
-   */
   getOrdinalSuffix(day) {
     const num = parseInt(day);
     if (num >= 11 && num <= 13) return "th";
@@ -103,17 +88,11 @@ class WhatsAppService {
     }
   }
 
-  /**
-   * Format due day with ordinal
-   */
   formatDueDay(day) {
     const num = parseInt(day) || 1;
     return `${num}${this.getOrdinalSuffix(num)}`;
   }
 
-  /**
-   * Get paybill number from settings
-   */
   async getPaybillNumber() {
     try {
       const result = await pool.query(
@@ -131,14 +110,6 @@ class WhatsAppService {
   // CORE WHATSAPP SENDING
   // ============================================================
 
-  /**
-   * Send a template message via WhatsApp Cloud API
-   * @param {string} phoneNumber - Recipient phone number
-   * @param {string} templateName - Meta-approved template name
-   * @param {Array} templateParams - Array of parameter values (strings)
-   * @param {string} languageCode - Template language (default: en)
-   * @returns {Object} Result with success status
-   */
   async sendTemplateMessage(
     phoneNumber,
     templateName,
@@ -152,7 +123,6 @@ class WhatsAppService {
         paramsCount: templateParams.length,
       });
 
-      // Validate phone
       if (!this.validatePhoneNumber(phoneNumber)) {
         console.error("❌ WhatsApp: Invalid phone number:", phoneNumber);
         return {
@@ -162,7 +132,6 @@ class WhatsAppService {
         };
       }
 
-      // Check configuration
       if (!this.configured) {
         console.warn("⚠️ WhatsApp not configured - skipping");
         return {
@@ -175,7 +144,6 @@ class WhatsAppService {
 
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      // Build template components
       const components = [];
 
       if (templateParams.length > 0) {
@@ -188,7 +156,6 @@ class WhatsAppService {
         });
       }
 
-      // WhatsApp Cloud API payload
       const payload = {
         messaging_product: "whatsapp",
         recipient_type: "individual",
@@ -221,7 +188,6 @@ class WhatsAppService {
         JSON.stringify(response.data, null, 2),
       );
 
-      // Meta API returns messages array with id on success
       if (response.data?.messages?.[0]?.id) {
         const messageId = response.data.messages[0].id;
         const messageStatus =
@@ -240,7 +206,6 @@ class WhatsAppService {
         };
       }
 
-      // Check for error in response
       if (response.data?.error) {
         const errorMsg =
           response.data.error.message || "Unknown WhatsApp API error";
@@ -269,7 +234,6 @@ class WhatsAppService {
         error.response?.data || error.message,
       );
 
-      // Extract Meta API error details
       const metaError = error.response?.data?.error;
       let errorMessage = error.message;
       let errorCode = null;
@@ -278,9 +242,7 @@ class WhatsAppService {
         errorMessage = metaError.message || error.message;
         errorCode = metaError.code;
 
-        // Handle specific Meta error codes
         if (errorCode === 131026) {
-          // Recipient not on WhatsApp
           console.warn("⚠️ WhatsApp: Recipient not on WhatsApp:", phoneNumber);
           return {
             success: false,
@@ -292,7 +254,6 @@ class WhatsAppService {
         }
 
         if (errorCode === 131047) {
-          // Re-engagement required (24h window expired, need template)
           console.warn("⚠️ WhatsApp: Template required for this recipient");
           return {
             success: false,
@@ -303,7 +264,6 @@ class WhatsAppService {
         }
 
         if (errorCode === 131048) {
-          // Spam rate limit
           console.warn("⚠️ WhatsApp: Rate limited by Meta");
           return {
             success: false,
@@ -314,38 +274,30 @@ class WhatsAppService {
         }
 
         if (errorCode === 132000) {
-          // Template does not exist
           console.error("❌ WhatsApp: Template not found:", errorMessage);
           return {
             success: false,
-            error: `Template not found or not approved`,
+            error: "Template not found or not approved",
             code: 132000,
             channel: "whatsapp",
           };
         }
 
         if (errorCode === 132001) {
-          // Template parameter count mismatch
           console.error(
             "❌ WhatsApp: Template parameter mismatch:",
             errorMessage,
           );
           return {
             success: false,
-            error: `Template parameter mismatch`,
+            error: "Template parameter mismatch",
             code: 132001,
             channel: "whatsapp",
           };
         }
       }
 
-      // Queue for retry
-      await this.queueForRetry(
-        phoneNumber,
-        null, // templateName will be set by caller
-        [],
-        errorMessage,
-      );
+      await this.queueForRetry(phoneNumber, null, [], errorMessage);
 
       return {
         success: false,
@@ -358,11 +310,13 @@ class WhatsAppService {
   }
 
   // ============================================================
-  // MESSAGE TYPE METHODS (Mirror smsService methods)
+  // MESSAGE TYPE METHODS (Matched to submitted Meta templates)
   // ============================================================
 
   /**
    * Send welcome message via WhatsApp
+   * Template: rental_welcome (7 params)
+   * {{1}}=name, {{2}}=property, {{3}}=unit, {{4}}=rent, {{5}}=dueDay, {{6}}=paybill, {{7}}=account
    */
   async sendWelcomeMessage(
     tenantPhone,
@@ -385,9 +339,8 @@ class WhatsAppService {
         formattedRent,
         dueDayFormatted,
         paybill,
+        unitCode, // {{7}} = Account number (same as unit code)
       ];
-
-      const fallbackMessage = `Dear ${tenantName}, Welcome to ${propertyName || "Zakaria Housing"}! Unit: ${unitCode}, Rent: KES ${formattedRent}/month, Due: ${dueDayFormatted}. Paybill: ${paybill}, Account: ${unitCode}.`;
 
       console.log("👋 WhatsApp: Sending welcome message:", {
         tenant: tenantName,
@@ -417,6 +370,8 @@ class WhatsAppService {
 
   /**
    * Send payment confirmation via WhatsApp
+   * Template: payment_confirmation (5 params)
+   * {{1}}=name, {{2}}=amount, {{3}}=unit, {{4}}=month, {{5}}=status
    */
   async sendPaymentConfirmation(
     tenantPhone,
@@ -463,6 +418,8 @@ class WhatsAppService {
 
   /**
    * Send enhanced payment confirmation with breakdown via WhatsApp
+   * Template: payment_confirmation_detailed (6 params)
+   * {{1}}=name, {{2}}=amount, {{3}}=unit, {{4}}=month, {{5}}=breakdown, {{6}}=status
    */
   async sendEnhancedPaymentConfirmation(
     tenantPhone,
@@ -480,7 +437,6 @@ class WhatsAppService {
           ? "FULLY PAID"
           : `Balance: KES ${this.formatAmount(balance)}`;
 
-      // Build breakdown text
       const allocations = [];
       if (rentPaid > 0)
         allocations.push(`- Rent: KES ${this.formatAmount(rentPaid)}`);
@@ -530,6 +486,8 @@ class WhatsAppService {
 
   /**
    * Send bill notification via WhatsApp
+   * Template: bill_notification (7 params)
+   * {{1}}=name, {{2}}=month, {{3}}=unit, {{4}}=items, {{5}}=total, {{6}}=paybill, {{7}}=account
    */
   async sendBillNotification(
     tenantPhone,
@@ -543,7 +501,6 @@ class WhatsAppService {
     paybillNumber,
   ) {
     try {
-      // Build itemized bill
       const items = [];
       if (rentDue > 0) items.push(`- Rent: KES ${this.formatAmount(rentDue)}`);
       if (waterDue > 0)
@@ -560,6 +517,7 @@ class WhatsAppService {
         itemsText,
         this.formatAmount(totalDue),
         paybillNumber,
+        unitCode, // {{7}} = Account number (same as unit code)
       ];
 
       console.log("📋 WhatsApp: Sending bill notification:", {
@@ -591,6 +549,8 @@ class WhatsAppService {
 
   /**
    * Send balance reminder via WhatsApp
+   * Template: balance_reminder (7 params)
+   * {{1}}=name, {{2}}=unit, {{3}}=month, {{4}}=balance, {{5}}=dueDate, {{6}}=paybill, {{7}}=account
    */
   async sendBalanceReminder(
     tenantPhone,
@@ -610,6 +570,7 @@ class WhatsAppService {
         this.formatAmount(balance),
         dueDate,
         paybill,
+        unitCode, // {{7}} = Account number (same as unit code)
       ];
 
       console.log("⏰ WhatsApp: Sending balance reminder:", {
@@ -640,6 +601,8 @@ class WhatsAppService {
 
   /**
    * Send admin payment alert via WhatsApp
+   * Template: admin_payment_alert (5 params)
+   * {{1}}=tenant, {{2}}=unit, {{3}}=amount, {{4}}=month, {{5}}=status
    */
   async sendAdminAlert(
     adminPhone,
@@ -689,6 +652,8 @@ class WhatsAppService {
 
   /**
    * Send detailed admin payment alert via WhatsApp
+   * Template: admin_payment_alert_detailed (6 params)
+   * {{1}}=tenant, {{2}}=unit, {{3}}=month, {{4}}=amount, {{5}}=allocation, {{6}}=status
    */
   async sendAdminPaymentAlert(
     adminPhone,
@@ -704,7 +669,6 @@ class WhatsAppService {
       const status =
         balance <= 0 ? "COMPLETE" : `Bal: KES ${this.formatAmount(balance)}`;
 
-      // Build compact breakdown
       const parts = [];
       if (rentPaid > 0) parts.push(`R:${this.formatAmount(rentPaid)}`);
       if (waterPaid > 0) parts.push(`W:${this.formatAmount(waterPaid)}`);
@@ -749,6 +713,8 @@ class WhatsAppService {
 
   /**
    * Send advance payment notification via WhatsApp
+   * Template: advance_payment (4 params)
+   * {{1}}=name, {{2}}=amount, {{3}}=unit, {{4}}=months
    */
   async sendAdvancePaymentNotification(
     tenantPhone,
@@ -794,6 +760,8 @@ class WhatsAppService {
 
   /**
    * Send maintenance update via WhatsApp
+   * Template: maintenance_update (3 params)
+   * {{1}}=name, {{2}}=unit, {{3}}=update
    */
   async sendMaintenanceUpdate(tenantPhone, tenantName, unitCode, update) {
     try {
@@ -827,7 +795,8 @@ class WhatsAppService {
 
   /**
    * Send general announcement via WhatsApp
-   * Used by bulk SMS and targeted SMS
+   * Template: general_announcement (2 params)
+   * {{1}}=title, {{2}}=message
    */
   async sendGeneralAnnouncement(phone, title, message) {
     try {
@@ -861,6 +830,8 @@ class WhatsAppService {
 
   /**
    * Send monthly bill (cron job format) via WhatsApp
+   * Template: monthly_bill_cron (8 params)
+   * {{1}}=name, {{2}}=month, {{3}}=unit, {{4}}=items, {{5}}=total, {{6}}=paybill, {{7}}=account, {{8}}=company
    */
   async sendMonthlyBillCron(
     tenantPhone,
@@ -880,6 +851,7 @@ class WhatsAppService {
         billItems,
         this.formatAmount(totalDue),
         paybillNumber,
+        unitCode, // {{7}} = Account number (same as unit code)
         companyName,
       ];
 
@@ -914,9 +886,6 @@ class WhatsAppService {
   // QUEUE & RETRY
   // ============================================================
 
-  /**
-   * Queue WhatsApp message for retry
-   */
   async queueForRetry(
     phoneNumber,
     templateName,
@@ -949,9 +918,6 @@ class WhatsAppService {
     }
   }
 
-  /**
-   * Queue a WhatsApp message (for bulk/scheduled sending)
-   */
   async queueMessage(
     phoneNumber,
     templateName,
@@ -990,9 +956,6 @@ class WhatsAppService {
     }
   }
 
-  /**
-   * Process queued WhatsApp messages
-   */
   async processQueue() {
     try {
       console.log("🔄 WhatsApp: Processing queue...");
@@ -1029,7 +992,6 @@ class WhatsAppService {
           );
 
           if (result.notOnWhatsApp) {
-            // Mark as skipped - recipient not on WhatsApp
             await pool.query(
               `UPDATE whatsapp_queue 
                SET status = 'skipped', attempts = attempts + 1,
@@ -1063,8 +1025,6 @@ class WhatsAppService {
 
           results.processed++;
 
-          // Rate limit: 300ms between WhatsApp messages
-          // Meta allows ~80 messages/second but being conservative
           await new Promise((resolve) => setTimeout(resolve, 300));
         } catch (error) {
           console.error(
@@ -1096,9 +1056,6 @@ class WhatsAppService {
   // LOGGING & STATISTICS
   // ============================================================
 
-  /**
-   * Log WhatsApp notification to database
-   */
   async logNotification(
     phone,
     templateName,
@@ -1129,9 +1086,6 @@ class WhatsAppService {
     }
   }
 
-  /**
-   * Get WhatsApp statistics
-   */
   async getStatistics() {
     try {
       const notifStats = await pool.query(`
@@ -1180,9 +1134,6 @@ class WhatsAppService {
     }
   }
 
-  /**
-   * Check service status
-   */
   async checkServiceStatus() {
     const status = {
       provider: "Meta WhatsApp Cloud API",
@@ -1195,7 +1146,6 @@ class WhatsAppService {
 
     if (this.configured) {
       try {
-        // Test API connectivity by checking the phone number
         const response = await axios.get(
           `https://graph.facebook.com/${this.apiVersion}/${this.phoneNumberId}`,
           {
@@ -1225,10 +1175,6 @@ class WhatsAppService {
   // WEBHOOK HANDLING (for delivery status updates)
   // ============================================================
 
-  /**
-   * Process incoming webhook from Meta (delivery status updates)
-   * Call this from a webhook route handler
-   */
   async processWebhook(webhookData) {
     try {
       if (!webhookData?.entry?.[0]?.changes?.[0]?.value) {
@@ -1237,13 +1183,11 @@ class WhatsAppService {
 
       const value = webhookData.entry[0].changes[0].value;
 
-      // Handle message status updates
       if (value.statuses && value.statuses.length > 0) {
         for (const statusUpdate of value.statuses) {
           const messageId = statusUpdate.id;
-          const status = statusUpdate.status; // sent, delivered, read, failed
+          const status = statusUpdate.status;
           const recipientId = statusUpdate.recipient_id;
-          const timestamp = statusUpdate.timestamp;
 
           console.log("📬 WhatsApp: Status update:", {
             messageId,
@@ -1251,7 +1195,6 @@ class WhatsAppService {
             recipient: recipientId,
           });
 
-          // Update whatsapp_notifications with delivery status
           await pool.query(
             `UPDATE whatsapp_notifications 
              SET status = $1 
@@ -1259,7 +1202,6 @@ class WhatsAppService {
             [status === "failed" ? "failed" : "sent", messageId],
           );
 
-          // Update whatsapp_queue if exists
           await pool.query(
             `UPDATE whatsapp_queue 
              SET status = $1 
@@ -1267,7 +1209,6 @@ class WhatsAppService {
             [status === "failed" ? "failed" : "sent", messageId],
           );
 
-          // Handle failures
           if (status === "failed") {
             const errorData = statusUpdate.errors?.[0];
             const errorMsg = errorData
