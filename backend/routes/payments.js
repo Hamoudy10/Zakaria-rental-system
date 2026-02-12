@@ -92,6 +92,10 @@ router.get('/details/:tenantId/:unitId', protect, paymentController.getPaymentHi
 // Get future payments status for tenant + unit
 router.get('/future/:tenantId/:unitId', protect, paymentController.getFuturePaymentsStatus);
 
+//get tenant payment status (current month)
+router.get('/tenant/:tenantId/status', protect, paymentController.getTenantPaymentStatus);
+
+
 // ==================== MANUAL PAYMENT RECORDING ====================
 
 // Record manual payment (admin/agent enters cash/bank payment)
@@ -103,7 +107,6 @@ router.post('/manual', protect, paymentController.recordManualPayment);
 // Used by: PaymentManagement.jsx fetchPayments()
 router.get('/', protect, paymentController.getAllPayments);
 
-router.get("/tenant-status", authMiddleware, getTenantPaymentStatus);
 
 // Create new payment record
 router.post('/', protect, async (req, res) => {
