@@ -2594,13 +2594,20 @@ const getPaymentsByTenant = async (req, res) => {
   }
 };
 
-/**
- * Get tenant payment status for a specific month
- * Returns all tenants with their payment status breakdown
- * 
- * GET /api/payments/tenant-status
- * Query params: month (YYYY-MM), propertyId (optional), search (optional)
- */
+// ============================================================
+// COMPLETE BACKEND SETUP INSTRUCTIONS
+// ============================================================
+// 
+// ERROR YOU SAW: "invalid input syntax for type uuid: 'tenant-status'"
+// CAUSE: Route /tenant-status is being caught by /:id route
+// FIX: Route order must have specific routes BEFORE generic /:id
+//
+// ============================================================
+
+// ============================================================
+// STEP 1: Copy this function to paymentController.js
+// ============================================================
+
 const getTenantPaymentStatus = async (req, res) => {
   try {
     const { month, propertyId, search } = req.query;
@@ -2611,12 +2618,14 @@ const getTenantPaymentStatus = async (req, res) => {
     const targetMonth = month || new Date().toISOString().slice(0, 7);
     const monthStart = `${targetMonth}-01`;
 
-    console.log('📊 Getting tenant payment status:', { targetMonth, propertyId, userRole });
+    console.log('📊 Getting tenant payment status:', { targetMonth, propertyId, userRole, userId });
 
     // Build query with agent isolation
     let baseQuery = `
       SELECT 
         t.id as tenant_id,
+        t.first_name,
+        t.last_name,
         CONCAT(t.first_name, ' ', t.last_name) as tenant_name,
         t.phone_number,
         p.id as property_id,
@@ -2714,6 +2723,7 @@ const getTenantPaymentStatus = async (req, res) => {
         t.last_name ILIKE $${paramIndex} OR 
         pu.unit_code ILIKE $${paramIndex} OR
         p.name ILIKE $${paramIndex} OR
+        t.phone_number ILIKE $${paramIndex} OR
         CONCAT(t.first_name, ' ', t.last_name) ILIKE $${paramIndex}
       )`);
       queryParams.push(`%${search}%`);
@@ -2745,6 +2755,8 @@ const getTenantPaymentStatus = async (req, res) => {
 
       return {
         tenant_id: row.tenant_id,
+        first_name: row.first_name,
+        last_name: row.last_name,
         tenant_name: row.tenant_name,
         phone_number: row.phone_number,
         property_id: row.property_id,
@@ -2775,7 +2787,7 @@ const getTenantPaymentStatus = async (req, res) => {
       total_outstanding: tenants.reduce((sum, t) => sum + t.total_due, 0)
     };
 
-    console.log(`✅ Tenant status fetched: ${tenants.length} tenants, ${summary.unpaid_count} unpaid`);
+    console.log(`✅ Tenant payment status fetched: ${tenants.length} tenants, ${summary.paid_count} paid, ${summary.unpaid_count} unpaid`);
 
     res.json({
       success: true,
