@@ -2594,6 +2594,208 @@ const getPaymentsByTenant = async (req, res) => {
   }
 };
 
+/**
+ * Get tenant payment status for a specific month
+ * Returns all tenants with their payment status breakdown
+ * 
+ * GET /api/payments/tenant-status
+ * Query params: month (YYYY-MM), propertyId (optional), search (optional)
+ */
+const getTenantPaymentStatus = async (req, res) => {
+  try {
+    const { month, propertyId, search } = req.query;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+
+    // Default to current month if not provided
+    const targetMonth = month || new Date().toISOString().slice(0, 7);
+    const monthStart = `${targetMonth}-01`;
+
+    console.log('📊 Getting tenant payment status:', { targetMonth, propertyId, userRole });
+
+    // Build query with agent isolation
+    let baseQuery = `
+      SELECT 
+        t.id as tenant_id,
+        CONCAT(t.first_name, ' ', t.last_name) as tenant_name,
+        t.phone_number,
+        p.id as property_id,
+        p.name as property_name,
+        pu.id as unit_id,
+        pu.unit_code,
+        ta.monthly_rent,
+        ta.arrears_balance as arrears,
+        
+        -- Rent payments for this month
+        COALESCE((
+          SELECT SUM(rp.amount) 
+          FROM rent_payments rp 
+          WHERE rp.tenant_id = t.id 
+          AND rp.unit_id = pu.id 
+          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
+          AND rp.status = 'completed'
+        ), 0) as rent_paid,
+        
+        -- Water bill for this month
+        COALESCE((
+          SELECT wb.amount 
+          FROM water_bills wb 
+          WHERE wb.tenant_id = t.id 
+          AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
+          LIMIT 1
+        ), 0) as water_bill,
+        
+        -- Water paid for this month (from allocated_to_water in rent_payments)
+        COALESCE((
+          SELECT SUM(rp.allocated_to_water) 
+          FROM rent_payments rp 
+          WHERE rp.tenant_id = t.id 
+          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
+          AND rp.status = 'completed'
+        ), 0) as water_paid,
+        
+        -- Advance payments (future months)
+        COALESCE((
+          SELECT SUM(rp.amount) 
+          FROM rent_payments rp 
+          WHERE rp.tenant_id = t.id 
+          AND rp.unit_id = pu.id 
+          AND DATE_TRUNC('month', rp.payment_month) > DATE_TRUNC('month', $1::date)
+          AND rp.status = 'completed'
+          AND rp.is_advance_payment = true
+        ), 0) as advance_amount,
+        
+        -- Last payment date
+        (
+          SELECT MAX(rp.payment_date) 
+          FROM rent_payments rp 
+          WHERE rp.tenant_id = t.id 
+          AND rp.status = 'completed'
+        ) as last_payment_date
+        
+      FROM tenants t
+      INNER JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+      INNER JOIN property_units pu ON ta.unit_id = pu.id AND pu.is_active = true
+      INNER JOIN properties p ON pu.property_id = p.id
+    `;
+
+    const whereClauses = [];
+    const queryParams = [monthStart];
+    let paramIndex = 2;
+
+    // ============================================================
+    // CRITICAL: Agent Isolation Filter
+    // ============================================================
+    if (userRole === 'agent') {
+      whereClauses.push(`
+        p.id IN (
+          SELECT property_id 
+          FROM agent_property_assignments 
+          WHERE agent_id = $${paramIndex}::uuid 
+          AND is_active = true
+        )
+      `);
+      queryParams.push(userId);
+      paramIndex++;
+      console.log(`🔒 Agent isolation applied for agent: ${userId}`);
+    }
+
+    // Property filter
+    if (propertyId) {
+      whereClauses.push(`p.id = $${paramIndex}::uuid`);
+      queryParams.push(propertyId);
+      paramIndex++;
+    }
+
+    // Search filter
+    if (search) {
+      whereClauses.push(`(
+        t.first_name ILIKE $${paramIndex} OR 
+        t.last_name ILIKE $${paramIndex} OR 
+        pu.unit_code ILIKE $${paramIndex} OR
+        p.name ILIKE $${paramIndex} OR
+        CONCAT(t.first_name, ' ', t.last_name) ILIKE $${paramIndex}
+      )`);
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    // Apply WHERE clauses
+    if (whereClauses.length > 0) {
+      baseQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+    }
+
+    baseQuery += ` ORDER BY p.name, pu.unit_code`;
+
+    // Execute query
+    const result = await pool.query(baseQuery, queryParams);
+
+    // Process results to calculate derived fields
+    const tenants = result.rows.map(row => {
+      const monthlyRent = parseFloat(row.monthly_rent) || 0;
+      const rentPaid = parseFloat(row.rent_paid) || 0;
+      const waterBill = parseFloat(row.water_bill) || 0;
+      const waterPaid = parseFloat(row.water_paid) || 0;
+      const arrears = parseFloat(row.arrears) || 0;
+      const advanceAmount = parseFloat(row.advance_amount) || 0;
+
+      const rentDue = Math.max(0, monthlyRent - rentPaid);
+      const waterDue = Math.max(0, waterBill - waterPaid);
+      const totalDue = rentDue + waterDue + arrears;
+
+      return {
+        tenant_id: row.tenant_id,
+        tenant_name: row.tenant_name,
+        phone_number: row.phone_number,
+        property_id: row.property_id,
+        property_name: row.property_name,
+        unit_id: row.unit_id,
+        unit_code: row.unit_code,
+        monthly_rent: monthlyRent,
+        rent_paid: rentPaid,
+        rent_due: rentDue,
+        water_bill: waterBill,
+        water_paid: waterPaid,
+        water_due: waterDue,
+        arrears: arrears,
+        total_due: totalDue,
+        advance_amount: advanceAmount,
+        is_fully_paid: totalDue <= 0,
+        last_payment_date: row.last_payment_date
+      };
+    });
+
+    // Calculate summary
+    const summary = {
+      total_tenants: tenants.length,
+      paid_count: tenants.filter(t => t.total_due <= 0).length,
+      unpaid_count: tenants.filter(t => t.total_due > 0).length,
+      total_expected: tenants.reduce((sum, t) => sum + t.monthly_rent + t.water_bill + t.arrears, 0),
+      total_collected: tenants.reduce((sum, t) => sum + t.rent_paid + t.water_paid, 0),
+      total_outstanding: tenants.reduce((sum, t) => sum + t.total_due, 0)
+    };
+
+    console.log(`✅ Tenant status fetched: ${tenants.length} tenants, ${summary.unpaid_count} unpaid`);
+
+    res.json({
+      success: true,
+      data: {
+        tenants,
+        summary,
+        month: targetMonth
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting tenant payment status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get tenant payment status',
+      error: error.message
+    });
+  }
+};
+
 // ==================== EXPORT ALL FUNCTIONS ====================
 
 module.exports = {
@@ -2616,6 +2818,7 @@ module.exports = {
   getPaymentSummary,
   getPaymentHistory,
   getFuturePaymentsStatus,
+  getTenantPaymentStatus,
   
   // Tenant allocations
   getTenantAllocations,

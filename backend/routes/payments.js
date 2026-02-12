@@ -103,6 +103,8 @@ router.post('/manual', protect, paymentController.recordManualPayment);
 // Used by: PaymentManagement.jsx fetchPayments()
 router.get('/', protect, paymentController.getAllPayments);
 
+router.get("/tenant-status", authMiddleware, getTenantPaymentStatus);
+
 // Create new payment record
 router.post('/', protect, async (req, res) => {
   const pool = require('../config/database');

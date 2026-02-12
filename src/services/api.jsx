@@ -1,4 +1,4 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 
 const API_BASE_URL =
   (import.meta.env.VITE_API_URL ||
@@ -164,18 +164,26 @@ export const notificationAPI = {
 };
 
 // Enhanced Payment API with salary payments and paybill integration
+// ============================================================
+// FULL paymentAPI UPDATE - Copy this to replace your existing paymentAPI
+// ============================================================
+
 export const paymentAPI = {
   // Payment operations
   getPayments: (params = {}) => api.get('/payments', { params }),
   getPayment: (id) => api.get(`/payments/${id}`),
-  // Kept getPaymentsByTenant as the primary tenant-specific payments endpoint
   getPaymentsByTenant: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
   createPayment: (paymentData) => api.post('/payments', paymentData),
   confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
-  // Consolidated getPaymentHistory to accept tenantId and optional params (unitId, months)
   getPaymentHistory: (tenantId, params = {}) => api.get(`/payments/history/${tenantId}`, { params }),
   generateReceipt: (paymentId) => api.get(`/payments/${paymentId}/receipt`),
   deletePayment: (paymentId) => api.delete(`/payments/${paymentId}`),
+  
+  // ===== NEW: Tenant Payment Status =====
+  getTenantPaymentStatus: (params = {}) => api.get('/payments/tenant-status', { params }),
+  
+  // ===== NEW: Manual Payment Recording =====
+  recordManualPayment: (paymentData) => api.post('/payments/manual', paymentData),
   
   // M-Pesa specific payments
   processMpesaPayment: (paymentData) => api.post('/payments/mpesa', paymentData),
@@ -183,7 +191,7 @@ export const paymentAPI = {
   verifyMpesaTransaction: (transactionId) => api.get(`/payments/mpesa/verify/${transactionId}`),
   getMpesaTransactions: () => api.get('/payments/mpesa/transactions'),
   
-  // NEW: Paybill payment endpoints
+  // Paybill payment endpoints
   processPaybillPayment: (paymentData) => api.post('/payments/paybill', paymentData),
   getPaymentStatusByUnitCode: (unitCode, month = null) => {
     const params = month ? { month } : {};
@@ -196,13 +204,11 @@ export const paymentAPI = {
   // Statistics and reports
   getPaymentStats: () => api.get('/payments/stats/overview'),
   getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
-  getPendingPayments: () => api.get('/payments?status=pending'), // Consider params for filtering
-  getOverduePayments: () => api.get('/payments?status=overdue'), // Consider params for filtering
+  getPendingPayments: () => api.get('/payments?status=pending'),
+  getOverduePayments: () => api.get('/payments?status=overdue'),
   
   // Tenant payment functions
-  // getTenantPayments is a duplicate of getPaymentsByTenant, kept one.
-  // Assuming getTenantAllocations is the correct endpoint for allocations specific to a tenant
-  getTenantAllocations: (tenantId) => api.get(`/tenant-allocations/tenant/${tenantId}`), // Corrected API for tenant allocations if different from payments
+  getTenantAllocations: (tenantId) => api.get(`/tenant-allocations/tenant/${tenantId}`),
   getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`),
   getPaymentSummary: (tenantId, unitId) => api.get(`/payments/summary/${tenantId}/${unitId}`),
   
@@ -210,7 +216,7 @@ export const paymentAPI = {
   checkPaymentStatus: (checkoutRequestId) => api.get(`/payments/mpesa/status/${checkoutRequestId}`),
   updatePayment: (paymentId, updates) => api.put(`/payments/${paymentId}`, updates),
   
-  // NEW: Enhanced payment tracking endpoints
+  // Enhanced payment tracking endpoints
   getFuturePaymentsStatus: (tenantId, unitId, params = {}) => 
     api.get(`/payments/future/${tenantId}/${unitId}`, { params }),
   
@@ -222,9 +228,10 @@ export const paymentAPI = {
   // M-Pesa configuration test
   testMpesaConfig: () => api.get('/payments/mpesa/test-config'),
 
-  // Assuming you have a general report generation endpoint for PDF/Excel
-  generateReport: (reportData) => api.post('/reports/payments', reportData), // Example endpoint
+  // Report generation
+  generateReport: (reportData) => api.post('/reports/payments', reportData),
 };
+
 
 // Mock M-Pesa API for testing
 export const mockMpesaAPI = {
