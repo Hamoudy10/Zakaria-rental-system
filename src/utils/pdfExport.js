@@ -1,6 +1,5 @@
-// src/utils/pdfExport.js - UPDATED VERSION WITH PAYMENT MANAGEMENT SUPPORT
-// This is the complete file with the new cases added for unpaid_tenants and paid_tenants
-
+// src/utils/pdfExport.js
+// ORIGINAL FILE WITH MINIMAL ADDITIONS FOR unpaid_tenants AND paid_tenants SUPPORT
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { API } from "../services/api";
@@ -370,6 +369,12 @@ const addReportMetadata = (doc, title, user, filters, dataLength, startY) => {
   }
   yPos += 5;
 
+  // Month filter if present
+  if (filters?.month) {
+    doc.text(`Month: ${filters.month}`, 14, yPos);
+    yPos += 5;
+  }
+
   // Search filter if present
   if (filters?.search) {
     doc.text(`Search Filter: "${filters.search}"`, 14, yPos);
@@ -450,7 +455,13 @@ export const exportToPDF = async (config) => {
 
     console.log("📋 Final company info for export:", companyInfo);
 
-    const doc = new jsPDF();
+    // Use landscape for reports with many columns
+    const useLandscape = [
+      "unpaid_tenants",
+      "paid_tenants",
+      "expenses",
+    ].includes(reportType);
+    const doc = new jsPDF(useLandscape ? "landscape" : "portrait");
     const pageWidth = doc.internal.pageSize.getWidth();
 
     // Add company header with logo
@@ -477,13 +488,13 @@ export const exportToPDF = async (config) => {
       headStyles: {
         fillColor: [30, 64, 175],
         textColor: [255, 255, 255],
-        fontSize: 9,
+        fontSize: useLandscape ? 8 : 9,
         fontStyle: "bold",
         halign: "center",
         cellPadding: 3,
       },
       bodyStyles: {
-        fontSize: 8,
+        fontSize: useLandscape ? 7 : 8,
         cellPadding: 2.5,
         lineColor: [220, 220, 220],
         lineWidth: 0.1,
@@ -534,6 +545,109 @@ export const exportToPDF = async (config) => {
   }
 };
 
+/* ---------------- Helper Functions ---------------- */
+
+/**
+ * Parse currency value from various formats
+ * Handles: "KSh 15,000", "15,000", 15000, "15000"
+ * ADDED: This is a new helper to handle pre-formatted currency strings
+ */
+const parseCurrencyValue = (value) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    // Remove KSh, commas, spaces and parse
+    const cleaned = value.replace(/[KSh,\s]/g, "").trim();
+    return parseFloat(cleaned) || 0;
+  }
+  return 0;
+};
+
+/**
+ * Format currency - handles pre-formatted strings and raw numbers
+ * UPDATED: Now handles pre-formatted strings from PaymentManagement component
+ */
+const formatCurrency = (amount) => {
+  // If already formatted as string with KSh, return as-is (just the number part)
+  if (typeof amount === "string" && amount.includes("KSh")) {
+    return amount.replace("KSh", "").trim();
+  }
+  // If it's a formatted number string like "15,000", return as-is
+  if (typeof amount === "string" && amount.includes(",")) {
+    return amount;
+  }
+  const num = parseFloat(amount) || 0;
+  return num.toLocaleString("en-KE");
+};
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return "N/A";
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return "N/A";
+  }
+};
+
+const formatMonth = (monthStr) => {
+  if (!monthStr) return "N/A";
+  try {
+    if (monthStr.match(/^\d{4}-\d{2}$/)) {
+      const [year, month] = monthStr.split("-");
+      const date = new Date(year, parseInt(month) - 1);
+      return date.toLocaleDateString("en-GB", {
+        month: "short",
+        year: "numeric",
+      });
+    }
+    const date = new Date(monthStr);
+    return date.toLocaleDateString("en-GB", {
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return monthStr;
+  }
+};
+
+const formatPhone = (phone) => {
+  if (!phone) return "N/A";
+  if (phone.startsWith("254")) {
+    return "0" + phone.substring(3);
+  }
+  return phone;
+};
+
+const truncateText = (text, maxLength) => {
+  if (!text) return "N/A";
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength - 3) + "...";
+};
+
+const capitalizeFirst = (str) => {
+  if (!str) return "";
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+};
+
+/**
+ * Detect if data is in transformed format (from PaymentManagement component)
+ * ADDED: Helper to detect pre-transformed data
+ */
+const isTransformedData = (data) => {
+  if (!data || data.length === 0) return false;
+  const firstItem = data[0];
+  // Check for transformed keys (readable format)
+  return (
+    firstItem["Tenant Name"] !== undefined ||
+    firstItem["Monthly Rent"] !== undefined ||
+    firstItem["Total Due"] !== undefined
+  );
+};
+
 /**
  * Prepare table data based on report type
  */
@@ -571,75 +685,131 @@ const prepareTableData = (reportType, data) => {
       };
       break;
 
-    // NEW: Unpaid Tenants Report (for PaymentManagement component)
+    // ==================== ADDED: Unpaid Tenants Report ====================
     case "unpaid_tenants":
-      headers = [
-        "#",
-        "Tenant Name",
-        "Phone",
-        "Property",
-        "Unit",
-        "Rent Due",
-        "Water Due",
-        "Arrears",
-        "Total Due",
-        "Last Payment",
-      ];
-      rows = data.map((item, index) => [
-        index + 1,
-        `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+      if (isTransformedData(data)) {
+        // Data from PaymentManagement component (pre-formatted with readable keys)
+        headers = [
+          "#",
+          "Tenant Name",
+          "Phone",
+          "Property",
+          "Unit",
+          "Monthly Rent",
+          "Rent Due",
+          "Water Bill",
+          "Arrears",
+          "Total Due",
+        ];
+        rows = data.map((item, index) => [
+          index + 1,
+          item["Tenant Name"] || "N/A",
+          item["Phone"] || "N/A",
+          item["Property"] || "N/A",
+          item["Unit"] || "N/A",
+          item["Monthly Rent"] || "KSh 0",
+          item["Rent Due"] || "KSh 0",
+          item["Water Bill"] || "KSh 0",
+          item["Arrears"] || "KSh 0",
+          item["Total Due"] || "KSh 0",
+        ]);
+      } else {
+        // Raw API data
+        headers = [
+          "#",
+          "Tenant Name",
+          "Phone",
+          "Property",
+          "Unit",
+          "Monthly Rent",
+          "Rent Due",
+          "Water Due",
+          "Arrears",
+          "Total Due",
+        ];
+        rows = data.map((item, index) => [
+          index + 1,
           item.tenant_name ||
-          "N/A",
-        formatPhone(item.phone_number),
-        item.property_name || "N/A",
-        item.unit_code || "N/A",
-        formatCurrency(item.rent_due || 0),
-        formatCurrency(item.water_due || 0),
-        formatCurrency(item.arrears || 0),
-        formatCurrency(item.total_due || 0),
-        formatDate(item.last_payment_date),
-      ]);
+            `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+            "N/A",
+          formatPhone(item.phone_number),
+          item.property_name || "N/A",
+          item.unit_code || "N/A",
+          formatCurrency(item.monthly_rent),
+          formatCurrency(item.rent_due),
+          formatCurrency(item.water_due || item.water_bill),
+          formatCurrency(item.arrears_balance || item.arrears),
+          formatCurrency(item.total_due),
+        ]);
+      }
       columnStyles = {
         0: { halign: "center", cellWidth: 10 },
         5: { halign: "right" },
         6: { halign: "right" },
         7: { halign: "right" },
         8: { halign: "right" },
-        9: { halign: "center" },
+        9: { halign: "right" },
       };
       break;
 
-    // NEW: Paid Tenants Report (for PaymentManagement component)
+    // ==================== ADDED: Paid Tenants Report ====================
     case "paid_tenants":
-      headers = [
-        "#",
-        "Tenant Name",
-        "Phone",
-        "Property",
-        "Unit",
-        "Amount Paid",
-        "Advance",
-        "Payment Date",
-        "Status",
-      ];
-      rows = data.map((item, index) => [
-        index + 1,
-        `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+      if (isTransformedData(data)) {
+        // Data from PaymentManagement component (pre-formatted with readable keys)
+        headers = [
+          "#",
+          "Tenant Name",
+          "Phone",
+          "Property",
+          "Unit",
+          "Monthly Rent",
+          "Rent Paid",
+          "Advance",
+          "Status",
+        ];
+        rows = data.map((item, index) => [
+          index + 1,
+          item["Tenant Name"] || "N/A",
+          item["Phone"] || "N/A",
+          item["Property"] || "N/A",
+          item["Unit"] || "N/A",
+          item["Monthly Rent"] || "KSh 0",
+          item["Rent Paid"] || "KSh 0",
+          item["Advance"] || "KSh 0",
+          item["Status"] || "Paid",
+        ]);
+      } else {
+        // Raw API data
+        headers = [
+          "#",
+          "Tenant Name",
+          "Phone",
+          "Property",
+          "Unit",
+          "Monthly Rent",
+          "Amount Paid",
+          "Advance",
+          "Status",
+        ];
+        rows = data.map((item, index) => [
+          index + 1,
           item.tenant_name ||
-          "N/A",
-        formatPhone(item.phone_number),
-        item.property_name || "N/A",
-        item.unit_code || "N/A",
-        formatCurrency(item.amount_paid || item.rent_paid || 0),
-        formatCurrency(item.advance_payment || 0),
-        formatDate(item.last_payment_date || item.payment_date),
-        "Paid",
-      ]);
+            `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+            "N/A",
+          formatPhone(item.phone_number),
+          item.property_name || "N/A",
+          item.unit_code || "N/A",
+          formatCurrency(item.monthly_rent),
+          formatCurrency(item.rent_paid || item.amount_paid),
+          formatCurrency(item.advance_amount || item.advance_payment),
+          item.payment_status || "Paid",
+        ]);
+      }
       columnStyles = {
         0: { halign: "center", cellWidth: 10 },
         5: { halign: "right" },
         6: { halign: "right" },
-        7: { halign: "center" },
+        7: { halign: "right" },
         8: { halign: "center" },
       };
       break;
@@ -769,27 +939,28 @@ const prepareTableData = (reportType, data) => {
       break;
 
     case "sms":
+    case "messaging":
       headers = [
         "#",
+        "Channel",
         "Recipient",
         "Message",
         "Type",
         "Status",
-        "Attempts",
         "Date",
       ];
       rows = data.map((item, index) => [
         index + 1,
+        item.channel || "SMS",
         formatPhone(item.recipient_phone || item.phone_number),
-        truncateText(item.message, 40),
-        item.message_type || "General",
+        truncateText(item.message, 35),
+        item.message_type || item.template_name || "General",
         capitalizeFirst(item.status) || "Pending",
-        item.attempts || 0,
-        formatDate(item.created_at),
+        formatDate(item.created_at || item.sent_at),
       ]);
       columnStyles = {
         0: { halign: "center", cellWidth: 10 },
-        4: { halign: "center" },
+        1: { halign: "center" },
         5: { halign: "center" },
         6: { halign: "center" },
       };
@@ -887,52 +1058,73 @@ const prepareTableData = (reportType, data) => {
  */
 const calculateTotals = (reportType, data) => {
   switch (reportType) {
-    // NEW: Unpaid Tenants Totals
-    case "unpaid_tenants":
-      const totalUnpaidRent = data.reduce(
-        (sum, item) => sum + (parseFloat(item.rent_due) || 0),
-        0,
-      );
-      const totalUnpaidWater = data.reduce(
-        (sum, item) => sum + (parseFloat(item.water_due) || 0),
-        0,
-      );
-      const totalArrears = data.reduce(
-        (sum, item) => sum + (parseFloat(item.arrears) || 0),
-        0,
-      );
-      const totalDue = data.reduce(
-        (sum, item) => sum + (parseFloat(item.total_due) || 0),
-        0,
-      );
+    // ==================== ADDED: Unpaid Tenants Totals ====================
+    case "unpaid_tenants": {
+      let totalRentDue = 0,
+        totalWaterDue = 0,
+        totalArrears = 0,
+        totalDue = 0;
+
+      if (isTransformedData(data)) {
+        data.forEach((item) => {
+          totalRentDue += parseCurrencyValue(item["Rent Due"]);
+          totalWaterDue += parseCurrencyValue(item["Water Bill"]);
+          totalArrears += parseCurrencyValue(item["Arrears"]);
+          totalDue += parseCurrencyValue(item["Total Due"]);
+        });
+      } else {
+        data.forEach((item) => {
+          totalRentDue += parseCurrencyValue(item.rent_due);
+          totalWaterDue += parseCurrencyValue(
+            item.water_due || item.water_bill,
+          );
+          totalArrears += parseCurrencyValue(
+            item.arrears_balance || item.arrears,
+          );
+          totalDue += parseCurrencyValue(item.total_due);
+        });
+      }
+
       return {
-        "Total Rent Due": `KSh ${totalUnpaidRent.toLocaleString()}`,
-        "Total Water Due": `KSh ${totalUnpaidWater.toLocaleString()}`,
+        "Total Rent Due": `KSh ${totalRentDue.toLocaleString()}`,
+        "Total Water Due": `KSh ${totalWaterDue.toLocaleString()}`,
         "Total Arrears": `KSh ${totalArrears.toLocaleString()}`,
         "Grand Total Due": `KSh ${totalDue.toLocaleString()}`,
         "Unpaid Tenants": `${data.length}`,
       };
+    }
 
-    // NEW: Paid Tenants Totals
-    case "paid_tenants":
-      const totalPaid = data.reduce(
-        (sum, item) =>
-          sum + (parseFloat(item.amount_paid || item.rent_paid) || 0),
-        0,
-      );
-      const totalAdvance = data.reduce(
-        (sum, item) => sum + (parseFloat(item.advance_payment) || 0),
-        0,
-      );
-      const tenantsWithAdvance = data.filter(
-        (item) => (parseFloat(item.advance_payment) || 0) > 0,
-      ).length;
+    // ==================== ADDED: Paid Tenants Totals ====================
+    case "paid_tenants": {
+      let totalPaid = 0,
+        totalAdvance = 0,
+        tenantsWithAdvance = 0;
+
+      if (isTransformedData(data)) {
+        data.forEach((item) => {
+          totalPaid += parseCurrencyValue(item["Rent Paid"]);
+          const advance = parseCurrencyValue(item["Advance"]);
+          totalAdvance += advance;
+          if (advance > 0) tenantsWithAdvance++;
+        });
+      } else {
+        data.forEach((item) => {
+          totalPaid += parseCurrencyValue(item.rent_paid || item.amount_paid);
+          const advance = parseCurrencyValue(
+            item.advance_amount || item.advance_payment,
+          );
+          totalAdvance += advance;
+          if (advance > 0) tenantsWithAdvance++;
+        });
+      }
+
       return {
         "Total Paid": `KSh ${totalPaid.toLocaleString()}`,
         "Total Advance": `KSh ${totalAdvance.toLocaleString()}`,
         "Paid Tenants": `${data.length}`,
-        "With Advance": `${tenantsWithAdvance} tenants`,
+        "With Advance": `${tenantsWithAdvance} tenant(s)`,
       };
+    }
 
     case "payments":
       const totalPayments = data.reduce(
@@ -1020,70 +1212,25 @@ const calculateTotals = (reportType, data) => {
         "Pending Approval": `${pendingCount} expense(s)`,
       };
 
+    case "sms":
+    case "messaging":
+      const sentCount = data.filter((item) => item.status === "sent").length;
+      const failedCount = data.filter(
+        (item) => item.status === "failed",
+      ).length;
+      const pendingSmsCount = data.filter(
+        (item) => item.status === "pending",
+      ).length;
+      return {
+        "Total Messages": `${data.length}`,
+        Sent: `${sentCount}`,
+        Failed: `${failedCount}`,
+        Pending: `${pendingSmsCount}`,
+      };
+
     default:
       return null;
   }
-};
-
-/* ---------------- Helper Functions ---------------- */
-
-const formatCurrency = (amount) => {
-  const num = parseFloat(amount) || 0;
-  return num.toLocaleString("en-KE");
-};
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return "N/A";
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return "N/A";
-  }
-};
-
-const formatMonth = (monthStr) => {
-  if (!monthStr) return "N/A";
-  try {
-    if (monthStr.match(/^\d{4}-\d{2}$/)) {
-      const [year, month] = monthStr.split("-");
-      const date = new Date(year, parseInt(month) - 1);
-      return date.toLocaleDateString("en-GB", {
-        month: "short",
-        year: "numeric",
-      });
-    }
-    const date = new Date(monthStr);
-    return date.toLocaleDateString("en-GB", {
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return monthStr;
-  }
-};
-
-const formatPhone = (phone) => {
-  if (!phone) return "N/A";
-  if (phone.startsWith("254")) {
-    return "0" + phone.substring(3);
-  }
-  return phone;
-};
-
-const truncateText = (text, maxLength) => {
-  if (!text) return "N/A";
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength - 3) + "...";
-};
-
-const capitalizeFirst = (str) => {
-  if (!str) return "";
-  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
 };
 
 /**
