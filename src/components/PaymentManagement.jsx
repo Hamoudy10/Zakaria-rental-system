@@ -175,14 +175,42 @@ const PaymentManagement = () => {
     }
   }, [fetchProperties]);
 
-  // Fetch data based on active tab
+  // Fetch data based on active tab - with proper dependencies
   useEffect(() => {
     if (activeTab === "all") {
       handleFetchPayments();
-    } else {
+    }
+  }, [
+    activeTab,
+    filters.propertyId,
+    filters.period,
+    filters.startDate,
+    filters.endDate,
+    currentPage,
+    sort.sortBy,
+    sort.sortOrder,
+  ]);
+
+  // Separate effect for tenant status tabs - auto-refresh when filters change
+  useEffect(() => {
+    if (activeTab !== "all") {
       fetchTenantStatusData();
     }
-  }, [activeTab, filters.propertyId, filters.month, currentPage, sort]);
+  }, [activeTab, filters.propertyId, filters.month]);
+
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (activeTab === "all") {
+        handleFetchPayments();
+      } else {
+        // For unpaid/paid tabs, search is done client-side via filteredTenants memo
+        // So we don't need to refetch, just trigger a re-render
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [filters.search]);
 
   // Reset selection when tab changes
   useEffect(() => {
@@ -205,7 +233,8 @@ const PaymentManagement = () => {
     if (filters.propertyId) params.propertyId = filters.propertyId;
     if (filters.search) params.search = filters.search;
 
-    let { startDate, endDate } = filters;
+    let startDate = filters.startDate;
+    let endDate = filters.endDate;
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth();
@@ -230,8 +259,19 @@ const PaymentManagement = () => {
     if (startDate) params.startDate = startDate;
     if (endDate) params.endDate = endDate;
 
+    console.log("📅 Fetching payments with params:", params);
     fetchPayments(params);
-  }, [currentPage, filters, sort, fetchPayments]);
+  }, [
+    currentPage,
+    filters.propertyId,
+    filters.search,
+    filters.period,
+    filters.startDate,
+    filters.endDate,
+    sort.sortBy,
+    sort.sortOrder,
+    fetchPayments,
+  ]);
 
   const fetchTenantStatusData = useCallback(async () => {
     setStatusLoading(true);
