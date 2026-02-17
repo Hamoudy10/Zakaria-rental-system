@@ -52,8 +52,6 @@ router.post("/test-sms", protect, adminOnly, paymentController.testSMSService);
 // M-Pesa callback (NO AUTH - called by Safaricom)
 router.post("/mpesa-callback", paymentController.handleMpesaCallback);
 
-// Initiate M-Pesa STK Push
-router.post("/mpesa", protect, paymentController.initiateSTKPush);
 
 // Check M-Pesa payment status
 router.get(
