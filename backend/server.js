@@ -12,13 +12,17 @@ const expenseRoutes = require('./routes/expenses');
 const app = express();
 
 // ==================== MIDDLEWARE ====================
-app.use(cors({
-  origin: "https://zakaria-rental-system.vercel.app" || "http://localhost:5173",
-  credentials: true
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
+app.use(
+  cors({
+    origin: [
+      "https://zakaria-rental-system.vercel.app",
+      "http://localhost:5173",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 // ==================== FILE UPLOAD CONFIGURATION ====================
 const path = require('path');
 const fs = require('fs');
