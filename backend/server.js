@@ -23,6 +23,10 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
+
+// Body parsers MUST come BEFORE routes
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 // ==================== FILE UPLOAD CONFIGURATION ====================
 const path = require('path');
 const fs = require('fs');
