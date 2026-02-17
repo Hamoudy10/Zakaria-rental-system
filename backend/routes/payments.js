@@ -11,6 +11,12 @@ const {
 } = require("../middleware/authMiddleware");
 
 console.log("🔗 Payment routes loading...");
+// DEBUG: Find the undefined export
+Object.entries(paymentController).forEach(([key, val]) => {
+  if (typeof val !== 'function') {
+    console.error(`🔴 UNDEFINED EXPORT: paymentController.${key} is ${typeof val}`);
+  }
+});
 
 // ==================== TENANT PAYMENT STATUS (MUST BE FIRST) ====================
 // ⚠️ CRITICAL: This route MUST come before ANY parameterized routes like /:id
