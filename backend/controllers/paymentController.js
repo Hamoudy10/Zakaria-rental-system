@@ -1115,25 +1115,29 @@ const recordManualPayment = async (req, res) => {
       client,
     );
 
-    const paymentResult = await client.query(
-      `INSERT INTO rent_payments 
+        const paymentResult = await client.query(
+          `INSERT INTO rent_payments 
        (tenant_id, unit_id, amount, payment_month, payment_date, status,
-        mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, notes, payment_method)
-       VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, 'manual')
+        mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, notes, 
+        payment_method, mpesa_transaction_id)
+       VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, 'manual', $11)
        RETURNING *`,
-      [
-        tenant_id,
-        unit_id,
-        trackingResult.allocatedAmount,
-        formattedPaymentMonth,
-        paymentDate,
-        mpesa_receipt_number,
-        phone_number,
-        req.user.id,
-        paymentDate,
-        notes,
-      ],
-    );
+          [
+            tenant_id,
+            unit_id,
+            trackingResult.allocatedAmount,
+            formattedPaymentMonth,
+            paymentDate,
+            mpesa_receipt_number,
+            phone_number,
+            req.user.id,
+            paymentDate,
+            notes,
+            mpesa_receipt_number
+              ? `MANUAL_${mpesa_receipt_number}`
+              : `MANUAL_${Date.now()}`,
+          ],
+        );
 
     const paymentRecord = paymentResult.rows[0];
 
