@@ -2,6 +2,7 @@
 // PRODUCTION-READY — Cleaned up for go-live
 // Tenants do NOT use the system. Payments are recorded by admins/agents.
 // STK Push removed. Paybill + Manual + M-Pesa Callback only.
+// FIX: Carry-forward now uses transaction client to avoid FK constraint errors.
 
 const axios = require("axios");
 const pool = require("../config/database");
@@ -89,13 +90,25 @@ const isProduction = () => process.env.NODE_ENV === "production";
 
 // ==================== CORE BUSINESS LOGIC ====================
 
+/**
+ * Track rent payment allocation
+ * @param {string} tenantId
+ * @param {string} unitId
+ * @param {number} amount
+ * @param {Date} paymentDate
+ * @param {string|null} targetMonth
+ * @param {object|null} dbClient - Optional database client for transactions
+ */
 const trackRentPayment = async (
   tenantId,
   unitId,
   amount,
   paymentDate,
   targetMonth = null,
+  dbClient = null,
 ) => {
+  const db = dbClient || pool;
+
   try {
     const allocationQuery = `
       SELECT ta.*, pu.rent_amount 
@@ -103,7 +116,7 @@ const trackRentPayment = async (
       JOIN property_units pu ON ta.unit_id = pu.id 
       WHERE ta.tenant_id = $1 AND ta.unit_id = $2 AND ta.is_active = true
     `;
-    const allocationResult = await pool.query(allocationQuery, [
+    const allocationResult = await db.query(allocationQuery, [
       tenantId,
       unitId,
     ]);
@@ -131,7 +144,7 @@ const trackRentPayment = async (
       AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
       AND status = 'completed'
     `;
-    const targetMonthResult = await pool.query(targetMonthPaymentsQuery, [
+    const targetMonthResult = await db.query(targetMonthPaymentsQuery, [
       tenantId,
       unitId,
       `${paymentMonth}-01`,
@@ -147,9 +160,13 @@ const trackRentPayment = async (
       allocatedAmount = paymentAmount;
       isMonthComplete = targetMonthPaid + allocatedAmount >= monthlyRent;
     } else {
-      allocatedAmount = remainingForTargetMonth;
-      carryForwardAmount = paymentAmount - remainingForTargetMonth;
-      isMonthComplete = true;
+      allocatedAmount =
+        remainingForTargetMonth > 0 ? remainingForTargetMonth : paymentAmount;
+      carryForwardAmount =
+        remainingForTargetMonth > 0
+          ? paymentAmount - remainingForTargetMonth
+          : 0;
+      isMonthComplete = remainingForTargetMonth > 0;
     }
 
     return {
@@ -168,6 +185,18 @@ const trackRentPayment = async (
   }
 };
 
+/**
+ * Record carry-forward payments to future months
+ * @param {string} tenantId
+ * @param {string} unitId
+ * @param {number} amount
+ * @param {string} originalPaymentId
+ * @param {Date} paymentDate
+ * @param {string} mpesaReceiptNumber
+ * @param {string} phoneNumber
+ * @param {string} confirmedBy
+ * @param {object|null} dbClient - Database client for transactions (REQUIRED for FK integrity)
+ */
 const recordCarryForward = async (
   tenantId,
   unitId,
@@ -177,7 +206,11 @@ const recordCarryForward = async (
   mpesaReceiptNumber,
   phoneNumber,
   confirmedBy,
+  dbClient = null,
 ) => {
+  // Use provided client or fall back to pool
+  const db = dbClient || pool;
+
   try {
     let nextMonth = new Date(paymentDate);
     let remainingAmount = amount;
@@ -189,7 +222,7 @@ const recordCarryForward = async (
       nextMonth.setMonth(nextMonth.getMonth() + 1);
       const nextMonthFormatted = nextMonth.toISOString().slice(0, 7) + "-01";
 
-      const futureMonthResult = await pool.query(
+      const futureMonthResult = await db.query(
         `SELECT COALESCE(SUM(amount), 0) as total_paid 
          FROM rent_payments 
          WHERE tenant_id = $1 AND unit_id = $2 
@@ -199,21 +232,26 @@ const recordCarryForward = async (
       );
       const futureMonthPaid = parseFloat(futureMonthResult.rows[0].total_paid);
 
-      const allocationResult = await pool.query(
+      const allocationResult = await db.query(
         `SELECT monthly_rent FROM tenant_allocations 
          WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true`,
         [tenantId, unitId],
       );
-      const monthlyRent = parseFloat(allocationResult.rows[0].monthly_rent);
 
+      if (allocationResult.rows.length === 0) {
+        console.warn("No active allocation found for carry-forward");
+        break;
+      }
+
+      const monthlyRent = parseFloat(allocationResult.rows[0].monthly_rent);
       const remainingForFutureMonth = monthlyRent - futureMonthPaid;
       const allocationAmount = Math.min(
         remainingAmount,
-        remainingForFutureMonth,
+        Math.max(0, remainingForFutureMonth),
       );
 
       if (allocationAmount > 0) {
-        const result = await pool.query(
+        const result = await db.query(
           `INSERT INTO rent_payments 
            (tenant_id, unit_id, amount, payment_month, status, is_advance_payment, 
             original_payment_id, payment_date, mpesa_transaction_id, mpesa_receipt_number, 
@@ -240,10 +278,20 @@ const recordCarryForward = async (
         remainingAmount -= allocationAmount;
 
         if (remainingAmount <= 0) break;
+      } else {
+        // Month is already fully paid, skip to next month
+        // But still decrement by what would have been allocated to prevent infinite loop
+        if (remainingForFutureMonth <= 0) {
+          // Month fully paid, continue to next
+          continue;
+        }
       }
 
       // Safety limit: max 24 months ahead
-      if (index > 24) break;
+      if (index > 24) {
+        console.warn("Carry-forward safety limit reached (24 months)");
+        break;
+      }
     }
 
     return createdPayments;
@@ -628,6 +676,7 @@ const processPaybillPayment = async (req, res) => {
     } = req.body;
 
     if (!unit_code || !amount || !mpesa_receipt_number || !phone_number) {
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
         message:
@@ -685,12 +734,14 @@ const processPaybillPayment = async (req, res) => {
       : new Date();
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
 
+    // Pass client to trackRentPayment for transaction consistency
     const trackingResult = await trackRentPayment(
       unit.tenant_id,
       unit.id,
       amount,
       paymentDate,
       formattedPaymentMonth.slice(0, 7),
+      client,
     );
 
     const paymentResult = await client.query(
@@ -717,12 +768,35 @@ const processPaybillPayment = async (req, res) => {
 
     const paymentRecord = paymentResult.rows[0];
 
-    // In-app notifications to admins and agents
+    // Carry-forward with transaction client
+    if (trackingResult.carryForwardAmount > 0) {
+      const carryForwardPayments = await recordCarryForward(
+        unit.tenant_id,
+        unit.id,
+        trackingResult.carryForwardAmount,
+        paymentRecord.id,
+        paymentDate,
+        mpesa_receipt_number,
+        phone_number,
+        req.user?.id,
+        client, // Pass the transaction client
+      );
+
+      // Notifications for carry-forward will be sent after commit
+      for (const cfPayment of carryForwardPayments) {
+        await sendPaymentNotifications(cfPayment, trackingResult, true);
+      }
+    }
+
+    // Commit the transaction
+    await client.query("COMMIT");
+
+    // Post-commit: In-app notifications to admins and agents
     try {
-      const adminUsersQuery = await client.query(
+      const adminUsersQuery = await pool.query(
         "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
       );
-      const agentAssignmentQuery = await client.query(
+      const agentAssignmentQuery = await pool.query(
         "SELECT agent_id FROM agent_property_assignments WHERE property_id = $1 AND is_active = true",
         [unit.property_id],
       );
@@ -752,29 +826,9 @@ const processPaybillPayment = async (req, res) => {
       );
     }
 
-    // Carry-forward
-    if (trackingResult.carryForwardAmount > 0) {
-      const carryForwardPayments = await recordCarryForward(
-        unit.tenant_id,
-        unit.id,
-        trackingResult.carryForwardAmount,
-        paymentRecord.id,
-        paymentDate,
-        mpesa_receipt_number,
-        phone_number,
-        req.user?.id,
-      );
-
-      for (const cfPayment of carryForwardPayments) {
-        await sendPaymentNotifications(cfPayment, trackingResult, true);
-      }
-    }
-
     // SMS + WhatsApp notifications
     await sendPaybillSMSNotifications(paymentRecord, trackingResult, unit);
     await sendPaymentNotifications(paymentRecord, trackingResult, false);
-
-    await client.query("COMMIT");
 
     res.status(201).json({
       success: true,
@@ -948,11 +1002,11 @@ const sendBalanceReminders = async (req, res) => {
         const dueDate = new Date(
           currentDate.getFullYear(),
           currentDate.getMonth(),
-          unit.rent_due_day,
+          unit.rent_due_day || 1,
         );
         const gracePeriodEnd = new Date(dueDate);
         gracePeriodEnd.setDate(
-          gracePeriodEnd.getDate() + unit.grace_period_days,
+          gracePeriodEnd.getDate() + (unit.grace_period_days || 5),
         );
 
         if (currentDate > dueDate && currentDate <= gracePeriodEnd) {
@@ -1025,6 +1079,7 @@ const recordManualPayment = async (req, res) => {
     } = req.body;
 
     if (!tenant_id || !unit_id || !amount || !payment_month) {
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
         message:
@@ -1050,19 +1105,21 @@ const recordManualPayment = async (req, res) => {
     const paymentDate = new Date();
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
 
+    // Pass client to trackRentPayment for transaction consistency
     const trackingResult = await trackRentPayment(
       tenant_id,
       unit_id,
       amount,
       paymentDate,
       formattedPaymentMonth.slice(0, 7),
+      client,
     );
 
     const paymentResult = await client.query(
       `INSERT INTO rent_payments 
        (tenant_id, unit_id, amount, payment_month, payment_date, status,
-        mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, notes)
-       VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10)
+        mpesa_receipt_number, phone_number, confirmed_by, confirmed_at, notes, payment_method)
+       VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, 'manual')
        RETURNING *`,
       [
         tenant_id,
@@ -1080,7 +1137,7 @@ const recordManualPayment = async (req, res) => {
 
     const paymentRecord = paymentResult.rows[0];
 
-    // Carry-forward
+    // Carry-forward with transaction client
     if (trackingResult.carryForwardAmount > 0) {
       const carryForwardPayments = await recordCarryForward(
         tenant_id,
@@ -1091,6 +1148,7 @@ const recordManualPayment = async (req, res) => {
         mpesa_receipt_number || "MANUAL",
         phone_number,
         req.user.id,
+        client, // Pass the transaction client
       );
 
       for (const cfPayment of carryForwardPayments) {
@@ -1098,9 +1156,10 @@ const recordManualPayment = async (req, res) => {
       }
     }
 
-    await sendPaymentNotifications(paymentRecord, trackingResult, false);
-
     await client.query("COMMIT");
+
+    // Post-commit notifications
+    await sendPaymentNotifications(paymentRecord, trackingResult, false);
 
     res.status(201).json({
       success: true,
@@ -1484,6 +1543,7 @@ const handleMpesaCallback = async (req, res) => {
         amount || payment.amount,
         paymentDate,
         payment.payment_month.toISOString().slice(0, 7),
+        client,
       );
 
       await client.query(
@@ -1500,7 +1560,7 @@ const handleMpesaCallback = async (req, res) => {
         ],
       );
 
-      // Carry-forward
+      // Carry-forward with transaction client
       if (trackingResult.carryForwardAmount > 0) {
         const carryForwardPayments = await recordCarryForward(
           payment.tenant_id,
@@ -1511,6 +1571,7 @@ const handleMpesaCallback = async (req, res) => {
           mpesaReceiptNumber,
           phoneNumber,
           null,
+          client, // Pass the transaction client
         );
 
         for (const cfPayment of carryForwardPayments) {
@@ -1702,6 +1763,7 @@ const processSalaryPayment = async (req, res) => {
     const { agent_id, amount, payment_month, phone_number, notes } = req.body;
 
     if (!agent_id || !amount || !payment_month || !phone_number) {
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
         message:
@@ -1747,6 +1809,9 @@ const processSalaryPayment = async (req, res) => {
 
     const salaryPayment = salaryResult.rows[0];
 
+    await client.query("COMMIT");
+
+    // Post-commit notifications
     // Notify the agent
     await NotificationService.createNotification({
       userId: agent_id,
@@ -1758,7 +1823,7 @@ const processSalaryPayment = async (req, res) => {
     });
 
     // Notify admins
-    const adminUsers = await client.query(
+    const adminUsers = await pool.query(
       "SELECT id FROM users WHERE role = $1 AND is_active = true",
       ["admin"],
     );
@@ -1773,8 +1838,6 @@ const processSalaryPayment = async (req, res) => {
         relatedEntityId: salaryPayment.id,
       });
     }
-
-    await client.query("COMMIT");
 
     res.status(201).json({
       success: true,
