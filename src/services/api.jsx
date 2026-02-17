@@ -169,67 +169,92 @@ export const notificationAPI = {
 // ============================================================
 
 export const paymentAPI = {
-  // Payment operations
-  getPayments: (params = {}) => api.get('/payments', { params }),
+  // ==================== CORE PAYMENT CRUD ====================
+  // ✅ These match your payment routes exactly
+  getPayments: (params = {}) => api.get("/payments", { params }),
   getPayment: (id) => api.get(`/payments/${id}`),
-  getPaymentsByTenant: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
-  createPayment: (paymentData) => api.post('/payments', paymentData),
-  confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
-  getPaymentHistory: (tenantId, params = {}) => api.get(`/payments/history/${tenantId}`, { params }),
-  generateReceipt: (paymentId) => api.get(`/payments/${paymentId}/receipt`),
+  createPayment: (paymentData) => api.post("/payments", paymentData),
+  updatePayment: (paymentId, updates) =>
+    api.put(`/payments/${paymentId}`, updates),
   deletePayment: (paymentId) => api.delete(`/payments/${paymentId}`),
-  
-  // ===== NEW: Tenant Payment Status =====
-  getTenantPaymentStatus: (params = {}) => api.get('/payments/tenant-status', { params }),
-  
-  // ===== NEW: Manual Payment Recording =====
-  recordManualPayment: (paymentData) => api.post('/payments/manual', paymentData),
-  
-  // M-Pesa specific payments
-  processMpesaPayment: (paymentData) => api.post('/payments/mpesa', paymentData),
-  processMpesaDeposit: (depositData) => api.post('/payments/mpesa/deposit', depositData),
-  verifyMpesaTransaction: (transactionId) => api.get(`/payments/mpesa/verify/${transactionId}`),
-  getMpesaTransactions: () => api.get('/payments/mpesa/transactions'),
-  
-  // Paybill payment endpoints
-  processPaybillPayment: (paymentData) => api.post('/payments/paybill', paymentData),
+  confirmPayment: (id) => api.post(`/payments/${id}/confirm`),
+
+  // ==================== TENANT PAYMENT STATUS ====================
+  getTenantPaymentStatus: (params = {}) =>
+    api.get("/payments/tenant-status", { params }),
+
+  // ==================== MANUAL PAYMENT ====================
+  recordManualPayment: (paymentData) =>
+    api.post("/payments/manual", paymentData),
+
+  // ==================== PAYBILL ====================
+  processPaybillPayment: (paymentData) =>
+    api.post("/payments/paybill", paymentData),
   getPaymentStatusByUnitCode: (unitCode, month = null) => {
     const params = month ? { month } : {};
     return api.get(`/payments/unit/${unitCode}/status`, { params });
   },
-  sendBalanceReminders: () => api.post('/payments/send-reminders'),
-  testSMSService: (testData) => api.post('/payments/test-sms', testData),
-  getPaybillStats: (period = '30days') => api.get('/payments/paybill/stats', { params: { period } }),
-  
-  // Statistics and reports
-  getPaymentStats: () => api.get('/payments/stats/overview'),
-  getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
-  getPendingPayments: () => api.get('/payments?status=pending'),
-  getOverduePayments: () => api.get('/payments?status=overdue'),
-  
-  // Tenant payment functions
-  getTenantAllocations: (tenantId) => api.get(`/tenant-allocations/tenant/${tenantId}`),
-  getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`),
-  getPaymentSummary: (tenantId, unitId) => api.get(`/payments/summary/${tenantId}/${unitId}`),
-  
-  // Payment status and updates
-  checkPaymentStatus: (checkoutRequestId) => api.get(`/payments/mpesa/status/${checkoutRequestId}`),
-  updatePayment: (paymentId, updates) => api.put(`/payments/${paymentId}`, updates),
-  
-  // Enhanced payment tracking endpoints
-  getFuturePaymentsStatus: (tenantId, unitId, params = {}) => 
+
+  // ==================== TENANT-SPECIFIC QUERIES ====================
+  getPaymentsByTenant: (tenantId) => api.get(`/payments/tenant/${tenantId}`),
+  getPaymentHistory: (tenantId, params = {}) =>
+    api.get(`/payments/history/${tenantId}`, { params }),
+  getPaymentSummary: (tenantId, unitId) =>
+    api.get(`/payments/summary/${tenantId}/${unitId}`),
+  getDetailedHistory: (tenantId, unitId, params = {}) =>
+    api.get(`/payments/details/${tenantId}/${unitId}`, { params }),
+  getFuturePaymentsStatus: (tenantId, unitId, params = {}) =>
     api.get(`/payments/future/${tenantId}/${unitId}`, { params }),
-  
-  // Salary payments
-  processSalaryPayment: (salaryData) => api.post('/payments/salary', salaryData),
-  getSalaryPayments: (params = {}) => api.get('/payments/salary', { params }),
-  getAgentSalaryPayments: (agentId) => api.get(`/payments/salary/agent/${agentId}`),
 
-  // M-Pesa configuration test
-  testMpesaConfig: () => api.get('/payments/mpesa/test-config'),
+  // ==================== M-PESA ====================
+  // Callback is POST /payments/mpesa/callback — called by Safaricom, no frontend API needed
+  checkPaymentStatus: (checkoutRequestId) =>
+    api.get(`/payments/mpesa/status/${checkoutRequestId}`),
+  testMpesaConfig: () => api.get("/payments/mpesa/test-config"),
 
-  // Report generation
-  generateReport: (reportData) => api.post('/reports/payments', reportData),
+  // ==================== REMINDERS ====================
+  sendBalanceReminders: () => api.post("/payments/send-reminders"),
+  getOverdueReminders: (params = {}) =>
+    api.get("/payments/reminders/overdue", { params }),
+  sendOverdueReminders: (reminderData) =>
+    api.post("/payments/reminders/overdue", reminderData),
+  getUpcomingReminders: (params = {}) =>
+    api.get("/payments/reminders/upcoming", { params }),
+  sendUpcomingReminders: (reminderData) =>
+    api.post("/payments/reminders/upcoming", reminderData),
+
+  // ==================== SALARY PAYMENTS ====================
+  processSalaryPayment: (salaryData) =>
+    api.post("/payments/salary", salaryData),
+  getSalaryPayments: (params = {}) => api.get("/payments/salary", { params }),
+  getAgentSalaryPayments: (agentId) =>
+    api.get(`/payments/salary/agent/${agentId}`),
+
+  // ==================== SMS TESTING ====================
+  testSMSService: (testData) => api.post("/payments/test-sms", testData),
+
+  // ==================== DEBUG (Admin only) ====================
+  debugEnv: () => api.get("/payments/debug-env"),
+
+  // ==================== KEPT AS-IS (May be used by other controllers/routes) ====================
+  processMpesaPayment: (paymentData) =>
+    api.post("/payments/mpesa", paymentData),
+  processMpesaDeposit: (depositData) =>
+    api.post("/payments/mpesa/deposit", depositData),
+  verifyMpesaTransaction: (transactionId) =>
+    api.get(`/payments/mpesa/verify/${transactionId}`),
+  getMpesaTransactions: () => api.get("/payments/mpesa/transactions"),
+  getPaybillStats: (period = "30days") =>
+    api.get("/payments/paybill/stats", { params: { period } }),
+  getPaymentStats: () => api.get("/payments/stats/overview"),
+  getUnitPayments: (unitId) => api.get(`/payments/unit/${unitId}`),
+  getPendingPayments: () => api.get("/payments?status=pending"),
+  getOverduePayments: () => api.get("/payments?status=overdue"),
+  getTenantAllocations: (tenantId) =>
+    api.get(`/tenant-allocations/tenant/${tenantId}`),
+  getUpcomingPayments: (tenantId) => api.get(`/payments/upcoming/${tenantId}`),
+  generateReceipt: (paymentId) => api.get(`/payments/${paymentId}/receipt`),
+  generateReport: (reportData) => api.post("/reports/payments", reportData),
 };
 
 
