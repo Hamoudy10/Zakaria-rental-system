@@ -249,3 +249,80 @@ WhatsApp messaging is handled entirely on the backend. No frontend changes requi
     errors: []
   }
 }
+
+Phase 1: Payment System Upgrade & M-Pesa Integration
+
+    Backend Architecture Overhaul (Payment Module)
+        Refactored paymentController.js:
+            Removed STK Push (tenant-initiated payments) as tenants don't use the system.
+            Implemented processPaybillPayment for recording M-Pesa Paybill transactions.
+            Implemented recordManualPayment for cash/bank payments.
+            Implemented handleMpesaCallback to process real-time payment notifications from Safaricom.
+            Core Logic: Added trackRentPayment (allocation logic) and recordCarryForward (handling overpayments).
+            Fix: Updated recordCarryForward to accept a transaction client (dbClient) to fix foreign key constraint errors during atomic transactions.
+            Fix: Made mpesa_transaction_id nullable in the database to support manual payments.
+            Fix: Added duplicate payment detection logic.
+
+    Route & API Standardization
+        Refactored paymentRoutes.js:
+            Aligned route paths with frontend API calls (e.g., /mpesa/callback instead of /mpesa-callback).
+            Secured debug routes (/debug-env) with admin authentication.
+            Ensured correct middleware (protect, adminOnly) usage.
+        Updated Frontend API (api.jsx):
+            synced paymentAPI methods with backend routes (e.g., getDetailedHistory, getOverdueReminders).
+
+    Database Updates
+        Created payment_notifications table for logging SMS/WhatsApp alerts.
+        Created salary_payments table for agent salary tracking.
+        Adjusted rent_payments table constraints (nullable mpesa_transaction_id, fixed FK for original_payment_id).
+
+    Testing & Verification (Sandbox)
+        Conducted rigorous Postman testing:
+            Connectivity: Verified health checks and M-Pesa config.
+            Paybill: Confirmed successful payment processing.
+            Duplicates: Verified duplicate receipt rejection (409 Conflict).
+            Manual Payments: Confirmed successful recording.
+            Overpayments: Verified carry-forward logic (allocating excess to future months).
+            Callbacks: Simulated successful and failed M-Pesa callbacks; verified status updates.
+
+Phase 2: Notification System (SMS & WhatsApp)
+
+    Dual-Channel Messaging
+        Implemented MessagingService to send notifications via SMS (Celcom) and WhatsApp (Meta Cloud API) in parallel.
+        Configured retry logic for failed messages.
+
+    Authentication Fixes
+        Fixed server.js middleware ordering (CORS before body parsers) to resolve "req.body undefined" login errors.
+        Addressed WhatsApp token expiration issue (identified need for permanent token).
+
+Phase 3: Logic Clarification (Outstanding Balances & Lease Period)
+
+    Lease Period Logic
+        Lease Start/End: Used to determine validity of a tenant's stay.
+        Billing Cycle: The system checks if the current date falls within the lease period. If yes, rent is expected.
+        Rent Calculation:
+            Due: monthly_rent from tenant_allocations.
+            Paid: Sum of payments in rent_payments for the target month.
+            Outstanding: Due - Paid.
+        Arrears: Cumulative unpaid balance from previous months (stored in tenant_allocations.arrears_balance).
+        Total Due: Rent (Current Month) + Arrears + Water Bill.
+
+    Frontend Consistency (PaymentManagement.jsx)
+        Logic Check: The frontend uses API.payments.getTenantPaymentStatus which aggregates data correctly:
+            Calculates rent_due, water_due, arrears, and total_due.
+            Handles advance_amount separately.
+        Visuals:
+            Unpaid Tab: Filters tenants where total_due > 0.
+            Paid Tab: Filters tenants where total_due <= 0 OR rent_paid >= monthly_rent.
+            Status Indicators: Shows "Paid" (Green) or "Unpaid" (Red) based on logic.
+
+Current Status
+
+    System State: Production-Ready (Code & Logic).
+    Pending External Actions:
+        Client to provide M-Pesa Business Portal Username.
+        Go-Live: Apply for Daraja Go-Live using the Paybill number.
+        Switch: Update Render environment variables to Production credentials.
+        WhatsApp: Generate permanent token.
+
+Your system is now robust, tested, and waiting only for live credentials to launch.
