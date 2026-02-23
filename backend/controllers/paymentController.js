@@ -563,6 +563,21 @@ const handleMpesaCallback = async (req, res) => {
   // ALWAYS respond to Safaricom immediately (they timeout after ~5 seconds)
   res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 
+  // ═══════════════════════════════════════════════════════════════
+  // DEBUG: Log ALL fields and their lengths from real Safaricom callback
+  // ═══════════════════════════════════════════════════════════════
+  console.log("═══════════════════════════════════════════════════════════");
+  console.log("REAL SAFARICOM CALLBACK - FULL PAYLOAD:");
+  console.log(JSON.stringify(req.body, null, 2));
+  console.log("═══════════════════════════════════════════════════════════");
+
+  console.log("FIELD LENGTHS FROM SAFARICOM:");
+  Object.entries(req.body).forEach(([key, value]) => {
+    const strValue = String(value || "");
+    console.log(`  ${key}: ${strValue.length} chars = "${strValue}"`);
+  });
+  console.log("═══════════════════════════════════════════════════════════");
+
   const client = await pool.connect();
   try {
     console.log("═══════════════════════════════════════");
@@ -956,7 +971,7 @@ const handleMpesaCallback = async (req, res) => {
   } finally {
     client.release();
   }
-};
+};;
 
 // ==================== CONTROLLER HANDLERS ====================
 
