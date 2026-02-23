@@ -2451,10 +2451,10 @@ const registerC2BUrls = async (req, res) => {
       process.env.MPESA_PAYBILL_NUMBER || process.env.MPESA_SHORT_CODE;
     const confirmationUrl =
       process.env.MPESA_CALLBACK_URL ||
-      "https://zakaria-rental-system.onrender.com/api/payments/mpesa/callback";
+      "https://zakaria-rental-system.onrender.com/api/payments/c2b/callback";
     const validationUrl =
       process.env.MPESA_VALIDATION_URL ||
-      "https://zakaria-rental-system.onrender.com/api/payments/mpesa/validation";
+      "https://zakaria-rental-system.onrender.com/api/payments/c2b/validation";
 
     if (!shortCode) {
       return res.status(400).json({
@@ -2466,7 +2466,7 @@ const registerC2BUrls = async (req, res) => {
     const accessToken = await getAccessToken();
 
     const response = await axios.post(
-      `${getMpesaBaseUrl()}/mpesa/c2b/v1/registerurl`,
+      `${getMpesaBaseUrl()}/mpesa/c2b/v2/registerurl`,
       {
         ShortCode: shortCode,
         ResponseType: "Completed",
