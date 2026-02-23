@@ -22,8 +22,8 @@ Object.entries(paymentController).forEach(([key, val]) => {
 // ⚠️ CRITICAL: These have NO auth middleware — Safaricom calls them directly
 // Must be defined early to avoid being caught by parameterized routes
 
-router.post("/mpesa/validation", paymentController.handleMpesaValidation);
-router.post("/mpesa/callback", paymentController.handleMpesaCallback);
+router.post("/c2b/validation", paymentController.handleMpesaValidation);
+router.post("/c2b/callback", paymentController.handleMpesaCallback);
 
 // ==================== TENANT PAYMENT STATUS (BEFORE /:id) ====================
 // ⚠️ CRITICAL: Must come before ANY parameterized routes like /:id
