@@ -25,6 +25,91 @@ Object.entries(paymentController).forEach(([key, val]) => {
 router.post("/c2b/validation", paymentController.handleMpesaValidation);
 router.post("/c2b/callback", paymentController.handleMpesaCallback);
 
+// ==================== DEBUG CALLBACK ENDPOINT ====================
+// Temporary route to debug column length issues
+router.post("/c2b/callback-debug", async (req, res) => {
+  const pool = require("../config/database");
+
+  console.log("═══════════════════════════════════════");
+  console.log("DEBUG CALLBACK - RAW REQUEST BODY:");
+  console.log(JSON.stringify(req.body, null, 2));
+  console.log("═══════════════════════════════════════");
+
+  // Log each field's length
+  const fields = {
+    TransID: req.body.TransID,
+    TransAmount: req.body.TransAmount,
+    BillRefNumber: req.body.BillRefNumber,
+    MSISDN: req.body.MSISDN,
+    FirstName: req.body.FirstName,
+    MiddleName: req.body.MiddleName,
+    LastName: req.body.LastName,
+    TransTime: req.body.TransTime,
+    BusinessShortCode: req.body.BusinessShortCode,
+    OrgAccountBalance: req.body.OrgAccountBalance,
+    InvoiceNumber: req.body.InvoiceNumber,
+    ThirdPartyTransID: req.body.ThirdPartyTransID,
+    TransactionType: req.body.TransactionType,
+  };
+
+  console.log("FIELD LENGTHS:");
+  Object.entries(fields).forEach(([key, value]) => {
+    const len = value ? String(value).length : 0;
+    console.log(`  ${key}: ${len} characters - "${value}"`);
+  });
+
+  try {
+    // Check all varchar columns in rent_payments
+    const columnCheck = await pool.query(`
+      SELECT column_name, character_maximum_length
+      FROM information_schema.columns
+      WHERE table_name = 'rent_payments'
+      AND data_type = 'character varying'
+      ORDER BY character_maximum_length ASC
+    `);
+
+    console.log("DATABASE VARCHAR COLUMNS (sorted by size):");
+    columnCheck.rows.forEach((row) => {
+      console.log(
+        `  ${row.column_name}: max ${row.character_maximum_length} chars`,
+      );
+    });
+
+    // Also check other tables that might be involved
+    const notificationColumns = await pool.query(`
+      SELECT column_name, character_maximum_length, table_name
+      FROM information_schema.columns
+      WHERE table_name IN ('notifications', 'payment_notifications', 'sms_queue', 'whatsapp_queue')
+      AND data_type = 'character varying'
+      AND character_maximum_length < 100
+      ORDER BY table_name, character_maximum_length ASC
+    `);
+
+    console.log("OTHER TABLES - SHORT VARCHAR COLUMNS (<100):");
+    notificationColumns.rows.forEach((row) => {
+      console.log(
+        `  ${row.table_name}.${row.column_name}: max ${row.character_maximum_length} chars`,
+      );
+    });
+
+    res.json({
+      success: true,
+      message: "Debug info logged to Render console",
+      fieldLengths: Object.fromEntries(
+        Object.entries(fields).map(([k, v]) => [k, v ? String(v).length : 0]),
+      ),
+      rentPaymentsColumns: columnCheck.rows,
+      otherShortColumns: notificationColumns.rows,
+    });
+  } catch (error) {
+    console.error("Debug error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 // ==================== TENANT PAYMENT STATUS (BEFORE /:id) ====================
 // ⚠️ CRITICAL: Must come before ANY parameterized routes like /:id
 
