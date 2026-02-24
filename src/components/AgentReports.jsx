@@ -435,7 +435,7 @@ const AgentReports = () => {
         case "water":
           try {
             response = await api.get("/agent-properties/water-bills", {
-              params,
+              params: { ...params, limit: 5000, offset: 0 },
             });
             response = { data: response.data };
           } catch (err) {
