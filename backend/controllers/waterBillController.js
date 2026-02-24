@@ -364,7 +364,7 @@ const listWaterBills = async (req, res) => {
     params.push(parseInt(offset, 10));
 
     const query = `
-      SELECT wb.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name, u.first_name AS agent_first, u.last_name AS agent_last
+      SELECT wb.*, t.first_name, t.last_name, t.phone_number, pu.unit_code, p.name as property_name, u.first_name AS agent_first, u.last_name AS agent_last
       FROM water_bills wb
       LEFT JOIN tenants t ON t.id = wb.tenant_id
       LEFT JOIN property_units pu ON pu.id = wb.unit_id

@@ -286,7 +286,7 @@ const styleHeaderRow = (row) => {
       pattern: "solid",
       fgColor: { argb: "FF1E40AF" },
     };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
     cell.border = {
       top: { style: "thin", color: { argb: "FF1E40AF" } },
       left: { style: "thin", color: { argb: "FF1E40AF" } },
@@ -497,7 +497,7 @@ export const exportToExcel = async (config) => {
         }
       });
 
-      column.width = Math.min(Math.max(maxLength + 2, 10), 40);
+      column.width = Math.min(Math.max(maxLength + 2, 10), 80);
     });
 
     // Generate and download
@@ -815,7 +815,7 @@ const prepareExcelData = (reportType, data) => {
       rows = data.map((item, index) => [
         index + 1,
         item.title || "N/A",
-        truncateText(item.description, 50),
+        item.description || "N/A",
         item.property_name || "N/A",
         item.unit_code || "N/A",
         item.tenant_name ||
@@ -839,6 +839,7 @@ const prepareExcelData = (reportType, data) => {
         "Bill Month",
         "Status",
         "Notes",
+        "Created",
       ];
       rows = data.map((item, index) => [
         index + 1,
@@ -852,6 +853,7 @@ const prepareExcelData = (reportType, data) => {
         formatMonth(item.bill_month),
         capitalizeFirst(item.status) || "Pending",
         item.notes || "",
+        formatDate(item.created_at),
       ]);
       columnFormats = {
         5: { numFmt: "#,##0", alignment: { horizontal: "right" } },
@@ -876,7 +878,7 @@ const prepareExcelData = (reportType, data) => {
         index + 1,
         item.channel || "SMS",
         formatPhone(item.recipient_phone || item.phone_number),
-        truncateText(item.message, 60),
+        item.message || "N/A",
         item.message_type || item.template_name || "General",
         capitalizeFirst(item.status) || "Pending",
         item.attempts || 0,
@@ -953,7 +955,7 @@ const prepareExcelData = (reportType, data) => {
       rows = data.map((item, index) => [
         index + 1,
         item.name || item.first_name || item.tenant_name || item.title || "N/A",
-        truncateText(item.description || item.notes || "", 40),
+        item.description || item.notes || "N/A",
         formatDate(item.created_at),
         parseCurrencyValue(item.amount),
         capitalizeFirst(item.status) || "Active",
@@ -1237,12 +1239,6 @@ const formatMonth = (monthStr) => {
   }
 };
 
-const truncateText = (text, maxLength) => {
-  if (!text) return "";
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength - 3) + "...";
-};
-
 const capitalizeFirst = (str) => {
   if (!str) return "";
   return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
@@ -1256,3 +1252,9 @@ export const clearCompanyInfoCache = () => {
   cacheTimestamp = null;
   console.log("🗑️ Excel company info cache cleared");
 };
+    const existingAlignment = cell.alignment || {};
+    cell.alignment = {
+      vertical: "top",
+      wrapText: true,
+      ...existingAlignment,
+    };
