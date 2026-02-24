@@ -1,5 +1,5 @@
-// backend/controllers/paymentController.js
-// PRODUCTION-READY — C2B Paybill + Manual Entry
+﻿// backend/controllers/paymentController.js
+// PRODUCTION-READY â€” C2B Paybill + Manual Entry
 // STK Push fully removed. C2B callback handles real M-Pesa Paybill payments.
 // Tenants do NOT use the system. Payments are recorded by admins/agents or arrive via M-Pesa C2B callback.
 
@@ -516,15 +516,15 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
  * M-Pesa C2B Validation Handler
  * Safaricom calls this BEFORE completing a Paybill payment.
  * Return ResultCode "0" to accept, any other code to reject.
- * NO AUTH MIDDLEWARE — Safaricom calls this directly.
+ * NO AUTH MIDDLEWARE â€” Safaricom calls this directly.
  */
 const handleMpesaValidation = async (req, res) => {
   try {
-    console.log("═══════════════════════════════════════");
+    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
     console.log("M-PESA C2B VALIDATION REQUEST");
     console.log("Timestamp:", new Date().toISOString());
     console.log("Body:", JSON.stringify(req.body, null, 2));
-    console.log("═══════════════════════════════════════");
+    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
     const {
       TransID,
@@ -572,7 +572,7 @@ const handleMpesaValidation = async (req, res) => {
             "VALIDATION WARNING: Unrecognized account reference:",
             cleanRef,
           );
-          // Accept anyway — handle unmatched payments in the callback
+          // Accept anyway â€” handle unmatched payments in the callback
           // To REJECT unknown refs, uncomment:
           // return res.json({ ResultCode: "C2B00011", ResultDesc: "Invalid Account" });
         }
@@ -605,8 +605,8 @@ const handleMpesaValidation = async (req, res) => {
 /**
  * M-Pesa C2B Confirmation (Callback) Handler
  * Safaricom calls this AFTER a Paybill payment is completed.
- * Payload is FLAT JSON — NOT the nested stkCallback format.
- * NO AUTH MIDDLEWARE — Safaricom calls this directly.
+ * Payload is FLAT JSON â€” NOT the nested stkCallback format.
+ * NO AUTH MIDDLEWARE â€” Safaricom calls this directly.
  *
  * C2B Payload format:
  * {
@@ -629,28 +629,28 @@ const handleMpesaCallback = async (req, res) => {
   // ALWAYS respond to Safaricom immediately (they timeout after ~5 seconds)
   res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 
-  // ═══════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // DEBUG: Log ALL fields and their lengths from real Safaricom callback
-  // ═══════════════════════════════════════════════════════════════
-  console.log("═══════════════════════════════════════════════════════════");
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
   console.log("REAL SAFARICOM CALLBACK - FULL PAYLOAD:");
   console.log(JSON.stringify(req.body, null, 2));
-  console.log("═══════════════════════════════════════════════════════════");
+  console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
   console.log("FIELD LENGTHS FROM SAFARICOM:");
   Object.entries(req.body).forEach(([key, value]) => {
     const strValue = String(value || "");
     console.log(`  ${key}: ${strValue.length} chars = "${strValue}"`);
   });
-  console.log("═══════════════════════════════════════════════════════════");
+  console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
   const client = await pool.connect();
   try {
-    console.log("═══════════════════════════════════════");
+    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
     console.log("M-PESA C2B CONFIRMATION RECEIVED");
     console.log("Timestamp:", new Date().toISOString());
     console.log("Body:", JSON.stringify(req.body, null, 2));
-    console.log("═══════════════════════════════════════");
+    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
     // C2B Paybill payload is FLAT JSON
     const {
@@ -691,6 +691,7 @@ const handleMpesaCallback = async (req, res) => {
     }
 
     const phone = normalizeKenyanPhone(MSISDN);
+    const billRefPhone = normalizeKenyanPhone(BillRefNumber);
     if (!phone) {
       console.warn("Invalid callback MSISDN format received:", MSISDN);
     }
@@ -715,9 +716,9 @@ const handleMpesaCallback = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // ═══════════════════════════════════════
-    // TENANT RESOLUTION — Try multiple strategies
-    // ═══════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TENANT RESOLUTION â€” Try multiple strategies
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     let tenant = null;
     let unit = null;
     let property = null;
@@ -752,14 +753,14 @@ const handleMpesaCallback = async (req, res) => {
         unit = { id: row.unit_id, unit_code: row.unit_code };
         property = { id: row.property_id, name: row.property_name };
         console.log(
-          `✅ Matched by unit_code: ${cleanRef} → ${tenant.first_name} ${tenant.last_name}`,
+          `âœ… Matched by unit_code: ${cleanRef} â†’ ${tenant.first_name} ${tenant.last_name}`,
         );
       }
     }
 
     // Strategy 2: Match BillRefNumber as phone number
     if (!tenant && BillRefNumber && BillRefNumber.trim()) {
-      const phoneRef = normalizeKenyanPhone(BillRefNumber);
+      const phoneRef = billRefPhone;
       // Only try if it looks like a phone number
       if (phoneRef) {
         const phoneResult = await client.query(
@@ -787,7 +788,7 @@ const handleMpesaCallback = async (req, res) => {
           unit = { id: row.unit_id, unit_code: row.unit_code };
           property = { id: row.property_id, name: row.property_name };
           console.log(
-            `✅ Matched by BillRefNumber as phone: ${phoneRef} → ${tenant.first_name} ${tenant.last_name}`,
+            `âœ… Matched by BillRefNumber as phone: ${phoneRef} â†’ ${tenant.first_name} ${tenant.last_name}`,
           );
         }
       }
@@ -821,20 +822,46 @@ const handleMpesaCallback = async (req, res) => {
           unit = { id: row.unit_id, unit_code: row.unit_code };
           property = { id: row.property_id, name: row.property_name };
           console.log(
-            `✅ Matched by MSISDN: ${phone} → ${tenant.first_name} ${tenant.last_name}`,
+            `âœ… Matched by MSISDN: ${phone} â†’ ${tenant.first_name} ${tenant.last_name}`,
           );
         }
       }
     }
 
-    // ═══════════════════════════════════════
-    // UNMATCHED PAYMENT — Record for manual allocation
-    // ═══════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // UNMATCHED PAYMENT â€” Record for manual allocation
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     if (!tenant) {
-      const safePhone = phone || "invalid_msisdn";
-      console.log(
-        `⚠️ UNMATCHED PAYMENT: ${TransID}, KSh ${amount}, Phone: ${safePhone}, Ref: ${BillRefNumber || "none"}, Payer: ${payerName}`,
-      );
+      const phoneForInsert = phone || billRefPhone;
+      const safePhone = phoneForInsert || "invalid_msisdn";
+            if (!phoneForInsert) {
+        await client.query("ROLLBACK");
+        console.error(
+          `Skipping unmatched callback ${TransID}: no valid phone from MSISDN/BillRef`,
+        );
+
+        try {
+          const adminUsers = await pool.query(
+            "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
+          );
+          for (const admin of adminUsers.rows) {
+            await NotificationService.createNotification({
+              userId: admin.id,
+              title: "⚠️ Unmatched M-Pesa Callback (Invalid Phone)",
+              message: `Callback received but no valid phone could be parsed (Receipt: ${TransID}, Ref: ${BillRefNumber || "none"}, Raw MSISDN: ${MSISDN || "none"}).`,
+              type: "payment_pending",
+              relatedEntityType: "rent_payment",
+            });
+          }
+        } catch (notifError) {
+          console.error(
+            "Failed to notify admins of invalid-phone callback:",
+            notifError.message,
+          );
+        }
+
+        return;
+      }
 
       await client.query(
         `INSERT INTO rent_payments (
@@ -848,7 +875,7 @@ const handleMpesaCallback = async (req, res) => {
         )`,
         [
           TransID,
-          phone,
+          phoneForInsert,
           amount,
           transTime,
           `UNMATCHED C2B: Ref=${BillRefNumber || "none"}, Payer=${payerName}, Phone=${safePhone}, RawMSISDN=${MSISDN}`,
@@ -865,7 +892,7 @@ const handleMpesaCallback = async (req, res) => {
         for (const admin of adminUsers.rows) {
           await NotificationService.createNotification({
             userId: admin.id,
-            title: "⚠️ Unmatched M-Pesa Payment",
+            title: "âš ï¸ Unmatched M-Pesa Payment",
             message: `KSh ${amount.toLocaleString()} from ${safePhone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Manual allocation required.`,
             type: "payment_pending",
             relatedEntityType: "rent_payment",
@@ -881,9 +908,9 @@ const handleMpesaCallback = async (req, res) => {
       return;
     }
 
-    // ═══════════════════════════════════════
-    // MATCHED PAYMENT — Process allocation
-    // ═══════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // MATCHED PAYMENT â€” Process allocation
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     const currentMonth = transTime.toISOString().slice(0, 7);
     const formattedPaymentMonth = `${currentMonth}-01`;
 
@@ -896,6 +923,13 @@ const handleMpesaCallback = async (req, res) => {
       currentMonth,
       client,
     );
+
+        const paymentPhone = phone || normalizeKenyanPhone(tenant.phone_number);
+    if (!paymentPhone) {
+      throw new Error(
+        `No valid phone for matched callback ${TransID} (tenant ${tenant.id})`,
+      );
+    }
 
     // Insert the payment record
     const paymentResult = await client.query(
@@ -917,7 +951,7 @@ const handleMpesaCallback = async (req, res) => {
         unit.id,
         property.id,
         TransID,
-        phone,
+        paymentPhone,
         trackingResult.allocatedAmount,
         transTime,
         formattedPaymentMonth,
@@ -937,7 +971,7 @@ const handleMpesaCallback = async (req, res) => {
         paymentRecord.id,
         transTime,
         TransID,
-        phone,
+        paymentPhone,
         null,
         client,
       );
@@ -945,7 +979,7 @@ const handleMpesaCallback = async (req, res) => {
 
     await client.query("COMMIT");
 
-    console.log("✅ PAYMENT PROCESSED:", {
+    console.log("âœ… PAYMENT PROCESSED:", {
       transId: TransID,
       tenant: `${tenant.first_name} ${tenant.last_name}`,
       unit: unit.unit_code,
@@ -956,9 +990,9 @@ const handleMpesaCallback = async (req, res) => {
       monthComplete: trackingResult.isMonthComplete,
     });
 
-    // ═══════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // POST-COMMIT: Notifications (non-blocking)
-    // ═══════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     try {
       // In-app notifications
       await sendPaymentNotifications(paymentRecord, trackingResult, false);
@@ -1248,7 +1282,7 @@ const getTenantPaymentHistory = async (req, res) => {
 };
 
 /**
- * Process paybill payment — Admin/Agent manually enters M-Pesa receipt details
+ * Process paybill payment â€” Admin/Agent manually enters M-Pesa receipt details
  */
 const processPaybillPayment = async (req, res) => {
   const client = await pool.connect();
@@ -2515,16 +2549,16 @@ const testSMSService = async (req, res) => {
 const testMpesaConfig = async (req, res) => {
   try {
     const mpesaConfig = {
-      consumerKey: process.env.MPESA_CONSUMER_KEY ? "✅ Set" : "❌ Missing",
+      consumerKey: process.env.MPESA_CONSUMER_KEY ? "âœ… Set" : "âŒ Missing",
       consumerSecret: process.env.MPESA_CONSUMER_SECRET
-        ? "✅ Set"
-        : "❌ Missing",
+        ? "âœ… Set"
+        : "âŒ Missing",
       paybillNumber:
         process.env.MPESA_PAYBILL_NUMBER ||
         process.env.MPESA_SHORT_CODE ||
-        "❌ Missing",
-      callbackUrl: process.env.MPESA_CALLBACK_URL ? "✅ Set" : "❌ Missing",
-      validationUrl: process.env.MPESA_VALIDATION_URL ? "✅ Set" : "❌ Missing",
+        "âŒ Missing",
+      callbackUrl: process.env.MPESA_CALLBACK_URL ? "âœ… Set" : "âŒ Missing",
+      validationUrl: process.env.MPESA_VALIDATION_URL ? "âœ… Set" : "âŒ Missing",
       environment: process.env.MPESA_ENVIRONMENT || "sandbox",
       apiBaseUrl: getMpesaBaseUrl(),
     };
@@ -2533,10 +2567,10 @@ const testMpesaConfig = async (req, res) => {
     try {
       const accessToken = await getAccessToken();
       mpesaConfig.accessToken = accessToken
-        ? "✅ Obtained successfully"
-        : "❌ Failed";
+        ? "âœ… Obtained successfully"
+        : "âŒ Failed";
     } catch (tokenError) {
-      mpesaConfig.accessToken = `❌ Failed: ${tokenError.message}`;
+      mpesaConfig.accessToken = `âŒ Failed: ${tokenError.message}`;
     }
 
     res.json({
@@ -2869,7 +2903,7 @@ const getTenantPaymentStatus = async (req, res) => {
 // ==================== EXPORTS ====================
 
 module.exports = {
-  // M-Pesa C2B endpoints (called by Safaricom — NO auth middleware)
+  // M-Pesa C2B endpoints (called by Safaricom â€” NO auth middleware)
   handleMpesaValidation,
   handleMpesaCallback,
 
@@ -2917,3 +2951,5 @@ module.exports = {
   recordCarryForward,
   sendPaymentNotifications,
 };
+
+
