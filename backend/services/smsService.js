@@ -705,16 +705,25 @@ class SMSService {
     amount,
     unitCode,
     monthsPaid,
+    coveredMonthsText = "",
   ) {
     try {
+      const safeUnit = unitCode || "N/A";
+      const safeMonths = Number.isFinite(Number(monthsPaid))
+        ? Math.max(1, Number(monthsPaid))
+        : 1;
+      const coveredLine = coveredMonthsText
+        ? `Covers: ${coveredMonthsText}`
+        : `Covers: ${safeMonths} month(s) ahead`;
+
       const message = [
         `Dear ${tenantName},`,
         ``,
         `ADVANCE PAYMENT`,
         ``,
         `Amount: KES ${this.formatAmount(amount)}`,
-        `Unit: ${unitCode}`,
-        `Covers: ${monthsPaid} month(s) ahead`,
+        `Unit: ${safeUnit}`,
+        coveredLine,
         ``,
         `Thank you for paying in advance!`,
       ].join("\n");
@@ -722,7 +731,9 @@ class SMSService {
       console.log("🔮 Sending advance payment notification:", {
         tenant: tenantName,
         amount: amount,
-        months: monthsPaid,
+        months: safeMonths,
+        unit: safeUnit,
+        coveredMonths: coveredMonthsText || null,
       });
 
       const result = await this.sendSMS(tenantPhone, message);

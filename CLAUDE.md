@@ -325,3 +325,35 @@ All SMS messages in the system are now also sent via WhatsApp (Meta Cloud API) i
 - **WhatsApp not configured:** Cleanly skipped, SMS-only mode
 
 ### Environment Variables
+
+## 12. PAYMENT STATEMENT MODAL EXPORTS (Frontend)
+
+### Scope
+- Added export actions directly inside the **Payment Statement** modal opened from Paid/Unpaid tenants tabs in `PaymentManagement`.
+- Users can now export the currently viewed tenant statement as:
+  - PDF
+  - Excel
+
+### Files Updated
+| File | Change |
+|------|--------|
+| `src/components/PaymentManagement.jsx` | Added modal export buttons + handlers, export loading guard |
+| `src/utils/pdfExport.js` | Added `tenant_statement` report type + `totalsOverride` support |
+| `src/utils/excelExport.js` | Added `tenant_statement` report type + `totalsOverride` support |
+
+### Export Content
+- Statement rows include payment date, amount, reference code, payment month, method, status.
+- Statement summary is exported via override totals:
+  - Total Expected
+  - Total Paid
+  - Outstanding Balance
+  - Payment Records
+
+### Branding
+- PDF/Excel exports continue using shared branding pipeline:
+  - Company name, contacts, and logo from settings (`/api/admin/company-info`)
+  - Existing cache behavior preserved (no breaking changes).
+
+### UX Safeguards
+- Export buttons are disabled while statement is loading or export is in progress.
+- Empty history cannot be exported (user receives validation alert).
