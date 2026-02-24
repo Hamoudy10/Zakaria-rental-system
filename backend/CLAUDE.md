@@ -310,3 +310,44 @@ app.use(cors({
 - **cronService.js**: `sendMonthlyBills()` queues to both `sms_queue` + `whatsapp_queue`, cron processes both queues via `MessagingService.processQueues()`
 
 ### Environment Variables
+```
+
+## RECENT UPDATES (2026-02-24)
+
+### Payment Logic Hardening (`paymentController.js`)
+- `trackRentPayment()` now prevents over-allocation when target month is already full:
+  - `remainingForTargetMonth` is clamped to `>= 0`
+  - overflow always goes to `carryForwardAmount`
+- Added strict validation for invalid rent/payment inputs (`NaN`, `<= 0`).
+- `recordCarryForward()` safety improved:
+  - max future month guard runs before loop body `continue` paths
+  - logs unallocated remainder if safety limit is reached.
+- Tenant/unit scoping fixes:
+  - `getPaymentStatusByUnitCode()` aggregates now filter by both `unit_id` and `tenant_id`.
+  - `sendBalanceReminders()` rent sum join now includes tenant match (`ta.tenant_id = rp.tenant_id`).
+  - `getTenantPaymentStatus()` water-paid aggregation now includes `unit_id`.
+- Tenant status due calculation now applies advance credit:
+  - `gross_due = rent_due + water_due + arrears`
+  - `advance_applied = min(advance_amount, gross_due)`
+  - `total_due = max(0, gross_due - advance_applied)`
+
+### Agent Reports Messaging Coverage (`notificationController.js`)
+- `getMessagingHistory()` now returns a unified feed from:
+  - `sms_queue` + `whatsapp_queue` (manual/queued sends)
+  - `sms_notifications` + `whatsapp_notifications` (automatic/system sends)
+- Agent visibility model:
+  - sees own `agent_id` sends
+  - plus system messages to tenant phones in agent-assigned properties.
+- Added source metadata in response rows:
+  - `source = 'queue' | 'notification'`
+  - system rows expose `sent_by_name = 'System (Auto)'`.
+- Added runtime table checks using `to_regclass(...)` so endpoint still works if notification tables are missing.
+
+### Data Repair Assets Added
+- Migration: `backend/migrations/002_add_fix_overpaid_month_carry_forward_procedure.sql`
+- Ops script: `backend/scripts/sql/repair_overpaid_carry_forward.sql`
+- Purpose: repair historical month over-allocation by moving overflow to future advance months.
+
+### Operational Guidance
+- For messaging report issues, start with `GET /api/notifications/sms-history`.
+- For historical rent anomalies, run the procedure `fix_overpaid_month_carry_forward(...)` inside a transaction and verify by month totals afterward.
