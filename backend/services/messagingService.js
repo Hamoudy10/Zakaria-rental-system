@@ -392,11 +392,20 @@ class MessagingService {
     amount,
     unitCode,
     monthsPaid,
+    coveredMonthsText = "",
   ) {
+    const safeUnitCode = unitCode || "N/A";
+    const safeMonthsPaid = Number.isFinite(Number(monthsPaid))
+      ? Math.max(1, Number(monthsPaid))
+      : 1;
+    const safeCoveredMonthsText = coveredMonthsText || "";
+
     console.log("🔮 Messaging: Sending advance payment notification:", {
       tenant: tenantName,
       amount,
-      months: monthsPaid,
+      months: safeMonthsPaid,
+      unit: safeUnitCode,
+      coveredMonths: safeCoveredMonthsText,
     });
 
     return this.sendParallel(
@@ -405,16 +414,18 @@ class MessagingService {
           tenantPhone,
           tenantName,
           amount,
-          unitCode,
-          monthsPaid,
+          safeUnitCode,
+          safeMonthsPaid,
+          safeCoveredMonthsText,
         ),
       () =>
         this.whatsapp.sendAdvancePaymentNotification(
           tenantPhone,
           tenantName,
           amount,
-          unitCode,
-          monthsPaid,
+          safeUnitCode,
+          safeMonthsPaid,
+          safeCoveredMonthsText,
         ),
     );
   }

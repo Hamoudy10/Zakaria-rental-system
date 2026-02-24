@@ -70,7 +70,61 @@ const formatPaymentMonth = (paymentMonth) => {
   return `${year}-${month}-01`;
 };
 
+const normalizeKenyanPhone = (input) => {
+  if (input === undefined || input === null) return null;
+
+  const raw = String(input).trim();
+  if (!raw) return null;
+
+  // Keep digits only; Safaricom MSISDN must end up as 2547XXXXXXXX or 2541XXXXXXXX
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return null;
+
+  let normalized = null;
+
+  if (digits.startsWith("254") && digits.length >= 12) {
+    normalized = digits.slice(0, 12);
+  } else if (digits.startsWith("0") && digits.length >= 10) {
+    normalized = `254${digits.slice(1, 10)}`;
+  } else if (
+    (digits.startsWith("7") || digits.startsWith("1")) &&
+    digits.length >= 9
+  ) {
+    normalized = `254${digits.slice(0, 9)}`;
+  }
+
+  if (!normalized || !/^254[17]\d{8}$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+};
+
 const isProduction = () => process.env.NODE_ENV === "production";
+
+const formatCoveredMonths = (carryForwardPayments = []) => {
+  const uniqueMonths = [
+    ...new Set(
+      carryForwardPayments
+        .map((p) => {
+          const d = p.payment_month ? new Date(p.payment_month) : null;
+          return d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 7) : null;
+        })
+        .filter(Boolean),
+    ),
+  ].sort();
+
+  return uniqueMonths.map((month) => {
+    const [year, monthNum] = month.split("-");
+    return new Date(Number(year), Number(monthNum) - 1, 1).toLocaleDateString(
+      "en-US",
+      {
+        month: "short",
+        year: "numeric",
+      },
+    );
+  });
+};
 
 // ==================== CORE BUSINESS LOGIC ====================
 
@@ -636,10 +690,10 @@ const handleMpesaCallback = async (req, res) => {
       return;
     }
 
-    // Format phone number to 254XXXXXXXXX
-    const phone = MSISDN.startsWith("254")
-      ? MSISDN
-      : `254${MSISDN.replace(/^0/, "")}`;
+    const phone = normalizeKenyanPhone(MSISDN);
+    if (!phone) {
+      console.warn("Invalid callback MSISDN format received:", MSISDN);
+    }
 
     // Parse transaction time (format: YYYYMMDDHHmmss)
     let transTime = new Date();
@@ -705,9 +759,9 @@ const handleMpesaCallback = async (req, res) => {
 
     // Strategy 2: Match BillRefNumber as phone number
     if (!tenant && BillRefNumber && BillRefNumber.trim()) {
-      const phoneRef = BillRefNumber.trim().replace(/^0/, "254");
+      const phoneRef = normalizeKenyanPhone(BillRefNumber);
       // Only try if it looks like a phone number
-      if (/^\d{9,12}$/.test(phoneRef) || /^254\d{9}$/.test(phoneRef)) {
+      if (phoneRef) {
         const phoneResult = await client.query(
           `SELECT 
             t.id as tenant_id, t.first_name, t.last_name, t.phone_number,
@@ -741,33 +795,35 @@ const handleMpesaCallback = async (req, res) => {
 
     // Strategy 3: Match MSISDN (paying phone number) to tenant
     if (!tenant) {
-      const msisdnResult = await client.query(
-        `SELECT 
-          t.id as tenant_id, t.first_name, t.last_name, t.phone_number,
-          ta.id as allocation_id, ta.monthly_rent, ta.arrears_balance,
-          pu.id as unit_id, pu.unit_code, pu.property_id,
-          p.name as property_name
-        FROM tenants t
-        JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-        JOIN property_units pu ON ta.unit_id = pu.id
-        JOIN properties p ON pu.property_id = p.id
-        WHERE t.phone_number = $1`,
-        [phone],
-      );
-
-      if (msisdnResult.rows.length > 0) {
-        const row = msisdnResult.rows[0];
-        tenant = {
-          id: row.tenant_id,
-          first_name: row.first_name,
-          last_name: row.last_name,
-          phone_number: row.phone_number,
-        };
-        unit = { id: row.unit_id, unit_code: row.unit_code };
-        property = { id: row.property_id, name: row.property_name };
-        console.log(
-          `✅ Matched by MSISDN: ${phone} → ${tenant.first_name} ${tenant.last_name}`,
+      if (phone) {
+        const msisdnResult = await client.query(
+          `SELECT 
+            t.id as tenant_id, t.first_name, t.last_name, t.phone_number,
+            ta.id as allocation_id, ta.monthly_rent, ta.arrears_balance,
+            pu.id as unit_id, pu.unit_code, pu.property_id,
+            p.name as property_name
+          FROM tenants t
+          JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+          JOIN property_units pu ON ta.unit_id = pu.id
+          JOIN properties p ON pu.property_id = p.id
+          WHERE t.phone_number = $1`,
+          [phone],
         );
+
+        if (msisdnResult.rows.length > 0) {
+          const row = msisdnResult.rows[0];
+          tenant = {
+            id: row.tenant_id,
+            first_name: row.first_name,
+            last_name: row.last_name,
+            phone_number: row.phone_number,
+          };
+          unit = { id: row.unit_id, unit_code: row.unit_code };
+          property = { id: row.property_id, name: row.property_name };
+          console.log(
+            `✅ Matched by MSISDN: ${phone} → ${tenant.first_name} ${tenant.last_name}`,
+          );
+        }
       }
     }
 
@@ -775,8 +831,9 @@ const handleMpesaCallback = async (req, res) => {
     // UNMATCHED PAYMENT — Record for manual allocation
     // ═══════════════════════════════════════
     if (!tenant) {
+      const safePhone = phone || "invalid_msisdn";
       console.log(
-        `⚠️ UNMATCHED PAYMENT: ${TransID}, KSh ${amount}, Phone: ${phone}, Ref: ${BillRefNumber || "none"}, Payer: ${payerName}`,
+        `⚠️ UNMATCHED PAYMENT: ${TransID}, KSh ${amount}, Phone: ${safePhone}, Ref: ${BillRefNumber || "none"}, Payer: ${payerName}`,
       );
 
       await client.query(
@@ -794,7 +851,7 @@ const handleMpesaCallback = async (req, res) => {
           phone,
           amount,
           transTime,
-          `UNMATCHED C2B: Ref=${BillRefNumber || "none"}, Payer=${payerName}, Phone=${phone}`,
+          `UNMATCHED C2B: Ref=${BillRefNumber || "none"}, Payer=${payerName}, Phone=${safePhone}, RawMSISDN=${MSISDN}`,
         ],
       );
 
@@ -809,7 +866,7 @@ const handleMpesaCallback = async (req, res) => {
           await NotificationService.createNotification({
             userId: admin.id,
             title: "⚠️ Unmatched M-Pesa Payment",
-            message: `KSh ${amount.toLocaleString()} from ${phone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Manual allocation required.`,
+            message: `KSh ${amount.toLocaleString()} from ${safePhone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Manual allocation required.`,
             type: "payment_pending",
             relatedEntityType: "rent_payment",
           });
@@ -944,10 +1001,14 @@ const handleMpesaCallback = async (req, res) => {
         trackingResult.carryForwardAmount > 0 &&
         carryForwardPayments.length > 0
       ) {
+        const coveredMonths = formatCoveredMonths(carryForwardPayments);
         await MessagingService.sendAdvancePaymentNotification(
           tenant.phone_number,
-          tenant.first_name,
+          tenantName,
           trackingResult.carryForwardAmount,
+          unit.unit_code,
+          coveredMonths.length,
+          coveredMonths.join(", "),
         );
       }
     } catch (notifError) {
@@ -1212,6 +1273,16 @@ const processPaybillPayment = async (req, res) => {
       });
     }
 
+    const normalizedPhone = normalizeKenyanPhone(phone_number);
+    if (!normalizedPhone) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid phone number format. Use Kenyan format (07XXXXXXXX / 2547XXXXXXXX).",
+      });
+    }
+
     // Check for duplicate receipt number
     const duplicateCheck = await client.query(
       "SELECT id FROM rent_payments WHERE mpesa_receipt_number = $1",
@@ -1286,7 +1357,7 @@ const processPaybillPayment = async (req, res) => {
         formattedPaymentMonth,
         paymentDate,
         mpesa_receipt_number,
-        phone_number,
+        normalizedPhone,
         "paybill",
         `PB_${mpesa_receipt_number}`,
       ],
@@ -1651,6 +1722,18 @@ const recordManualPayment = async (req, res) => {
 
     const paymentDate = new Date();
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
+    const normalizedPhone = phone_number
+      ? normalizeKenyanPhone(phone_number)
+      : null;
+
+    if (phone_number && !normalizedPhone) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid phone number format. Use Kenyan format (07XXXXXXXX / 2547XXXXXXXX).",
+      });
+    }
 
     // Track rent allocation
     const trackingResult = await trackRentPayment(
@@ -1677,7 +1760,7 @@ const recordManualPayment = async (req, res) => {
         formattedPaymentMonth,
         paymentDate,
         mpesa_receipt_number,
-        phone_number,
+        normalizedPhone,
         notes,
         mpesa_receipt_number
           ? `MANUAL_${mpesa_receipt_number}`
@@ -1696,7 +1779,7 @@ const recordManualPayment = async (req, res) => {
         paymentRecord.id,
         paymentDate,
         mpesa_receipt_number || "MANUAL",
-        phone_number,
+        normalizedPhone,
         req.user.id,
         client,
       );

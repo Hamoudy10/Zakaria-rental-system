@@ -722,19 +722,30 @@ class WhatsAppService {
     amount,
     unitCode,
     monthsPaid,
+    coveredMonthsText = "",
   ) {
     try {
+      const safeUnit = unitCode || "N/A";
+      const safeMonths = Number.isFinite(Number(monthsPaid))
+        ? Math.max(1, Number(monthsPaid))
+        : 1;
+      const monthsParam = coveredMonthsText
+        ? `${safeMonths} month(s): ${coveredMonthsText}`
+        : String(safeMonths);
+
       const params = [
         tenantName,
         this.formatAmount(amount),
-        unitCode,
-        String(monthsPaid),
+        safeUnit,
+        monthsParam,
       ];
 
       console.log("🔮 WhatsApp: Sending advance payment notification:", {
         tenant: tenantName,
         amount,
-        months: monthsPaid,
+        months: safeMonths,
+        unit: safeUnit,
+        coveredMonths: coveredMonthsText || null,
       });
 
       const result = await this.sendTemplateMessage(
