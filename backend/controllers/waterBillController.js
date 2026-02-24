@@ -337,14 +337,25 @@ const checkMissingWaterBills = async (req, res) => {
 const listWaterBills = async (req, res) => {
   try {
     const agentId = req.user.id;
+    const userRole = req.user.role;
     const { propertyId, tenantId, month, limit = 50, offset = 0 } = req.query;
 
-    const params = [agentId];
-    let where = `
-      WHERE wb.property_id IN (
-        SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true
-      )
-    `;
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    if (userRole !== 'admin') {
+      params.push(agentId);
+      where += `
+        AND (
+          wb.property_id IN (
+            SELECT property_id
+            FROM agent_property_assignments
+            WHERE agent_id = $1 AND is_active = true
+          )
+          OR wb.agent_id = $1
+        )
+      `;
+    }
 
     if (propertyId) {
       params.push(propertyId);
