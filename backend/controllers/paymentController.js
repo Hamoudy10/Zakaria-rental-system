@@ -108,6 +108,14 @@ const trackRentPayment = async (
     const monthlyRent = parseFloat(allocation.monthly_rent);
     const paymentAmount = parseFloat(amount);
 
+    if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
+      throw new Error("Invalid monthly rent configuration for allocation");
+    }
+
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      throw new Error("Invalid payment amount");
+    }
+
     let paymentMonth = targetMonth;
     if (!paymentMonth) {
       paymentMonth = new Date(paymentDate).toISOString().slice(0, 7);
@@ -130,23 +138,18 @@ const trackRentPayment = async (
     ]);
     const targetMonthPaid = parseFloat(targetMonthResult.rows[0].total_paid);
 
-    const remainingForTargetMonth = monthlyRent - targetMonthPaid;
+    const remainingForTargetMonth = Math.max(0, monthlyRent - targetMonthPaid);
     let allocatedAmount = 0;
     let carryForwardAmount = 0;
     let isMonthComplete = false;
 
     if (paymentAmount <= remainingForTargetMonth) {
       allocatedAmount = paymentAmount;
-      isMonthComplete = targetMonthPaid + allocatedAmount >= monthlyRent;
     } else {
-      allocatedAmount =
-        remainingForTargetMonth > 0 ? remainingForTargetMonth : paymentAmount;
-      carryForwardAmount =
-        remainingForTargetMonth > 0
-          ? paymentAmount - remainingForTargetMonth
-          : 0;
-      isMonthComplete = remainingForTargetMonth > 0;
+      allocatedAmount = remainingForTargetMonth;
+      carryForwardAmount = paymentAmount - allocatedAmount;
     }
+    isMonthComplete = targetMonthPaid + allocatedAmount >= monthlyRent;
 
     return {
       allocatedAmount,
@@ -182,6 +185,11 @@ const recordCarryForward = async (
   const db = dbClient || pool;
 
   try {
+    let remainingAmount = parseFloat(amount);
+    if (!Number.isFinite(remainingAmount) || remainingAmount <= 0) {
+      return [];
+    }
+
     // Get property_id for the unit
     const propertyResult = await db.query(
       `SELECT property_id FROM property_units WHERE id = $1`,
@@ -190,12 +198,16 @@ const recordCarryForward = async (
     const propertyId = propertyResult.rows[0]?.property_id;
 
     let nextMonth = new Date(paymentDate);
-    let remainingAmount = amount;
     const createdPayments = [];
     let index = 0;
 
     while (remainingAmount > 0) {
       index++;
+      if (index > 24) {
+        console.warn("Carry-forward safety limit reached (24 months)");
+        break;
+      }
+
       nextMonth.setMonth(nextMonth.getMonth() + 1);
       const nextMonthFormatted = nextMonth.toISOString().slice(0, 7) + "-01";
 
@@ -262,12 +274,12 @@ const recordCarryForward = async (
           continue;
         }
       }
+    }
 
-      // Safety limit: max 24 months ahead
-      if (index > 24) {
-        console.warn("Carry-forward safety limit reached (24 months)");
-        break;
-      }
+    if (remainingAmount > 0) {
+      console.warn(
+        `Carry-forward ended with unallocated remainder: ${remainingAmount}`,
+      );
     }
 
     return createdPayments;
@@ -1413,9 +1425,10 @@ const getPaymentStatusByUnitCode = async (req, res) => {
       `SELECT COALESCE(SUM(amount), 0) as total_paid, COUNT(*) as payment_count
        FROM rent_payments 
        WHERE unit_id = $1 
-       AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $2::date)
+       AND tenant_id = $2
+       AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
        AND status = 'completed'`,
-      [unit.id, `${targetMonth}-01`],
+      [unit.id, unit.tenant_id, `${targetMonth}-01`],
     );
 
     const totalPaid = parseFloat(summaryResult.rows[0].total_paid);
@@ -1425,9 +1438,10 @@ const getPaymentStatusByUnitCode = async (req, res) => {
     const historyResult = await pool.query(
       `SELECT * FROM rent_payments 
        WHERE unit_id = $1 
-       AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $2::date)
+       AND tenant_id = $2
+       AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
        ORDER BY payment_date DESC`,
-      [unit.id, `${targetMonth}-01`],
+      [unit.id, unit.tenant_id, `${targetMonth}-01`],
     );
 
     const futureResult = await pool.query(
@@ -1436,11 +1450,12 @@ const getPaymentStatusByUnitCode = async (req, res) => {
         COALESCE(SUM(amount), 0) as total_paid
        FROM rent_payments 
        WHERE unit_id = $1 
-       AND DATE_TRUNC('month', payment_month) > DATE_TRUNC('month', $2::date)
+       AND tenant_id = $2
+       AND DATE_TRUNC('month', payment_month) > DATE_TRUNC('month', $3::date)
        AND status = 'completed'
        GROUP BY DATE_TRUNC('month', payment_month)
        ORDER BY month ASC`,
-      [unit.id, `${targetMonth}-01`],
+      [unit.id, unit.tenant_id, `${targetMonth}-01`],
     );
 
     const futurePayments = futureResult.rows.map((row) => ({
@@ -1496,8 +1511,9 @@ const sendBalanceReminders = async (req, res) => {
       FROM property_units pu
       LEFT JOIN properties p ON pu.property_id = p.id
       LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
-      LEFT JOIN tenants t ON ta.tenant_id = t.id
-      LEFT JOIN rent_payments rp ON pu.id = rp.unit_id 
+       LEFT JOIN tenants t ON ta.tenant_id = t.id
+       LEFT JOIN rent_payments rp ON pu.id = rp.unit_id 
+        AND ta.tenant_id = rp.tenant_id
         AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
         AND rp.status = 'completed'
       WHERE ta.tenant_id IS NOT NULL
@@ -2637,6 +2653,7 @@ const getTenantPaymentStatus = async (req, res) => {
         COALESCE((
           SELECT SUM(rp.allocated_to_water) FROM rent_payments rp 
           WHERE rp.tenant_id = t.id 
+          AND rp.unit_id = pu.id
           AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
           AND rp.status = 'completed'
         ), 0) as water_paid,
@@ -2707,7 +2724,9 @@ const getTenantPaymentStatus = async (req, res) => {
 
       const rentDue = Math.max(0, monthlyRent - rentPaid);
       const waterDue = Math.max(0, waterBill - waterPaid);
-      const totalDue = rentDue + waterDue + arrears;
+      const grossDue = rentDue + waterDue + arrears;
+      const advanceApplied = Math.min(advanceAmount, grossDue);
+      const totalDue = Math.max(0, grossDue - advanceApplied);
 
       return {
         tenant_id: row.tenant_id,
@@ -2728,6 +2747,8 @@ const getTenantPaymentStatus = async (req, res) => {
         arrears,
         total_due: totalDue,
         advance_amount: advanceAmount,
+        advance_applied: advanceApplied,
+        advance_credit: Math.max(0, advanceAmount - advanceApplied),
         is_fully_paid: totalDue <= 0,
         last_payment_date: row.last_payment_date,
       };
