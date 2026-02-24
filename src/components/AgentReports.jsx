@@ -1051,6 +1051,15 @@ const AgentReports = () => {
   };
 
   const renderTable = () => {
+    const formatDisplayDate = (...dateCandidates) => {
+      const rawDate = dateCandidates.find((d) => !!d);
+      if (!rawDate) return "N/A";
+      const parsed = new Date(rawDate);
+      return Number.isNaN(parsed.getTime())
+        ? "N/A"
+        : parsed.toLocaleDateString();
+    };
+
     if (loading) {
       return (
         <div className="flex justify-center items-center h-64">
@@ -1222,9 +1231,11 @@ const AgentReports = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.created_at
-                        ? new Date(item.created_at).toLocaleDateString()
-                        : "N/A"}
+                      {formatDisplayDate(
+                        item.payment_date,
+                        item.created_at,
+                        item.updated_at,
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1352,9 +1363,11 @@ const AgentReports = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.created_at
-                        ? new Date(item.created_at).toLocaleDateString()
-                        : "N/A"}
+                      {formatDisplayDate(
+                        item.raised_at,
+                        item.created_at,
+                        item.updated_at,
+                      )}
                     </td>
                   </tr>
                 ))}
