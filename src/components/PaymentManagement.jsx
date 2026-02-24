@@ -75,6 +75,33 @@ const getMonthOptions = () => {
 
 const formatPhone = (phone) => phone?.replace(/^254/, "0") || "";
 
+const formatExactDueDate = ({ dueDate, rentDueDay, month }) => {
+  const parsedDueDate = dueDate ? new Date(dueDate) : null;
+  if (parsedDueDate && !Number.isNaN(parsedDueDate.getTime())) {
+    return parsedDueDate.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  if (!month) return "N/A";
+  const [yearText, monthText] = String(month).split("-");
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex)) return "N/A";
+
+  const day = Math.min(28, Math.max(1, Number(rentDueDay) || 1));
+  const fallbackDate = new Date(year, monthIndex, day);
+
+  if (Number.isNaN(fallbackDate.getTime())) return "N/A";
+  return fallbackDate.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
@@ -346,9 +373,7 @@ const PaymentManagement = () => {
     if (activeTab === "unpaid") {
       filtered = filtered.filter((t) => t.total_due > 0);
     } else if (activeTab === "paid") {
-      filtered = filtered.filter(
-        (t) => t.total_due <= 0 || t.rent_paid >= t.monthly_rent,
-      );
+      filtered = filtered.filter((t) => t.total_due <= 0);
     }
 
     return filtered;
@@ -360,10 +385,7 @@ const PaymentManagement = () => {
   );
 
   const paidCount = useMemo(
-    () =>
-      tenantStatus.filter(
-        (t) => t.total_due <= 0 || t.rent_paid >= t.monthly_rent,
-      ).length,
+    () => tenantStatus.filter((t) => t.total_due <= 0).length,
     [tenantStatus],
   );
 
@@ -1333,8 +1355,7 @@ const TenantStatusTable = ({
             <tbody className="divide-y">
               {tenants.map((t) => {
                 const isSelected = selectedTenants.includes(t.tenant_id);
-                const isPaid =
-                  t.total_due <= 0 || t.rent_paid >= t.monthly_rent;
+                const isPaid = t.total_due <= 0;
 
                 return (
                   <tr
@@ -1369,6 +1390,14 @@ const TenantStatusTable = ({
                     <td className="p-4 text-right whitespace-nowrap">
                       <div className="text-gray-500 text-xs">
                         Due: {formatCurrency(t.monthly_rent)}
+                      </div>
+                      <div className="text-gray-500 text-xs">
+                        Date:{" "}
+                        {formatExactDueDate({
+                          dueDate: t.due_date,
+                          rentDueDay: t.rent_due_day,
+                          month,
+                        })}
                       </div>
                       <div
                         className={`font-medium ${t.rent_paid >= t.monthly_rent ? "text-green-600" : "text-gray-800"}`}

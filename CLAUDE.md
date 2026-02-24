@@ -357,3 +357,20 @@ All SMS messages in the system are now also sent via WhatsApp (Meta Cloud API) i
 ### UX Safeguards
 - Export buttons are disabled while statement is loading or export is in progress.
 - Empty history cannot be exported (user receives validation alert).
+
+## 13. SESSION SUMMARY (2026-02-24)
+
+- Hardened rent/payment logic and carry-forward handling in `paymentController.js` to avoid month over-allocation and to keep allocation behavior consistent.
+- Added data-repair assets for overpaid months:
+  - Procedure migration: `backend/migrations/002_add_fix_overpaid_month_carry_forward_procedure.sql`
+  - Ops SQL script: `backend/scripts/sql/repair_overpaid_carry_forward.sql`
+- Expanded reports pipeline for full exports (PDF/Excel) so exports use full dataset, not viewport/screenshot-like truncation.
+- Fixed Excel runtime crash in reports (`ReferenceError: cell is not defined`) by correcting cell-style logic placement.
+- Improved Agent Reports data quality:
+  - Payment/Complaint date fallback mapping fixed (avoids `N/A` when valid timestamps exist).
+  - Water-bill report columns expanded to show relevant details.
+  - Water-bill listing for agents now includes assigned-property scope plus records created by the same agent.
+- Dashboard payment alert integrity fixed:
+  - `/agent-properties/my-tenants` returns usable due fields (`monthly_rent`, `rent_paid`, `balance_due`, `amount_due`, `due_date`, `payment_status`).
+  - Agent pending-payment stats now use computed current-month rent balance instead of naive payment-row existence checks.
+  - Frontend overview alert amount has safe fallback computation to prevent false `KSh 0` display.

@@ -50,19 +50,57 @@ const getAdminStats = async (req, res) => {
     const pendingComplaints = parseInt(complaintResult.rows[0].pending_complaints || 0);
 
     const pendingPaymentResult = await pool.query(`
-      SELECT COUNT(*) AS pending_payments
+      SELECT COUNT(*)::int AS pending_payments
       FROM (
-        SELECT ta.id
+        SELECT
+          ta.id,
+          (
+            GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+            GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+            GREATEST(0, COALESCE(ta.arrears_balance, 0))
+          ) AS total_due
         FROM tenant_allocations ta
-        LEFT JOIN rent_payments rp
-          ON ta.tenant_id = rp.tenant_id
-          AND ta.unit_id = rp.unit_id
-          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
-          AND rp.status = 'completed'
+        JOIN property_units pu ON pu.id = ta.unit_id
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ), 0) AS rent_paid
+          FROM rent_payments rp
+          WHERE rp.tenant_id = ta.tenant_id
+            AND rp.unit_id = ta.unit_id
+            AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+            AND rp.status = 'completed'
+        ) pm ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE((
+              SELECT wb.amount
+              FROM water_bills wb
+              WHERE wb.tenant_id = ta.tenant_id
+                AND (wb.unit_id = ta.unit_id OR wb.unit_id IS NULL)
+                AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', CURRENT_DATE)
+              ORDER BY CASE WHEN wb.unit_id = ta.unit_id THEN 0 ELSE 1 END
+              LIMIT 1
+            ), 0) AS water_bill,
+            COALESCE((
+              SELECT SUM(COALESCE(rp.allocated_to_water, 0))
+              FROM rent_payments rp
+              WHERE rp.tenant_id = ta.tenant_id
+                AND rp.unit_id = ta.unit_id
+                AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+                AND rp.status = 'completed'
+            ), 0) AS water_paid
+        ) wp ON TRUE
         WHERE ta.is_active = true
-        GROUP BY ta.id
-        HAVING COUNT(rp.id) = 0
-      ) sub
+      ) balances
+      WHERE balances.total_due > 0
     `);
     const pendingPayments = parseInt(pendingPaymentResult.rows[0].pending_payments || 0);
 
@@ -230,6 +268,81 @@ const getComprehensiveStats = async (req, res) => {
     const collectionRate = expectedRent > 0 
       ? ((collectedThisMonth / expectedRent) * 100).toFixed(1) 
       : '0.0';
+
+    // Current-month unpaid balance from active allocations (rent + water + arrears).
+    let dueSummary = {
+      pending_count: 0,
+      rent_due_total: 0,
+      water_due_total: 0,
+      arrears_due_total: 0,
+      total_due: 0
+    };
+    try {
+      const dueSummaryResult = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE total_due > 0)::int AS pending_count,
+          COALESCE(SUM(rent_due), 0) AS rent_due_total,
+          COALESCE(SUM(water_due), 0) AS water_due_total,
+          COALESCE(SUM(arrears_due), 0) AS arrears_due_total,
+          COALESCE(SUM(total_due), 0) AS total_due
+        FROM (
+          SELECT
+            ta.id,
+            GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) AS rent_due,
+            GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) AS water_due,
+            GREATEST(0, COALESCE(ta.arrears_balance, 0)) AS arrears_due,
+            (
+              GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+              GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+              GREATEST(0, COALESCE(ta.arrears_balance, 0))
+            ) AS total_due
+          FROM tenant_allocations ta
+          JOIN property_units pu ON pu.id = ta.unit_id
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(
+              CASE
+                WHEN (
+                  COALESCE(rp.allocated_to_rent, 0) +
+                  COALESCE(rp.allocated_to_water, 0) +
+                  COALESCE(rp.allocated_to_arrears, 0)
+                ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+                ELSE COALESCE(rp.amount, 0)
+              END
+            ), 0) AS rent_paid
+            FROM rent_payments rp
+            WHERE rp.tenant_id = ta.tenant_id
+              AND rp.unit_id = ta.unit_id
+              AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+              AND rp.status = 'completed'
+          ) pm ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT
+              COALESCE((
+                SELECT wb.amount
+                FROM water_bills wb
+                WHERE wb.tenant_id = ta.tenant_id
+                  AND (wb.unit_id = ta.unit_id OR wb.unit_id IS NULL)
+                  AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', CURRENT_DATE)
+                ORDER BY CASE WHEN wb.unit_id = ta.unit_id THEN 0 ELSE 1 END
+                LIMIT 1
+              ), 0) AS water_bill,
+              COALESCE((
+                SELECT SUM(COALESCE(rp.allocated_to_water, 0))
+                FROM rent_payments rp
+                WHERE rp.tenant_id = ta.tenant_id
+                  AND rp.unit_id = ta.unit_id
+                  AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+                  AND rp.status = 'completed'
+              ), 0) AS water_paid
+          ) wp ON TRUE
+          WHERE ta.is_active = true
+        ) dues
+      `);
+      dueSummary = dueSummaryResult.rows[0] || dueSummary;
+      console.log('✅ Due summary fetched');
+    } catch (e) {
+      console.error('Error fetching due summary:', e.message);
+    }
 
     // Outstanding water bills calculation
     let outstandingWater = 0;
@@ -450,8 +563,11 @@ const getComprehensiveStats = async (req, res) => {
           revenueThisYear: parseFloat(financialStats.revenue_this_year) || 0,
           expectedMonthlyRent: expectedRent,
           collectionRate: collectionRate,
-          pendingPaymentsAmount: parseFloat(financialStats.pending_amount) || 0,
-          pendingPaymentsCount: parseInt(financialStats.pending_count) || 0,
+          pendingPaymentsAmount: parseFloat(dueSummary.total_due) || 0,
+          pendingPaymentsCount: parseInt(dueSummary.pending_count) || 0,
+          pendingRentAmount: parseFloat(dueSummary.rent_due_total) || 0,
+          pendingWaterAmount: parseFloat(dueSummary.water_due_total) || 0,
+          pendingArrearsAmount: parseFloat(dueSummary.arrears_due_total) || 0,
           outstandingWater: outstandingWater,
           totalRentCollected: parseFloat(financialStats.total_rent_collected) || 0,
           totalWaterCollected: parseFloat(financialStats.total_water_collected) || 0,
@@ -483,7 +599,7 @@ const getComprehensiveStats = async (req, res) => {
           amountThisWeek: parseFloat(paymentStats.amount_this_week) || 0,
           paymentsThisMonth: parseInt(paymentStats.payments_this_month) || 0,
           failedPayments: parseInt(paymentStats.failed_payments) || 0,
-          pendingPayments: parseInt(paymentStats.pending_payments) || 0
+          pendingPayments: parseInt(dueSummary.pending_count) || 0
         },
         unitTypeBreakdown: unitTypeBreakdown,
         monthlyTrend: monthlyTrend,

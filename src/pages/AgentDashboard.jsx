@@ -192,7 +192,11 @@ const AgentOverview = ({ setActiveTab, user }) => {
 
       const paymentAlertsData = paymentsResponse.data?.data || paymentsResponse.data || [];
       const pendingPayments = Array.isArray(paymentAlertsData) 
-        ? paymentAlertsData.filter(tenant => tenant.payment_status === 'pending' || tenant.balance_due > 0)
+        ? paymentAlertsData.filter((tenant) => {
+            const totalDue = Number(tenant.total_due);
+            const balanceDue = Number(tenant.balance_due);
+            return tenant.payment_status === 'pending' || totalDue > 0 || balanceDue > 0;
+          })
         : [];
 
       setDashboardData({
@@ -268,6 +272,9 @@ const AgentOverview = ({ setActiveTab, user }) => {
   };
 
   const getAlertDueAmount = (alert) => {
+    const parsedTotalDue = Number(alert?.total_due);
+    if (Number.isFinite(parsedTotalDue) && parsedTotalDue > 0) return parsedTotalDue;
+
     const parsedBalance = Number(alert?.balance_due);
     if (Number.isFinite(parsedBalance) && parsedBalance > 0) return parsedBalance;
 
@@ -281,6 +288,33 @@ const AgentOverview = ({ setActiveTab, user }) => {
     }
 
     return Number.isFinite(parsedMonthlyRent) ? parsedMonthlyRent : 0;
+  };
+
+  const getAlertBreakdown = (alert) => {
+    const rentDue = Math.max(0, Number(alert?.rent_due) || 0);
+    const waterDue = Math.max(0, Number(alert?.water_due) || 0);
+    if (rentDue <= 0 && waterDue <= 0) return null;
+
+    return `Rent: ${formatCurrency(rentDue)} • Water: ${formatCurrency(waterDue)}`;
+  };
+
+  const formatExactDueDate = (alert) => {
+    const parsedDirect = alert?.due_date ? new Date(alert.due_date) : null;
+    if (parsedDirect && !Number.isNaN(parsedDirect.getTime())) {
+      return parsedDirect.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+    }
+
+    const dueDay = Math.min(28, Math.max(1, Number(alert?.rent_due_day) || 1));
+    const fallback = new Date(new Date().getFullYear(), new Date().getMonth(), dueDay);
+    return fallback.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
   };
 
   if (loading && !dashboardData.stats) {
@@ -522,13 +556,18 @@ const AgentOverview = ({ setActiveTab, user }) => {
                     <p className="text-xs text-gray-600">
                       {alert.property_name} • {alert.unit_number || alert.unit_code}
                     </p>
+                    {getAlertBreakdown(alert) && (
+                      <p className="text-xs text-gray-500">
+                        {getAlertBreakdown(alert)}
+                      </p>
+                    )}
                   </div>
                   <div className="text-right">
                     <p className="text-xs sm:text-sm font-semibold text-red-600">
                       {formatCurrency(getAlertDueAmount(alert))}
                     </p>
                     <p className="text-xs text-gray-500">
-                      Due {alert.due_date || 'This month'}
+                      Due {formatExactDueDate(alert)}
                     </p>
                   </div>
                 </div>

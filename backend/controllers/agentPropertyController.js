@@ -155,11 +155,30 @@ const getMyTenants = async (req, res) => {
         pu.unit_code,
         pu.unit_number,
         COALESCE(ta.monthly_rent, pu.rent_amount, 0) as monthly_rent,
+        LEAST(GREATEST(COALESCE(ta.rent_due_day, 1), 1), 28) as rent_due_day,
         p.name as property_name,
         p.id as property_id,
         COALESCE(pm.rent_paid, 0) as rent_paid,
-        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) as balance_due,
-        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) as amount_due,
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) as rent_due,
+        COALESCE(wp.water_bill, 0) as water_bill,
+        COALESCE(wp.water_paid, 0) as water_paid,
+        GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) as water_due,
+        GREATEST(0, COALESCE(ta.arrears_balance, 0)) as arrears,
+        (
+          GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+          GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+          GREATEST(0, COALESCE(ta.arrears_balance, 0))
+        ) as total_due,
+        (
+          GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+          GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+          GREATEST(0, COALESCE(ta.arrears_balance, 0))
+        ) as balance_due,
+        (
+          GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+          GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+          GREATEST(0, COALESCE(ta.arrears_balance, 0))
+        ) as amount_due,
         TO_CHAR(
           MAKE_DATE(
             EXTRACT(YEAR FROM CURRENT_DATE)::int,
@@ -169,7 +188,11 @@ const getMyTenants = async (req, res) => {
           'YYYY-MM-DD'
         ) as due_date,
         CASE 
-          WHEN GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) <= 0 THEN 'paid'
+          WHEN (
+            GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+            GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+            GREATEST(0, COALESCE(ta.arrears_balance, 0))
+          ) <= 0 THEN 'paid'
           ELSE 'pending'
         END as payment_status
       FROM tenants t
@@ -193,6 +216,26 @@ const getMyTenants = async (req, res) => {
           AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
           AND rp.status = 'completed'
       ) pm ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE((
+            SELECT wb.amount
+            FROM water_bills wb
+            WHERE wb.tenant_id = t.id
+              AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
+              AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', CURRENT_DATE)
+            ORDER BY CASE WHEN wb.unit_id = pu.id THEN 0 ELSE 1 END
+            LIMIT 1
+          ), 0) AS water_bill,
+          COALESCE((
+            SELECT SUM(COALESCE(rp.allocated_to_water, 0))
+            FROM rent_payments rp
+            WHERE rp.tenant_id = t.id
+              AND rp.unit_id = pu.id
+              AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+              AND rp.status = 'completed'
+          ), 0) AS water_paid
+      ) wp ON TRUE
     `;
 
     const params = [];
@@ -296,17 +339,17 @@ const getAgentDashboardStats = async (req, res) => {
       WHERE apa.agent_id = $1 AND apa.is_active = true AND c.status IN ('open', 'in_progress')
     `, [agent_id]);
 
-    // Get pending payments count based on actual rent balance for current month.
-    // This avoids false "paid" states when only zero-amount/metadata payment rows exist.
+    // Get pending payments count based on current-month total due (rent + water + arrears).
     const paymentsResult = await db.query(`
       SELECT COUNT(*)::int AS count
       FROM (
         SELECT
           t.id,
-          GREATEST(
-            0,
-            COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)
-          ) AS balance_due
+          (
+            GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+            GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+            GREATEST(0, COALESCE(ta.arrears_balance, 0))
+          ) AS total_due
         FROM tenants t
         JOIN tenant_allocations ta ON ta.tenant_id = t.id
         JOIN property_units pu ON pu.id = ta.unit_id
@@ -328,11 +371,31 @@ const getAgentDashboardStats = async (req, res) => {
             AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
             AND rp.status = 'completed'
         ) pm ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE((
+              SELECT wb.amount
+              FROM water_bills wb
+              WHERE wb.tenant_id = t.id
+                AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
+                AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', CURRENT_DATE)
+              ORDER BY CASE WHEN wb.unit_id = pu.id THEN 0 ELSE 1 END
+              LIMIT 1
+            ), 0) AS water_bill,
+            COALESCE((
+              SELECT SUM(COALESCE(rp.allocated_to_water, 0))
+              FROM rent_payments rp
+              WHERE rp.tenant_id = t.id
+                AND rp.unit_id = pu.id
+                AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+                AND rp.status = 'completed'
+            ), 0) AS water_paid
+        ) wp ON TRUE
         WHERE apa.agent_id = $1
           AND apa.is_active = true
           AND ta.is_active = true
       ) balances
-      WHERE balances.balance_due > 0
+      WHERE balances.total_due > 0
     `, [agent_id]);
 
     // Get resolved complaints this week

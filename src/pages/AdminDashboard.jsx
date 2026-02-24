@@ -550,9 +550,9 @@ const DashboardOverview = ({
             value={formatCurrency(financial?.revenueThisYear || 0)}
           />
           <FinanceMetric
-            label="Pending Payments"
+            label="Unpaid Total"
             value={formatCurrency(financial?.pendingPaymentsAmount || 0)}
-            subValue={`${financial?.pendingPaymentsCount || 0} payments`}
+            subValue={`${financial?.pendingPaymentsCount || 0} tenants due • Rent: ${formatCurrency(financial?.pendingRentAmount || 0)} • Water: ${formatCurrency(financial?.pendingWaterAmount || 0)}`}
           />
           <FinanceMetric
             label="Outstanding Water"

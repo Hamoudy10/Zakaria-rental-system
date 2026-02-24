@@ -2918,6 +2918,12 @@ const getTenantPaymentStatus = async (req, res) => {
         p.id as property_id, p.name as property_name,
         pu.id as unit_id, pu.unit_code,
         ta.monthly_rent, ta.arrears_balance as arrears,
+        LEAST(GREATEST(COALESCE(ta.rent_due_day, 1), 1), 28) as rent_due_day,
+        MAKE_DATE(
+          EXTRACT(YEAR FROM $1::date)::int,
+          EXTRACT(MONTH FROM $1::date)::int,
+          LEAST(GREATEST(COALESCE(ta.rent_due_day, 1), 1), 28)
+        ) as due_date,
         COALESCE((
           SELECT SUM(
             CASE
@@ -3039,6 +3045,8 @@ const getTenantPaymentStatus = async (req, res) => {
         unit_id: row.unit_id,
         unit_code: row.unit_code,
         monthly_rent: monthlyRent,
+        rent_due_day: Number(row.rent_due_day) || 1,
+        due_date: row.due_date,
         rent_paid: rentPaid,
         rent_due: rentDue,
         water_bill: waterBill,
