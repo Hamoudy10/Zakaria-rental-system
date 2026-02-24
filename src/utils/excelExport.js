@@ -1,4 +1,4 @@
-// src/utils/excelExport.js
+﻿// src/utils/excelExport.js
 // UPDATED: Added unpaid_tenants, paid_tenants, and messaging support
 // All original company info implementation preserved
 
@@ -39,17 +39,17 @@ const fetchCompanyInfo = async () => {
     now - cacheTimestamp < CACHE_DURATION
   ) {
     if (isValidCompanyInfo(cachedCompanyInfo)) {
-      console.log("📦 Using cached company info for Excel:", cachedCompanyInfo);
+      console.log("ðŸ“¦ Using cached company info for Excel:", cachedCompanyInfo);
       return cachedCompanyInfo;
     } else {
-      console.log("⚠️ Cached data is incomplete, refetching...");
+      console.log("âš ï¸ Cached data is incomplete, refetching...");
     }
   }
 
   try {
-    console.log("🔄 Fetching company info from API for Excel...");
+    console.log("ðŸ”„ Fetching company info from API for Excel...");
     const response = await API.settings.getCompanyInfo();
-    console.log("📥 API Response:", response.data);
+    console.log("ðŸ“¥ API Response:", response.data);
 
     if (response.data?.success && response.data?.data) {
       const companyData = response.data.data;
@@ -64,18 +64,18 @@ const fetchCompanyInfo = async () => {
 
       cacheTimestamp = now;
       console.log(
-        "✅ Company info fetched and cached for Excel:",
+        "âœ… Company info fetched and cached for Excel:",
         cachedCompanyInfo,
       );
       return cachedCompanyInfo;
     } else {
-      console.warn("⚠️ API returned unexpected structure:", response.data);
+      console.warn("âš ï¸ API returned unexpected structure:", response.data);
     }
   } catch (error) {
-    console.error("❌ Could not fetch company info for Excel:", error.message);
+    console.error("âŒ Could not fetch company info for Excel:", error.message);
   }
 
-  console.log("⚠️ Using default company info for Excel");
+  console.log("âš ï¸ Using default company info for Excel");
   return DEFAULT_COMPANY;
 };
 
@@ -86,7 +86,7 @@ const fetchImageAsBase64 = async (imageUrl) => {
   if (!imageUrl) return null;
 
   try {
-    console.log("🔄 Loading logo for Excel from:", imageUrl);
+    console.log("ðŸ”„ Loading logo for Excel from:", imageUrl);
 
     const response = await fetch(imageUrl, {
       mode: "cors",
@@ -100,7 +100,7 @@ const fetchImageAsBase64 = async (imageUrl) => {
     const blob = await response.blob();
     const arrayBuffer = await blob.arrayBuffer();
 
-    console.log("✅ Logo loaded for Excel");
+    console.log("âœ… Logo loaded for Excel");
     return {
       buffer: arrayBuffer,
       extension: "png",
@@ -154,7 +154,7 @@ const addCompanyHeader = async (
         worksheet.getRow(3).height = 20;
         worksheet.getRow(4).height = 10; // Spacer row
 
-        console.log("✅ Logo added to Excel");
+        console.log("âœ… Logo added to Excel");
       }
     } catch (error) {
       console.warn("Could not add logo to Excel:", error);
@@ -302,6 +302,13 @@ const styleHeaderRow = (row) => {
  */
 const styleDataRow = (row, isAlternate) => {
   row.eachCell((cell) => {
+    const existingAlignment = cell.alignment || {};
+    cell.alignment = {
+      vertical: "top",
+      wrapText: true,
+      ...existingAlignment,
+    };
+
     cell.border = {
       top: { style: "thin", color: { argb: "FFE5E7EB" } },
       left: { style: "thin", color: { argb: "FFE5E7EB" } },
@@ -400,8 +407,8 @@ export const exportToExcel = async (config) => {
   }
 
   try {
-    console.log("📊 Starting Excel export...");
-    console.log("📋 Provided company info:", providedCompanyInfo);
+    console.log("ðŸ“Š Starting Excel export...");
+    console.log("ðŸ“‹ Provided company info:", providedCompanyInfo);
 
     // Fetch fresh company info if provided is incomplete
     let companyInfo;
@@ -410,16 +417,16 @@ export const exportToExcel = async (config) => {
       isValidCompanyInfo(providedCompanyInfo) &&
       providedCompanyInfo.logo
     ) {
-      console.log("✅ Using provided company info (complete)");
+      console.log("âœ… Using provided company info (complete)");
       companyInfo = providedCompanyInfo;
     } else {
       console.log(
-        "🔄 Fetching company info (provided was incomplete or missing)",
+        "ðŸ”„ Fetching company info (provided was incomplete or missing)",
       );
       companyInfo = await fetchCompanyInfo();
     }
 
-    console.log("📋 Final company info for Excel export:", companyInfo);
+    console.log("ðŸ“‹ Final company info for Excel export:", companyInfo);
 
     // Create workbook
     const workbook = new ExcelJS.Workbook();
@@ -518,10 +525,10 @@ export const exportToExcel = async (config) => {
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
 
-    console.log("✅ Excel exported successfully:", filename);
+    console.log("âœ… Excel exported successfully:", filename);
     return true;
   } catch (error) {
-    console.error("❌ Excel export failed:", error);
+    console.error("âŒ Excel export failed:", error);
     alert(`Export failed: ${error.message}`);
     return false;
   }
@@ -1250,11 +1257,5 @@ const capitalizeFirst = (str) => {
 export const clearCompanyInfoCache = () => {
   cachedCompanyInfo = null;
   cacheTimestamp = null;
-  console.log("🗑️ Excel company info cache cleared");
+  console.log("ðŸ—‘ï¸ Excel company info cache cleared");
 };
-    const existingAlignment = cell.alignment || {};
-    cell.alignment = {
-      vertical: "top",
-      wrapText: true,
-      ...existingAlignment,
-    };
