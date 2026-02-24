@@ -461,6 +461,11 @@ export const exportToPDF = async (config) => {
       "unpaid_tenants",
       "paid_tenants",
       "expenses",
+      "water",
+      "sms",
+      "messaging",
+      "complaints",
+      "properties",
     ].includes(reportType);
     const doc = new jsPDF(useLandscape ? "landscape" : "portrait");
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -499,6 +504,8 @@ export const exportToPDF = async (config) => {
         cellPadding: 2.5,
         lineColor: [220, 220, 220],
         lineWidth: 0.1,
+        overflow: "linebreak",
+        valign: "top",
       },
       alternateRowStyles: {
         fillColor: [248, 250, 252],
@@ -506,6 +513,9 @@ export const exportToPDF = async (config) => {
       columnStyles: columnStyles,
       theme: "striped",
       showHead: "everyPage",
+      tableWidth: "auto",
+      horizontalPageBreak: true,
+      horizontalPageBreakRepeat: 0,
       didDrawPage: (data) => {
         const pageCount = doc.internal.getNumberOfPages();
         addPageFooter(doc, companyName, data.pageNumber, pageCount);
@@ -621,12 +631,6 @@ const formatPhone = (phone) => {
     return "0" + phone.substring(3);
   }
   return phone;
-};
-
-const truncateText = (text, maxLength) => {
-  if (!text) return "N/A";
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength - 3) + "...";
 };
 
 const capitalizeFirst = (str) => {
@@ -921,7 +925,7 @@ const prepareTableData = (reportType, data) => {
       ];
       rows = data.map((item, index) => [
         index + 1,
-        truncateText(item.title, 30),
+        item.title || "N/A",
         item.property_name || "N/A",
         item.unit_code || "N/A",
         capitalizeFirst(item.priority) || "Medium",
@@ -940,28 +944,34 @@ const prepareTableData = (reportType, data) => {
       headers = [
         "#",
         "Tenant",
+        "Phone",
         "Property",
         "Unit",
         "Amount (KSh)",
         "Bill Month",
         "Status",
+        "Notes",
+        "Created",
       ];
       rows = data.map((item, index) => [
         index + 1,
         item.tenant_name ||
           `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
           "N/A",
+        formatPhone(item.phone_number),
         item.property_name || "N/A",
         item.unit_code || "N/A",
         formatCurrency(item.amount),
         formatMonth(item.bill_month),
-        item.status || "Pending",
+        item.status || "Billed",
+        item.notes || "N/A",
+        formatDate(item.created_at),
       ]);
       columnStyles = {
         0: { halign: "center", cellWidth: 10 },
-        4: { halign: "right" },
-        5: { halign: "center" },
+        5: { halign: "right" },
         6: { halign: "center" },
+        7: { halign: "center" },
       };
       break;
 
@@ -980,7 +990,7 @@ const prepareTableData = (reportType, data) => {
         index + 1,
         item.channel || "SMS",
         formatPhone(item.recipient_phone || item.phone_number),
-        truncateText(item.message, 35),
+        item.message || "N/A",
         item.message_type || item.template_name || "General",
         capitalizeFirst(item.status) || "Pending",
         formatDate(item.created_at || item.sent_at),
@@ -1038,7 +1048,7 @@ const prepareTableData = (reportType, data) => {
         index + 1,
         formatDate(item.expense_date),
         item.category || "N/A",
-        truncateText(item.description, 25),
+        item.description || "N/A",
         item.property_name || "General",
         formatCurrency(item.amount),
         capitalizeFirst(item.payment_method) || "Cash",
@@ -1057,7 +1067,7 @@ const prepareTableData = (reportType, data) => {
       rows = data.map((item, index) => [
         index + 1,
         item.name || item.first_name || item.tenant_name || item.title || "N/A",
-        truncateText(item.description || item.notes || "", 30),
+        item.description || item.notes || "N/A",
         formatDate(item.created_at),
         formatCurrency(item.amount),
         capitalizeFirst(item.status) || "Active",

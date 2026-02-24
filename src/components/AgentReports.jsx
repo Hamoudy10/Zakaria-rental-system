@@ -520,7 +520,119 @@ const AgentReports = () => {
   }, [messagingFilters]);
 
   const handleExport = async (format) => {
-    if (!Array.isArray(data) || data.length === 0) {
+    const fetchExportData = async () => {
+      const params = buildFilterParams();
+      const EXPORT_LIMIT = 5000;
+
+      const extractPaginatedArray = (response, type) => {
+        const extracted = extractDataArray(response, type);
+        return Array.isArray(extracted) ? extracted : [];
+      };
+
+      switch (activeReport) {
+        case "payments": {
+          let page = 1;
+          let totalPages = 1;
+          const allRows = [];
+          do {
+            const resp = await safeAPICall(() =>
+              API.payments.getPayments({ ...params, page, limit: EXPORT_LIMIT }),
+            );
+            const rows = extractPaginatedArray(resp, "payments");
+            allRows.push(...rows);
+            totalPages = resp?.data?.data?.pagination?.totalPages || 1;
+            page += 1;
+          } while (page <= totalPages);
+          return allRows;
+        }
+
+        case "water": {
+          const resp = await safeAPICall(() =>
+            api.get("/agent-properties/water-bills", {
+              params: { ...params, limit: EXPORT_LIMIT, offset: 0 },
+            }),
+          );
+          return extractPaginatedArray(resp, "water");
+        }
+
+        case "sms": {
+          let page = 1;
+          let totalPages = 1;
+          const allRows = [];
+          do {
+            const smsParams = {
+              ...params,
+              page,
+              limit: 1000,
+              ...(messagingFilters.status !== "all" && {
+                status: messagingFilters.status,
+              }),
+              ...(messagingFilters.channel !== "all" && {
+                channel: messagingFilters.channel,
+              }),
+            };
+            const resp = await safeAPICall(() =>
+              API.notifications.getSMSHistory(smsParams),
+            );
+            const rows =
+              resp?.data?.data?.messages ||
+              resp?.data?.data?.history ||
+              extractPaginatedArray(resp, "sms");
+            allRows.push(...(Array.isArray(rows) ? rows : []));
+            totalPages = resp?.data?.data?.pagination?.totalPages || 1;
+            page += 1;
+          } while (page <= totalPages);
+          return allRows;
+        }
+
+        case "revenue": {
+          let page = 1;
+          let totalPages = 1;
+          const allPayments = [];
+          do {
+            const resp = await safeAPICall(() =>
+              API.payments.getPayments({ ...params, page, limit: EXPORT_LIMIT }),
+            );
+            allPayments.push(...extractPaginatedArray(resp, "payments"));
+            totalPages = resp?.data?.data?.pagination?.totalPages || 1;
+            page += 1;
+          } while (page <= totalPages);
+          return calculateRevenue(allPayments);
+        }
+
+        case "tenants": {
+          const resp = await safeAPICall(() =>
+            api.get("/agent-properties/my-tenants", { params }),
+          );
+          return extractPaginatedArray(resp, "tenants");
+        }
+
+        case "complaints": {
+          const resp = await safeAPICall(() =>
+            api.get("/agent-properties/my-complaints", { params }),
+          );
+          return extractPaginatedArray(resp, "complaints");
+        }
+
+        case "properties": {
+          const resp = await safeAPICall(() => API.properties.getAgentProperties());
+          return extractPaginatedArray(resp, "properties");
+        }
+
+        default:
+          return Array.isArray(data) ? data : [];
+      }
+    };
+
+    let exportData = [];
+    try {
+      exportData = await fetchExportData();
+    } catch (e) {
+      console.warn("Falling back to loaded data for export:", e);
+      exportData = Array.isArray(data) ? data : [];
+    }
+
+    if (!Array.isArray(exportData) || exportData.length === 0) {
       alert(
         "No data to export. Please wait for data to load or check if the report has any records.",
       );
@@ -533,7 +645,7 @@ const AgentReports = () => {
       if (format === "pdf") {
         await exportToPDF({
           reportType: activeReport,
-          data: data,
+          data: exportData,
           filters: filters,
           companyInfo: companyInfo,
           user: user,
@@ -542,7 +654,7 @@ const AgentReports = () => {
       } else if (format === "excel") {
         await exportToExcel({
           reportType: activeReport,
-          data: data,
+          data: exportData,
           filters: filters,
           companyInfo: companyInfo,
           user: user,
@@ -1267,6 +1379,9 @@ const AgentReports = () => {
                     Unit
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Phone
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Amount
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1275,10 +1390,16 @@ const AgentReports = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Notes
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Created
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
+                {data.map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.tenant_name ||
@@ -1292,10 +1413,18 @@ const AgentReports = () => {
                       {item.unit_code || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.phone_number || "N/A"}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       KSh {(parseFloat(item.amount) || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.bill_month || "N/A"}
+                      {item.bill_month
+                        ? new Date(item.bill_month).toLocaleDateString("en-GB", {
+                            month: "short",
+                            year: "numeric",
+                          })
+                        : "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
@@ -1305,8 +1434,16 @@ const AgentReports = () => {
                             : "bg-yellow-100 text-yellow-800"
                         }`}
                       >
-                        {item.status || "Pending"}
+                        {item.status || "Billed"}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
+                      {item.notes || "N/A"}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleString()
+                        : "N/A"}
                     </td>
                   </tr>
                 ))}
@@ -1647,11 +1784,13 @@ const AgentReports = () => {
               {Array.isArray(data) ? data.length : 0} records • Export to PDF or
               Excel
             </div>
-            <div className="text-xs text-gray-400">
-              {activeReport === "sms"
-                ? `Showing ${Math.min(Array.isArray(data) ? data.length : 0, 100)} messages`
-                : `Showing first ${Math.min(Array.isArray(data) ? data.length : 0, 10)} of ${Array.isArray(data) ? data.length : 0} records`}
-            </div>
+              <div className="text-xs text-gray-400">
+                {activeReport === "sms"
+                  ? `Showing ${Math.min(Array.isArray(data) ? data.length : 0, 100)} messages`
+                  : activeReport === "water"
+                    ? `Showing all ${Array.isArray(data) ? data.length : 0} records`
+                    : `Showing first ${Math.min(Array.isArray(data) ? data.length : 0, 10)} of ${Array.isArray(data) ? data.length : 0} records`}
+              </div>
           </div>
         </div>
       </div>
