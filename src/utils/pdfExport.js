@@ -426,6 +426,7 @@ export const exportToPDF = async (config) => {
     companyInfo: providedCompanyInfo,
     user,
     title = "Report",
+    totalsOverride,
   } = config;
 
   if (!data || data.length === 0) {
@@ -474,7 +475,7 @@ export const exportToPDF = async (config) => {
     const { headers, rows, columnStyles } = prepareTableData(reportType, data);
 
     // Calculate totals for financial reports
-    const totals = calculateTotals(reportType, data);
+    const totals = totalsOverride || calculateTotals(reportType, data);
 
     // Store company name for footer
     const companyName = companyInfo.name || DEFAULT_COMPANY.name;
@@ -839,6 +840,32 @@ const prepareTableData = (reportType, data) => {
         0: { halign: "center", cellWidth: 10 },
         3: { halign: "right" },
         5: { halign: "center" },
+        6: { halign: "center" },
+      };
+      break;
+
+    case "tenant_statement":
+      headers = [
+        "#",
+        "Payment Date",
+        "Amount (KSh)",
+        "Ref Code",
+        "Payment Month",
+        "Method",
+        "Status",
+      ];
+      rows = data.map((item, index) => [
+        index + 1,
+        formatDate(item.payment_date),
+        formatCurrency(item.amount),
+        item.mpesa_receipt_number || item.mpesa_transaction_id || "N/A",
+        formatMonth(item.payment_month),
+        item.payment_method || "N/A",
+        item.status || "N/A",
+      ]);
+      columnStyles = {
+        0: { halign: "center", cellWidth: 10 },
+        2: { halign: "right" },
         6: { halign: "center" },
       };
       break;

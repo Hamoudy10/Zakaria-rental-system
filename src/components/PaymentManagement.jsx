@@ -144,6 +144,7 @@ const PaymentManagement = () => {
   });
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [historyExporting, setHistoryExporting] = useState(false);
 
   // Manual Payment Modal
   const [showManualPayment, setShowManualPayment] = useState(false);
@@ -598,6 +599,57 @@ const PaymentManagement = () => {
     else exportToExcel(config);
   };
 
+  const handleExportTenantHistory = async (format) => {
+    if (loadingHistory) {
+      alert("Please wait for statement data to finish loading.");
+      return;
+    }
+
+    if (!selectedTenant) {
+      alert("No tenant selected for statement export.");
+      return;
+    }
+
+    if (!tenantHistory?.payments || tenantHistory.payments.length === 0) {
+      alert("No statement data available to export.");
+      return;
+    }
+
+    const monthLabel = filters.month
+      ? new Date(`${filters.month}-01`).toLocaleDateString("en-US", {
+          month: "long",
+          year: "numeric",
+        })
+      : "";
+
+    const summary = tenantHistory.summary || {};
+    const config = {
+      reportType: "tenant_statement",
+      data: tenantHistory.payments,
+      filters: {
+        ...filters,
+        tenant: selectedTenant.name,
+        ...(monthLabel ? { month: monthLabel } : {}),
+      },
+      user,
+      title: `Payment Statement - ${selectedTenant.name}`,
+      totalsOverride: {
+        "Total Expected": formatCurrency(summary.totalExpected || 0),
+        "Total Paid": formatCurrency(summary.totalPaid || 0),
+        "Outstanding Balance": formatCurrency(summary.balance || 0),
+        "Payment Records": `${tenantHistory.payments.length}`,
+      },
+    };
+
+    try {
+      setHistoryExporting(true);
+      if (format === "pdf") await exportToPDF(config);
+      else await exportToExcel(config);
+    } finally {
+      setHistoryExporting(false);
+    }
+  };
+
   // ============================================================
   // COMPUTED VALUES
   // ============================================================
@@ -979,6 +1031,9 @@ const PaymentManagement = () => {
           history={tenantHistory}
           loading={loadingHistory}
           error={historyError}
+          exporting={historyExporting}
+          onExportPDF={() => handleExportTenantHistory("pdf")}
+          onExportExcel={() => handleExportTenantHistory("excel")}
           onClose={() => setShowTenantHistory(false)}
         />
       )}
@@ -1406,7 +1461,16 @@ const TenantStatusTable = ({
   );
 };
 
-const TenantHistoryModal = ({ tenant, history, loading, error, onClose }) => {
+const TenantHistoryModal = ({
+  tenant,
+  history,
+  loading,
+  error,
+  exporting,
+  onExportPDF,
+  onExportExcel,
+  onClose,
+}) => {
   const formatCurrency = (amount) =>
     new Intl.NumberFormat("en-KE", {
       style: "currency",
@@ -1427,12 +1491,30 @@ const TenantHistoryModal = ({ tenant, history, loading, error, onClose }) => {
             </h3>
             <p className="text-blue-600 font-medium">{tenant.name}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full hover:bg-gray-200 transition-colors"
-          >
-            <X size={24} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onExportPDF}
+              disabled={loading || exporting || !!error}
+              className="flex items-center gap-2 bg-red-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              <FileText size={14} />
+              PDF
+            </button>
+            <button
+              onClick={onExportExcel}
+              disabled={loading || exporting || !!error}
+              className="flex items-center gap-2 bg-green-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              <FileSpreadsheet size={14} />
+              Excel
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full hover:bg-gray-200 transition-colors"
+            >
+              <X size={24} />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 overflow-y-auto max-h-[60vh]">
