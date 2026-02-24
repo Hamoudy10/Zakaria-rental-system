@@ -267,6 +267,22 @@ const AgentOverview = ({ setActiveTab, user }) => {
     }).format(amount || 0);
   };
 
+  const getAlertDueAmount = (alert) => {
+    const parsedBalance = Number(alert?.balance_due);
+    if (Number.isFinite(parsedBalance) && parsedBalance > 0) return parsedBalance;
+
+    const parsedAmountDue = Number(alert?.amount_due);
+    if (Number.isFinite(parsedAmountDue) && parsedAmountDue > 0) return parsedAmountDue;
+
+    const parsedRentPaid = Number(alert?.rent_paid);
+    const parsedMonthlyRent = Number(alert?.monthly_rent);
+    if (Number.isFinite(parsedMonthlyRent) && Number.isFinite(parsedRentPaid)) {
+      return Math.max(0, parsedMonthlyRent - parsedRentPaid);
+    }
+
+    return Number.isFinite(parsedMonthlyRent) ? parsedMonthlyRent : 0;
+  };
+
   if (loading && !dashboardData.stats) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -509,7 +525,7 @@ const AgentOverview = ({ setActiveTab, user }) => {
                   </div>
                   <div className="text-right">
                     <p className="text-xs sm:text-sm font-semibold text-red-600">
-                      {formatCurrency(alert.balance_due || alert.amount_due)}
+                      {formatCurrency(getAlertDueAmount(alert))}
                     </p>
                     <p className="text-xs text-gray-500">
                       Due {alert.due_date || 'This month'}

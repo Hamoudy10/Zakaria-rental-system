@@ -154,22 +154,45 @@ const getMyTenants = async (req, res) => {
         ta.unit_id,
         pu.unit_code,
         pu.unit_number,
-        pu.rent_amount,
+        COALESCE(ta.monthly_rent, pu.rent_amount, 0) as monthly_rent,
         p.name as property_name,
         p.id as property_id,
+        COALESCE(pm.rent_paid, 0) as rent_paid,
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) as balance_due,
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) as amount_due,
+        TO_CHAR(
+          MAKE_DATE(
+            EXTRACT(YEAR FROM CURRENT_DATE)::int,
+            EXTRACT(MONTH FROM CURRENT_DATE)::int,
+            LEAST(GREATEST(COALESCE(ta.rent_due_day, 1), 1), 28)
+          ),
+          'YYYY-MM-DD'
+        ) as due_date,
         CASE 
-          WHEN EXISTS (
-            SELECT 1 FROM rent_payments rp 
-            WHERE rp.tenant_id = t.id 
-            AND rp.payment_month = date_trunc('month', CURRENT_DATE)::date
-            AND rp.status = 'completed'
-          ) THEN 'paid'
+          WHEN GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) <= 0 THEN 'paid'
           ELSE 'pending'
         END as payment_status
       FROM tenants t
       JOIN tenant_allocations ta ON ta.tenant_id = t.id
       JOIN property_units pu ON pu.id = ta.unit_id
       JOIN properties p ON p.id = pu.property_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(
+          CASE
+            WHEN (
+              COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+            ELSE COALESCE(rp.amount, 0)
+          END
+        ), 0) as rent_paid
+        FROM rent_payments rp
+        WHERE rp.tenant_id = t.id
+          AND rp.unit_id = pu.id
+          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+          AND rp.status = 'completed'
+      ) pm ON TRUE
     `;
 
     const params = [];
@@ -273,22 +296,43 @@ const getAgentDashboardStats = async (req, res) => {
       WHERE apa.agent_id = $1 AND apa.is_active = true AND c.status IN ('open', 'in_progress')
     `, [agent_id]);
 
-    // Get pending payments count
+    // Get pending payments count based on actual rent balance for current month.
+    // This avoids false "paid" states when only zero-amount/metadata payment rows exist.
     const paymentsResult = await db.query(`
-      SELECT COUNT(DISTINCT t.id)
-      FROM tenants t
-      JOIN tenant_allocations ta ON ta.tenant_id = t.id
-      JOIN property_units pu ON pu.id = ta.unit_id
-      JOIN agent_property_assignments apa ON apa.property_id = pu.property_id
-      WHERE apa.agent_id = $1 
-        AND apa.is_active = true 
-        AND ta.is_active = true
-        AND NOT EXISTS (
-          SELECT 1 FROM rent_payments rp 
-          WHERE rp.tenant_id = t.id 
-          AND rp.payment_month = date_trunc('month', CURRENT_DATE)::date
-          AND rp.status = 'completed'
-        )
+      SELECT COUNT(*)::int AS count
+      FROM (
+        SELECT
+          t.id,
+          GREATEST(
+            0,
+            COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)
+          ) AS balance_due
+        FROM tenants t
+        JOIN tenant_allocations ta ON ta.tenant_id = t.id
+        JOIN property_units pu ON pu.id = ta.unit_id
+        JOIN agent_property_assignments apa ON apa.property_id = pu.property_id
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ), 0) AS rent_paid
+          FROM rent_payments rp
+          WHERE rp.tenant_id = t.id
+            AND rp.unit_id = pu.id
+            AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+            AND rp.status = 'completed'
+        ) pm ON TRUE
+        WHERE apa.agent_id = $1
+          AND apa.is_active = true
+          AND ta.is_active = true
+      ) balances
+      WHERE balances.balance_due > 0
     `, [agent_id]);
 
     // Get resolved complaints this week
