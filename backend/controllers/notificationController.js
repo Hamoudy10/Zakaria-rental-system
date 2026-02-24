@@ -1058,16 +1058,48 @@ const getMessagingHistory = async (req, res) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Build WHERE clauses for both queries
-    const buildWhereClauses = (tableAlias, paramStartIndex) => {
+    // Build WHERE clauses for queue + notification tables
+    const buildWhereClauses = (
+      tableAlias,
+      phoneColumn,
+      messageColumn,
+      dateColumn,
+      hasAgentColumn,
+      paramStartIndex,
+    ) => {
       const whereClauses = [];
       const queryParams = [];
       let paramIndex = paramStartIndex;
 
-      // Agent isolation: agents only see their own sent messages
+      // Agent visibility:
+      // 1) Explicitly agent-sent rows (agent_id)
+      // 2) Auto/system rows to phones belonging to tenants in assigned properties
       if (userRole !== "admin") {
-        whereClauses.push(`${tableAlias}.agent_id = $${paramIndex++}`);
+        const agentParamIndex = paramIndex++;
         queryParams.push(userId);
+
+        const visibilityClauses = [];
+        if (hasAgentColumn) {
+          visibilityClauses.push(`${tableAlias}.agent_id = $${agentParamIndex}`);
+        }
+
+        visibilityClauses.push(`EXISTS (
+          SELECT 1
+          FROM tenants t
+          JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+          JOIN property_units pu ON pu.id = ta.unit_id
+          JOIN agent_property_assignments apa
+            ON apa.property_id = pu.property_id
+           AND apa.is_active = true
+          WHERE apa.agent_id = $${agentParamIndex}
+            AND (
+              REPLACE(t.phone_number, '+', '') = REPLACE(${phoneColumn}, '+', '')
+              OR REPLACE(t.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(${phoneColumn}, '+', ''), 9))
+              OR REPLACE(${phoneColumn}, '+', '') = CONCAT('254', RIGHT(REPLACE(t.phone_number, '+', ''), 9))
+            )
+        )`);
+
+        whereClauses.push(`(${visibilityClauses.join(" OR ")})`);
       }
 
       // Status filter
@@ -1078,22 +1110,20 @@ const getMessagingHistory = async (req, res) => {
 
       // Date range filters
       if (startDate) {
-        whereClauses.push(`${tableAlias}.created_at >= $${paramIndex++}`);
+        whereClauses.push(`${dateColumn} >= $${paramIndex++}`);
         queryParams.push(startDate);
       }
 
       if (endDate) {
         whereClauses.push(
-          `${tableAlias}.created_at <= $${paramIndex++}::date + interval '1 day'`,
+          `${dateColumn} <= $${paramIndex++}::date + interval '1 day'`,
         );
         queryParams.push(endDate);
       }
 
       // Search filter
       if (search) {
-        whereClauses.push(
-          `(${tableAlias}.recipient_phone ILIKE $${paramIndex} OR ${tableAlias}.message ILIKE $${paramIndex})`,
-        );
+        whereClauses.push(`(${phoneColumn} ILIKE $${paramIndex} OR ${messageColumn} ILIKE $${paramIndex})`);
         queryParams.push(`%${search}%`);
         paramIndex++;
       }
@@ -1105,14 +1135,30 @@ const getMessagingHistory = async (req, res) => {
     const includesSMS = !channel || channel === "all" || channel === "sms";
     const includesWhatsApp =
       !channel || channel === "all" || channel === "whatsapp";
+    const [smsNotifTableCheck, waNotifTableCheck] = await Promise.all([
+      pool.query(`SELECT to_regclass('public.sms_notifications') as table_name`),
+      pool.query(
+        `SELECT to_regclass('public.whatsapp_notifications') as table_name`,
+      ),
+    ]);
+    const hasSMSNotificationsTable = !!smsNotifTableCheck.rows[0]?.table_name;
+    const hasWhatsAppNotificationsTable =
+      !!waNotifTableCheck.rows[0]?.table_name;
 
     let queries = [];
     let allParams = [];
     let currentParamIndex = 1;
 
-    // SMS Query
-    if (includesSMS) {
-      const smsWhere = buildWhereClauses("sq", currentParamIndex);
+    // SMS queue (agent initiated + queued/retry records)
+    if (includesSMS && hasSMSNotificationsTable) {
+      const smsWhere = buildWhereClauses(
+        "sq",
+        "sq.recipient_phone",
+        "sq.message",
+        "sq.created_at",
+        true,
+        currentParamIndex,
+      );
       const smsWhereClause =
         smsWhere.whereClauses.length > 0
           ? `WHERE ${smsWhere.whereClauses.join(" AND ")}`
@@ -1120,7 +1166,7 @@ const getMessagingHistory = async (req, res) => {
 
       queries.push(`
         SELECT 
-          sq.id,
+          sq.id::text as id,
           sq.recipient_phone,
           sq.message,
           sq.message_type,
@@ -1133,6 +1179,7 @@ const getMessagingHistory = async (req, res) => {
           sq.agent_id,
           'sms' as channel,
           NULL as template_name,
+          'queue' as source,
           CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
         FROM sms_queue sq
         LEFT JOIN users u ON sq.agent_id = u.id
@@ -1143,9 +1190,56 @@ const getMessagingHistory = async (req, res) => {
       currentParamIndex = smsWhere.nextParamIndex;
     }
 
-    // WhatsApp Query
-    if (includesWhatsApp) {
-      const waWhere = buildWhereClauses("wq", currentParamIndex);
+    // SMS notifications (automatic immediate sends)
+    if (includesSMS) {
+      const smsNotifWhere = buildWhereClauses(
+        "sn",
+        "sn.phone_number",
+        "sn.message_content",
+        "sn.sent_at",
+        false,
+        currentParamIndex,
+      );
+      const smsNotifWhereClause =
+        smsNotifWhere.whereClauses.length > 0
+          ? `WHERE ${smsNotifWhere.whereClauses.join(" AND ")}`
+          : "";
+
+      queries.push(`
+        SELECT
+          CONCAT('smsn_', ROW_NUMBER() OVER ()) as id,
+          sn.phone_number as recipient_phone,
+          sn.message_content as message,
+          sn.message_type,
+          sn.status,
+          NULL::int as attempts,
+          NULL::timestamp as last_attempt_at,
+          sn.sent_at,
+          sn.sent_at as created_at,
+          NULL::text as error_message,
+          NULL::uuid as agent_id,
+          'sms' as channel,
+          NULL as template_name,
+          'notification' as source,
+          'System (Auto)' as sent_by_name
+        FROM sms_notifications sn
+        ${smsNotifWhereClause}
+      `);
+
+      allParams = [...allParams, ...smsNotifWhere.queryParams];
+      currentParamIndex = smsNotifWhere.nextParamIndex;
+    }
+
+    // WhatsApp queue (agent initiated + queued/retry records)
+    if (includesWhatsApp && hasWhatsAppNotificationsTable) {
+      const waWhere = buildWhereClauses(
+        "wq",
+        "wq.recipient_phone",
+        "COALESCE(wq.fallback_message, '')",
+        "wq.created_at",
+        true,
+        currentParamIndex,
+      );
       const waWhereClause =
         waWhere.whereClauses.length > 0
           ? `WHERE ${waWhere.whereClauses.join(" AND ")}`
@@ -1153,7 +1247,7 @@ const getMessagingHistory = async (req, res) => {
 
       queries.push(`
         SELECT 
-          wq.id,
+          wq.id::text as id,
           wq.recipient_phone,
           wq.fallback_message as message,
           wq.message_type,
@@ -1166,6 +1260,7 @@ const getMessagingHistory = async (req, res) => {
           wq.agent_id,
           'whatsapp' as channel,
           wq.template_name,
+          'queue' as source,
           CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
         FROM whatsapp_queue wq
         LEFT JOIN users u ON wq.agent_id = u.id
@@ -1174,6 +1269,46 @@ const getMessagingHistory = async (req, res) => {
 
       allParams = [...allParams, ...waWhere.queryParams];
       currentParamIndex = waWhere.nextParamIndex;
+    }
+
+    // WhatsApp notifications (automatic immediate sends)
+    if (includesWhatsApp) {
+      const waNotifWhere = buildWhereClauses(
+        "wn",
+        "wn.phone_number",
+        "COALESCE(wn.template_name, '')",
+        "wn.sent_at",
+        false,
+        currentParamIndex,
+      );
+      const waNotifWhereClause =
+        waNotifWhere.whereClauses.length > 0
+          ? `WHERE ${waNotifWhere.whereClauses.join(" AND ")}`
+          : "";
+
+      queries.push(`
+        SELECT
+          CONCAT('wan_', ROW_NUMBER() OVER ()) as id,
+          wn.phone_number as recipient_phone,
+          wn.template_name as message,
+          wn.message_type,
+          wn.status,
+          NULL::int as attempts,
+          NULL::timestamp as last_attempt_at,
+          wn.sent_at,
+          wn.sent_at as created_at,
+          wn.error_message,
+          NULL::uuid as agent_id,
+          'whatsapp' as channel,
+          wn.template_name,
+          'notification' as source,
+          'System (Auto)' as sent_by_name
+        FROM whatsapp_notifications wn
+        ${waNotifWhereClause}
+      `);
+
+      allParams = [...allParams, ...waNotifWhere.queryParams];
+      currentParamIndex = waNotifWhere.nextParamIndex;
     }
 
     // If no queries (shouldn't happen), return empty
@@ -1194,10 +1329,11 @@ const getMessagingHistory = async (req, res) => {
 
     // Combine queries with UNION ALL
     const combinedQuery = queries.join(" UNION ALL ");
+    const baseParams = [...allParams];
 
     // Count query
     const countQuery = `SELECT COUNT(*) FROM (${combinedQuery}) as combined`;
-    const countResult = await pool.query(countQuery, allParams);
+    const countResult = await pool.query(countQuery, baseParams);
     const totalCount = parseInt(countResult.rows[0].count, 10);
 
     // Add ordering and pagination
@@ -1206,53 +1342,32 @@ const getMessagingHistory = async (req, res) => {
       ORDER BY created_at DESC
       LIMIT $${currentParamIndex++} OFFSET $${currentParamIndex++}
     `;
-    allParams.push(parseInt(limit), offset);
-
-    const historyResult = await pool.query(paginatedQuery, allParams);
+    const paginatedParams = [...baseParams, parseInt(limit), offset];
+    const historyResult = await pool.query(paginatedQuery, paginatedParams);
 
     // Get channel-specific counts for summary
     let channelCounts = { sms: 0, whatsapp: 0 };
-
-    if (includesSMS && includesWhatsApp) {
-      // Count per channel
-      const channelCountQuery = `
-        SELECT channel, COUNT(*) as count
-        FROM (${combinedQuery.replace(/LIMIT.*$/, "")}) as combined
-        GROUP BY channel
-      `;
-      try {
-        const channelCountResult = await pool.query(
-          channelCountQuery,
-          allParams.slice(0, -2),
-        );
-        channelCountResult.rows.forEach((row) => {
-          channelCounts[row.channel] = parseInt(row.count);
-        });
-      } catch (e) {
-        // Ignore count errors, just show messages
-        console.warn("Channel count query failed:", e.message);
-      }
-    }
-
-    // Get status counts
     let statusCounts = { sent: 0, pending: 0, failed: 0, skipped: 0 };
-    const statusCountQuery = `
-      SELECT status, COUNT(*) as count
-      FROM (${combinedQuery.replace(/LIMIT.*$/, "")}) as combined
-      GROUP BY status
+
+    const summaryQuery = `
+      SELECT channel, status, COUNT(*) as count
+      FROM (${combinedQuery}) as combined
+      GROUP BY channel, status
     `;
+
     try {
-      const statusCountResult = await pool.query(
-        statusCountQuery,
-        allParams.slice(0, -2),
-      );
-      statusCountResult.rows.forEach((row) => {
+      const summaryResult = await pool.query(summaryQuery, baseParams);
+      summaryResult.rows.forEach((row) => {
+        const count = parseInt(row.count, 10) || 0;
+        if (row.channel && channelCounts[row.channel] !== undefined) {
+          channelCounts[row.channel] += count;
+        }
         if (row.status) {
-          statusCounts[row.status] = parseInt(row.count);
+          statusCounts[row.status] = count;
         }
       });
     } catch (e) {
-      console.warn("Status count query failed:", e.message);
+      console.warn("Messaging summary query failed:", e.message);
     }
 
     res.json({

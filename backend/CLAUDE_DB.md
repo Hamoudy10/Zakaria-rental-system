@@ -118,6 +118,43 @@ created_at TIMESTAMP
 UNIQUE(tenant_id, bill_month)
 ```
 
+---
+
+## DATA REPAIR RUNBOOK
+
+### Overpaid Month Carry-Forward Repair
+Use this when historical data has a month where `rent_paid > monthly_rent` due to older allocation logic.
+
+Artifacts:
+- Migration procedure: `backend/migrations/002_add_fix_overpaid_month_carry_forward_procedure.sql`
+- Ops script template: `backend/scripts/sql/repair_overpaid_carry_forward.sql`
+
+Quick execution pattern:
+```sql
+BEGIN;
+CALL fix_overpaid_month_carry_forward(
+  '<tenant_uuid>'::uuid,
+  '<unit_uuid>'::uuid,
+  DATE 'YYYY-MM-01',
+  <monthly_rent>::numeric,
+  120
+);
+COMMIT;
+```
+
+Mahmoud (MJ-01) example:
+```sql
+BEGIN;
+CALL fix_overpaid_month_carry_forward(
+  '42357843-48d9-4bbc-b524-09b1b80eb4e4'::uuid,
+  '3efbe582-a73b-4c14-8686-fdc754de799d'::uuid,
+  DATE '2026-02-01',
+  10000::numeric,
+  120
+);
+COMMIT;
+```
+
 ### expenses
 ```sql
 id UUID PRIMARY KEY
@@ -453,3 +490,27 @@ CREATE INDEX idx_whatsapp_queue_template ON whatsapp_queue(template_name);
 CREATE INDEX idx_whatsapp_notifications_phone ON whatsapp_notifications(phone_number);
 CREATE INDEX idx_whatsapp_notifications_status ON whatsapp_notifications(status);
 CREATE INDEX idx_whatsapp_notifications_sent ON whatsapp_notifications(sent_at);
+```
+
+---
+
+## MESSAGING REPORT SOURCES
+
+`GET /api/notifications/sms-history` uses a unified query over:
+- `sms_queue` (manual/queued SMS)
+- `whatsapp_queue` (manual/queued WhatsApp)
+- `sms_notifications` (automatic/system SMS)
+- `whatsapp_notifications` (automatic/system WhatsApp)
+
+Agent visibility rule:
+- Include rows with `agent_id = req.user.id`
+- Plus automatic rows whose recipient phone matches tenants in agent-assigned properties.
+
+Response normalization for reports:
+- `channel`: `sms | whatsapp`
+- `source`: `queue | notification`
+- `sent_by_name`: `"System (Auto)"` for automatic notification rows.
+
+Compatibility guard:
+- `to_regclass('public.sms_notifications')` and `to_regclass('public.whatsapp_notifications')` are checked at runtime.
+- Missing tables are skipped without failing the endpoint.
