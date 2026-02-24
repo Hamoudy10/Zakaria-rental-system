@@ -351,3 +351,18 @@ app.use(cors({
 ### Operational Guidance
 - For messaging report issues, start with `GET /api/notifications/sms-history`.
 - For historical rent anomalies, run the procedure `fix_overpaid_month_carry_forward(...)` inside a transaction and verify by month totals afterward.
+
+## SESSION SUMMARY (2026-02-24)
+
+- Payment logic hardening continued:
+  - Better overflow handling and carry-forward safety in rent allocation flow.
+  - Validation and guardrails added to reduce bad allocation states.
+- Agent report coverage improved:
+  - Unified messaging history includes queued + automatic channels.
+  - Visibility filters tightened for agent-assigned properties.
+- Water bill report data visibility fixed:
+  - Agent water-bill listing includes assigned-property records and agent-created records.
+  - Water bill rows now expose richer tenant-related fields for reporting.
+- Agent dashboard payment integrity fixed in `agentPropertyController`:
+  - `/my-tenants` now provides reliable `monthly_rent`, `rent_paid`, `balance_due`, `amount_due`, `due_date`, `payment_status`.
+  - `/dashboard-stats` pending payment count now uses computed current-month rent balance (`balance_due > 0`) instead of simple payment-exists checks.

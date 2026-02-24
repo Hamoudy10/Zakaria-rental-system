@@ -514,3 +514,14 @@ Response normalization for reports:
 Compatibility guard:
 - `to_regclass('public.sms_notifications')` and `to_regclass('public.whatsapp_notifications')` are checked at runtime.
 - Missing tables are skipped without failing the endpoint.
+
+## SESSION SUMMARY (2026-02-24)
+
+- Added and used overpaid-month repair assets:
+  - Procedure migration: `backend/migrations/002_add_fix_overpaid_month_carry_forward_procedure.sql`
+  - Ops script: `backend/scripts/sql/repair_overpaid_carry_forward.sql`
+- Data consistency updates applied around payment reporting:
+  - Current-month due calculations now rely on rent allocations (`allocated_to_rent`) with safe legacy fallback to `amount`.
+  - Dashboard pending-payment logic aligned to computed rent balance (`monthly_rent - rent_paid`).
+- Agent water-bill reporting scope clarified in backend logic:
+  - Report queries now include records from assigned properties and valid agent-created entries, preventing historical "no water bills" false negatives.

@@ -326,3 +326,19 @@ Current Status
         WhatsApp: Generate permanent token.
 
 Your system is now robust, tested, and waiting only for live credentials to launch.
+
+## RECENT SESSION SUMMARY (2026-02-24)
+
+- Agent Reports export behavior improved for all tabs:
+  - PDF/Excel exports now pull complete report data (no viewport/screenshot truncation).
+  - Wide/long content is preserved across pages/columns.
+- Fixed reports runtime error in production build:
+  - `ReferenceError: cell is not defined` in Excel export utility.
+- Corrected date rendering in reports:
+  - Complaint and Payment report rows now resolve proper date fields before falling back to `N/A`.
+- Improved Water Bill report UX/data:
+  - Added fuller detail columns in report output.
+  - Backend feed adjusted so valid historical water bills are visible under agent scope.
+- Agent Dashboard overview payment alerts corrected:
+  - Alert amount rendering now uses robust due fallback logic (`balance_due` -> `amount_due` -> `monthly_rent - rent_paid`).
+  - Prevents false `KSh 0` alerts for unpaid tenants.
