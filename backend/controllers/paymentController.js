@@ -352,6 +352,7 @@ const sendPaymentNotifications = async (
   payment,
   trackingResult,
   isCarryForward = false,
+  carryForwardPayments = [],
 ) => {
   try {
     const paymentId = payment.id || payment.payment_id;
@@ -379,11 +380,20 @@ const sendPaymentNotifications = async (
     const tenantName = `${details.first_name} ${details.last_name}`;
     const unitInfo = `Unit ${details.unit_number} (${details.unit_code})`;
 
+    const paidAmount = Number(amount) || 0;
+    const carryForwardAmount = Number(trackingResult.carryForwardAmount) || 0;
+    const totalReceivedAmount = paidAmount + carryForwardAmount;
+    const coveredMonths = formatCoveredMonths(carryForwardPayments);
+    const coveredMonthsText =
+      coveredMonths.length > 0
+        ? coveredMonths.join(", ")
+        : "future month(s)";
+
     let notificationMessage;
     if (isCarryForward) {
       notificationMessage = `Payment of KSh ${amount} for ${tenantName} (${details.unit_code}) has been carried forward to future months.`;
-    } else if (trackingResult.carryForwardAmount > 0) {
-      notificationMessage = `Payment of KSh ${amount} received from ${tenantName} for ${details.property_name} - ${unitInfo}. KSh ${trackingResult.allocatedAmount} applied to ${trackingResult.targetMonth}, KSh ${trackingResult.carryForwardAmount} carried forward.`;
+    } else if (carryForwardAmount > 0) {
+      notificationMessage = `Payment of KSh ${totalReceivedAmount} received from ${tenantName} for ${details.property_name} - ${unitInfo}. KSh ${trackingResult.allocatedAmount} applied to ${trackingResult.targetMonth}, KSh ${carryForwardAmount} carried forward to ${coveredMonthsText}.`;
     } else if (trackingResult.isMonthComplete) {
       notificationMessage = `Payment of KSh ${amount} received from ${tenantName} for ${details.property_name} - ${unitInfo}. Payment for ${trackingResult.targetMonth} is now complete.`;
     } else {
@@ -995,11 +1005,12 @@ const handleMpesaCallback = async (req, res) => {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     try {
       // In-app notifications
-      await sendPaymentNotifications(paymentRecord, trackingResult, false);
-
-      for (const cfPayment of carryForwardPayments) {
-        await sendPaymentNotifications(cfPayment, trackingResult, true);
-      }
+      await sendPaymentNotifications(
+        paymentRecord,
+        trackingResult,
+        false,
+        carryForwardPayments,
+      );
 
       // SMS + WhatsApp to tenant
       const tenantName = `${tenant.first_name} ${tenant.last_name}`;
@@ -1400,8 +1411,9 @@ const processPaybillPayment = async (req, res) => {
     const paymentRecord = paymentResult.rows[0];
 
     // Carry-forward with transaction client
+    let carryForwardPayments = [];
     if (trackingResult.carryForwardAmount > 0) {
-      const carryForwardPayments = await recordCarryForward(
+      carryForwardPayments = await recordCarryForward(
         unit.tenant_id,
         unit.id,
         trackingResult.carryForwardAmount,
@@ -1413,9 +1425,6 @@ const processPaybillPayment = async (req, res) => {
         client,
       );
 
-      for (const cfPayment of carryForwardPayments) {
-        await sendPaymentNotifications(cfPayment, trackingResult, true);
-      }
     }
 
     // Commit the transaction
@@ -1458,7 +1467,12 @@ const processPaybillPayment = async (req, res) => {
 
     // SMS + WhatsApp notifications
     await sendPaybillSMSNotifications(paymentRecord, trackingResult, unit);
-    await sendPaymentNotifications(paymentRecord, trackingResult, false);
+    await sendPaymentNotifications(
+      paymentRecord,
+      trackingResult,
+      false,
+      carryForwardPayments,
+    );
 
     res.status(201).json({
       success: true,
@@ -1805,8 +1819,9 @@ const recordManualPayment = async (req, res) => {
     const paymentRecord = paymentResult.rows[0];
 
     // Carry-forward with transaction client
+    let carryForwardPayments = [];
     if (trackingResult.carryForwardAmount > 0) {
-      const carryForwardPayments = await recordCarryForward(
+      carryForwardPayments = await recordCarryForward(
         tenant_id,
         unit_id,
         trackingResult.carryForwardAmount,
@@ -1818,15 +1833,17 @@ const recordManualPayment = async (req, res) => {
         client,
       );
 
-      for (const cfPayment of carryForwardPayments) {
-        await sendPaymentNotifications(cfPayment, trackingResult, true);
-      }
     }
 
     await client.query("COMMIT");
 
     // Post-commit notifications
-    await sendPaymentNotifications(paymentRecord, trackingResult, false);
+    await sendPaymentNotifications(
+      paymentRecord,
+      trackingResult,
+      false,
+      carryForwardPayments,
+    );
 
     res.status(201).json({
       success: true,

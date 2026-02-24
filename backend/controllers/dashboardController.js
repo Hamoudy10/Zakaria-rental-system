@@ -530,13 +530,35 @@ const getRecentActivities = async (req, res) => {
     try {
       const paymentsResult = await pool.query(`
         SELECT
-          created_at AS sort_time,
-          'Payment of KES ' || COALESCE(amount::text, '0') || ' received' AS description,
+          rp.created_at AS sort_time,
+          CASE
+            WHEN COALESCE(cf.cf_total, 0) > 0 THEN
+              'Payment of KES ' || (rp.amount + cf.cf_total)::text ||
+              ' received (carry forward: ' || COALESCE(cf.cf_months, 'future month(s)') || ')'
+            ELSE
+              'Payment of KES ' || COALESCE(rp.amount::text, '0') || ' received'
+          END AS description,
           'payment' AS type,
-          to_char(created_at, 'YYYY-MM-DD HH24:MI') AS time
-        FROM rent_payments
-        WHERE status = 'completed' AND created_at IS NOT NULL
-        ORDER BY created_at DESC
+          to_char(rp.created_at, 'YYYY-MM-DD HH24:MI') AS time
+        FROM rent_payments rp
+        LEFT JOIN (
+          SELECT
+            original_payment_id,
+            COALESCE(SUM(amount), 0) AS cf_total,
+            STRING_AGG(
+              DISTINCT to_char(date_trunc('month', payment_month), 'Mon YYYY'),
+              ', ' ORDER BY to_char(date_trunc('month', payment_month), 'YYYY-MM')
+            ) AS cf_months
+          FROM rent_payments
+          WHERE status = 'completed'
+            AND payment_method IN ('carry_forward', 'carry_forward_fix')
+            AND original_payment_id IS NOT NULL
+          GROUP BY original_payment_id
+        ) cf ON cf.original_payment_id = rp.id
+        WHERE rp.status = 'completed'
+          AND rp.created_at IS NOT NULL
+          AND rp.payment_method NOT IN ('carry_forward', 'carry_forward_fix')
+        ORDER BY rp.created_at DESC
         LIMIT 5
       `);
       activities.push(...paymentsResult.rows);
