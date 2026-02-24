@@ -129,8 +129,8 @@ const formatCoveredMonths = (carryForwardPayments = []) => {
 // ==================== CORE BUSINESS LOGIC ====================
 
 /**
- * Track rent payment allocation
- * Determines how much of a payment goes to current month vs carry-forward
+ * Track payment allocation across arrears, rent, and water.
+ * Any remainder is treated as carry-forward to future rent months.
  */
 const trackRentPayment = async (
   tenantId,
@@ -160,6 +160,7 @@ const trackRentPayment = async (
 
     const allocation = allocationResult.rows[0];
     const monthlyRent = parseFloat(allocation.monthly_rent);
+    const arrearsBalance = parseFloat(allocation.arrears_balance) || 0;
     const paymentAmount = parseFloat(amount);
 
     if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
@@ -179,9 +180,21 @@ const trackRentPayment = async (
     const isFutureMonth = paymentMonth > currentMonth;
 
     const targetMonthPaymentsQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_paid 
-      FROM rent_payments 
-      WHERE tenant_id = $1 AND unit_id = $2 
+      SELECT
+        COALESCE(SUM(
+          CASE
+            WHEN (
+              COALESCE(allocated_to_rent, 0) +
+              COALESCE(allocated_to_water, 0) +
+              COALESCE(allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(allocated_to_rent, 0)
+            ELSE COALESCE(amount, 0)
+          END
+        ), 0) AS rent_paid,
+        COALESCE(SUM(COALESCE(allocated_to_water, 0)), 0) AS water_paid,
+        COALESCE(SUM(COALESCE(allocated_to_arrears, 0)), 0) AS arrears_paid
+      FROM rent_payments
+      WHERE tenant_id = $1 AND unit_id = $2
       AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
       AND status = 'completed'
     `;
@@ -190,28 +203,59 @@ const trackRentPayment = async (
       unitId,
       `${paymentMonth}-01`,
     ]);
-    const targetMonthPaid = parseFloat(targetMonthResult.rows[0].total_paid);
+    const rentPaidForMonth = parseFloat(targetMonthResult.rows[0].rent_paid) || 0;
+    const waterPaidForMonth =
+      parseFloat(targetMonthResult.rows[0].water_paid) || 0;
+    const arrearsPaidForMonth =
+      parseFloat(targetMonthResult.rows[0].arrears_paid) || 0;
 
-    const remainingForTargetMonth = Math.max(0, monthlyRent - targetMonthPaid);
-    let allocatedAmount = 0;
-    let carryForwardAmount = 0;
-    let isMonthComplete = false;
+    const waterBillResult = await db.query(
+      `SELECT COALESCE(wb.amount, 0) AS amount
+       FROM water_bills wb
+       WHERE wb.tenant_id = $1
+       AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $2::date)
+       AND (wb.unit_id = $3 OR wb.unit_id IS NULL)
+       ORDER BY CASE WHEN wb.unit_id = $3 THEN 0 ELSE 1 END
+       LIMIT 1`,
+      [tenantId, `${paymentMonth}-01`, unitId],
+    );
+    const waterAmount = parseFloat(waterBillResult.rows[0]?.amount) || 0;
 
-    if (paymentAmount <= remainingForTargetMonth) {
-      allocatedAmount = paymentAmount;
-    } else {
-      allocatedAmount = remainingForTargetMonth;
-      carryForwardAmount = paymentAmount - allocatedAmount;
-    }
-    isMonthComplete = targetMonthPaid + allocatedAmount >= monthlyRent;
+    const remainingArrears = Math.max(0, arrearsBalance - arrearsPaidForMonth);
+    const remainingRent = Math.max(0, monthlyRent - rentPaidForMonth);
+    const remainingWater = Math.max(0, waterAmount - waterPaidForMonth);
+
+    const totalDueBeforePayment = remainingArrears + remainingRent + remainingWater;
+    let remainingPayment = paymentAmount;
+
+    const allocatedToArrears = Math.min(remainingPayment, remainingArrears);
+    remainingPayment -= allocatedToArrears;
+
+    const allocatedToRent = Math.min(remainingPayment, remainingRent);
+    remainingPayment -= allocatedToRent;
+
+    const allocatedToWater = Math.min(remainingPayment, remainingWater);
+    remainingPayment -= allocatedToWater;
+
+    const allocatedAmount = allocatedToArrears + allocatedToRent + allocatedToWater;
+    const carryForwardAmount = remainingPayment;
+    const totalDueAfterPayment = Math.max(0, totalDueBeforePayment - allocatedAmount);
+    const isMonthComplete = totalDueAfterPayment <= 0;
 
     return {
       allocatedAmount,
+      allocatedToArrears,
+      allocatedToRent,
+      allocatedToWater,
       carryForwardAmount,
       monthlyRent,
-      targetMonthPaid,
+      waterAmount,
+      targetMonthPaid: rentPaidForMonth,
       isMonthComplete,
-      remainingForTargetMonth,
+      remainingForTargetMonth: totalDueBeforePayment,
+      rentBalanceAfterPayment: Math.max(0, remainingRent - allocatedToRent),
+      waterBalanceAfterPayment: Math.max(0, remainingWater - allocatedToWater),
+      arrearsBalanceAfterPayment: Math.max(0, remainingArrears - allocatedToArrears),
       targetMonth: paymentMonth,
       isFutureMonth,
     };
@@ -298,8 +342,8 @@ const recordCarryForward = async (
           `INSERT INTO rent_payments 
            (tenant_id, unit_id, property_id, amount, payment_month, status, is_advance_payment, 
             original_payment_id, payment_date, mpesa_transaction_id, mpesa_receipt_number, 
-            phone_number, payment_method)
-           VALUES ($1, $2, $3, $4, $5, 'completed', true, $6, $7, $8, $9, $10, $11)
+            phone_number, payment_method, allocated_to_rent, allocated_to_water, allocated_to_arrears)
+           VALUES ($1, $2, $3, $4, $5, 'completed', true, $6, $7, $8, $9, $10, $11, $4, 0, 0)
            RETURNING *`,
           [
             tenantId,
@@ -948,12 +992,13 @@ const handleMpesaCallback = async (req, res) => {
         mpesa_transaction_id, mpesa_receipt_number, phone_number,
         amount, payment_date, payment_month, status,
         payment_method, is_advance_payment,
+        allocated_to_rent, allocated_to_water, allocated_to_arrears,
         created_at
       ) VALUES (
         $1, $2, $3,
         $4, $4, $5,
         $6, $7, $8, 'completed',
-        'mpesa', $9,
+        'mpesa', $9, $10, $11, $12,
         NOW()
       ) RETURNING *`,
       [
@@ -966,6 +1011,9 @@ const handleMpesaCallback = async (req, res) => {
         transTime,
         formattedPaymentMonth,
         trackingResult.carryForwardAmount > 0,
+        trackingResult.allocatedToRent || 0,
+        trackingResult.allocatedToWater || 0,
+        trackingResult.allocatedToArrears || 0,
       ],
     );
 
@@ -1391,8 +1439,9 @@ const processPaybillPayment = async (req, res) => {
     const paymentResult = await client.query(
       `INSERT INTO rent_payments 
        (tenant_id, unit_id, property_id, amount, payment_month, payment_date, status,
-        mpesa_receipt_number, phone_number, payment_method, mpesa_transaction_id)
-       VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9, $10)
+        mpesa_receipt_number, phone_number, payment_method, mpesa_transaction_id,
+        allocated_to_rent, allocated_to_water, allocated_to_arrears)
+       VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         unit.tenant_id,
@@ -1405,6 +1454,9 @@ const processPaybillPayment = async (req, res) => {
         normalizedPhone,
         "paybill",
         `PB_${mpesa_receipt_number}`,
+        trackingResult.allocatedToRent || 0,
+        trackingResult.allocatedToWater || 0,
+        trackingResult.allocatedToArrears || 0,
       ],
     );
 
@@ -1420,7 +1472,7 @@ const processPaybillPayment = async (req, res) => {
         paymentRecord.id,
         paymentDate,
         mpesa_receipt_number,
-        phone_number,
+        normalizedPhone,
         req.user?.id,
         client,
       );
@@ -1541,7 +1593,18 @@ const getPaymentStatusByUnitCode = async (req, res) => {
     }
 
     const summaryResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_paid, COUNT(*) as payment_count
+      `SELECT
+         COALESCE(SUM(
+           CASE
+             WHEN (
+               COALESCE(allocated_to_rent, 0) +
+               COALESCE(allocated_to_water, 0) +
+               COALESCE(allocated_to_arrears, 0)
+             ) > 0 THEN COALESCE(allocated_to_rent, 0)
+             ELSE COALESCE(amount, 0)
+           END
+         ), 0) as total_paid,
+         COUNT(*) as payment_count
        FROM rent_payments 
        WHERE unit_id = $1 
        AND tenant_id = $2
@@ -1566,7 +1629,16 @@ const getPaymentStatusByUnitCode = async (req, res) => {
     const futureResult = await pool.query(
       `SELECT 
         DATE_TRUNC('month', payment_month) as month,
-        COALESCE(SUM(amount), 0) as total_paid
+        COALESCE(SUM(
+          CASE
+            WHEN (
+              COALESCE(allocated_to_rent, 0) +
+              COALESCE(allocated_to_water, 0) +
+              COALESCE(allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(allocated_to_rent, 0)
+            ELSE COALESCE(amount, 0)
+          END
+        ), 0) as total_paid
        FROM rent_payments 
        WHERE unit_id = $1 
        AND tenant_id = $2
@@ -1624,8 +1696,28 @@ const sendBalanceReminders = async (req, res) => {
         ta.tenant_id, t.first_name as tenant_first_name,
         t.last_name as tenant_last_name, t.phone_number as tenant_phone,
         ta.monthly_rent,
-        COALESCE(SUM(rp.amount), 0) as total_paid,
-        (ta.monthly_rent - COALESCE(SUM(rp.amount), 0)) as balance,
+        COALESCE(SUM(
+          CASE
+            WHEN (
+              COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+            ELSE COALESCE(rp.amount, 0)
+          END
+        ), 0) as total_paid,
+        (
+          ta.monthly_rent - COALESCE(SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ), 0)
+        ) as balance,
         ta.rent_due_day, ta.grace_period_days
       FROM property_units pu
       LEFT JOIN properties p ON pu.property_id = p.id
@@ -1638,7 +1730,18 @@ const sendBalanceReminders = async (req, res) => {
       WHERE ta.tenant_id IS NOT NULL
       GROUP BY pu.id, pu.unit_code, p.name, ta.tenant_id, t.first_name, t.last_name, 
                t.phone_number, ta.monthly_rent, ta.rent_due_day, ta.grace_period_days
-      HAVING (ta.monthly_rent - COALESCE(SUM(rp.amount), 0)) > 0`,
+      HAVING (
+        ta.monthly_rent - COALESCE(SUM(
+          CASE
+            WHEN (
+              COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+            ELSE COALESCE(rp.amount, 0)
+          END
+        ), 0)
+      ) > 0`,
       [`${currentMonth}-01`],
     );
 
@@ -1797,8 +1900,8 @@ const recordManualPayment = async (req, res) => {
       `INSERT INTO rent_payments 
        (tenant_id, unit_id, property_id, amount, payment_month, payment_date, status,
         mpesa_receipt_number, phone_number, notes, 
-        payment_method, mpesa_transaction_id)
-       VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9, 'manual', $10)
+        payment_method, mpesa_transaction_id, allocated_to_rent, allocated_to_water, allocated_to_arrears)
+       VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9, 'manual', $10, $11, $12, $13)
        RETURNING *`,
       [
         tenant_id,
@@ -1813,6 +1916,9 @@ const recordManualPayment = async (req, res) => {
         mpesa_receipt_number
           ? `MANUAL_${mpesa_receipt_number}`
           : `MANUAL_${Date.now()}`,
+        trackingResult.allocatedToRent || 0,
+        trackingResult.allocatedToWater || 0,
+        trackingResult.allocatedToArrears || 0,
       ],
     );
 
@@ -1893,7 +1999,18 @@ const getPaymentSummary = async (req, res) => {
     const monthlyRent = parseFloat(allocation.monthly_rent);
 
     const currentMonthResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_paid, COUNT(*) as payment_count
+      `SELECT
+         COALESCE(SUM(
+           CASE
+             WHEN (
+               COALESCE(allocated_to_rent, 0) +
+               COALESCE(allocated_to_water, 0) +
+               COALESCE(allocated_to_arrears, 0)
+             ) > 0 THEN COALESCE(allocated_to_rent, 0)
+             ELSE COALESCE(amount, 0)
+           END
+         ), 0) as total_paid,
+         COUNT(*) as payment_count
        FROM rent_payments 
        WHERE tenant_id = $1 AND unit_id = $2 
        AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
@@ -1905,7 +2022,18 @@ const getPaymentSummary = async (req, res) => {
     const balance = monthlyRent - totalPaid;
 
     const advanceResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as advance_amount, COUNT(*) as advance_count
+      `SELECT
+         COALESCE(SUM(
+           CASE
+             WHEN (
+               COALESCE(allocated_to_rent, 0) +
+               COALESCE(allocated_to_water, 0) +
+               COALESCE(allocated_to_arrears, 0)
+             ) > 0 THEN COALESCE(allocated_to_rent, 0)
+             ELSE COALESCE(amount, 0)
+           END
+         ), 0) as advance_amount,
+         COUNT(*) as advance_count
        FROM rent_payments 
        WHERE tenant_id = $1 AND unit_id = $2 
        AND is_advance_payment = true AND status = 'completed'
@@ -1916,7 +2044,16 @@ const getPaymentSummary = async (req, res) => {
     const historyResult = await pool.query(
       `SELECT 
         DATE_TRUNC('month', payment_month) as month,
-        COALESCE(SUM(amount), 0) as total_paid,
+        COALESCE(SUM(
+          CASE
+            WHEN (
+              COALESCE(allocated_to_rent, 0) +
+              COALESCE(allocated_to_water, 0) +
+              COALESCE(allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(allocated_to_rent, 0)
+            ELSE COALESCE(amount, 0)
+          END
+        ), 0) as total_paid,
         COUNT(*) as payment_count
        FROM rent_payments 
        WHERE tenant_id = $1 AND unit_id = $2 
@@ -2098,7 +2235,16 @@ const getFuturePaymentsStatus = async (req, res) => {
       const monthFormatted = futureMonth.toISOString().slice(0, 7) + "-01";
 
       const paymentsResult = await pool.query(
-        `SELECT COALESCE(SUM(amount), 0) as total_paid
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN (
+               COALESCE(allocated_to_rent, 0) +
+               COALESCE(allocated_to_water, 0) +
+               COALESCE(allocated_to_arrears, 0)
+             ) > 0 THEN COALESCE(allocated_to_rent, 0)
+             ELSE COALESCE(amount, 0)
+           END
+         ), 0) as total_paid
          FROM rent_payments 
          WHERE tenant_id = $1 AND unit_id = $2 
          AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', $3::date)
@@ -2773,7 +2919,16 @@ const getTenantPaymentStatus = async (req, res) => {
         pu.id as unit_id, pu.unit_code,
         ta.monthly_rent, ta.arrears_balance as arrears,
         COALESCE((
-          SELECT SUM(rp.amount) FROM rent_payments rp 
+          SELECT SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ) FROM rent_payments rp 
           WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id 
           AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
           AND rp.status = 'completed'
@@ -2781,7 +2936,9 @@ const getTenantPaymentStatus = async (req, res) => {
         COALESCE((
           SELECT wb.amount FROM water_bills wb 
           WHERE wb.tenant_id = t.id 
+          AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
           AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
+          ORDER BY CASE WHEN wb.unit_id = pu.id THEN 0 ELSE 1 END
           LIMIT 1
         ), 0) as water_bill,
         COALESCE((
@@ -2792,7 +2949,16 @@ const getTenantPaymentStatus = async (req, res) => {
           AND rp.status = 'completed'
         ), 0) as water_paid,
         COALESCE((
-          SELECT SUM(rp.amount) FROM rent_payments rp 
+          SELECT SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ) FROM rent_payments rp 
           WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id 
           AND DATE_TRUNC('month', rp.payment_month) > DATE_TRUNC('month', $1::date)
           AND rp.status = 'completed' AND rp.is_advance_payment = true
