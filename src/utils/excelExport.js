@@ -391,6 +391,7 @@ export const exportToExcel = async (config) => {
     companyInfo: providedCompanyInfo,
     user,
     title = "Report",
+    totalsOverride,
   } = config;
 
   if (!data || data.length === 0) {
@@ -476,7 +477,7 @@ export const exportToExcel = async (config) => {
     });
 
     // Calculate and add totals
-    const totals = calculateTotals(reportType, data);
+    const totals = totalsOverride || calculateTotals(reportType, data);
     if (totals) {
       addTotalsRow(worksheet, totals);
     }
@@ -733,6 +734,30 @@ const prepareExcelData = (reportType, data) => {
       ]);
       columnFormats = {
         4: { numFmt: "#,##0", alignment: { horizontal: "right" } },
+      };
+      break;
+
+    case "tenant_statement":
+      headers = [
+        "#",
+        "Payment Date",
+        "Amount (KSh)",
+        "Ref Code",
+        "Payment Month",
+        "Method",
+        "Status",
+      ];
+      rows = data.map((item, index) => [
+        index + 1,
+        formatDate(item.payment_date),
+        parseCurrencyValue(item.amount),
+        item.mpesa_receipt_number || item.mpesa_transaction_id || "N/A",
+        formatMonth(item.payment_month),
+        item.payment_method || "N/A",
+        item.status || "N/A",
+      ]);
+      columnFormats = {
+        2: { numFmt: "#,##0", alignment: { horizontal: "right" } },
       };
       break;
 
