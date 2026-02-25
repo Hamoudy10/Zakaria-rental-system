@@ -484,13 +484,13 @@ const UserModal = ({ isOpen, onClose, onSubmit, editingUser, loading }) => {
                   National ID <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                  <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <CreditCard className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
                   <input
                     type="text"
                     value={formData.national_id}
                     onChange={(e) => setFormData({...formData, national_id: e.target.value})}
                     placeholder="Enter national ID"
-                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                    className={`w-full pl-4 pr-10 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
                       errors.national_id ? 'border-red-300 bg-red-50' : 'border-gray-200'
                     }`}
                   />
@@ -544,13 +544,13 @@ const UserModal = ({ isOpen, onClose, onSubmit, editingUser, loading }) => {
                   Email Address <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
                   <input
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
                     placeholder="user@example.com"
-                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                    className={`w-full pl-4 pr-10 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
                       errors.email ? 'border-red-300 bg-red-50' : 'border-gray-200'
                     }`}
                   />
@@ -566,13 +566,13 @@ const UserModal = ({ isOpen, onClose, onSubmit, editingUser, loading }) => {
                   Phone Number <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <Phone className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
                   <input
                     type="text"
                     value={formData.phone_number}
                     onChange={(e) => setFormData({...formData, phone_number: e.target.value})}
                     placeholder="0712345678"
-                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                    className={`w-full pl-4 pr-10 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
                       errors.phone_number ? 'border-red-300 bg-red-50' : 'border-gray-200'
                     }`}
                   />
@@ -589,13 +589,13 @@ const UserModal = ({ isOpen, onClose, onSubmit, editingUser, loading }) => {
                     Password <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Lock className="absolute right-12 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
                     <input
                       type={showPassword ? 'text' : 'password'}
                       value={formData.password}
                       onChange={(e) => setFormData({...formData, password: e.target.value})}
                       placeholder="Minimum 6 characters"
-                      className={`w-full pl-10 pr-12 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                      className={`w-full pl-4 pr-20 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
                         errors.password ? 'border-red-300 bg-red-50' : 'border-gray-200'
                       }`}
                     />
