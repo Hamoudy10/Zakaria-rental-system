@@ -1343,8 +1343,24 @@ const TenantStatusTable = ({
                 <th className="p-4">Property / Unit</th>
                 <th className="p-4">Phone</th>
                 <th className="p-4 text-right">Rent</th>
-                <th className="p-4 text-right">Water</th>
-                <th className="p-4 text-right">Arrears</th>
+                <th className="p-4 text-right">
+                  <span
+                    title="Balance values shown in this table are net after advance allocation."
+                    className="inline-flex items-center gap-1 cursor-help"
+                  >
+                    Water
+                    <AlertCircle size={12} className="text-gray-400" />
+                  </span>
+                </th>
+                <th className="p-4 text-right">
+                  <span
+                    title="Balance values shown in this table are net after advance allocation."
+                    className="inline-flex items-center gap-1 cursor-help"
+                  >
+                    Arrears
+                    <AlertCircle size={12} className="text-gray-400" />
+                  </span>
+                </th>
                 <th className="p-4 text-right">
                   {activeTab === "unpaid" ? "Total Due" : "Advance"}
                 </th>
@@ -1404,8 +1420,11 @@ const TenantStatusTable = ({
                       >
                         Paid: {formatCurrency(t.rent_paid)}
                       </div>
-                      {t.rent_due > 0 && (
-                        <div className="text-red-600 text-xs font-bold">
+                      {(Number(t.rent_due) || 0) > 0 && (
+                        <div
+                          className="text-red-600 text-xs font-bold"
+                          title="Net balance after advance allocation."
+                        >
                           Bal: {formatCurrency(t.rent_due)}
                         </div>
                       )}
@@ -1417,17 +1436,19 @@ const TenantStatusTable = ({
                       <div className="font-medium text-gray-800">
                         Paid: {formatCurrency(t.water_paid || 0)}
                       </div>
-                      {t.water_bill - (t.water_paid || 0) > 0 && (
-                        <div className="text-red-600 text-xs font-bold">
-                          Bal:{" "}
-                          {formatCurrency(t.water_bill - (t.water_paid || 0))}
+                      {(Number(t.water_due) || 0) > 0 && (
+                        <div
+                          className="text-red-600 text-xs font-bold"
+                          title="Net balance after advance allocation."
+                        >
+                          Bal: {formatCurrency(t.water_due)}
                         </div>
                       )}
                     </td>
                     <td className="p-4 text-right whitespace-nowrap">
-                      {t.arrears > 0 ? (
+                      {(Number(t.arrears_due ?? t.arrears) || 0) > 0 ? (
                         <span className="text-red-600 font-bold">
-                          {formatCurrency(t.arrears)}
+                          {formatCurrency(t.arrears_due ?? t.arrears)}
                         </span>
                       ) : (
                         <span className="text-gray-400">-</span>

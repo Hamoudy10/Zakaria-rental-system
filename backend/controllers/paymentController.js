@@ -2967,7 +2967,11 @@ const getTenantPaymentStatus = async (req, res) => {
           ) FROM rent_payments rp 
           WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id 
           AND DATE_TRUNC('month', rp.payment_month) > DATE_TRUNC('month', $1::date)
-          AND rp.status = 'completed' AND rp.is_advance_payment = true
+          AND rp.status = 'completed'
+          AND (
+            rp.is_advance_payment = true
+            OR rp.payment_method IN ('carry_forward', 'carry_forward_fix')
+          )
         ), 0) as advance_amount,
         (
           SELECT MAX(rp.payment_date) FROM rent_payments rp 
@@ -3028,11 +3032,28 @@ const getTenantPaymentStatus = async (req, res) => {
       const arrears = parseFloat(row.arrears) || 0;
       const advanceAmount = parseFloat(row.advance_amount) || 0;
 
-      const rentDue = Math.max(0, monthlyRent - rentPaid);
-      const waterDue = Math.max(0, waterBill - waterPaid);
-      const grossDue = rentDue + waterDue + arrears;
-      const advanceApplied = Math.min(advanceAmount, grossDue);
-      const totalDue = Math.max(0, grossDue - advanceApplied);
+      const rawRentDue = Math.max(0, monthlyRent - rentPaid);
+      const rawWaterDue = Math.max(0, waterBill - waterPaid);
+      const rawArrearsDue = Math.max(0, arrears);
+      const grossDue = rawRentDue + rawWaterDue + rawArrearsDue;
+
+      // Apply available advance credit using system allocation priority:
+      // arrears -> water -> rent.
+      let remainingAdvance = Math.max(0, advanceAmount);
+      const advanceToArrears = Math.min(remainingAdvance, rawArrearsDue);
+      remainingAdvance -= advanceToArrears;
+      const effectiveArrearsDue = rawArrearsDue - advanceToArrears;
+
+      const advanceToWater = Math.min(remainingAdvance, rawWaterDue);
+      remainingAdvance -= advanceToWater;
+      const effectiveWaterDue = rawWaterDue - advanceToWater;
+
+      const advanceToRent = Math.min(remainingAdvance, rawRentDue);
+      remainingAdvance -= advanceToRent;
+      const effectiveRentDue = rawRentDue - advanceToRent;
+
+      const advanceApplied = advanceToArrears + advanceToWater + advanceToRent;
+      const totalDue = effectiveRentDue + effectiveWaterDue + effectiveArrearsDue;
 
       return {
         tenant_id: row.tenant_id,
@@ -3048,15 +3069,22 @@ const getTenantPaymentStatus = async (req, res) => {
         rent_due_day: Number(row.rent_due_day) || 1,
         due_date: row.due_date,
         rent_paid: rentPaid,
-        rent_due: rentDue,
+        rent_due: effectiveRentDue,
+        raw_rent_due: rawRentDue,
         water_bill: waterBill,
         water_paid: waterPaid,
-        water_due: waterDue,
+        water_due: effectiveWaterDue,
+        raw_water_due: rawWaterDue,
         arrears,
+        arrears_due: effectiveArrearsDue,
+        raw_arrears_due: rawArrearsDue,
         total_due: totalDue,
         advance_amount: advanceAmount,
         advance_applied: advanceApplied,
-        advance_credit: Math.max(0, advanceAmount - advanceApplied),
+        advance_applied_to_arrears: advanceToArrears,
+        advance_applied_to_water: advanceToWater,
+        advance_applied_to_rent: advanceToRent,
+        advance_credit: remainingAdvance,
         is_fully_paid: totalDue <= 0,
         last_payment_date: row.last_payment_date,
       };
