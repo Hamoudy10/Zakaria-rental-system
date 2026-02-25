@@ -1,6 +1,11 @@
 const pool = require('../config/database');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error('Missing required environment variable: JWT_SECRET');
+}
 
 /**
  * Authentication Controller - FIXED VERSION
@@ -75,7 +80,7 @@ const login = async (req, res) => {
 
     const token = jwt.sign(
       tokenPayload,
-      process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024',
+      JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '30d' }
     );
 
@@ -177,7 +182,7 @@ const register = async (req, res) => {
 
     const token = jwt.sign(
       tokenPayload,
-      process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024',
+      JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '30d' }
     );
 
@@ -352,7 +357,7 @@ const debugToken = async (req, res) => {
     }
 
     const decoded = jwt.decode(token);
-    const verified = jwt.verify(token, process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024');
+    const verified = jwt.verify(token, JWT_SECRET);
     
     res.json({
       success: true,

@@ -6,6 +6,11 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 const authMiddleware = require('../middleware/authMiddleware').authMiddleware;
 const { uploadProfileImage, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error('Missing required environment variable: JWT_SECRET');
+}
 
 console.log('✅ AUTH ROUTES LOADED');
 
@@ -64,7 +69,7 @@ const register = async (req, res) => {
         email: user.email,
         role: user.role 
       },
-      process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024',
+      JWT_SECRET,
       { expiresIn: '30d' }
     );
     
@@ -145,7 +150,7 @@ const login = async (req, res) => {
         email: user.email,
         role: user.role 
       },
-      process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024',
+      JWT_SECRET,
       { expiresIn: '30d' }
     );
     
@@ -521,7 +526,7 @@ router.post('/debug-login', async (req, res) => {
         email: user.email,
         role: user.role
       },
-      process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024',
+      JWT_SECRET,
       { expiresIn: '1h' }
     );
     
