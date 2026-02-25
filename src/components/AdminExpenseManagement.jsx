@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { expenseAPI, propertyAPI, userAPI } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { exportToPDF } from "../utils/pdfExport";
@@ -25,7 +25,6 @@ const AdminExpenseManagement = () => {
     endDate: "",
     category: "",
     propertyId: "",
-    status: "",
     recordedBy: "",
   });
 
@@ -58,6 +57,9 @@ const AdminExpenseManagement = () => {
     type: "success",
   });
 
+  // Prevent stale async responses from overwriting latest tab/filter result
+  const fetchSeqRef = useRef(0);
+
   // Fetch initial data
   useEffect(() => {
     fetchCategories();
@@ -72,13 +74,8 @@ const AdminExpenseManagement = () => {
     fetchExpenses();
   }, [filters, pagination.page, activeTab]);
 
-  // Update status filter when tab changes
+  // Reset paging/selection when tab changes
   useEffect(() => {
-    if (activeTab === "all") {
-      setFilters((prev) => ({ ...prev, status: "" }));
-    } else {
-      setFilters((prev) => ({ ...prev, status: activeTab }));
-    }
     setPagination((prev) => ({ ...prev, page: 1 }));
     setSelectedExpenses([]);
     setSelectAll(false);
@@ -127,11 +124,13 @@ const AdminExpenseManagement = () => {
 
   const fetchExpenses = async () => {
     setLoading(true);
+    const fetchSeq = ++fetchSeqRef.current;
     try {
       const params = {
         page: pagination.page,
         limit: pagination.limit,
         ...filters,
+        status: activeTab === "all" ? "" : activeTab,
       };
 
       // Remove empty filters
@@ -140,6 +139,7 @@ const AdminExpenseManagement = () => {
       });
 
       const response = await expenseAPI.getExpenses(params);
+      if (fetchSeq !== fetchSeqRef.current) return;
       if (response.data.success) {
         setExpenses(response.data.data);
         setPagination((prev) => ({
@@ -186,6 +186,7 @@ const AdminExpenseManagement = () => {
         page: 1,
         limit: 10000,
         ...filters,
+        status: activeTab === "all" ? "" : activeTab,
       };
 
       Object.keys(params).forEach((key) => {
@@ -965,7 +966,6 @@ const AdminExpenseManagement = () => {
                   endDate: "",
                   category: "",
                   propertyId: "",
-                  status: activeTab === "all" ? "" : activeTab,
                   recordedBy: "",
                 });
                 setPagination((prev) => ({ ...prev, page: 1 }));
