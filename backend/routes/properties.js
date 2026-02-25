@@ -731,10 +731,28 @@ router.post('/', protect, adminOnly, async (req, res) => {
     console.log('📝 Creating new property with data:', req.body);
     console.log('👤 Created by user ID:', req.user.id);
     
-    if (!property_code || !name || !address || !county || !town || !total_units) {
+    const parsedTotalUnits = Number(total_units);
+
+    if (
+      !property_code ||
+      !name ||
+      !address ||
+      !county ||
+      !town ||
+      total_units === undefined ||
+      total_units === null ||
+      Number.isNaN(parsedTotalUnits)
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields: property_code, name, address, county, town, total_units'
+      });
+    }
+
+    if (parsedTotalUnits < 0 || parsedTotalUnits > 1000) {
+      return res.status(400).json({
+        success: false,
+        message: 'total_units must be between 0 and 1000'
       });
     }
 
@@ -755,12 +773,12 @@ router.post('/', protect, adminOnly, async (req, res) => {
         (property_code, name, address, county, town, description, total_units, available_units, created_by) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
        RETURNING *`,
-      [property_code, name, address, county, town, description, total_units, total_units, req.user.id]
+      [property_code, name, address, county, town, description, parsedTotalUnits, parsedTotalUnits, req.user.id]
     );
 
     // Create default units
-    if (total_units > 0) {
-      for (let i = 1; i <= total_units; i++) {
+    if (parsedTotalUnits > 0) {
+      for (let i = 1; i <= parsedTotalUnits; i++) {
         await client.query(
           `INSERT INTO property_units 
             (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, created_by)

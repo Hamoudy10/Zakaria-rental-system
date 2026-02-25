@@ -88,8 +88,19 @@ const createProperty = async (req, res) => {
     
     console.log('📝 Creating new property with data:', req.body);
     
+    const parsedTotalUnits = Number(total_units);
+
     // Validate required fields
-    if (!property_code || !name || !address || !county || !town || !total_units) {
+    if (
+      !property_code ||
+      !name ||
+      !address ||
+      !county ||
+      !town ||
+      total_units === undefined ||
+      total_units === null ||
+      Number.isNaN(parsedTotalUnits)
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields: property_code, name, address, county, town, total_units'
@@ -105,11 +116,11 @@ const createProperty = async (req, res) => {
       });
     }
 
-    // Validate total_units is a positive number
-    if (total_units <= 0 || total_units > 1000) {
+    // Validate total_units range
+    if (parsedTotalUnits < 0 || parsedTotalUnits > 1000) {
       return res.status(400).json({
         success: false,
-        message: 'Total units must be a positive number between 1 and 1000'
+        message: 'Total units must be between 0 and 1000'
       });
     }
 
@@ -141,12 +152,12 @@ const createProperty = async (req, res) => {
         (property_code, name, address, county, town, description, total_units, available_units, unit_type, created_by) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
        RETURNING *`,
-      [property_code, name, address, county, town, description, total_units, total_units, unit_type, req.user.id]
+      [property_code, name, address, county, town, description, parsedTotalUnits, parsedTotalUnits, unit_type, req.user.id]
     );
 
     // Create default units with improved unit codes
-    if (total_units > 0) {
-      for (let i = 1; i <= total_units; i++) {
+    if (parsedTotalUnits > 0) {
+      for (let i = 1; i <= parsedTotalUnits; i++) {
         // Generate unit code: PROP001-001, PROP001-002, etc.
         const unitCode = `${property_code}-${i.toString().padStart(3, '0')}`;
         
