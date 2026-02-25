@@ -564,7 +564,7 @@ const UnitModal = ({
                     Monthly Rent (KES) <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <DollarSign className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
                     <input
                       type="number"
                       min="0"
@@ -572,7 +572,7 @@ const UnitModal = ({
                       value={formData.rent_amount}
                       onChange={(e) => setFormData({...formData, rent_amount: e.target.value})}
                       placeholder="15000"
-                      className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors ${
+                      className={`w-full pl-4 pr-10 py-3 border rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors ${
                         errors.rent_amount ? 'border-red-300 bg-red-50' : 'border-gray-200'
                       }`}
                     />
@@ -586,7 +586,7 @@ const UnitModal = ({
                     Security Deposit (KES) <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <DollarSign className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
                     <input
                       type="number"
                       min="0"
@@ -594,7 +594,7 @@ const UnitModal = ({
                       value={formData.deposit_amount}
                       onChange={(e) => setFormData({...formData, deposit_amount: e.target.value})}
                       placeholder="15000"
-                      className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors ${
+                      className={`w-full pl-4 pr-10 py-3 border rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors ${
                         errors.deposit_amount ? 'border-red-300 bg-red-50' : 'border-gray-200'
                       }`}
                     />

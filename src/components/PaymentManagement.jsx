@@ -863,7 +863,7 @@ const PaymentManagement = () => {
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1 relative">
             <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
               size={18}
             />
             <input
@@ -873,7 +873,7 @@ const PaymentManagement = () => {
                   ? "Search tenant or receipt..."
                   : "Search tenant, unit, or property..."
               }
-              className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full pl-4 pr-10 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
               value={filters.search}
               onChange={(e) =>
                 setFilters({ ...filters, search: e.target.value })
@@ -1532,7 +1532,7 @@ const TenantHistoryModal = ({
     dateString ? new Date(dateString).toLocaleDateString("en-GB") : "N/A";
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-300 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden border max-h-[90vh]">
         <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
           <div>
@@ -1686,7 +1686,7 @@ const ManualPaymentModal = ({
   tenants,
 }) => {
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border">
         <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
           <div>
@@ -1862,7 +1862,7 @@ const SMSReminderModal = ({
   onClose,
 }) => {
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border">
         <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
           <div>
