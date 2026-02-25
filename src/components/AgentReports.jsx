@@ -856,7 +856,7 @@ const AgentReports = () => {
               Search
             </label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
               <input
                 type="text"
                 placeholder={
@@ -868,7 +868,7 @@ const AgentReports = () => {
                 onChange={(e) =>
                   setFilters({ ...filters, search: e.target.value })
                 }
-                className="block w-full pl-10 rounded-md border border-gray-300 px-3 py-2 text-sm"
+                className="block w-full pl-3 pr-10 rounded-md border border-gray-300 py-2 text-sm"
               />
             </div>
           </div>
