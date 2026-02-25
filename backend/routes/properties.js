@@ -1078,7 +1078,23 @@ router.post('/:id/units', protect, adminOnly, async (req, res) => {
       });
     }
     
-    const finalUnitCode = unit_code || `${property.property_code}-${unit_number || 'UNIT'}`;
+    const prefix = `${property.property_code}-`;
+    const toStringSafe = (value) => (value === null || value === undefined ? '' : String(value).trim());
+    const normalizeUnitCode = (value) => {
+      const raw = toStringSafe(value);
+      if (!raw) return raw;
+      let normalized = raw;
+      const doublePrefix = `${prefix}${prefix}`;
+      while (normalized.startsWith(doublePrefix)) {
+        normalized = normalized.slice(prefix.length);
+      }
+      if (!normalized.startsWith(prefix)) {
+        normalized = `${prefix}${normalized}`;
+      }
+      return normalized;
+    };
+
+    const finalUnitCode = normalizeUnitCode(unit_code || unit_number || 'UNIT');
     
     const existingUnit = await client.query(
       'SELECT id FROM property_units WHERE unit_code = $1',
@@ -1226,7 +1242,7 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
     console.log(`🔄 Updating unit ${unitId} in property ${id} with:`, updates);
     
     const propertyCheck = await client.query(
-      'SELECT id FROM properties WHERE id = $1',
+      'SELECT id, property_code FROM properties WHERE id = $1',
       [id]
     );
     
@@ -1249,6 +1265,32 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
       });
     }
     
+    const propertyCode = propertyCheck.rows[0].property_code;
+    const prefix = `${propertyCode}-`;
+
+    const toStringSafe = (value) => (value === null || value === undefined ? '' : String(value).trim());
+
+    const normalizeUnitCode = (value) => {
+      const raw = toStringSafe(value);
+      if (!raw) return raw;
+      let normalized = raw;
+      const doublePrefix = `${prefix}${prefix}`;
+      while (normalized.startsWith(doublePrefix)) {
+        normalized = normalized.slice(prefix.length);
+      }
+      if (!normalized.startsWith(prefix)) {
+        normalized = `${prefix}${normalized}`;
+      }
+      return normalized;
+    };
+
+    // Keep unit_code in sync with edited unit_number when frontend does not send unit_code.
+    if (updates.unit_code === undefined && updates.unit_number !== undefined) {
+      updates.unit_code = normalizeUnitCode(updates.unit_number);
+    } else if (updates.unit_code !== undefined) {
+      updates.unit_code = normalizeUnitCode(updates.unit_code);
+    }
+
     if (updates.unit_type) {
       const validUnitTypes = ['bedsitter', 'studio', 'one_bedroom', 'two_bedroom', 'three_bedroom', 'shop', 'hall'];
       if (!validUnitTypes.includes(updates.unit_type)) {

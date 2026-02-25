@@ -252,7 +252,7 @@ const UnitCard = ({
         <div className="absolute bottom-3 right-3">
           <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-900/80 backdrop-blur-sm rounded-lg">
             <Home className="w-3.5 h-3.5 text-white" />
-            <span className="text-xs font-bold text-white">{unit.unit_code}</span>
+            <span className="text-xs font-bold text-white">{unit.display_unit_code || unit.unit_code}</span>
           </div>
         </div>
       </div>
@@ -767,7 +767,7 @@ const ImageGalleryModal = ({
             </div>
             <div>
               <h2 className="text-lg font-bold text-white">
-                {unit.unit_code} - Gallery
+                {unit.display_unit_code || unit.unit_code} - Gallery
               </h2>
               <p className="text-sm text-gray-400">
                 {unitTypes[unit.unit_type]} • {images.length} image{images.length !== 1 ? 's' : ''}
@@ -1004,6 +1004,18 @@ const UnitManagement = () => {
     fetchProperties();
   }, [fetchProperties]);
 
+  const normalizeUnitCodeForDisplay = useCallback((unitCode, propertyCode) => {
+    if (!unitCode) return unitCode;
+    if (!propertyCode) return unitCode;
+    const prefix = `${propertyCode}-`;
+    const doublePrefix = `${prefix}${prefix}`;
+    let normalized = String(unitCode);
+    while (normalized.startsWith(doublePrefix)) {
+      normalized = normalized.slice(prefix.length);
+    }
+    return normalized;
+  }, []);
+
   // Get all units from all properties
   const allUnits = useMemo(() => {
     return properties.flatMap(property => 
@@ -1011,10 +1023,11 @@ const UnitManagement = () => {
         ...unit,
         property_name: property.name,
         property_code: property.property_code,
-        property_id: property.id
+        property_id: property.id,
+        display_unit_code: normalizeUnitCodeForDisplay(unit.unit_code, property.property_code)
       }))
     );
-  }, [properties]);
+  }, [properties, normalizeUnitCodeForDisplay]);
 
   // Filtered units
   const filteredUnits = useMemo(() => {
@@ -1041,6 +1054,7 @@ const UnitManagement = () => {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       result = result.filter(unit => 
+        unit.display_unit_code?.toLowerCase().includes(query) ||
         unit.unit_code?.toLowerCase().includes(query) ||
         unit.unit_number?.toLowerCase().includes(query) ||
         unit.property_name?.toLowerCase().includes(query) ||
@@ -1143,7 +1157,7 @@ const UnitManagement = () => {
     setActionLoading(true);
     try {
       await deleteUnit(unitToDelete.property_id, unitToDelete.id);
-      addToast(`Unit ${unitToDelete.unit_code} deleted successfully`, 'success');
+      addToast(`Unit ${unitToDelete.display_unit_code || unitToDelete.unit_code} deleted successfully`, 'success');
       setShowDeleteConfirm(false);
       setUnitToDelete(null);
       refreshProperties();
@@ -1453,7 +1467,7 @@ const UnitManagement = () => {
         onClose={() => { setShowDeleteConfirm(false); setUnitToDelete(null); }}
         onConfirm={handleDeleteUnit}
         title="Delete Unit"
-        message={`Are you sure you want to delete unit ${unitToDelete?.unit_code}? This action cannot be undone and will remove all associated data.`}
+        message={`Are you sure you want to delete unit ${unitToDelete?.display_unit_code || unitToDelete?.unit_code}? This action cannot be undone and will remove all associated data.`}
         confirmText="Delete Unit"
         confirmColor="red"
         icon={Trash2}
