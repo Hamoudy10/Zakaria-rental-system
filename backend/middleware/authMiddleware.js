@@ -1,6 +1,11 @@
 // backend/middleware/authMiddleware.js - UPDATED WITH authorize FUNCTION
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error('Missing required environment variable: JWT_SECRET');
+}
 
 // Main authentication middleware
 const authMiddleware = async (req, res, next) => {
@@ -14,7 +19,7 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'zakaria-rental-system-secret-key-2024');
+    const decoded = jwt.verify(token, JWT_SECRET);
     
     // Get user from database to ensure they still exist and are active
     const userQuery = 'SELECT * FROM users WHERE id = $1 AND is_active = true';
