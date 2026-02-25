@@ -1166,7 +1166,62 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
     await client.query('BEGIN');
     
     const { id, unitId } = req.params;
-    const updates = req.body;
+    const updates = { ...req.body };
+
+    const normalizeEmpty = (value) =>
+      typeof value === 'string' && value.trim() === '' ? undefined : value;
+
+    updates.unit_code = normalizeEmpty(updates.unit_code);
+    updates.unit_type = normalizeEmpty(updates.unit_type);
+    updates.unit_number = normalizeEmpty(updates.unit_number);
+    updates.description = normalizeEmpty(updates.description);
+
+    if (updates.rent_amount !== undefined) {
+      const rentValue = normalizeEmpty(updates.rent_amount);
+      if (rentValue === undefined) {
+        updates.rent_amount = undefined;
+      } else {
+        const parsed = Number(rentValue);
+        if (Number.isNaN(parsed)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid rent_amount value'
+          });
+        }
+        updates.rent_amount = parsed;
+      }
+    }
+
+    if (updates.deposit_amount !== undefined) {
+      const depositValue = normalizeEmpty(updates.deposit_amount);
+      if (depositValue === undefined) {
+        updates.deposit_amount = undefined;
+      } else {
+        const parsed = Number(depositValue);
+        if (Number.isNaN(parsed)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid deposit_amount value'
+          });
+        }
+        updates.deposit_amount = parsed;
+      }
+    }
+
+    if (updates.features !== undefined) {
+      if (updates.features === '') {
+        updates.features = {};
+      } else if (typeof updates.features === 'string') {
+        try {
+          updates.features = JSON.parse(updates.features);
+        } catch (parseError) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid features JSON'
+          });
+        }
+      }
+    }
     
     console.log(`🔄 Updating unit ${unitId} in property ${id} with:`, updates);
     
@@ -1239,7 +1294,6 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
       });
     }
     
-    updateFields.push('updated_at = CURRENT_TIMESTAMP');
     updateValues.push(unitId, id);
     
     const query = `
@@ -1267,6 +1321,14 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Invalid unit_type value'
+      });
+    }
+
+    if (error.code === '42703') {
+      return res.status(400).json({
+        success: false,
+        message: 'Unit update failed due to schema mismatch. Please run latest migrations.',
+        error: error.message
       });
     }
     
@@ -1530,7 +1592,7 @@ router.patch('/:id/units/:unitId/occupancy', protect, adminOnly, async (req, res
     }
     
     await client.query(
-      'UPDATE property_units SET is_occupied = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE property_units SET is_occupied = $1 WHERE id = $2',
       [is_occupied, unitId]
     );
     
