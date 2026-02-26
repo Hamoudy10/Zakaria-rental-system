@@ -8,6 +8,7 @@ const pool = require("../config/database");
 const NotificationService = require("../services/notificationService");
 const SMSService = require("../services/smsService");
 const MessagingService = require("../services/messagingService");
+const MessageTemplateService = require("../services/messageTemplateService");
 
 // ==================== UTILITY HELPERS ====================
 
@@ -1746,6 +1747,14 @@ const sendBalanceReminders = async (req, res) => {
     );
 
     const overdueUnits = overdueResult.rows;
+    const settingsResult = await pool.query(
+      `SELECT setting_key, setting_value
+       FROM admin_settings
+       WHERE setting_key IN ('paybill_number','company_name')`,
+    );
+    const settingsMap = Object.fromEntries(
+      settingsResult.rows.map((row) => [row.setting_key, row.setting_value]),
+    );
     const results = {
       total_units: overdueUnits.length,
       sms_sent: 0,
@@ -1766,14 +1775,39 @@ const sendBalanceReminders = async (req, res) => {
         );
 
         if (currentDate > dueDate && currentDate <= gracePeriodEnd) {
-          const msgResult = await MessagingService.sendBalanceReminder(
-            unit.tenant_phone,
-            `${unit.tenant_first_name} ${unit.tenant_last_name}`,
-            unit.unit_code,
-            unit.balance,
-            currentMonth,
-            gracePeriodEnd.toISOString().slice(0, 10),
-          );
+          const variables = {
+            tenantName: `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+            unitCode: unit.unit_code,
+            month: currentMonth,
+            total: Number(unit.balance || 0).toLocaleString("en-KE", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }),
+            dueDate: gracePeriodEnd.toISOString().slice(0, 10),
+            paybill: settingsMap.paybill_number || "",
+            companyName: settingsMap.company_name || "",
+          };
+
+          const rendered = await MessageTemplateService.buildRenderedMessage({
+            eventKey: "balance_reminder_auto",
+            channel: "sms",
+            variables,
+          });
+
+          const msgResult = rendered?.rendered
+            ? await MessagingService.sendRawMessage(
+                unit.tenant_phone,
+                rendered.rendered,
+                "balance_reminder",
+              )
+            : await MessagingService.sendBalanceReminder(
+                unit.tenant_phone,
+                `${unit.tenant_first_name} ${unit.tenant_last_name}`,
+                unit.unit_code,
+                unit.balance,
+                currentMonth,
+                gracePeriodEnd.toISOString().slice(0, 10),
+              );
 
           const anySent = msgResult.sms?.success || msgResult.whatsapp?.success;
 

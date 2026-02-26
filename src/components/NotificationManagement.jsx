@@ -7,7 +7,8 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useProperty } from "../context/PropertyContext";
-import { notificationAPI } from "../services/api";
+import { API, notificationAPI } from "../services/api";
+import TemplatePicker from "./common/TemplatePicker";
 import {
   Send,
   MessageSquare,
@@ -286,6 +287,8 @@ const NotificationManagement = () => {
   const [selectedProperty, setSelectedProperty] = useState("");
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("announcement");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [eventTemplates, setEventTemplates] = useState([]);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -376,6 +379,22 @@ const NotificationManagement = () => {
     },
     [historyFilters],
   );
+
+  const fetchEventTemplates = useCallback(async () => {
+    try {
+      const response = await API.settings.getTemplateOptionsForEvent(
+        "agent_manual_general_trigger",
+      );
+      if (response.data?.success) {
+        setEventTemplates(response.data.data?.templates || []);
+      } else {
+        setEventTemplates([]);
+      }
+    } catch (err) {
+      console.error("Error fetching event templates:", err);
+      setEventTemplates([]);
+    }
+  }, []);
 
   // ============================================================
   // DELIVERY TRACKING FUNCTION
@@ -475,13 +494,17 @@ const NotificationManagement = () => {
     setTenantSearch("");
   }, [selectedProperty]);
 
+  useEffect(() => {
+    fetchEventTemplates();
+  }, [fetchEventTemplates]);
+
   // ============================================================
   // SEND FUNCTIONS
   // ============================================================
 
   const sendBulkSMS = async () => {
-    if (!selectedProperty || !message.trim()) {
-      alert("Please select a property and enter a message");
+    if (!selectedProperty || (!message.trim() && !selectedTemplateId)) {
+      alert("Please select a property and provide a message or choose a template");
       return;
     }
 
@@ -493,6 +516,12 @@ const NotificationManagement = () => {
         propertyId: selectedProperty,
         message: message.trim(),
         messageType,
+        template_id: selectedTemplateId || undefined,
+        template_variables: {
+          message: message.trim(),
+          propertyName:
+            properties.find((p) => p.id === selectedProperty)?.name || "",
+        },
       });
 
       if (response.data.success) {
@@ -519,8 +548,8 @@ const NotificationManagement = () => {
   };
 
   const sendTargetedSMS = async () => {
-    if (selectedTenants.length === 0 || !message.trim()) {
-      alert("Please select at least one tenant and enter a message");
+    if (selectedTenants.length === 0 || (!message.trim() && !selectedTemplateId)) {
+      alert("Please select tenants and provide a message or choose a template");
       return;
     }
 
@@ -532,6 +561,10 @@ const NotificationManagement = () => {
         tenantIds: selectedTenants,
         message: message.trim(),
         messageType,
+        template_id: selectedTemplateId || undefined,
+        template_variables: {
+          message: message.trim(),
+        },
       });
 
       if (response.data.success) {
@@ -637,6 +670,16 @@ const NotificationManagement = () => {
           ))}
         </div>
       </div>
+
+      <TemplatePicker
+        label="Template (Optional)"
+        value={selectedTemplateId}
+        onChange={setSelectedTemplateId}
+        templates={eventTemplates}
+        emptyLabel="Use raw message text"
+        helpText="If selected, server renders the template using tenant/property variables."
+        selectClassName="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+      />
 
       <div>
         <label className="block text-sm font-bold text-gray-700 mb-2">

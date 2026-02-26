@@ -3,6 +3,7 @@ const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
 const SMSService = require('../services/smsService');
 const MessagingService = require("../services/messagingService");
+const MessageTemplateService = require("../services/messageTemplateService");
 
 // Rate limiting to prevent excessive API calls
 const userRequestTimestamps = new Map();
@@ -615,7 +616,13 @@ const createBroadcastNotification = async (req, res) => {
 // NEW: Send Bulk SMS to property tenants
 const sendBulkSMS = async (req, res) => {
   try {
-    const { propertyId, message, messageType = "announcement" } = req.body;
+    const {
+      propertyId,
+      message,
+      messageType = "announcement",
+      template_id,
+      template_variables = {},
+    } = req.body;
     const userId = req.user.id;
 
     console.log("📱 Sending bulk SMS + WhatsApp:", {
@@ -624,19 +631,28 @@ const sendBulkSMS = async (req, res) => {
       userId,
     });
 
-    if (!propertyId || !message) {
+    if (!propertyId || (!message && !template_id)) {
       return res.status(400).json({
         success: false,
-        message: "Missing required fields: propertyId, message",
+        message: "Missing required fields: propertyId and message or template_id",
       });
     }
 
-    if (message.length > 160) {
+    if (message && !template_id && message.length > 160) {
       return res.status(400).json({
         success: false,
         message: "SMS message cannot exceed 160 characters",
       });
     }
+
+    const binding = await MessageTemplateService.getBinding(
+      "agent_manual_general_trigger",
+    );
+    const useTemplateId =
+      template_id &&
+      (req.user.role === "admin" || binding?.allow_agent_override === true)
+        ? template_id
+        : null;
 
     // Verify user has access to this property (admin or assigned agent)
     let accessQuery;
@@ -695,10 +711,30 @@ const sendBulkSMS = async (req, res) => {
 
     for (const tenant of tenants) {
       try {
+        let finalMessage = message;
+        const rendered = await MessageTemplateService.buildRenderedMessage({
+          eventKey: "agent_manual_general_trigger",
+          channel: "sms",
+          templateIdOverride: useTemplateId,
+          variables: {
+            tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
+            unitCode: tenant.unit_code,
+            propertyName: property.name,
+            message: message || "",
+            ...template_variables,
+          },
+        });
+        if (rendered?.rendered) {
+          finalMessage = rendered.rendered;
+        }
+        if (!finalMessage || !String(finalMessage).trim()) {
+          throw new Error("Resolved template message is empty");
+        }
+
         // Send via both SMS + WhatsApp in parallel
         const msgResult = await MessagingService.sendRawMessage(
           tenant.phone_number,
-          message,
+          finalMessage,
           messageType,
         );
 
@@ -708,7 +744,7 @@ const sendBulkSMS = async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
           [
             tenant.phone_number,
-            message,
+            finalMessage,
             messageType,
             msgResult.sms?.success ? "sent" : "failed",
             userId,
@@ -751,7 +787,7 @@ const sendBulkSMS = async (req, res) => {
              VALUES ($1, $2, $3, 'failed', $4, $5, NOW())`,
             [
               tenant.phone_number,
-              message,
+              finalMessage,
               messageType,
               sendError.message,
               userId,
@@ -770,7 +806,10 @@ const sendBulkSMS = async (req, res) => {
     res.json({
       success: true,
       message: `Messages sent to ${results.sent} of ${results.total} tenants via SMS. ${results.whatsapp_sent} also received WhatsApp.`,
-      data: results,
+      data: {
+        ...results,
+        template_id_used: useTemplateId || null,
+      },
     });
   } catch (error) {
     console.error("❌ Send bulk messaging error:", error);
@@ -862,7 +901,13 @@ const getPropertyTenants = async (req, res) => {
 
 const sendTargetedSMS = async (req, res) => {
   try {
-    const { tenantIds, message, messageType = "announcement" } = req.body;
+    const {
+      tenantIds,
+      message,
+      messageType = "announcement",
+      template_id,
+      template_variables = {},
+    } = req.body;
     const userId = req.user.id;
 
     console.log("📱 Sending targeted SMS + WhatsApp:", {
@@ -879,19 +924,28 @@ const sendTargetedSMS = async (req, res) => {
       });
     }
 
-    if (!message || message.trim().length === 0) {
+    if ((!message || message.trim().length === 0) && !template_id) {
       return res.status(400).json({
         success: false,
-        message: "Message is required",
+        message: "Message or template_id is required",
       });
     }
 
-    if (message.length > 160) {
+    if (message && !template_id && message.length > 160) {
       return res.status(400).json({
         success: false,
         message: "SMS message cannot exceed 160 characters",
       });
     }
+
+    const binding = await MessageTemplateService.getBinding(
+      "agent_manual_general_trigger",
+    );
+    const useTemplateId =
+      template_id &&
+      (req.user.role === "admin" || binding?.allow_agent_override === true)
+        ? template_id
+        : null;
 
     // Get tenant details with phone numbers
     // Also verify agent has access to these tenants via property assignments
@@ -955,10 +1009,29 @@ const sendTargetedSMS = async (req, res) => {
 
     for (const tenant of tenantsWithPhones) {
       try {
+        let finalMessage = message;
+        const rendered = await MessageTemplateService.buildRenderedMessage({
+          eventKey: "agent_manual_general_trigger",
+          channel: "sms",
+          templateIdOverride: useTemplateId,
+          variables: {
+            tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
+            unitCode: tenant.unit_code,
+            message: message || "",
+            ...template_variables,
+          },
+        });
+        if (rendered?.rendered) {
+          finalMessage = rendered.rendered;
+        }
+        if (!finalMessage || !String(finalMessage).trim()) {
+          throw new Error("Resolved template message is empty");
+        }
+
         // Send via both SMS + WhatsApp in parallel
         const msgResult = await MessagingService.sendRawMessage(
           tenant.phone_number,
-          message,
+          finalMessage,
           messageType,
         );
 
@@ -968,7 +1041,7 @@ const sendTargetedSMS = async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
           [
             tenant.phone_number,
-            message,
+            finalMessage,
             messageType,
             msgResult.sms?.success ? "sent" : "failed",
             userId,
@@ -1011,7 +1084,7 @@ const sendTargetedSMS = async (req, res) => {
              VALUES ($1, $2, $3, 'failed', $4, $5, NOW())`,
             [
               tenant.phone_number,
-              message,
+              finalMessage,
               messageType,
               sendError.message,
               userId,
@@ -1030,7 +1103,10 @@ const sendTargetedSMS = async (req, res) => {
     res.json({
       success: true,
       message: `Messages sent to ${results.sent} of ${results.total} tenants via SMS. ${results.whatsapp_sent} also received WhatsApp.`,
-      data: results,
+      data: {
+        ...results,
+        template_id_used: useTemplateId || null,
+      },
     });
   } catch (error) {
     console.error("❌ Send targeted messaging error:", error);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSystemSettings } from '../context/SystemSettingsContext';
 import { useAuth } from '../context/AuthContext';
-import { authAPI } from '../services/api';
+import { API, authAPI } from '../services/api';
 
 const SystemSettings = () => {
   const {
@@ -24,6 +24,24 @@ const SystemSettings = () => {
   const [activeTab, setActiveTab] = useState('company');
   const [settingsUpdates, setSettingsUpdates] = useState({});
   const [saveStatus, setSaveStatus] = useState('');
+  const [templateMessage, setTemplateMessage] = useState({ type: '', text: '' });
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [messageTemplates, setMessageTemplates] = useState([]);
+  const [templateBindings, setTemplateBindings] = useState([]);
+  const [includeArchivedTemplates, setIncludeArchivedTemplates] = useState(false);
+  const [templatePreview, setTemplatePreview] = useState("");
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [templateForm, setTemplateForm] = useState({
+    template_key: '',
+    name: '',
+    description: '',
+    category: 'billing',
+    channel: 'both',
+    sms_body: '',
+    whatsapp_template_name: '',
+    whatsapp_fallback_body: '',
+    is_active: true
+  });
 
   // Company info form state
   const [companyFormData, setCompanyFormData] = useState({
@@ -107,6 +125,13 @@ const SystemSettings = () => {
       return () => clearTimeout(timer);
     }
   }, [profileMessage]);
+
+  useEffect(() => {
+    if (templateMessage.text) {
+      const timer = setTimeout(() => setTemplateMessage({ type: '', text: '' }), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [templateMessage]);
 
   /* ---------------- Dirty state ---------------- */
   const isDirty = useMemo(
@@ -437,6 +462,174 @@ const SystemSettings = () => {
   const getPaybillValue = () => {
     const paybillSetting = safeSettings.find(s => s.key === 'paybill_number');
     return settingsUpdates['paybill_number'] ?? paybillSetting?.value ?? '';
+  };
+
+  const resetTemplateForm = () => {
+    setEditingTemplateId(null);
+    setTemplatePreview("");
+    setTemplateForm({
+      template_key: '',
+      name: '',
+      description: '',
+      category: 'billing',
+      channel: 'both',
+      sms_body: '',
+      whatsapp_template_name: '',
+      whatsapp_fallback_body: '',
+      is_active: true
+    });
+  };
+
+  const loadMessageTemplates = useCallback(async () => {
+    setTemplatesLoading(true);
+    try {
+      const response = await API.settings.getMessageTemplates({
+        include_archived: includeArchivedTemplates
+      });
+      setMessageTemplates(response.data?.data || []);
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to load message templates'
+      });
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [includeArchivedTemplates]);
+
+  const loadTemplateBindings = useCallback(async () => {
+    try {
+      const response = await API.settings.getTemplateBindings();
+      setTemplateBindings(response.data?.data || []);
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to load template bindings'
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadMessageTemplates();
+  }, [loadMessageTemplates]);
+
+  useEffect(() => {
+    loadTemplateBindings();
+  }, [loadTemplateBindings]);
+
+  const handleTemplateInputChange = (key, value) => {
+    setTemplateForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!templateForm.template_key || !templateForm.name) {
+      setTemplateMessage({ type: 'error', text: 'Template key and name are required' });
+      return;
+    }
+
+    try {
+      if (editingTemplateId) {
+        await API.settings.updateMessageTemplate(editingTemplateId, templateForm);
+        setTemplateMessage({ type: 'success', text: 'Template updated successfully' });
+      } else {
+        await API.settings.createMessageTemplate(templateForm);
+        setTemplateMessage({ type: 'success', text: 'Template created successfully' });
+      }
+      resetTemplateForm();
+      await loadMessageTemplates();
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to save template'
+      });
+    }
+  };
+
+  const handleEditTemplate = (template) => {
+    setEditingTemplateId(template.id);
+    setTemplateForm({
+      template_key: template.template_key || '',
+      name: template.name || '',
+      description: template.description || '',
+      category: template.category || 'billing',
+      channel: template.channel || 'both',
+      sms_body: template.sms_body || '',
+      whatsapp_template_name: template.whatsapp_template_name || '',
+      whatsapp_fallback_body: template.whatsapp_fallback_body || '',
+      is_active: template.is_active !== false
+    });
+  };
+
+  const handleArchiveTemplate = async (id) => {
+    if (!window.confirm('Archive this template?')) return;
+    try {
+      await API.settings.archiveMessageTemplate(id);
+      setTemplateMessage({ type: 'success', text: 'Template archived' });
+      await loadMessageTemplates();
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to archive template'
+      });
+    }
+  };
+
+  const handleRestoreTemplate = async (id) => {
+    try {
+      await API.settings.restoreMessageTemplate(id);
+      setTemplateMessage({ type: 'success', text: 'Template restored' });
+      await loadMessageTemplates();
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to restore template'
+      });
+    }
+  };
+
+  const handleBindingChange = async (eventKey, defaultTemplateId) => {
+    try {
+      await API.settings.updateTemplateBinding(eventKey, {
+        default_template_id: defaultTemplateId || null
+      });
+      setTemplateMessage({ type: 'success', text: 'Binding updated' });
+      await loadTemplateBindings();
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to update binding'
+      });
+    }
+  };
+
+  const handlePreviewTemplate = async () => {
+    if (!editingTemplateId) {
+      setTemplateMessage({ type: 'error', text: 'Save template first, then preview it' });
+      return;
+    }
+    try {
+      const response = await API.settings.previewMessageTemplate(editingTemplateId, {
+        channel: templateForm.channel === 'whatsapp' ? 'whatsapp' : 'sms',
+        variables: {
+          tenantName: 'John Doe',
+          month: '2026-02',
+          unitCode: 'MJ-4',
+          rent: '12000.00',
+          water: '800.00',
+          arrears: '0.00',
+          total: '12800.00',
+          paybill: '522522',
+          companyName: 'Zakaria Housing Agency Limited',
+          message: 'This is a sample notice message.'
+        }
+      });
+      setTemplatePreview(response.data?.data?.rendered || '');
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to preview template'
+      });
+    }
   };
 
   /* ---------------- Document Preview Component ---------------- */
@@ -904,31 +1097,239 @@ const SystemSettings = () => {
 
       case 'billing':
         return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {settingsByCategory[activeTab]?.length > 0 ? (
-              settingsByCategory[activeTab]
-                .filter(setting => !['mpesa_passkey', 'mpesa_consumer_secret', 'mpesa_consumer_key', 'paybill_number', 'mpesa_paybill_number'].includes(setting.key))
-                .map(setting => (
-                  <div 
-                    key={setting.key} 
-                    className="space-y-2 p-4 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {settingsByCategory[activeTab]?.length > 0 ? (
+                settingsByCategory[activeTab]
+                  .filter(setting => !['mpesa_passkey', 'mpesa_consumer_secret', 'mpesa_consumer_key', 'paybill_number', 'mpesa_paybill_number'].includes(setting.key))
+                  .map(setting => (
+                    <div 
+                      key={setting.key} 
+                      className="space-y-2 p-4 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <label className="block text-sm font-medium text-gray-900">
+                        {setting.description || setting.key.replace(/_/g, ' ')}
+                      </label>
+                      {renderSettingField(setting)}
+                      {setting.updated_at && (
+                        <p className="text-xs text-gray-400 mt-1">
+                          Last updated: {new Date(setting.updated_at).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                  ))
+              ) : (
+                <div className="col-span-2 text-center py-12">
+                  <p className="text-gray-500">No settings found for this category.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t pt-8">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Message Templates</h3>
+                  <p className="text-sm text-gray-600">Create, update, archive, and bind SMS/WhatsApp templates for billing and reminders.</p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={includeArchivedTemplates}
+                    onChange={(e) => setIncludeArchivedTemplates(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  Show archived
+                </label>
+              </div>
+
+              <MessageAlert message={templateMessage} />
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4 border border-gray-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-gray-900">
+                    {editingTemplateId ? 'Edit Template' : 'Create Template'}
+                  </h4>
+
+                  <input
+                    type="text"
+                    placeholder="Template Key (e.g. monthly_bill_default)"
+                    value={templateForm.template_key}
+                    onChange={(e) => handleTemplateInputChange('template_key', e.target.value)}
+                    className="w-full border rounded p-2 text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Template Name"
+                    value={templateForm.name}
+                    onChange={(e) => handleTemplateInputChange('name', e.target.value)}
+                    className="w-full border rounded p-2 text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Category (billing, reminder, payment...)"
+                    value={templateForm.category}
+                    onChange={(e) => handleTemplateInputChange('category', e.target.value)}
+                    className="w-full border rounded p-2 text-sm"
+                  />
+                  <select
+                    value={templateForm.channel}
+                    onChange={(e) => handleTemplateInputChange('channel', e.target.value)}
+                    className="w-full border rounded p-2 text-sm"
                   >
-                    <label className="block text-sm font-medium text-gray-900">
-                      {setting.description || setting.key.replace(/_/g, ' ')}
-                    </label>
-                    {renderSettingField(setting)}
-                    {setting.updated_at && (
-                      <p className="text-xs text-gray-400 mt-1">
-                        Last updated: {new Date(setting.updated_at).toLocaleString()}
-                      </p>
+                    <option value="both">both</option>
+                    <option value="sms">sms</option>
+                    <option value="whatsapp">whatsapp</option>
+                  </select>
+                  <textarea
+                    rows={4}
+                    placeholder="SMS Body"
+                    value={templateForm.sms_body}
+                    onChange={(e) => handleTemplateInputChange('sms_body', e.target.value)}
+                    className="w-full border rounded p-2 text-sm font-mono"
+                  />
+                  <input
+                    type="text"
+                    placeholder="WhatsApp Template Name (Meta approved)"
+                    value={templateForm.whatsapp_template_name}
+                    onChange={(e) => handleTemplateInputChange('whatsapp_template_name', e.target.value)}
+                    className="w-full border rounded p-2 text-sm"
+                  />
+                  <textarea
+                    rows={3}
+                    placeholder="WhatsApp Fallback Body"
+                    value={templateForm.whatsapp_fallback_body}
+                    onChange={(e) => handleTemplateInputChange('whatsapp_fallback_body', e.target.value)}
+                    className="w-full border rounded p-2 text-sm font-mono"
+                  />
+                  <textarea
+                    rows={2}
+                    placeholder="Description"
+                    value={templateForm.description}
+                    onChange={(e) => handleTemplateInputChange('description', e.target.value)}
+                    className="w-full border rounded p-2 text-sm"
+                  />
+
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={!!templateForm.is_active}
+                      onChange={(e) => handleTemplateInputChange('is_active', e.target.checked)}
+                    />
+                    Active
+                  </label>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveTemplate}
+                      className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      {editingTemplateId ? 'Update Template' : 'Create Template'}
+                    </button>
+                    <button
+                      onClick={handlePreviewTemplate}
+                      disabled={!editingTemplateId}
+                      className="px-4 py-2 text-sm border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Preview
+                    </button>
+                    {editingTemplateId && (
+                      <button
+                        onClick={resetTemplateForm}
+                        className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
                     )}
                   </div>
-                ))
-            ) : (
-              <div className="col-span-2 text-center py-12">
-                <p className="text-gray-500">No settings found for this category.</p>
+
+                  {templatePreview && (
+                    <div className="mt-3 p-3 border rounded bg-gray-50">
+                      <p className="text-xs text-gray-500 mb-1">Preview Output</p>
+                      <pre className="text-xs text-gray-800 whitespace-pre-wrap font-mono">
+                        {templatePreview}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <div className="border border-gray-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-gray-900 mb-3">Event Bindings</h4>
+                    <div className="space-y-3">
+                      {templateBindings.map(binding => (
+                        <div key={binding.event_key} className="border rounded p-3">
+                          <p className="text-sm font-medium text-gray-900">{binding.event_name}</p>
+                          <p className="text-xs text-gray-500 mb-2">{binding.event_key}</p>
+                          <select
+                            value={binding.default_template_id || ''}
+                            onChange={(e) => handleBindingChange(binding.event_key, e.target.value)}
+                            className="w-full border rounded p-2 text-sm"
+                          >
+                            <option value="">No default template</option>
+                            {messageTemplates
+                              .filter(t => !t.is_archived && t.category === binding.template_category)
+                              .map(template => (
+                                <option key={template.id} value={template.id}>
+                                  {template.name} ({template.template_key})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-gray-900 mb-3">Template Library</h4>
+                    {templatesLoading ? (
+                      <p className="text-sm text-gray-500">Loading templates...</p>
+                    ) : (
+                      <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                        {messageTemplates.map(template => (
+                          <div key={template.id} className="border rounded p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-gray-900">{template.name}</p>
+                                <p className="text-xs text-gray-500">{template.template_key}</p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  {template.category} • {template.channel} • {template.is_archived ? 'archived' : 'active'}
+                                </p>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => handleEditTemplate(template)}
+                                  className="text-xs px-2 py-1 border rounded hover:bg-gray-50"
+                                >
+                                  Edit
+                                </button>
+                                {!template.is_archived ? (
+                                  <button
+                                    onClick={() => handleArchiveTemplate(template.id)}
+                                    className="text-xs px-2 py-1 border border-red-300 text-red-600 rounded hover:bg-red-50"
+                                  >
+                                    Archive
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleRestoreTemplate(template.id)}
+                                    className="text-xs px-2 py-1 border border-green-300 text-green-600 rounded hover:bg-green-50"
+                                  >
+                                    Restore
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {!messageTemplates.length && (
+                          <p className="text-sm text-gray-500">No templates found.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
           </div>
         );
 

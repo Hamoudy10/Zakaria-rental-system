@@ -11,6 +11,7 @@ import {
   XCircle,
   Eye,
 } from "lucide-react";
+import TemplatePicker from "./common/TemplatePicker";
 
 const AgentSMSManagement = () => {
   const { user } = useAuth();
@@ -24,6 +25,8 @@ const AgentSMSManagement = () => {
   const [triggerResult, setTriggerResult] = useState(null);
   const [missingBillsConfirmation, setMissingBillsConfirmation] =
     useState(null);
+  const [billingTemplates, setBillingTemplates] = useState([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
 
   // State for Failed SMS Tab
   const [failedSMS, setFailedSMS] = useState([]);
@@ -48,6 +51,7 @@ const AgentSMSManagement = () => {
   // Load agent's assigned properties
   useEffect(() => {
     fetchAgentProperties();
+    fetchBillingTemplates();
     // Set default month to current month
     const today = new Date();
     const year = today.getFullYear();
@@ -75,6 +79,21 @@ const AgentSMSManagement = () => {
     }
   };
 
+  const fetchBillingTemplates = async () => {
+    try {
+      const response =
+        await API.settings.getTemplateOptionsForEvent(
+          "agent_manual_billing_trigger",
+        );
+      if (response.data?.success) {
+        setBillingTemplates(response.data.data?.templates || []);
+      }
+    } catch (error) {
+      console.error("Error fetching billing templates:", error);
+      setBillingTemplates([]);
+    }
+  };
+
   const handleTriggerBilling = async () => {
     if (!month) {
       alert("Please select a month");
@@ -88,6 +107,9 @@ const AgentSMSManagement = () => {
       const payload = { month };
       if (propertyId) {
         payload.property_id = propertyId;
+      }
+      if (selectedTemplateId) {
+        payload.template_id = selectedTemplateId;
       }
 
       const response = await API.billing.triggerAgentBilling(payload);
@@ -132,6 +154,9 @@ const AgentSMSManagement = () => {
       };
       if (propertyId) {
         payload.property_id = propertyId;
+      }
+      if (selectedTemplateId) {
+        payload.template_id = selectedTemplateId;
       }
 
       const response = await API.billing.triggerAgentBilling(payload);
@@ -364,6 +389,18 @@ const AgentSMSManagement = () => {
                     ))}
                   </select>
                 </div>
+
+                <div className="md:col-span-2">
+                  <TemplatePicker
+                    label="Billing Template (Optional)"
+                    value={selectedTemplateId}
+                    onChange={setSelectedTemplateId}
+                    templates={billingTemplates}
+                    emptyLabel="Use system default template"
+                    helpText="Agents can pick approved billing templates when override is allowed."
+                    selectClassName="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
@@ -413,6 +450,7 @@ const AgentSMSManagement = () => {
                   onClick={() => {
                     setMonth("");
                     setPropertyId("");
+                    setSelectedTemplateId("");
                     setTriggerResult(null);
                     setMissingBillsConfirmation(null);
                   }}

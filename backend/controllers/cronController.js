@@ -1,6 +1,7 @@
 // backend/controllers/cronController.js
 const cronService = require("../services/cronService");
 const pool = require("../config/database");
+const MessageTemplateService = require("../services/messageTemplateService");
 
 // Start cron service
 const startCronService = async (req, res) => {
@@ -303,6 +304,7 @@ const triggerAgentBillingSMS = async (req, res) => {
       month,
       property_id,
       include_missing_water_bills = false,
+      template_id,
     } = req.body;
     const targetMonth = month || new Date().toISOString().slice(0, 7);
 
@@ -391,6 +393,14 @@ const triggerAgentBillingSMS = async (req, res) => {
         configMap.sms_billing_template ||
         "Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.",
     };
+    const binding = await MessageTemplateService.getBinding(
+      "agent_manual_billing_trigger",
+    );
+    const useTemplateId =
+      template_id &&
+      (req.user.role === "admin" || binding?.allow_agent_override === true)
+        ? template_id
+        : null;
 
     const tenantsQuery = `
       SELECT 
@@ -431,7 +441,7 @@ const triggerAgentBillingSMS = async (req, res) => {
           Number(tenant.water_amount || 0) +
           Number(tenant.arrears_balance || 0);
 
-        const message = renderBillingTemplate(config.smsBillingTemplate, {
+        let message = renderBillingTemplate(config.smsBillingTemplate, {
           tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
           month: targetMonth,
           unitCode: tenant.unit_code,
@@ -442,6 +452,26 @@ const triggerAgentBillingSMS = async (req, res) => {
           paybill: config.paybillNumber,
           companyName: config.companyName,
         });
+
+        const rendered = await MessageTemplateService.buildRenderedMessage({
+          eventKey: "agent_manual_billing_trigger",
+          channel: "sms",
+          templateIdOverride: useTemplateId,
+          variables: {
+            tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
+            month: targetMonth,
+            unitCode: tenant.unit_code,
+            rent: formatCurrency(tenant.monthly_rent),
+            water: formatCurrency(tenant.water_amount),
+            arrears: formatCurrency(tenant.arrears_balance),
+            total: formatCurrency(totalDue),
+            paybill: config.paybillNumber,
+            companyName: config.companyName,
+          },
+        });
+        if (rendered?.rendered) {
+          message = rendered.rendered;
+        }
 
         await pool.query(
           `INSERT INTO sms_queue (recipient_phone, message, message_type, status, billing_month, created_at, agent_id)
@@ -458,7 +488,10 @@ const triggerAgentBillingSMS = async (req, res) => {
     res.json({
       success: true,
       message: `Billing SMS triggered for ${results.queued} tenant(s)`,
-      data: results,
+      data: {
+        ...results,
+        template_id_used: useTemplateId || null,
+      },
     });
   } catch (error) {
     console.error("❌ Error triggering agent billing SMS:", error);

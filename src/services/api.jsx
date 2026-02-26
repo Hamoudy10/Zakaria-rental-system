@@ -452,6 +452,20 @@ export const settingsAPI = {
   },
   
   deleteCompanyLogo: () => api.delete('/admin/company-logo'),
+
+  // Message template management
+  getMessageTemplates: (params = {}) => api.get('/admin/message-templates', { params }),
+  getMessageTemplate: (id) => api.get(`/admin/message-templates/${id}`),
+  createMessageTemplate: (data) => api.post('/admin/message-templates', data),
+  updateMessageTemplate: (id, data) => api.put(`/admin/message-templates/${id}`, data),
+  archiveMessageTemplate: (id) => api.delete(`/admin/message-templates/${id}`),
+  restoreMessageTemplate: (id) => api.post(`/admin/message-templates/${id}/restore`),
+  previewMessageTemplate: (id, data) => api.post(`/admin/message-templates/${id}/preview`, data),
+  getTemplateBindings: () => api.get('/admin/message-template-bindings'),
+  updateTemplateBinding: (eventKey, data) =>
+    api.put(`/admin/message-template-bindings/${eventKey}`, data),
+  getTemplateOptionsForEvent: (eventKey) =>
+    api.get('/admin/message-template-options', { params: { event_key: eventKey } }),
 };
 // Add this NEW billingAPI section (add it after settingsAPI):
 export const billingAPI = {

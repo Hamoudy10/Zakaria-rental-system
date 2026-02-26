@@ -192,7 +192,9 @@ export const SystemSettingsProvider = ({ children }) => {
         s.key === 'grace_period_days' ||
         s.key === 'auto_billing_enabled' ||
         s.key === 'sms_enabled' ||
-        s.key === 'sms_billing_template'
+        s.key === 'sms_billing_template' ||
+        s.key === 'whatsapp_billing_template_name' ||
+        s.key === 'whatsapp_billing_fallback_template'
       ),
       mpesa: settings.filter(s => s.key.includes('mpesa_')),
       profile: [],
