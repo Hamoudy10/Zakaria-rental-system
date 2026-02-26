@@ -9,6 +9,7 @@ const { uploadCompanyLogo } = require('../middleware/uploadMiddleware');
 
 let dashboardController;
 let adminSettingsController;
+let messageTemplateController;
 
 try {
   dashboardController = require('../controllers/dashboardController');
@@ -48,6 +49,14 @@ try {
 } catch (err) {
   console.error('❌ Failed to load adminSettingsController:', err.message);
   throw new Error('adminSettingsController is required for billing system');
+}
+
+try {
+  messageTemplateController = require('../controllers/messageTemplateController');
+  console.log('Message template controller loaded successfully');
+} catch (err) {
+  console.error('Failed to load messageTemplateController:', err.message);
+  throw new Error('messageTemplateController is required for template management');
 }
 
 // ============================
@@ -134,5 +143,22 @@ router.get('/settings/:key', protect, adminOnly, adminSettingsController.getSett
 
 // UPDATE single setting
 router.put('/settings/:key', protect, adminOnly, adminSettingsController.updateSettingByKey);
+
+// ============================
+// Message Template Management Routes
+// ============================
+router.get('/message-templates', protect, adminOnly, messageTemplateController.listTemplates);
+router.post('/message-templates', protect, adminOnly, messageTemplateController.createTemplate);
+router.get('/message-templates/:id', protect, adminOnly, messageTemplateController.getTemplateById);
+router.put('/message-templates/:id', protect, adminOnly, messageTemplateController.updateTemplate);
+router.delete('/message-templates/:id', protect, adminOnly, messageTemplateController.archiveTemplate);
+router.post('/message-templates/:id/restore', protect, adminOnly, messageTemplateController.restoreTemplate);
+router.post('/message-templates/:id/preview', protect, adminOnly, messageTemplateController.previewTemplate);
+
+router.get('/message-template-bindings', protect, adminOnly, messageTemplateController.listBindings);
+router.put('/message-template-bindings/:eventKey', protect, adminOnly, messageTemplateController.updateBinding);
+
+// Agent/admin lookup endpoint for dashboard trigger template selection
+router.get('/message-template-options', protect, requireAgent, messageTemplateController.getTemplatesForEvent);
 
 module.exports = router;

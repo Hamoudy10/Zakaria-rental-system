@@ -5,6 +5,7 @@ const SMSService = require('./smsService');
 const NotificationService = require('./notificationService');
 const MessagingService = require("./messagingService");
 const WhatsAppService = require("./whatsappService");
+const MessageTemplateService = require("./messageTemplateService");
 
 class CronService {
   constructor() {
@@ -341,6 +342,24 @@ class CronService {
 
       // Get billing configuration
       const config = await this.getBillingConfig();
+
+      const boundTemplate =
+        await MessageTemplateService.getDefaultTemplateForEvent(
+          "monthly_bill_auto",
+        );
+      if (boundTemplate) {
+        if (boundTemplate.sms_body) {
+          config.smsBillingTemplate = boundTemplate.sms_body;
+        }
+        if (boundTemplate.whatsapp_template_name) {
+          config.whatsappBillingTemplateName =
+            boundTemplate.whatsapp_template_name;
+        }
+        if (boundTemplate.whatsapp_fallback_body) {
+          config.whatsappBillingFallbackTemplate =
+            boundTemplate.whatsapp_fallback_body;
+        }
+      }
       console.log("⚙️ Billing config:", config);
 
       // Generate bills for all tenants

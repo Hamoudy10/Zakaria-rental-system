@@ -6,6 +6,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { initializeDefaultSettings } = require('./controllers/adminSettingsController');
+const { initializeMessageTemplateSystem } = require('./controllers/messageTemplateController');
 const adminRoutes = require('./routes/adminRoutes');
 const expenseRoutes = require('./routes/expenses');
 
@@ -83,6 +84,10 @@ const initializeServices = async () => {
   try {
     // Initialize default settings first
     await initializeDefaultSettings();
+
+    // Initialize message templates schema/defaults
+    await initializeMessageTemplateSystem();
+    console.log('Message template system initialized');
     console.log('✅ Default admin settings initialized');
     
     // Start cron service

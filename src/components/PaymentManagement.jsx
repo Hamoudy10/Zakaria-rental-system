@@ -7,6 +7,7 @@ import { useAuth } from "../context/AuthContext";
 import { API, notificationAPI, paymentAPI } from "../services/api";
 import { exportToPDF } from "../utils/pdfExport";
 import { exportToExcel } from "../utils/excelExport";
+import TemplatePicker from "./common/TemplatePicker";
 import {
   Calendar,
   DollarSign,
@@ -190,6 +191,9 @@ const PaymentManagement = () => {
   // SMS Reminder Modal
   const [showSMSModal, setShowSMSModal] = useState(false);
   const [smsMessage, setSmsMessage] = useState("");
+  const [smsTemplateId, setSmsTemplateId] = useState("");
+  const [smsTemplates, setSmsTemplates] = useState([]);
+  const [smsTemplatesLoading, setSmsTemplatesLoading] = useState(false);
   const [smsLoading, setSmsLoading] = useState(false);
   const [smsResult, setSmsResult] = useState(null);
 
@@ -521,9 +525,33 @@ const PaymentManagement = () => {
     // Generate default message
     const defaultMessage = `Dear Tenant, this is a reminder that your rent for ${filters.month} is due. Please make payment at your earliest convenience. Thank you.`;
     setSmsMessage(defaultMessage);
+    setSmsTemplateId("");
     setSmsResult(null);
     setShowSMSModal(true);
   };
+
+  const fetchReminderTemplates = useCallback(async () => {
+    setSmsTemplatesLoading(true);
+    try {
+      const response = await API.settings.getTemplateOptionsForEvent(
+        "agent_manual_general_trigger",
+      );
+      if (response.data?.success) {
+        setSmsTemplates(response.data.data?.templates || []);
+      } else {
+        setSmsTemplates([]);
+      }
+    } catch (error) {
+      console.error("Failed to fetch reminder templates:", error);
+      setSmsTemplates([]);
+    } finally {
+      setSmsTemplatesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchReminderTemplates();
+  }, [fetchReminderTemplates]);
 
   const handleSendReminders = async () => {
     setSmsLoading(true);
@@ -534,6 +562,11 @@ const PaymentManagement = () => {
         tenantIds: selectedTenants,
         message: smsMessage,
         messageType: "balance_reminder",
+        template_id: smsTemplateId || undefined,
+        template_variables: {
+          month: filters.month,
+          message: smsMessage,
+        },
       });
 
       if (response.data.success) {
@@ -1080,6 +1113,10 @@ const PaymentManagement = () => {
           selectedCount={selectedTenants.length}
           message={smsMessage}
           setMessage={setSmsMessage}
+          templateId={smsTemplateId}
+          setTemplateId={setSmsTemplateId}
+          templates={smsTemplates}
+          templatesLoading={smsTemplatesLoading}
           loading={smsLoading}
           result={smsResult}
           onSend={handleSendReminders}
@@ -1856,6 +1893,10 @@ const SMSReminderModal = ({
   selectedCount,
   message,
   setMessage,
+  templateId,
+  setTemplateId,
+  templates,
+  templatesLoading,
   loading,
   result,
   onSend,
@@ -1920,6 +1961,17 @@ const SMSReminderModal = ({
             </div>
           )}
 
+          <TemplatePicker
+            label="Template (Optional)"
+            value={templateId}
+            onChange={setTemplateId}
+            templates={templates}
+            loading={templatesLoading}
+            emptyLabel="Use message text below"
+            helpText="If selected, backend renders this template per tenant."
+            selectClassName="w-full border rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none"
+          />
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Message
@@ -1961,7 +2013,7 @@ const SMSReminderModal = ({
             {!result?.success && (
               <button
                 onClick={onSend}
-                disabled={loading || !message.trim()}
+                disabled={loading || (!message.trim() && !templateId)}
                 className="flex-1 px-4 py-2.5 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
               >
                 {loading ? (
