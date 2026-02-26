@@ -366,3 +366,52 @@ app.use(cors({
 - Agent dashboard payment integrity fixed in `agentPropertyController`:
   - `/my-tenants` now provides reliable `monthly_rent`, `rent_paid`, `balance_due`, `amount_due`, `due_date`, `payment_status`.
   - `/dashboard-stats` pending payment count now uses computed current-month rent balance (`balance_due > 0`) instead of simple payment-exists checks.
+
+## RECENT BACKEND SUMMARY (2026-02-26)
+
+### 1) Cron Route Authorization Mismatch Fixed
+- File: `backend/routes/cronRoutes.js`
+- Updated middleware for admin cron endpoints to match controller expectations:
+  - `POST /cron/start` -> `adminOnly`
+  - `POST /cron/stop` -> `adminOnly`
+  - `POST /cron/trigger-billing` -> `adminOnly`
+  - `GET /cron/history` -> `adminOnly`
+
+### 2) Automatic Billing Templates Moved to Admin Settings
+- File: `backend/services/cronService.js`
+- `getBillingConfig()` now reads:
+  - `sms_billing_template`
+  - `whatsapp_billing_template_name`
+  - `whatsapp_billing_fallback_template`
+  - plus existing billing settings (`billing_day`, `paybill_number`, `company_name`).
+- SMS monthly billing message is now rendered from `sms_billing_template`.
+- WhatsApp monthly billing queue now uses configurable template name and fallback body from settings.
+
+### 3) Agent Trigger Billing Uses Same Template Strategy
+- File: `backend/controllers/cronController.js`
+- Replaced hardcoded agent billing SMS message composition with template rendering from `admin_settings.sms_billing_template`.
+- Added placeholder rendering + currency formatting helper for consistent output.
+
+### 4) Settings Defaults/Init Expanded
+- File: `backend/controllers/adminSettingsController.js`
+- Added new settings keys in:
+  - reset defaults
+  - billing config fetch
+  - default value map
+  - startup initializer
+- New keys:
+  - `whatsapp_billing_template_name` (default: `monthly_bill_cron`)
+  - `whatsapp_billing_fallback_template` (default aligned with SMS billing body)
+
+### 5) Validation Status
+- Syntax checks passed:
+  - `node --check backend/services/cronService.js`
+  - `node --check backend/controllers/cronController.js`
+  - `node --check backend/controllers/adminSettingsController.js`
+  - `node --check backend/routes/cronRoutes.js`
+
+### 6) QA Guidance Delivered During Session
+- Guided manual/Postman verification for:
+  - auth/token lifecycle and secret rotation behavior
+  - CRUD + RBAC coverage
+  - complaints and expenses flow troubleshooting (UUID/step/env variable issues).

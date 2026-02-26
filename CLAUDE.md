@@ -374,3 +374,51 @@ All SMS messages in the system are now also sent via WhatsApp (Meta Cloud API) i
   - `/agent-properties/my-tenants` returns usable due fields (`monthly_rent`, `rent_paid`, `balance_due`, `amount_due`, `due_date`, `payment_status`).
   - Agent pending-payment stats now use computed current-month rent balance instead of naive payment-row existence checks.
   - Frontend overview alert amount has safe fallback computation to prevent false `KSh 0` display.
+
+## 14. SESSION SUMMARY (2026-02-26)
+
+### API/QA & Security Validation Support
+- Guided end-to-end Postman CRUD/security testing for:
+  - auth/login token flow
+  - properties + units CRUD
+  - complaints + complaint steps lifecycle
+  - expenses lifecycle
+  - RBAC negative-path checks (agent blocked from admin-only routes).
+- Confirmed JWT secret rotation behavior:
+  - old tokens became invalid (`Token is not valid`) after proper secret change + restart.
+  - clarified Postman env token reuse pitfalls and how to force old-token tests.
+
+### Backend Reliability + Configurability
+- Removed role middleware mismatch on cron admin routes:
+  - `backend/routes/cronRoutes.js`
+  - `/start`, `/stop`, `/trigger-billing`, `/history` now guarded by `adminOnly` to match controller logic.
+- Made automatic billing templates settings-driven (not hardcoded):
+  - `backend/services/cronService.js`
+  - `backend/controllers/cronController.js`
+  - billing message now renders from `admin_settings.sms_billing_template`.
+- Added WhatsApp billing template settings support:
+  - `whatsapp_billing_template_name`
+  - `whatsapp_billing_fallback_template`
+  - wired through cron monthly billing queueing.
+- Extended defaults/initialization/config exposure for these settings:
+  - `backend/controllers/adminSettingsController.js`.
+
+### Frontend UX Cleanup (Inputs/Search + Modals)
+- Moved icon adornments to the right side of fields/search bars (with `pointer-events-none`) to avoid text overlap while typing.
+- Updated affected components:
+  - `src/components/PropertyManagement.jsx`
+  - `src/components/UnitManagement.jsx`
+  - `src/components/PaymentManagement.jsx`
+  - `src/components/ComplaintManagement.jsx`
+  - `src/components/AgentReports.jsx`
+  - `src/components/UserManagement.jsx`
+  - `src/components/NotificationManagement.jsx`
+  - `src/components/AdminTenantBrowser.jsx`
+- Improved modal viewport behavior in major management screens by using fixed overlay + scroll-safe wrappers (`overflow-y-auto`) so modals remain centered/usable even when parent content is scrolled.
+
+### System Settings UI
+- Added/editable UI handling in:
+  - `src/components/SystemSettings.jsx`
+- New template fields supported in billing settings:
+  - `whatsapp_billing_template_name`
+  - `whatsapp_billing_fallback_template`

@@ -342,3 +342,40 @@ Your system is now robust, tested, and waiting only for live credentials to laun
 - Agent Dashboard overview payment alerts corrected:
   - Alert amount rendering now uses robust due fallback logic (`balance_due` -> `amount_due` -> `monthly_rent - rent_paid`).
   - Prevents false `KSh 0` alerts for unpaid tenants.
+
+## RECENT FRONTEND SUMMARY (2026-02-26)
+
+### 1) Input/Search Icon UX Cleanup
+- Goal: prevent icon overlap with typed text by moving field icons to the right.
+- Pattern applied:
+  - icon classes switched from left positioning to right positioning
+  - input paddings switched from `pl-10 pr-4` to right-icon-friendly variants (e.g. `pl-4 pr-10`)
+  - added `pointer-events-none` on icons where needed.
+
+### 2) Components Updated
+- `src/components/PropertyManagement.jsx` (search field)
+- `src/components/UnitManagement.jsx` (modal money fields)
+- `src/components/PaymentManagement.jsx` (search field)
+- `src/components/ComplaintManagement.jsx` (search field)
+- `src/components/AgentReports.jsx` (search field)
+- `src/components/UserManagement.jsx` (modal form field icons incl password field)
+- `src/components/NotificationManagement.jsx` (tenant + history searches)
+- `src/components/AdminTenantBrowser.jsx` (search field)
+
+### 3) Modal Positioning/Scroll Usability Improvements
+- Updated major management modals to use fixed overlays with scroll-safe wrappers (`overflow-y-auto`) so dialogs stay centered/usable even when the parent layout is scrolled.
+- Applied in:
+  - `src/components/PaymentManagement.jsx`
+  - `src/components/ComplaintManagement.jsx`
+
+### 4) System Settings UI Enhancements for Messaging Templates
+- File: `src/components/SystemSettings.jsx`
+- Added editable field support for:
+  - `whatsapp_billing_template_name`
+  - `whatsapp_billing_fallback_template`
+- Existing `sms_billing_template` editor retained; all billing template fields are now manageable via System Settings UI.
+
+### 5) QA/Operations Guidance Delivered
+- Guided step-by-step Postman usage for beginners:
+  - environments, variable saving, pre/post-request scripts, token switching.
+- Helped run and interpret CRUD + RBAC verification for core modules.

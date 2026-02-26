@@ -631,6 +631,7 @@ const SystemSettings = () => {
         );
 
       case 'sms_billing_template':
+      case 'whatsapp_billing_fallback_template':
         return (
           <div className="space-y-2">
             <textarea
@@ -652,6 +653,22 @@ const SystemSettings = () => {
                 <code className="bg-gray-100 px-2 py-1 rounded">{"{paybill}"}</code>
               </div>
             </div>
+          </div>
+        );
+
+      case 'whatsapp_billing_template_name':
+        return (
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={currentValue || ''}
+              onChange={(e) => handleSettingChange(setting.key, e.target.value)}
+              placeholder="monthly_bill_cron"
+              className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+            />
+            <p className="text-xs text-gray-500">
+              Must match an approved Meta WhatsApp template name.
+            </p>
           </div>
         );
 
