@@ -18,42 +18,54 @@ class CronService {
   // Get billing configuration from admin_settings
   async getBillingConfig() {
     try {
-      const result = await pool.query(
-        `SELECT setting_value FROM admin_settings WHERE setting_key = $1`,
-        ["billing_day"],
+      const configResult = await pool.query(
+        `SELECT setting_key, setting_value
+         FROM admin_settings
+         WHERE setting_key = ANY($1)`,
+        [[
+          "billing_day",
+          "paybill_number",
+          "company_name",
+          "sms_billing_template",
+          "whatsapp_billing_template_name",
+          "whatsapp_billing_fallback_template",
+        ]],
       );
 
-      const billingDay = result.rows[0]?.setting_value || "28";
-
-      // Get paybill number
-      const paybillResult = await pool.query(
-        `SELECT setting_value FROM admin_settings WHERE setting_key = $1`,
-        ["paybill_number"],
+      const configMap = Object.fromEntries(
+        configResult.rows.map((row) => [row.setting_key, row.setting_value]),
       );
 
-      const paybillNumber =
-        paybillResult.rows[0]?.setting_value || "YOUR_PAYBILL_HERE";
-
-      // Get company name for SMS
-      const companyResult = await pool.query(
-        `SELECT setting_value FROM admin_settings WHERE setting_key = $1`,
-        ["company_name"],
-      );
-
-      const companyName =
-        companyResult.rows[0]?.setting_value || "Rental Management";
+      const billingDay = configMap.billing_day || "28";
+      const paybillNumber = configMap.paybill_number || "YOUR_PAYBILL_HERE";
+      const companyName = configMap.company_name || "Rental Management";
+      const smsBillingTemplate =
+        configMap.sms_billing_template ||
+        "Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.";
+      const whatsappBillingTemplateName =
+        configMap.whatsapp_billing_template_name || "monthly_bill_cron";
+      const whatsappBillingFallbackTemplate =
+        configMap.whatsapp_billing_fallback_template || smsBillingTemplate;
 
       return {
         billingDay: parseInt(billingDay, 10),
         paybillNumber,
         companyName,
+        smsBillingTemplate,
+        whatsappBillingTemplateName,
+        whatsappBillingFallbackTemplate,
       };
     } catch (error) {
-      console.error("❌ Error getting billing config:", error);
+      console.error("Error getting billing config:", error);
       return {
         billingDay: 28,
         paybillNumber: "YOUR_PAYBILL_HERE",
         companyName: "Rental Management",
+        smsBillingTemplate:
+          "Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.",
+        whatsappBillingTemplateName: "monthly_bill_cron",
+        whatsappBillingFallbackTemplate:
+          "Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.",
       };
     }
   }
@@ -362,6 +374,10 @@ class CronService {
           );
 
           const smsMessage = this.createBillMessage(bill, config);
+          const whatsappFallbackMessage = this.createWhatsAppFallbackMessage(
+            bill,
+            config,
+          );
 
           // Build WhatsApp template params for monthly_bill_cron
           const billItems = [];
@@ -408,10 +424,10 @@ class CronService {
           if (WhatsAppService.configured) {
             await WhatsAppService.queueMessage(
               bill.tenantPhone,
-              "monthly_bill_cron",
+              config.whatsappBillingTemplateName,
               whatsappParams,
               "bill_notification",
-              smsMessage,
+              whatsappFallbackMessage,
               null,
             );
             results.whatsapp_queued++;
@@ -480,30 +496,36 @@ class CronService {
 
   // Create bill message for SMS
   createBillMessage(bill, config) {
+    return this.renderBillingTemplate(config.smsBillingTemplate, bill, config);
+  }
+
+  createWhatsAppFallbackMessage(bill, config) {
+    return this.renderBillingTemplate(
+      config.whatsappBillingFallbackTemplate || config.smsBillingTemplate,
+      bill,
+      config,
+    );
+  }
+
+  renderBillingTemplate(template, bill, config) {
     const totalDue = bill.rentDue + bill.waterDue + bill.arrearsDue;
+    const variables = {
+      tenantName: bill.tenantName,
+      month: bill.targetMonth,
+      unitCode: bill.unitCode,
+      rent: this.formatAmount(bill.rentDue),
+      water: this.formatAmount(bill.waterDue),
+      arrears: this.formatAmount(bill.arrearsDue),
+      total: this.formatAmount(totalDue),
+      paybill: config.paybillNumber,
+      companyName: config.companyName,
+    };
 
-    let message = `Hello ${bill.tenantName},\n`;
-    message += `Your ${bill.targetMonth} bill for ${bill.unitCode}:\n\n`;
-
-    if (bill.rentDue > 0) {
-      message += `🏠 Rent: KSh ${this.formatAmount(bill.rentDue)}\n`;
-    }
-
-    if (bill.waterDue > 0) {
-      message += `🚰 Water: KSh ${this.formatAmount(bill.waterDue)}\n`;
-    }
-
-    if (bill.arrearsDue > 0) {
-      message += `📝 Arrears: KSh ${this.formatAmount(bill.arrearsDue)}\n`;
-    }
-
-    message += `\n💰 Total Due: KSh ${this.formatAmount(totalDue)}\n`;
-    message += `📱 Pay via paybill ${config.paybillNumber}\n`;
-    message += `Account: ${bill.unitCode}\n\n`;
-    message += `Due by end of month.\n`;
-    message += `- ${config.companyName}`;
-
-    return message;
+    return (template || "").replace(/\{(\w+)\}/g, (match, key) => {
+      return Object.prototype.hasOwnProperty.call(variables, key)
+        ? variables[key]
+        : match;
+    });
   }
 
   // Format amount with commas

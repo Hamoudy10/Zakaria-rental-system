@@ -15,15 +15,15 @@ console.log("🔍 DEBUG CRON ROUTES: Starting to load...");
 router.get("/status", cronController.getCronStatus);
 
 // Admin protected routes
-router.post("/start", protect, agentOnly, cronController.startCronService);
-router.post("/stop", protect, agentOnly, cronController.stopCronService);
+router.post("/start", protect, adminOnly, cronController.startCronService);
+router.post("/stop", protect, adminOnly, cronController.stopCronService);
 router.post(
   "/trigger-billing",
   protect,
-  agentOnly,
+  adminOnly,
   cronController.triggerManualBilling,
 );
-router.get("/history", protect, agentOnly, cronController.getBillingHistory);
+router.get("/history", protect, adminOnly, cronController.getBillingHistory);
 
 // ==================== AGENT-SPECIFIC ROUTES ====================
 // These routes handle billing triggers, retries, and history for agents

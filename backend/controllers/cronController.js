@@ -60,6 +60,17 @@ const getAgentProperties = async (agentId) => {
   return res.rows.map((row) => row.property_id);
 };
 
+const formatCurrency = (value) =>
+  new Intl.NumberFormat("en-KE").format(Number(value || 0).toFixed(2));
+
+const renderBillingTemplate = (template, payload) => {
+  return (template || "").replace(/\{(\w+)\}/g, (match, key) => {
+    return Object.prototype.hasOwnProperty.call(payload, key)
+      ? payload[key]
+      : match;
+  });
+};
+
 // Trigger billing manually
 const triggerManualBilling = async (req, res) => {
   try {
@@ -359,14 +370,26 @@ const triggerAgentBillingSMS = async (req, res) => {
     }
 
     const configResult = await pool.query(
-      `SELECT 
-        (SELECT setting_value FROM admin_settings WHERE setting_key = 'paybill_number') as paybill_number,
-        (SELECT setting_value FROM admin_settings WHERE setting_key = 'company_name') as company_name`,
+      `SELECT setting_key, setting_value
+       FROM admin_settings
+       WHERE setting_key = ANY($1)`,
+      [[
+        "paybill_number",
+        "company_name",
+        "sms_billing_template",
+      ]],
+    );
+
+    const configMap = Object.fromEntries(
+      configResult.rows.map((row) => [row.setting_key, row.setting_value]),
     );
 
     const config = {
-      paybillNumber: configResult.rows[0]?.paybill_number || "YOUR_PAYBILL",
-      companyName: configResult.rows[0]?.company_name || "Rental Management",
+      paybillNumber: configMap.paybill_number || "YOUR_PAYBILL",
+      companyName: configMap.company_name || "Rental Management",
+      smsBillingTemplate:
+        configMap.sms_billing_template ||
+        "Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.",
     };
 
     const tenantsQuery = `
@@ -404,13 +427,21 @@ const triggerAgentBillingSMS = async (req, res) => {
     for (const tenant of tenants) {
       try {
         const totalDue =
-          tenant.monthly_rent +
-          tenant.water_amount +
-          (tenant.arrears_balance || 0);
-        const message =
-          `Hello ${tenant.first_name}, Your ${targetMonth} bill for ${tenant.unit_code}:\n` +
-          `Rent: ${tenant.monthly_rent}, Water: ${tenant.water_amount}, Arrears: ${tenant.arrears_balance || 0}\n` +
-          `Total: KSh ${totalDue.toLocaleString()}\nPay via ${config.paybillNumber}, Acc: ${tenant.unit_code}\nDue: End of Month`;
+          Number(tenant.monthly_rent || 0) +
+          Number(tenant.water_amount || 0) +
+          Number(tenant.arrears_balance || 0);
+
+        const message = renderBillingTemplate(config.smsBillingTemplate, {
+          tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
+          month: targetMonth,
+          unitCode: tenant.unit_code,
+          rent: formatCurrency(tenant.monthly_rent),
+          water: formatCurrency(tenant.water_amount),
+          arrears: formatCurrency(tenant.arrears_balance),
+          total: formatCurrency(totalDue),
+          paybill: config.paybillNumber,
+          companyName: config.companyName,
+        });
 
         await pool.query(
           `INSERT INTO sms_queue (recipient_phone, message, message_type, status, billing_month, created_at, agent_id)
