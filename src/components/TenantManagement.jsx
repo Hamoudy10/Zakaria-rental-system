@@ -1,5 +1,5 @@
 // src/components/TenantManagement.jsx
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { API } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useProperty } from "../context/PropertyContext";
@@ -23,6 +23,7 @@ const TenantManagement = () => {
     limit: 10,
   });
   const [searchTerm, setSearchTerm] = useState("");
+  const initialSearchRunRef = useRef(false);
   // View modal state
   const [showViewModal, setShowViewModal] = useState(false);
   const [selectedTenantData, setSelectedTenantData] = useState(null);
@@ -177,12 +178,26 @@ const TenantManagement = () => {
     console.log("🚀 TenantManagement mounted, user:", user?.role);
 
     const initializeData = async () => {
-      await fetchTenants(1, "");
       await fetchAvailableUnits();
     };
 
     initializeData();
   }, []);
+  // Live search (debounced) as the user types
+  useEffect(() => {
+    if (!initialSearchRunRef.current) {
+      initialSearchRunRef.current = true;
+      fetchTenants(1, "");
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      fetchTenants(1, searchTerm.trim());
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, fetchTenants]);
+
   // Refresh units when assigned properties change
   useEffect(() => {
     if (assignedProperties.length > 0) {
@@ -293,8 +308,13 @@ const TenantManagement = () => {
   const validateForm = () => {
     const errors = {};
 
-    if (!formData.national_id.trim())
-      errors.national_id = "National ID is required";
+    const idValue = formData.national_id.trim();
+    if (!idValue) {
+      errors.national_id = "National ID or Passport number is required";
+    } else if (!/^[A-Za-z0-9]{6,20}$/.test(idValue)) {
+      errors.national_id =
+        "Enter a valid National ID or Passport number (6-20 letters/numbers).";
+    }
     if (!formData.first_name.trim())
       errors.first_name = "First name is required";
     if (!formData.last_name.trim()) errors.last_name = "Last name is required";
@@ -818,7 +838,7 @@ const TenantManagement = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      National ID *
+                      National ID / Passport *
                     </label>
                     <input
                       type="text"
@@ -831,7 +851,7 @@ const TenantManagement = () => {
                           ? "border-red-500"
                           : "border-gray-300"
                       }`}
-                      placeholder="Enter national ID"
+                      placeholder="Enter ID or passport number (e.g. 123456)"
                     />
                     {formErrors.national_id && (
                       <p className="mt-1 text-sm text-red-600">
