@@ -153,8 +153,13 @@ const extractCloudinaryPublicIdAndType = (fileUrl) => {
   return { publicId, deliveryType, format, version };
 };
 
-const deleteTenantAgreementFromCloudinary = async (fileUrl) => {
-  const { publicId, deliveryType } = extractCloudinaryPublicIdAndType(fileUrl);
+const resolveTenantAgreementPublicId = async ({
+  publicId,
+  format,
+  deliveryType,
+}) => {
+  if (!publicId) return null;
+
   const normalizedType =
     deliveryType === "upload" ||
     deliveryType === "authenticated" ||
@@ -162,8 +167,47 @@ const deleteTenantAgreementFromCloudinary = async (fileUrl) => {
       ? deliveryType
       : "upload";
 
+  const candidates = [];
+  if (format && !publicId.toLowerCase().endsWith(`.${format}`)) {
+    candidates.push(`${publicId}.${format}`);
+  }
+  candidates.push(publicId);
+
+  const uniqueCandidates = [...new Set(candidates)];
+
+  for (const candidate of uniqueCandidates) {
+    try {
+      await cloudinary.api.resource(candidate, {
+        resource_type: "raw",
+        type: normalizedType,
+      });
+      return { resolvedPublicId: candidate, normalizedType };
+    } catch (error) {
+      const notFound =
+        error?.http_code === 404 ||
+        /resource not found/i.test(error?.message || "");
+      if (!notFound) {
+        throw error;
+      }
+    }
+  }
+
+  return { resolvedPublicId: uniqueCandidates[0], normalizedType };
+};
+
+const deleteTenantAgreementFromCloudinary = async (fileUrl) => {
+  const { publicId, deliveryType, format } =
+    extractCloudinaryPublicIdAndType(fileUrl);
+
   if (publicId) {
-    return cloudinary.uploader.destroy(publicId, {
+    const { resolvedPublicId, normalizedType } =
+      await resolveTenantAgreementPublicId({
+        publicId,
+        format,
+        deliveryType,
+      });
+
+    return cloudinary.uploader.destroy(resolvedPublicId, {
       resource_type: "raw",
       type: normalizedType,
       invalidate: true,
@@ -1607,18 +1651,19 @@ const getTenantAgreementDownloadUrl = async (req, res) => {
       format ||
       (existing.rows[0].file_name || "").split(".").pop()?.toLowerCase() ||
       "pdf";
-    const normalizedType =
-      deliveryType === "upload" ||
-      deliveryType === "authenticated" ||
-      deliveryType === "private"
-        ? deliveryType
-        : "upload";
+    const { resolvedPublicId, normalizedType } =
+      await resolveTenantAgreementPublicId({
+        publicId,
+        format: extension,
+        deliveryType,
+      });
+    const hasExtension = /\.[a-z0-9]+$/i.test(resolvedPublicId || "");
 
     // Use Cloudinary private download URL for raw documents.
     // This is the most reliable flow for authenticated/private assets.
     const signedUrl = cloudinary.utils.private_download_url(
-      publicId,
-      extension,
+      resolvedPublicId,
+      hasExtension ? undefined : extension,
       {
         resource_type: "raw",
         type: normalizedType,
