@@ -94,35 +94,67 @@ const calculateLeaseExpectedMetrics = ({
 
 const extractCloudinaryPublicIdAndType = (fileUrl) => {
   if (!fileUrl || typeof fileUrl !== "string") {
-    return { publicId: null, deliveryType: "authenticated", format: null };
+    return {
+      publicId: null,
+      deliveryType: "authenticated",
+      format: null,
+      version: null,
+    };
   }
 
   // Typical URL: /raw/<type>/v123/folder/file.ext
   const marker = "/raw/";
   const markerIndex = fileUrl.indexOf(marker);
   if (markerIndex === -1) {
-    return { publicId: null, deliveryType: "authenticated", format: null };
+    return {
+      publicId: null,
+      deliveryType: "authenticated",
+      format: null,
+      version: null,
+    };
   }
 
   const rawPath = fileUrl.slice(markerIndex + marker.length);
   const segments = rawPath.split("/").filter(Boolean);
   if (segments.length < 2) {
-    return { publicId: null, deliveryType: "authenticated", format: null };
+    return {
+      publicId: null,
+      deliveryType: "authenticated",
+      format: null,
+      version: null,
+    };
   }
 
   const deliveryType = segments[0] || "authenticated";
   const withoutType = segments.slice(1);
-  const withoutVersion =
+  const versionToken =
     withoutType[0] && withoutType[0].startsWith("v")
-      ? withoutType.slice(1)
-      : withoutType;
+      ? withoutType[0].slice(1)
+      : null;
+  const version = versionToken ? Number(versionToken) : null;
+  const withoutVersion = versionToken ? withoutType.slice(1) : withoutType;
   const pathWithExt = withoutVersion.join("/");
   const cleanPath = pathWithExt.split("?")[0];
   const extMatch = cleanPath.match(/\.([a-zA-Z0-9]+)$/);
   const format = extMatch ? extMatch[1].toLowerCase() : null;
   const publicId = cleanPath.replace(/\.[^/.]+$/, "");
 
-  return { publicId, deliveryType, format };
+  return { publicId, deliveryType, format, version };
+};
+
+const deleteTenantAgreementFromCloudinary = async (fileUrl) => {
+  const { publicId, deliveryType } = extractCloudinaryPublicIdAndType(fileUrl);
+
+  if (publicId) {
+    return cloudinary.uploader.destroy(publicId, {
+      resource_type: "raw",
+      type: deliveryType || "upload",
+      invalidate: true,
+    });
+  }
+
+  // Fallback for any older non-raw URL shape.
+  return deleteCloudinaryImage(fileUrl);
 };
 
 // Get all tenants with agent data isolation
@@ -1478,15 +1510,17 @@ const deleteTenantAgreement = async (req, res) => {
       }
     }
 
-    await pool.query(
-      `UPDATE tenant_documents
-       SET is_active = false, updated_at = NOW()
-       WHERE id = $1`,
-      [documentId],
-    );
+    await pool.query(`DELETE FROM tenant_documents WHERE id = $1`, [documentId]);
 
     if (existing.rows[0].file_url) {
-      await deleteCloudinaryImage(existing.rows[0].file_url);
+      try {
+        await deleteTenantAgreementFromCloudinary(existing.rows[0].file_url);
+      } catch (cloudinaryError) {
+        console.warn(
+          "Agreement was removed from DB but Cloudinary deletion failed:",
+          cloudinaryError?.message || cloudinaryError,
+        );
+      }
     }
 
     return res.json({
@@ -1540,7 +1574,7 @@ const getTenantAgreementDownloadUrl = async (req, res) => {
       }
     }
 
-    const { publicId, deliveryType, format } = extractCloudinaryPublicIdAndType(
+    const { publicId, deliveryType, format, version } = extractCloudinaryPublicIdAndType(
       existing.rows[0].file_url,
     );
 
@@ -1557,16 +1591,18 @@ const getTenantAgreementDownloadUrl = async (req, res) => {
       (existing.rows[0].file_name || "").split(".").pop()?.toLowerCase() ||
       "pdf";
 
-    const signedUrl = cloudinary.utils.private_download_url(
-      publicId,
-      extension,
-      {
-        resource_type: "raw",
-        type: deliveryType || "authenticated",
-        expires_at: expiresAt,
-        attachment: true,
-      },
-    );
+    // Build a signed resource URL (works for both legacy upload and authenticated raw assets).
+    // Keep version when available so Cloudinary resolves the exact stored object.
+    const signedUrl = cloudinary.url(publicId, {
+      resource_type: "raw",
+      type: deliveryType || "upload",
+      secure: true,
+      sign_url: true,
+      expires_at: expiresAt,
+      version: Number.isFinite(version) ? version : undefined,
+      format: extension,
+      attachment: existing.rows[0].file_name || true,
+    });
 
     return res.json({
       success: true,

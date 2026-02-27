@@ -17,6 +17,7 @@ import {
   FileText,
   FileSpreadsheet,
   Download,
+  Upload,
   ChevronDown,
   Filter,
   UserPlus,
@@ -199,7 +200,17 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
 };
 
 // ==================== TENANT DETAIL MODAL ====================
-const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, formatCurrency }) => {
+const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, formatCurrency, onRefreshTenant, onNotify }) => {
+  const [agreementFile, setAgreementFile] = useState(null);
+  const [uploadingAgreement, setUploadingAgreement] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setAgreementFile(null);
+      setUploadingAgreement(false);
+    }
+  }, [isOpen, tenant?.id]);
+
   if (!isOpen || !tenant) return null;
 
   const leaseEndDate = tenant.lease_end_date ? new Date(tenant.lease_end_date) : null;
@@ -227,6 +238,59 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
         error.response?.data?.message ||
           "Failed to generate secure agreement download link.",
       );
+    }
+  };
+  const handleDeleteAgreement = async (tenantId, documentId) => {
+    const confirmed = window.confirm(
+      "Delete this agreement file? This cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    try {
+      const response = await tenantAPI.deleteTenantAgreement(tenantId, documentId);
+      if (response.data.success && typeof onRefreshTenant === "function") {
+        await onRefreshTenant(tenantId);
+        if (typeof onNotify === "function") {
+          onNotify("Agreement file deleted", "success");
+        }
+      }
+    } catch (error) {
+      console.error("Failed to delete agreement:", error);
+      if (typeof onNotify === "function") {
+        onNotify(error.response?.data?.message || "Failed to delete agreement file.", "error");
+      }
+      alert(
+        error.response?.data?.message || "Failed to delete agreement file.",
+      );
+    }
+  };
+  const handleUploadAgreement = async (tenantId) => {
+    if (!agreementFile) return;
+
+    try {
+      setUploadingAgreement(true);
+      const formData = new FormData();
+      formData.append("agreement_file", agreementFile);
+      formData.append("file_name", agreementFile.name);
+
+      const response = await tenantAPI.uploadTenantAgreement(tenantId, formData);
+      if (response.data?.success) {
+        setAgreementFile(null);
+        if (typeof onRefreshTenant === "function") {
+          await onRefreshTenant(tenantId);
+        }
+        if (typeof onNotify === "function") {
+          onNotify("Agreement uploaded successfully", "success");
+        }
+      }
+    } catch (error) {
+      console.error("Failed to upload agreement:", error);
+      if (typeof onNotify === "function") {
+        onNotify(error.response?.data?.message || "Failed to upload agreement file.", "error");
+      }
+      alert(error.response?.data?.message || "Failed to upload agreement file.");
+    } finally {
+      setUploadingAgreement(false);
     }
   };
 
@@ -433,14 +497,40 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
                   </div>
                   Agreement Files
                 </h3>
+                <div className="mb-4 p-3 bg-white border border-gray-200 rounded-lg">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      onChange={(e) => setAgreementFile(e.target.files?.[0] || null)}
+                      className="flex-1 text-sm text-gray-700"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleUploadAgreement(tenant.id)}
+                      disabled={!agreementFile || uploadingAgreement}
+                      className="inline-flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {uploadingAgreement ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Uploading...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" />
+                          Upload Agreement
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
                 {Array.isArray(tenant.agreement_documents) && tenant.agreement_documents.length > 0 ? (
                   <div className="space-y-2">
                     {tenant.agreement_documents.map((doc) => (
-                      <button
-                        type="button"
+                      <div
                         key={doc.id}
-                        onClick={() => handleDownloadAgreement(tenant.id, doc.id)}
-                        className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                        className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-lg"
                       >
                         <div>
                           <p className="text-sm font-medium text-gray-900">{doc.file_name}</p>
@@ -448,8 +538,23 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
                             {doc.file_type || 'Unknown type'} • {formatFileSize(doc.file_size)}
                           </p>
                         </div>
-                        <Download className="w-4 h-4 text-blue-600" />
-                      </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadAgreement(tenant.id, doc.id)}
+                            className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                          >
+                            Download
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAgreement(tenant.id, doc.id)}
+                            className="text-sm font-medium text-red-600 hover:text-red-800"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -2006,6 +2111,18 @@ const TenantHub = () => {
         formatPhone={formatPhone}
         formatDate={formatDate}
         formatCurrency={formatCurrency}
+        onNotify={addToast}
+        onRefreshTenant={async (tenantId) => {
+          await fetchTenants();
+          try {
+            const response = await tenantAPI.getTenant(tenantId);
+            if (response.data?.success) {
+              setSelectedTenant(response.data.data);
+            }
+          } catch (error) {
+            console.error("Failed to refresh tenant details:", error);
+          }
+        }}
       />
 
       <AllocationModal
