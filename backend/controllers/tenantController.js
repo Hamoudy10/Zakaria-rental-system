@@ -144,11 +144,15 @@ const extractCloudinaryPublicIdAndType = (fileUrl) => {
 
 const deleteTenantAgreementFromCloudinary = async (fileUrl) => {
   const { publicId, deliveryType } = extractCloudinaryPublicIdAndType(fileUrl);
+  const normalizedType =
+    deliveryType === "authenticated" || deliveryType === "private"
+      ? deliveryType
+      : "authenticated";
 
   if (publicId) {
     return cloudinary.uploader.destroy(publicId, {
       resource_type: "raw",
-      type: deliveryType || "upload",
+      type: normalizedType,
       invalidate: true,
     });
   }
@@ -1574,7 +1578,7 @@ const getTenantAgreementDownloadUrl = async (req, res) => {
       }
     }
 
-    const { publicId, deliveryType, format, version } = extractCloudinaryPublicIdAndType(
+    const { publicId, deliveryType, format } = extractCloudinaryPublicIdAndType(
       existing.rows[0].file_url,
     );
 
@@ -1590,19 +1594,23 @@ const getTenantAgreementDownloadUrl = async (req, res) => {
       format ||
       (existing.rows[0].file_name || "").split(".").pop()?.toLowerCase() ||
       "pdf";
+    const normalizedType =
+      deliveryType === "authenticated" || deliveryType === "private"
+        ? deliveryType
+        : "authenticated";
 
-    // Build a signed resource URL (works for both legacy upload and authenticated raw assets).
-    // Keep version when available so Cloudinary resolves the exact stored object.
-    const signedUrl = cloudinary.url(publicId, {
-      resource_type: "raw",
-      type: deliveryType || "upload",
-      secure: true,
-      sign_url: true,
-      expires_at: expiresAt,
-      version: Number.isFinite(version) ? version : undefined,
-      format: extension,
-      attachment: existing.rows[0].file_name || true,
-    });
+    // Use Cloudinary private download URL for raw documents.
+    // This is the most reliable flow for authenticated/private assets.
+    const signedUrl = cloudinary.utils.private_download_url(
+      publicId,
+      extension,
+      {
+        resource_type: "raw",
+        type: normalizedType,
+        expires_at: expiresAt,
+        attachment: true,
+      },
+    );
 
     return res.json({
       success: true,
