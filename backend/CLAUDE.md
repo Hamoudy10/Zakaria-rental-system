@@ -415,3 +415,44 @@ app.use(cors({
   - auth/token lifecycle and secret rotation behavior
   - CRUD + RBAC coverage
   - complaints and expenses flow troubleshooting (UUID/step/env variable issues).
+
+## RECENT BACKEND SUMMARY (2026-02-27)
+
+### 1) Expected Rent Metrics Persisted on Allocations
+- Added lease-derived expected fields handling in tenant flows:
+  - `month_count`
+  - `expected_amount`
+  - `current_month_expected`
+- Recalculation now happens on tenant create/update allocation paths to keep DB values consistent.
+- Files:
+  - `backend/controllers/tenantController.js`
+  - `backend/controllers/paymentController.js`
+
+### 2) Payment Endpoints Extended for Visibility
+- `getTenantPaymentHistory` now returns `summary.currentMonthExpected`.
+- Tenant status summary now includes:
+  - `current_month_expected`
+  - `lease_total_expected`
+- Preserved existing totals while exposing lease vs current-month expected values.
+
+### 3) New Migrations Added
+- `backend/migrations/004_add_expected_fields_to_tenant_allocations.sql`
+  - Adds expected-rent fields + backfills existing data.
+- `backend/migrations/005_create_tenant_documents.sql`
+  - Creates `tenant_documents` table for tenant agreement files.
+
+### 4) Tenant Agreement Documents (Cloudinary Raw Uploads)
+- Added upload support for `PDF/DOC/DOCX` via Cloudinary (`resource_type: raw`).
+- New tenant agreement APIs:
+  - `POST /tenants/:id/agreements`
+  - `GET /tenants/:id/agreements`
+  - `DELETE /tenants/:id/agreements/:documentId`
+- Added agent-access validation and soft-delete (`is_active = false`) for documents.
+- Files:
+  - `backend/middleware/uploadMiddleware.js`
+  - `backend/routes/tenants.js`
+  - `backend/controllers/tenantController.js`
+
+### 5) Tenant Payload Enrichment
+- `GET /tenants` and `GET /tenants/:id` now return aggregated `agreement_documents` for UI display.
+- This allows Tenant Management and Tenant Hub to render downloadable agreement files without extra joins client-side.
