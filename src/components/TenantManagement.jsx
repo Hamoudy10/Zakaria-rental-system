@@ -484,6 +484,25 @@ const TenantManagement = () => {
       );
     }
   };
+  const handleDeleteAgreement = async (tenantId, documentId) => {
+    const confirmed = window.confirm(
+      "Delete this agreement file? This cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    try {
+      const response = await API.tenants.deleteTenantAgreement(tenantId, documentId);
+      if (response.data.success) {
+        await fetchTenantDetails(tenantId);
+        await fetchTenants();
+      }
+    } catch (err) {
+      console.error("Agreement delete error:", err);
+      alert(
+        err.response?.data?.message || "Failed to delete agreement file.",
+      );
+    }
+  };
   const formatFileSize = (bytes) => {
     const size = Number(bytes) || 0;
     if (size < 1024) return `${size} B`;
@@ -1485,15 +1504,26 @@ const TenantManagement = () => {
                             {doc.file_type || "Unknown type"} • {formatFileSize(doc.file_size)} • {formatDate(doc.created_at)}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDownloadAgreement(selectedTenantData.id, doc.id)
-                          }
-                          className="text-sm font-medium text-blue-600 hover:text-blue-800"
-                        >
-                          Download
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDownloadAgreement(selectedTenantData.id, doc.id)
+                            }
+                            className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                          >
+                            Download
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDeleteAgreement(selectedTenantData.id, doc.id)
+                            }
+                            className="text-sm font-medium text-red-600 hover:text-red-800"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
