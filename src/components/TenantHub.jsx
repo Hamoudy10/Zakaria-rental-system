@@ -212,6 +212,23 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   };
+  const handleDownloadAgreement = async (tenantId, documentId) => {
+    try {
+      const response = await tenantAPI.getTenantAgreementDownloadUrl(
+        tenantId,
+        documentId,
+      );
+      const signedUrl = response?.data?.data?.url;
+      if (!signedUrl) throw new Error("No signed URL returned");
+      window.open(signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      console.error("Failed to download agreement:", error);
+      alert(
+        error.response?.data?.message ||
+          "Failed to generate secure agreement download link.",
+      );
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -419,12 +436,10 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
                 {Array.isArray(tenant.agreement_documents) && tenant.agreement_documents.length > 0 ? (
                   <div className="space-y-2">
                     {tenant.agreement_documents.map((doc) => (
-                      <a
+                      <button
+                        type="button"
                         key={doc.id}
-                        href={doc.file_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        download
+                        onClick={() => handleDownloadAgreement(tenant.id, doc.id)}
                         className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors"
                       >
                         <div>
@@ -434,7 +449,7 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
                           </p>
                         </div>
                         <Download className="w-4 h-4 text-blue-600" />
-                      </a>
+                      </button>
                     ))}
                   </div>
                 ) : (

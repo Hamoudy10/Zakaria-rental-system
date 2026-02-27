@@ -3,6 +3,7 @@ const fs = require("fs");
 const NotificationService = require("../services/notificationService");
 const smsService = require("../services/smsService");
 const { deleteCloudinaryImage } = require("../middleware/uploadMiddleware");
+const cloudinary = require("../config/cloudinary");
 
 // Format phone number to 254 format - UPDATED to support 01xxxxxxxx (new Safaricom)
 const formatPhoneNumber = (phone) => {
@@ -89,6 +90,39 @@ const calculateLeaseExpectedMetrics = ({
       ? roundToTwo(parsedMonthlyRent)
       : 0,
   };
+};
+
+const extractCloudinaryPublicIdAndType = (fileUrl) => {
+  if (!fileUrl || typeof fileUrl !== "string") {
+    return { publicId: null, deliveryType: "authenticated", format: null };
+  }
+
+  // Typical URL: /raw/<type>/v123/folder/file.ext
+  const marker = "/raw/";
+  const markerIndex = fileUrl.indexOf(marker);
+  if (markerIndex === -1) {
+    return { publicId: null, deliveryType: "authenticated", format: null };
+  }
+
+  const rawPath = fileUrl.slice(markerIndex + marker.length);
+  const segments = rawPath.split("/").filter(Boolean);
+  if (segments.length < 2) {
+    return { publicId: null, deliveryType: "authenticated", format: null };
+  }
+
+  const deliveryType = segments[0] || "authenticated";
+  const withoutType = segments.slice(1);
+  const withoutVersion =
+    withoutType[0] && withoutType[0].startsWith("v")
+      ? withoutType.slice(1)
+      : withoutType;
+  const pathWithExt = withoutVersion.join("/");
+  const cleanPath = pathWithExt.split("?")[0];
+  const extMatch = cleanPath.match(/\.([a-zA-Z0-9]+)$/);
+  const format = extMatch ? extMatch[1].toLowerCase() : null;
+  const publicId = cleanPath.replace(/\.[^/.]+$/, "");
+
+  return { publicId, deliveryType, format };
 };
 
 // Get all tenants with agent data isolation
@@ -1469,6 +1503,88 @@ const deleteTenantAgreement = async (req, res) => {
   }
 };
 
+const getTenantAgreementDownloadUrl = async (req, res) => {
+  try {
+    const { id, documentId } = req.params;
+
+    const existing = await pool.query(
+      `SELECT td.*, t.id as tenant_id, p.id as property_id
+       FROM tenant_documents td
+       JOIN tenants t ON td.tenant_id = t.id
+       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+       LEFT JOIN property_units pu ON ta.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       WHERE td.id = $1 AND td.tenant_id = $2 AND td.is_active = true`,
+      [documentId, id],
+    );
+
+    if (existing.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Agreement file not found",
+      });
+    }
+
+    if (req.user.role === "agent") {
+      const canAccess = await pool.query(
+        `SELECT 1 FROM agent_property_assignments
+         WHERE property_id = $1 AND agent_id = $2 AND is_active = true`,
+        [existing.rows[0].property_id, req.user.id],
+      );
+
+      if (canAccess.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to access this agreement file",
+        });
+      }
+    }
+
+    const { publicId, deliveryType, format } = extractCloudinaryPublicIdAndType(
+      existing.rows[0].file_url,
+    );
+
+    if (!publicId) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid agreement file URL",
+      });
+    }
+
+    const expiresAt = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+    const extension =
+      format ||
+      (existing.rows[0].file_name || "").split(".").pop()?.toLowerCase() ||
+      "pdf";
+
+    const signedUrl = cloudinary.utils.private_download_url(
+      publicId,
+      extension,
+      {
+        resource_type: "raw",
+        type: deliveryType || "authenticated",
+        expires_at: expiresAt,
+        attachment: true,
+      },
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        url: signedUrl,
+        expires_at: expiresAt,
+      },
+    });
+  } catch (error) {
+    console.error("Get tenant agreement download URL error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error creating secure download link",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
 module.exports = {
   getTenants,
   getTenant,
@@ -1480,4 +1596,5 @@ module.exports = {
   uploadTenantAgreement,
   getTenantAgreements,
   deleteTenantAgreement,
+  getTenantAgreementDownloadUrl,
 };

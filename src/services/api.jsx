@@ -886,6 +886,10 @@ export const tenantAPI = {
   // Get tenant agreement files
   getTenantAgreements: (id) => api.get(`/tenants/${id}/agreements`),
 
+  // Get secure signed download URL for tenant agreement file
+  getTenantAgreementDownloadUrl: (id, documentId) =>
+    api.get(`/tenants/${id}/agreements/${documentId}/download`),
+
   // Delete tenant agreement file
   deleteTenantAgreement: (id, documentId) => api.delete(`/tenants/${id}/agreements/${documentId}`),
   

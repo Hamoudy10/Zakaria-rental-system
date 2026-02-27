@@ -467,6 +467,23 @@ const TenantManagement = () => {
     if (!dateString) return "N/A";
     return new Date(dateString).toLocaleDateString("en-KE");
   };
+  const handleDownloadAgreement = async (tenantId, documentId) => {
+    try {
+      const response = await API.tenants.getTenantAgreementDownloadUrl(
+        tenantId,
+        documentId,
+      );
+      const signedUrl = response?.data?.data?.url;
+      if (!signedUrl) throw new Error("No signed URL returned");
+      window.open(signedUrl, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error("Agreement download error:", err);
+      alert(
+        err.response?.data?.message ||
+          "Failed to generate secure download link.",
+      );
+    }
+  };
   const formatFileSize = (bytes) => {
     const size = Number(bytes) || 0;
     if (size < 1024) return `${size} B`;
@@ -1468,15 +1485,15 @@ const TenantManagement = () => {
                             {doc.file_type || "Unknown type"} • {formatFileSize(doc.file_size)} • {formatDate(doc.created_at)}
                           </p>
                         </div>
-                        <a
-                          href={doc.file_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          download
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDownloadAgreement(selectedTenantData.id, doc.id)
+                          }
                           className="text-sm font-medium text-blue-600 hover:text-blue-800"
                         >
                           Download
-                        </a>
+                        </button>
                       </div>
                     ))}
                   </div>
