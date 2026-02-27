@@ -48,6 +48,17 @@ const roundToTwo = (value) => {
   return Math.round(num * 100) / 100;
 };
 
+const parseUniqueViolationField = (error) => {
+  const constraint = String(error?.constraint || "").toLowerCase();
+  const detail = String(error?.detail || "").toLowerCase();
+  const source = `${constraint} ${detail}`;
+
+  if (source.includes("national_id")) return "national_id";
+  if (source.includes("phone_number")) return "phone_number";
+  if (source.includes("email")) return "email";
+  return null;
+};
+
 const calculateLeaseExpectedMetrics = ({
   leaseStartDate,
   leaseEndDate,
@@ -515,7 +526,10 @@ const createTenant = async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
-        message: "Tenant with this national ID already exists",
+        message: "This national ID is already used by another tenant.",
+        fieldErrors: {
+          national_id: "This national ID is already used. Please check and try again.",
+        },
       });
     }
 
@@ -529,7 +543,10 @@ const createTenant = async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
-        message: "Tenant with this phone number already exists",
+        message: "This phone number is already used by another tenant.",
+        fieldErrors: {
+          phone_number: "This phone number is already used. Please use another number.",
+        },
       });
     }
 
@@ -742,9 +759,18 @@ const createTenant = async (req, res) => {
 
     // Handle unique constraint violations
     if (error.code === "23505") {
+      const duplicateField = parseUniqueViolationField(error);
+      const fieldMessages = {
+        national_id: "This national ID is already used. Please check and try again.",
+        phone_number: "This phone number is already used. Please use another number.",
+        email: "This email is already used. Please use another email.",
+      };
       return res.status(400).json({
         success: false,
-        message: "Tenant with this national ID, phone, or email already exists",
+        message: "Some details are already used by another tenant.",
+        ...(duplicateField && {
+          fieldErrors: { [duplicateField]: fieldMessages[duplicateField] },
+        }),
       });
     }
 
@@ -831,7 +857,10 @@ const updateTenant = async (req, res) => {
         await client.query("ROLLBACK");
         return res.status(400).json({
           success: false,
-          message: "Another tenant with this national ID already exists",
+          message: "This national ID is already used by another tenant.",
+          fieldErrors: {
+            national_id: "This national ID is already used. Please check and try again.",
+          },
         });
       }
     }
@@ -848,7 +877,10 @@ const updateTenant = async (req, res) => {
         await client.query("ROLLBACK");
         return res.status(400).json({
           success: false,
-          message: "Another tenant with this phone number already exists",
+          message: "This phone number is already used by another tenant.",
+          fieldErrors: {
+            phone_number: "This phone number is already used. Please use another number.",
+          },
         });
       }
     }
@@ -1157,10 +1189,18 @@ const updateTenant = async (req, res) => {
 
     // Handle unique constraint violations
     if (error.code === "23505") {
+      const duplicateField = parseUniqueViolationField(error);
+      const fieldMessages = {
+        national_id: "This national ID is already used. Please check and try again.",
+        phone_number: "This phone number is already used. Please use another number.",
+        email: "This email is already used. Please use another email.",
+      };
       return res.status(400).json({
         success: false,
-        message:
-          "Another tenant with this national ID, phone, or email already exists",
+        message: "Some details are already used by another tenant.",
+        ...(duplicateField && {
+          fieldErrors: { [duplicateField]: fieldMessages[duplicateField] },
+        }),
       });
     }
 
