@@ -513,6 +513,8 @@ const createTenant = async (req, res) => {
     const formattedEmergencyPhone = emergency_contact_phone
       ? formatPhoneNumber(emergency_contact_phone)
       : null;
+    const normalizedEmail =
+      typeof email === "string" ? email.trim() || null : (email ?? null);
 
     console.log("📞 Formatted phone:", formattedPhone);
 
@@ -561,7 +563,7 @@ const createTenant = async (req, res) => {
         national_id,
         first_name,
         last_name,
-        email,
+        normalizedEmail,
         formattedPhone,
         emergency_contact_name,
         formattedEmergencyPhone,
@@ -892,13 +894,19 @@ const updateTenant = async (req, res) => {
     const formattedEmergencyPhone = emergency_contact_phone
       ? formatPhoneNumber(emergency_contact_phone)
       : undefined;
+    const hasEmail = Object.prototype.hasOwnProperty.call(req.body, "email");
+    const normalizedEmail = hasEmail
+      ? typeof email === "string"
+        ? email.trim() || null
+        : (email ?? null)
+      : undefined;
 
     const result = await client.query(
       `UPDATE tenants 
        SET national_id = COALESCE($1, national_id),
            first_name = COALESCE($2, first_name),
            last_name = COALESCE($3, last_name),
-           email = COALESCE($4, email),
+           email = CASE WHEN $10 THEN $4 ELSE email END,
            phone_number = COALESCE($5, phone_number),
            emergency_contact_name = COALESCE($6, emergency_contact_name),
            emergency_contact_phone = COALESCE($7, emergency_contact_phone),
@@ -910,12 +918,13 @@ const updateTenant = async (req, res) => {
         national_id,
         first_name,
         last_name,
-        email,
+        normalizedEmail,
         formattedPhone,
         emergency_contact_name,
         formattedEmergencyPhone,
         is_active,
         id,
+        hasEmail,
       ],
     );
 
