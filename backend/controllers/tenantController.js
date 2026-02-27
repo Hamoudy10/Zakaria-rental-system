@@ -145,9 +145,11 @@ const extractCloudinaryPublicIdAndType = (fileUrl) => {
 const deleteTenantAgreementFromCloudinary = async (fileUrl) => {
   const { publicId, deliveryType } = extractCloudinaryPublicIdAndType(fileUrl);
   const normalizedType =
-    deliveryType === "authenticated" || deliveryType === "private"
+    deliveryType === "upload" ||
+    deliveryType === "authenticated" ||
+    deliveryType === "private"
       ? deliveryType
-      : "authenticated";
+      : "upload";
 
   if (publicId) {
     return cloudinary.uploader.destroy(publicId, {
@@ -1595,9 +1597,11 @@ const getTenantAgreementDownloadUrl = async (req, res) => {
       (existing.rows[0].file_name || "").split(".").pop()?.toLowerCase() ||
       "pdf";
     const normalizedType =
-      deliveryType === "authenticated" || deliveryType === "private"
+      deliveryType === "upload" ||
+      deliveryType === "authenticated" ||
+      deliveryType === "private"
         ? deliveryType
-        : "authenticated";
+        : "upload";
 
     // Use Cloudinary private download URL for raw documents.
     // This is the most reliable flow for authenticated/private assets.
