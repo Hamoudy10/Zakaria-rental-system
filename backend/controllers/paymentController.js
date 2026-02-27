@@ -1316,8 +1316,10 @@ const getTenantPaymentHistory = async (req, res) => {
     );
 
     const allocationsQuery = await pool.query(
-      `SELECT lease_start_date, lease_end_date, monthly_rent 
-       FROM tenant_allocations WHERE tenant_id = $1`,
+      `SELECT lease_start_date, lease_end_date, monthly_rent, is_active, created_at
+       FROM tenant_allocations
+       WHERE tenant_id = $1
+       ORDER BY is_active DESC, created_at DESC NULLS LAST, lease_start_date DESC NULLS LAST`,
       [tenantId],
     );
 
@@ -1326,7 +1328,24 @@ const getTenantPaymentHistory = async (req, res) => {
     const now = new Date();
     const nowMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    allocationsQuery.rows.forEach((alloc) => {
+    const normalizedAllocations = allocationsQuery.rows.map((alloc) => ({
+      ...alloc,
+      is_active:
+        alloc.is_active === true ||
+        alloc.is_active === "true" ||
+        alloc.is_active === 1,
+      created_at: alloc.created_at ? new Date(alloc.created_at) : null,
+    }));
+
+    // Prefer active allocations for expected metrics.
+    // If none are active (legacy/inconsistent data), fall back to the latest allocation.
+    const activeAllocations = normalizedAllocations.filter((a) => a.is_active);
+    const allocationsForMetrics =
+      activeAllocations.length > 0
+        ? activeAllocations
+        : normalizedAllocations.slice(0, 1);
+
+    allocationsForMetrics.forEach((alloc) => {
       const start = parseDateOnly(alloc.lease_start_date);
       const end = alloc.lease_end_date ? parseDateOnly(alloc.lease_end_date) : now;
       if (!start || !end || end < start) return;
