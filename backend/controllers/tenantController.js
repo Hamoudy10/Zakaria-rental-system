@@ -126,7 +126,18 @@ const extractCloudinaryPublicIdAndType = (fileUrl) => {
   }
 
   const deliveryType = segments[0] || "authenticated";
-  const withoutType = segments.slice(1);
+  let withoutType = segments.slice(1);
+
+  // Cloudinary signed delivery URLs can include an URL signature segment:
+  // /raw/upload/s--<signature>--/v123/folder/file.ext
+  if (
+    withoutType[0] &&
+    withoutType[0].startsWith("s--") &&
+    withoutType[0].endsWith("--")
+  ) {
+    withoutType = withoutType.slice(1);
+  }
+
   const versionToken =
     withoutType[0] && withoutType[0].startsWith("v")
       ? withoutType[0].slice(1)
