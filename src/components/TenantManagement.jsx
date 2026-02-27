@@ -338,12 +338,12 @@ const TenantManagement = () => {
     e.preventDefault();
 
     if (!validateForm()) {
-      setError("Please fix the form errors");
       return;
     }
 
     try {
       setError(null);
+      setFormErrors({});
       setUploading(true);
 
       let response;
@@ -383,9 +383,43 @@ const TenantManagement = () => {
         alert(response.data.message || "Tenant saved successfully!");
       }
     } catch (err) {
-      const errorMsg =
-        err.response?.data?.message || err.message || "Failed to save tenant";
-      setError(errorMsg);
+      const serverData = err.response?.data || {};
+      const errorMsg = serverData.message || err.message || "Failed to save tenant";
+      const fieldErrorsFromServer = serverData.fieldErrors || {};
+      const mappedFieldErrors = { ...fieldErrorsFromServer };
+      const msgLower = String(errorMsg).toLowerCase();
+
+      if (Object.keys(mappedFieldErrors).length === 0) {
+        if (msgLower.includes("national id")) {
+          mappedFieldErrors.national_id =
+            "This national ID is already used. Please check and try again.";
+        }
+        if (msgLower.includes("phone")) {
+          mappedFieldErrors.phone_number =
+            "This phone number is already used. Please use another number.";
+        }
+        if (msgLower.includes("email")) {
+          mappedFieldErrors.email =
+            "This email is already used. Please use another email.";
+        }
+        if (msgLower.includes("unit is already occupied")) {
+          mappedFieldErrors.unit_id =
+            "This unit is already occupied. Please choose another unit.";
+        }
+        if (msgLower.includes("lease_start_date")) {
+          mappedFieldErrors.lease_start_date =
+            "Please select a valid lease start date.";
+        }
+        if (msgLower.includes("monthly_rent")) {
+          mappedFieldErrors.monthly_rent = "Please enter a valid monthly rent.";
+        }
+      }
+
+      if (Object.keys(mappedFieldErrors).length > 0) {
+        setFormErrors((prev) => ({ ...prev, ...mappedFieldErrors }));
+      } else {
+        setError(errorMsg);
+      }
       console.error("Error saving tenant:", err);
     } finally {
       setUploading(false);
@@ -751,7 +785,7 @@ const TenantManagement = () => {
         </div>
       </form>
       {/* Error Alert */}
-      {error && (
+      {error && !showForm && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
           {error}
         </div>
@@ -885,9 +919,16 @@ const TenantManagement = () => {
                       name="email"
                       value={formData.email}
                       onChange={handleInputChange}
-                      className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        formErrors.email ? "border-red-500" : "border-gray-300"
+                      }`}
                       placeholder="email@example.com"
                     />
+                    {formErrors.email && (
+                      <p className="mt-1 text-sm text-red-600">
+                        {formErrors.email}
+                      </p>
+                    )}
                   </div>
                 </div>
                 {/* Emergency Contact */}
