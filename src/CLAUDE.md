@@ -379,3 +379,37 @@ Your system is now robust, tested, and waiting only for live credentials to laun
 - Guided step-by-step Postman usage for beginners:
   - environments, variable saving, pre/post-request scripts, token switching.
 - Helped run and interpret CRUD + RBAC verification for core modules.
+
+## RECENT FRONTEND SUMMARY (2026-02-27)
+
+### 1) Payment Statement UX Enhancement
+- In tenant payment history modal (`PaymentManagement`), added a new metric card:
+  - `Current Month Expected`
+- File:
+  - `src/components/PaymentManagement.jsx`
+
+### 2) Tenant Agreement Upload in Tenant Management
+- Added agreement upload section in tenant form:
+  - accepts `PDF/DOC/DOCX`
+  - supports multi-file selection
+  - uploads after tenant create/update
+- Added agreement list in tenant details modal with direct download links.
+- File:
+  - `src/components/TenantManagement.jsx`
+
+### 3) Tenant Hub Visibility for Agreement Files
+- Added “Agreement Files” section inside tenant detail modal.
+- Documents are shown with type/size and downloadable links.
+- File:
+  - `src/components/TenantHub.jsx`
+
+### 4) Frontend API Additions
+- Added tenant agreement endpoints in API client:
+  - `uploadTenantAgreement(id, formData)`
+  - `getTenantAgreements(id)`
+  - `deleteTenantAgreement(id, documentId)`
+- File:
+  - `src/services/api.jsx`
+
+### 5) Build Status
+- Frontend production build passed after these updates.

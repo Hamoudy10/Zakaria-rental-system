@@ -218,6 +218,66 @@ useEffect(() => {
   if (state?.conversationId && state?.conversation) {
     setActiveConversation(state.conversation);
     window.history.replaceState({}, document.title);
+
+---
+
+## SESSION SUMMARY (Latest Work)
+
+### 1) Unit code update consistency (API + UI verification)
+- Investigated update flow where API returned success but UI appeared stale.
+- Confirmed backend returned updated `unit_code` (`MJ-4`) and guided API-level verification with Postman.
+- Isolated stale-token confusion during authorization tests and validated JWT invalidation behavior after secret rotation.
+
+### 2) Fast CRUD + security test workflow
+- Guided end-to-end Postman collection setup for:
+  - Auth login and token variable capture
+  - Property + Unit CRUD
+  - Complaint + steps flow
+  - Expense CRUD
+  - Role-based authorization checks (`admin` vs `agent`)
+- Confirmed expected unauthorized responses for restricted agent operations.
+
+### 3) Payment expected-rent model improvements
+- Added lease-derived expected metrics support in backend logic.
+- Introduced and persisted:
+  - `month_count`
+  - `expected_amount` (lease total expected)
+  - `current_month_expected`
+- Ensured recalculation on tenant create/update allocation paths.
+- Exposed values in tenant/payment responses for UI consistency.
+
+### 4) New migration for expected-rent fields
+- Added migration:
+  - `backend/migrations/004_add_expected_fields_to_tenant_allocations.sql`
+- Includes schema changes + backfill for existing rows.
+
+### 5) Tenant PDF export fix
+- Fixed `a.autotable is not a function` issue by standardizing `jspdf-autotable` usage.
+- Updated export call pattern to `autoTable(doc, {...})`.
+
+### 6) UI cleanup (search/icons/modal behavior)
+- Moved/standardized field/search icon positions to avoid typing overlap.
+- Updated modal behavior to center in viewport reliably.
+- Applied adjustments across major management components per request sequence.
+
+### 7) Messaging template architecture direction
+- Shifted template strategy toward system-settings driven templates (billing/reminders) instead of hardcoded cron-only strings.
+- Wired/continued template selection consistency for manual reminder sends.
+
+### 8) Tenant agreement document feature (Cloudinary)
+- Added agreement file support (PDF/DOC/DOCX) with Cloudinary raw uploads.
+- Added tenant document APIs:
+  - `POST /tenants/:id/agreements`
+  - `GET /tenants/:id/agreements`
+  - `DELETE /tenants/:id/agreements/:documentId`
+- Added DB migration:
+  - `backend/migrations/005_create_tenant_documents.sql`
+- Added Tenant Management upload UI and document listing/download.
+- Added Tenant Hub admin visibility + download links.
+
+### 9) Build/validation status
+- Backend syntax checks passed for updated controllers/middleware/routes.
+- Frontend production build passed after changes.
   }
 }, [location.state, setActiveConversation, activeConversation?.id]);
 ```
@@ -422,3 +482,36 @@ All SMS messages in the system are now also sent via WhatsApp (Meta Cloud API) i
 - New template fields supported in billing settings:
   - `whatsapp_billing_template_name`
   - `whatsapp_billing_fallback_template`
+
+## 15. SESSION SUMMARY (2026-02-27)
+
+### Expected Rent Consistency (Lease-Based)
+- Implemented lease-aware expected values with backend persistence:
+  - `month_count`
+  - `expected_amount` (lease total expected)
+  - `current_month_expected`
+- Values are recalculated on tenant create/update allocation updates to keep dashboard and database aligned.
+- Added migration:
+  - `backend/migrations/004_add_expected_fields_to_tenant_allocations.sql`
+
+### Tenant Agreements (Cloudinary + Downloadable)
+- Added tenant agreement document support (PDF/DOC/DOCX).
+- Cloudinary upload path uses raw resources for document formats.
+- Added document APIs:
+  - `POST /tenants/:id/agreements`
+  - `GET /tenants/:id/agreements`
+  - `DELETE /tenants/:id/agreements/:documentId`
+- Added migration:
+  - `backend/migrations/005_create_tenant_documents.sql`
+
+### Frontend Integration Completed
+- Tenant Management:
+  - upload agreement files during create/update
+  - display and download agreements in tenant details modal.
+- Tenant Hub (admin):
+  - display and download agreement files in tenant detail modal.
+- Payment history modal now shows `Current Month Expected` for clearer monthly view.
+
+### Validation
+- Backend syntax checks passed for changed files.
+- Frontend production build passed.
