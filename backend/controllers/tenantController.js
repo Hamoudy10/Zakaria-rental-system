@@ -887,31 +887,51 @@ const updateTenant = async (req, res) => {
       ],
     );
 
-    const normalizedUnitId =
-      typeof unit_id === "string" && unit_id.trim() === ""
+    const hasUnitId = Object.prototype.hasOwnProperty.call(req.body, "unit_id");
+    const hasLeaseStartDate = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "lease_start_date",
+    );
+    const hasLeaseEndDate = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "lease_end_date",
+    );
+    const hasMonthlyRent = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "monthly_rent",
+    );
+    const hasSecurityDeposit = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "security_deposit",
+    );
+
+    const normalizedUnitId = hasUnitId
+      ? typeof unit_id === "string" && unit_id.trim() === ""
         ? null
-        : (unit_id ?? null);
+        : unit_id
+      : undefined;
+    const normalizedLeaseStartDate = hasLeaseStartDate
+      ? lease_start_date === ""
+        ? null
+        : lease_start_date
+      : undefined;
     const normalizedLeaseEndDate =
-      lease_end_date === "" ? null : (lease_end_date ?? undefined);
+      hasLeaseEndDate ? (lease_end_date === "" ? null : lease_end_date) : undefined;
     const normalizedMonthlyRent =
-      monthly_rent === undefined ||
-      monthly_rent === null ||
-      monthly_rent === ""
+      !hasMonthlyRent || monthly_rent === null || monthly_rent === ""
         ? undefined
         : Number(monthly_rent);
     const normalizedSecurityDeposit =
-      security_deposit === undefined ||
-      security_deposit === null ||
-      security_deposit === ""
+      !hasSecurityDeposit || security_deposit === null || security_deposit === ""
         ? undefined
         : Number(security_deposit);
 
     const allocationFieldsProvided =
-      normalizedUnitId !== null ||
-      lease_start_date !== undefined ||
-      lease_end_date !== undefined ||
-      monthly_rent !== undefined ||
-      security_deposit !== undefined;
+      normalizedUnitId !== undefined ||
+      normalizedLeaseStartDate !== undefined ||
+      normalizedLeaseEndDate !== undefined ||
+      normalizedMonthlyRent !== undefined ||
+      normalizedSecurityDeposit !== undefined;
 
     if (allocationFieldsProvided) {
       const activeAllocationQuery = await client.query(
@@ -936,7 +956,10 @@ const updateTenant = async (req, res) => {
         });
       }
 
-      const targetUnitId = normalizedUnitId || activeAllocation?.unit_id;
+      const targetUnitId =
+        normalizedUnitId !== undefined
+          ? normalizedUnitId
+          : activeAllocation?.unit_id;
 
       if (!targetUnitId) {
         await client.query("ROLLBACK");
@@ -994,7 +1017,9 @@ const updateTenant = async (req, res) => {
       }
 
       const finalLeaseStartDate =
-        lease_start_date || activeAllocation?.lease_start_date;
+        normalizedLeaseStartDate !== undefined
+          ? normalizedLeaseStartDate
+          : activeAllocation?.lease_start_date;
       const finalLeaseEndDate =
         normalizedLeaseEndDate !== undefined
           ? normalizedLeaseEndDate
@@ -1244,22 +1269,28 @@ const deleteTenant = async (req, res) => {
 const getAvailableUnits = async (req, res) => {
   try {
     const { tenant_id } = req.query; // Optional: get tenant ID if editing
-    const agentId = req.user.id;
-
+    const params = [];
     let query = `
       SELECT pu.*, p.name as property_name, p.property_code
       FROM property_units pu
       JOIN properties p ON pu.property_id = p.id
-      WHERE pu.is_active = true 
-      AND p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $1 AND is_active = true)`;
+      WHERE pu.is_active = true`;
 
-    const params = [agentId];
+    if (req.user.role === "agent") {
+      query += `
+      AND p.id IN (
+        SELECT property_id
+        FROM agent_property_assignments
+        WHERE agent_id = $1 AND is_active = true
+      )`;
+      params.push(req.user.id);
+    }
 
     if (tenant_id) {
       // When editing a tenant, include their current unit even if occupied
       query += ` AND (pu.is_occupied = false OR pu.id IN (
-        SELECT unit_id FROM tenant_allocations 
-        WHERE tenant_id = $2 AND is_active = true
+        SELECT unit_id FROM tenant_allocations
+        WHERE tenant_id = $${params.length + 1} AND is_active = true
       ))`;
       params.push(tenant_id);
     } else {

@@ -112,7 +112,7 @@ const TenantManagement = () => {
   };
   // Fetch available units
   const fetchAvailableUnits = useCallback(
-    async (currentUnitId = null) => {
+    async (editingTenantId = null, currentUnitId = null) => {
       try {
         console.log(
           "🔍 Fetching available units...",
@@ -123,7 +123,7 @@ const TenantManagement = () => {
 
         if (user?.role === "admin") {
           const response = await API.tenants.getAvailableUnits(
-            currentUnitId ? { current_unit_id: currentUnitId } : {},
+            editingTenantId ? { tenant_id: editingTenantId } : {},
           );
           if (response.data.success) {
             allUnits = response.data.data || [];
@@ -395,7 +395,7 @@ const TenantManagement = () => {
     setEditingTenant(tenant);
     const currentUnitId =
       tenant.unit_id || tenant.current_allocation?.unit_id || "";
-    fetchAvailableUnits(currentUnitId);
+    fetchAvailableUnits(tenant.id, currentUnitId);
     setFormData({
       national_id: tenant.national_id || "",
       first_name: tenant.first_name || "",
