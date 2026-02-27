@@ -349,6 +349,7 @@ const TenantManagement = () => {
       let response;
       const formattedData = {
         ...formData,
+        email: formData.email?.trim() ? formData.email.trim() : null,
         phone_number: formatPhoneForBackend(formData.phone_number),
         emergency_contact_phone: formData.emergency_contact_phone
           ? formatPhoneForBackend(formData.emergency_contact_phone)
