@@ -1613,7 +1613,15 @@ const TenantHistoryModal = ({
             <div className="text-center py-10 text-red-500">{error}</div>
           ) : (
             <div className="space-y-6">
-              <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl">
+                  <p className="text-xs font-bold text-indigo-400 uppercase mb-1">
+                    Current Month Expected
+                  </p>
+                  <p className="text-xl font-black text-indigo-700">
+                    {formatCurrency(history.summary?.currentMonthExpected)}
+                  </p>
+                </div>
                 <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl">
                   <p className="text-xs font-bold text-blue-400 uppercase mb-1">
                     Total Expected

@@ -4,7 +4,7 @@ import { API } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useProperty } from "../context/PropertyContext";
 import jsPDF from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 const TenantManagement = () => {
   const { user } = useAuth();
   const { properties: assignedProperties, loading: propertiesLoading } =
@@ -43,6 +43,7 @@ const TenantManagement = () => {
   });
   const [idFrontImage, setIdFrontImage] = useState(null);
   const [idBackImage, setIdBackImage] = useState(null);
+  const [agreementFiles, setAgreementFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [formErrors, setFormErrors] = useState({});
   // Fetch tenants list
@@ -279,6 +280,15 @@ const TenantManagement = () => {
       setUploading(false);
     }
   };
+  const handleAgreementUpload = async (tenantId, files) => {
+    if (!files || files.length === 0) return;
+    for (const file of files) {
+      const agreementFormData = new FormData();
+      agreementFormData.append("agreement_file", file);
+      agreementFormData.append("file_name", file.name);
+      await API.tenants.uploadTenantAgreement(tenantId, agreementFormData);
+    }
+  };
   // Updated validation to support 01xxxxxxxx format
   const validateForm = () => {
     const errors = {};
@@ -354,10 +364,16 @@ const TenantManagement = () => {
         if (idFrontImage || idBackImage) {
           await handleImageUpload(editingTenant.id);
         }
+        if (agreementFiles.length > 0) {
+          await handleAgreementUpload(editingTenant.id, agreementFiles);
+        }
       } else {
         response = await API.tenants.createTenant(formattedData);
         if ((idFrontImage || idBackImage) && response.data.data?.id) {
           await handleImageUpload(response.data.data.id);
+        }
+        if (agreementFiles.length > 0 && response.data.data?.id) {
+          await handleAgreementUpload(response.data.data.id, agreementFiles);
         }
       }
       if (response.data.success) {
@@ -430,6 +446,7 @@ const TenantManagement = () => {
     });
     setIdFrontImage(null);
     setIdBackImage(null);
+    setAgreementFiles([]);
     setEditingTenant(null);
     setShowForm(false);
     setError(null);
@@ -449,6 +466,12 @@ const TenantManagement = () => {
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
     return new Date(dateString).toLocaleDateString("en-KE");
+  };
+  const formatFileSize = (bytes) => {
+    const size = Number(bytes) || 0;
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   };
   // Load image as data URL for PDF
   const loadImageAsDataURL = async (url) => {
@@ -570,14 +593,14 @@ const TenantManagement = () => {
         doc.setFontSize(12);
         doc.text("Recent Payment History", 14, y);
         y += 4;
-        doc.autoTable({
+        autoTable(doc, {
           startY: y,
           head: [["Month", "Amount", "Status", "Date"]],
           body: tableRows,
           styles: { fontSize: 8 },
           theme: "grid",
         });
-        y = doc.lastAutoTable.finalY + 8;
+        y = (doc.lastAutoTable?.finalY || y) + 8;
       }
       doc.setFontSize(12);
       doc.text("ID Documents", 14, y);
@@ -1059,6 +1082,40 @@ const TenantManagement = () => {
                     and back)
                   </p>
                 </div>
+                {/* Agreement Files Upload */}
+                <div className="border-t pt-4">
+                  <h4 className="font-medium text-gray-900 mb-3">
+                    Tenant Agreement Files
+                  </h4>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Upload Agreements (PDF, DOC, DOCX)
+                    </label>
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      multiple
+                      onChange={(e) =>
+                        setAgreementFiles(
+                          e.target.files ? Array.from(e.target.files) : [],
+                        )
+                      }
+                      className="w-full border rounded-lg px-3 py-2"
+                    />
+                    {agreementFiles.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {agreementFiles.map((file, index) => (
+                          <p key={`${file.name}-${index}`} className="text-xs text-green-600">
+                            Selected: {file.name}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-sm text-gray-500 mt-2">
+                      Files are stored in Cloudinary and can be downloaded from Tenant Management and Tenant Hub.
+                    </p>
+                  </div>
+                </div>
                 {/* Form Actions */}
                 <div className="flex justify-end gap-3 pt-4 border-t">
                   <button
@@ -1391,6 +1448,43 @@ const TenantManagement = () => {
                     )}
                   </div>
                 </div>
+              </div>
+              {/* Agreement Documents */}
+              <div className="mb-6">
+                <h4 className="text-lg font-semibold text-gray-800 mb-4">
+                  Agreement Documents
+                </h4>
+                {Array.isArray(selectedTenantData.agreement_documents) &&
+                selectedTenantData.agreement_documents.length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedTenantData.agreement_documents.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className="flex items-center justify-between border rounded-lg p-3 bg-gray-50"
+                      >
+                        <div>
+                          <p className="font-medium text-gray-900">{doc.file_name}</p>
+                          <p className="text-xs text-gray-500">
+                            {doc.file_type || "Unknown type"} • {formatFileSize(doc.file_size)} • {formatDate(doc.created_at)}
+                          </p>
+                        </div>
+                        <a
+                          href={doc.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          download
+                          className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                        >
+                          Download
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="border rounded-lg p-6 bg-gray-50 text-center text-gray-500">
+                    No agreement documents uploaded
+                  </div>
+                )}
               </div>
               {/* Modal Footer */}
               <div className="flex justify-end gap-3 pt-4 border-t">

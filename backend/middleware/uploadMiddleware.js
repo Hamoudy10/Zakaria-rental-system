@@ -136,6 +136,26 @@ const unitImageStorage = new CloudinaryStorage({
 });
 
 // ============================================
+// 6B. CONFIGURE CLOUDINARY STORAGE FOR TENANT AGREEMENTS
+// ============================================
+const tenantAgreementStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    const tenantId = req.params.id || 'unknown';
+    console.log(`📤 Uploading tenant agreement for tenant:`, tenantId);
+    console.log(`   Original name: ${file.originalname}`);
+    console.log(`   MIME type: ${file.mimetype}`);
+
+    return {
+      folder: `zakaria_rental/tenant_agreements/${tenantId}`,
+      public_id: `agreement-${tenantId}-${Date.now()}`,
+      resource_type: 'raw',
+      format: file.originalname.split('.').pop()
+    };
+  },
+});
+
+// ============================================
 // 7. FILE FILTER (Validate file types)
 // ============================================
 const imageFileFilter = (req, file, cb) => {
@@ -147,6 +167,22 @@ const imageFileFilter = (req, file, cb) => {
   } else {
     console.log(`❌ File type rejected: ${file.mimetype}`);
     cb(new Error(`Invalid file type: ${file.mimetype}. Only JPEG, PNG, and WebP are allowed.`), false);
+  }
+};
+
+const agreementFileFilter = (req, file, cb) => {
+  const allowedMimeTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ];
+
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    console.log(`✅ Agreement file type accepted: ${file.mimetype}`);
+    cb(null, true);
+  } else {
+    console.log(`❌ Agreement file type rejected: ${file.mimetype}`);
+    cb(new Error(`Invalid file type: ${file.mimetype}. Only PDF, DOC, and DOCX are allowed.`), false);
   }
 };
 
@@ -201,6 +237,16 @@ const unitImageUpload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max per file
     files: 20 // Allow up to 20 images at once
+  }
+});
+
+// For tenant agreement files
+const tenantAgreementUpload = multer({
+  storage: tenantAgreementStorage,
+  fileFilter: agreementFileFilter,
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB max per file
+    files: 1
   }
 });
 
@@ -417,6 +463,48 @@ const uploadUnitImages = (req, res, next) => {
 };
 
 // ============================================
+// 13B. MIDDLEWARE FOR TENANT AGREEMENT DOCUMENT
+// ============================================
+const uploadTenantAgreement = (req, res, next) => {
+  const uploadSingle = tenantAgreementUpload.single('agreement_file');
+
+  uploadSingle(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      console.error('❌ Multer Error:', err);
+
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          success: false,
+          message: 'File too large. Maximum size is 15MB.',
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: `Upload error: ${err.message}`
+      });
+    } else if (err) {
+      console.error('❌ Upload Error:', err);
+      return res.status(400).json({
+        success: false,
+        message: err.message || 'Failed to upload agreement file'
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No agreement file received'
+      });
+    }
+
+    console.log('✅ Tenant agreement upload middleware completed successfully');
+    console.log('📁 Uploaded agreement:', req.file.path);
+    next();
+  });
+};
+
+// ============================================
 // 14. UTILITY: DELETE IMAGE FROM CLOUDINARY
 // ============================================
 const deleteCloudinaryImage = async (imageUrl) => {
@@ -448,5 +536,6 @@ module.exports = {
   uploadCompanyLogo,
   uploadPropertyImages,
   uploadUnitImages,
+  uploadTenantAgreement,
   deleteCloudinaryImage 
 };

@@ -206,6 +206,12 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
   const daysUntilExpiry = leaseEndDate ? Math.ceil((leaseEndDate - new Date()) / (1000 * 60 * 60 * 24)) : null;
   const isExpiringSoon = daysUntilExpiry !== null && daysUntilExpiry <= LEASE_WARNING_DAYS && daysUntilExpiry > 0;
   const isExpired = daysUntilExpiry !== null && daysUntilExpiry <= 0;
+  const formatFileSize = (bytes) => {
+    const size = Number(bytes) || 0;
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -402,6 +408,40 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
                     </span>
                   )}
                 </div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-4 md:col-span-2">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                    <FileText className="w-4 h-4 text-blue-600" />
+                  </div>
+                  Agreement Files
+                </h3>
+                {Array.isArray(tenant.agreement_documents) && tenant.agreement_documents.length > 0 ? (
+                  <div className="space-y-2">
+                    {tenant.agreement_documents.map((doc) => (
+                      <a
+                        key={doc.id}
+                        href={doc.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download
+                        className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{doc.file_name}</p>
+                          <p className="text-xs text-gray-500">
+                            {doc.file_type || 'Unknown type'} • {formatFileSize(doc.file_size)}
+                          </p>
+                        </div>
+                        <Download className="w-4 h-4 text-blue-600" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 bg-gray-100 rounded-lg text-sm text-gray-500">
+                    No agreement files uploaded
+                  </div>
+                )}
               </div>
             </div>
           </div>
