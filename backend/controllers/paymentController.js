@@ -1282,6 +1282,29 @@ const getTenantPaymentHistory = async (req, res) => {
   try {
     const { tenantId } = req.params;
 
+    const parseDateOnly = (value) => {
+      if (!value) return null;
+
+      if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) return null;
+        return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+      }
+
+      if (typeof value === "string") {
+        const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (match) {
+          const year = Number(match[1]);
+          const monthIndex = Number(match[2]) - 1;
+          const day = Number(match[3]);
+          return new Date(year, monthIndex, day);
+        }
+      }
+
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+    };
+
     const paymentsQuery = await pool.query(
       `SELECT rp.*, p.name as property_name, pu.unit_code 
        FROM rent_payments rp
@@ -1304,9 +1327,9 @@ const getTenantPaymentHistory = async (req, res) => {
     const nowMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     allocationsQuery.rows.forEach((alloc) => {
-      const start = new Date(alloc.lease_start_date);
-      const end = alloc.lease_end_date ? new Date(alloc.lease_end_date) : now;
-      if (end < start) return;
+      const start = parseDateOnly(alloc.lease_start_date);
+      const end = alloc.lease_end_date ? parseDateOnly(alloc.lease_end_date) : now;
+      if (!start || !end || end < start) return;
 
       let months = (end.getFullYear() - start.getFullYear()) * 12;
       months -= start.getMonth();
