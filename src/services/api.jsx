@@ -851,7 +851,7 @@ export const tenantAPI = {
   },
   
   // Get available units for tenant allocation
-  getAvailableUnits: () => api.get('/tenants/available-units'),
+  getAvailableUnits: (params = {}) => api.get('/tenants/available-units', { params }),
   
   // Search tenants
   searchTenants: (searchTerm) => api.get(`/tenants/search?q=${encodeURIComponent(searchTerm)}`),
