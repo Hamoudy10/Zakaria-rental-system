@@ -150,8 +150,7 @@ const tenantAgreementStorage = new CloudinaryStorage({
       folder: `zakaria_rental/tenant_agreements/${tenantId}`,
       public_id: `agreement-${tenantId}-${Date.now()}`,
       resource_type: 'raw',
-      type: 'upload',
-      access_mode: 'public',
+      type: 'authenticated',
       format: file.originalname.split('.').pop()
     };
   },

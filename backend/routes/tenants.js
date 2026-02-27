@@ -32,6 +32,7 @@ router.post('/:id/upload-id', uploadIDImages, tenantController.uploadIDImages);
 // Tenant agreement files
 router.post('/:id/agreements', uploadTenantAgreement, tenantController.uploadTenantAgreement);
 router.get('/:id/agreements', tenantController.getTenantAgreements);
+router.get('/:id/agreements/:documentId/download', tenantController.getTenantAgreementDownloadUrl);
 router.delete('/:id/agreements/:documentId', tenantController.deleteTenantAgreement);
 
 // Route to get tenant's ID images
