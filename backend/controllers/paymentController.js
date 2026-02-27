@@ -1299,7 +1299,9 @@ const getTenantPaymentHistory = async (req, res) => {
     );
 
     let totalExpected = 0;
+    let currentMonthExpected = 0;
     const now = new Date();
+    const nowMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     allocationsQuery.rows.forEach((alloc) => {
       const start = new Date(alloc.lease_start_date);
@@ -1312,6 +1314,19 @@ const getTenantPaymentHistory = async (req, res) => {
       const monthCount = months < 0 ? 0 : months + 1;
 
       totalExpected += monthCount * parseFloat(alloc.monthly_rent);
+
+      const allocationStartMonth = new Date(
+        start.getFullYear(),
+        start.getMonth(),
+        1,
+      );
+      const allocationEndMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+      if (
+        nowMonthStart >= allocationStartMonth &&
+        nowMonthStart <= allocationEndMonth
+      ) {
+        currentMonthExpected += parseFloat(alloc.monthly_rent);
+      }
     });
 
     const totalPaid = paymentsQuery.rows
@@ -1326,6 +1341,7 @@ const getTenantPaymentHistory = async (req, res) => {
         payments: paymentsQuery.rows,
         summary: {
           totalExpected,
+          currentMonthExpected,
           totalPaid,
           balance,
           arrears: balance > 0 ? balance : 0,
@@ -2951,7 +2967,7 @@ const getTenantPaymentStatus = async (req, res) => {
         t.phone_number,
         p.id as property_id, p.name as property_name,
         pu.id as unit_id, pu.unit_code,
-        ta.monthly_rent, ta.arrears_balance as arrears,
+        ta.monthly_rent, ta.arrears_balance as arrears, ta.expected_amount,
         LEAST(GREATEST(COALESCE(ta.rent_due_day, 1), 1), 28) as rent_due_day,
         MAKE_DATE(
           EXTRACT(YEAR FROM $1::date)::int,
@@ -3065,6 +3081,7 @@ const getTenantPaymentStatus = async (req, res) => {
       const waterPaid = parseFloat(row.water_paid) || 0;
       const arrears = parseFloat(row.arrears) || 0;
       const advanceAmount = parseFloat(row.advance_amount) || 0;
+      const totalLeaseExpected = parseFloat(row.expected_amount) || 0;
 
       const rawRentDue = Math.max(0, monthlyRent - rentPaid);
       const rawWaterDue = Math.max(0, waterBill - waterPaid);
@@ -3100,6 +3117,8 @@ const getTenantPaymentStatus = async (req, res) => {
         unit_id: row.unit_id,
         unit_code: row.unit_code,
         monthly_rent: monthlyRent,
+        current_month_expected: monthlyRent,
+        total_expected: totalLeaseExpected,
         rent_due_day: Number(row.rent_due_day) || 1,
         due_date: row.due_date,
         rent_paid: rentPaid,
@@ -3132,6 +3151,11 @@ const getTenantPaymentStatus = async (req, res) => {
         (sum, t) => sum + t.monthly_rent + t.water_bill + t.arrears,
         0,
       ),
+      current_month_expected: tenants.reduce(
+        (sum, t) => sum + t.current_month_expected,
+        0,
+      ),
+      lease_total_expected: tenants.reduce((sum, t) => sum + t.total_expected, 0),
       total_collected: tenants.reduce(
         (sum, t) => sum + t.rent_paid + t.water_paid,
         0,

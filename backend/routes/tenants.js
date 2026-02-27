@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const tenantController = require('../controllers/tenantController');
 const { protect, requireRole } = require('../middleware/authMiddleware');
-const { uploadIDImages } = require('../middleware/uploadMiddleware');
+const { uploadIDImages, uploadTenantAgreement } = require('../middleware/uploadMiddleware');
 
 // All routes require authentication
 router.use(protect);
@@ -28,6 +28,11 @@ router.delete('/:id', requireRole(['admin']), tenantController.deleteTenant);
 
 // ✅ SINGLE ROUTE for ID image upload (using multer middleware)
 router.post('/:id/upload-id', uploadIDImages, tenantController.uploadIDImages);
+
+// Tenant agreement files
+router.post('/:id/agreements', uploadTenantAgreement, tenantController.uploadTenantAgreement);
+router.get('/:id/agreements', tenantController.getTenantAgreements);
+router.delete('/:id/agreements/:documentId', tenantController.deleteTenantAgreement);
 
 // Route to get tenant's ID images
 router.get('/:id/id-images', async (req, res) => {

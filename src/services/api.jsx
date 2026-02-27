@@ -873,6 +873,21 @@ export const tenantAPI = {
   
   // Delete specific ID image
   deleteTenantIDImage: (id, imageType) => api.delete(`/tenants/${id}/id-images/${imageType}`),
+
+  // Upload tenant agreement file (pdf/doc/docx)
+  uploadTenantAgreement: (id, formData) => {
+    return api.post(`/tenants/${id}/agreements`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+  },
+
+  // Get tenant agreement files
+  getTenantAgreements: (id) => api.get(`/tenants/${id}/agreements`),
+
+  // Delete tenant agreement file
+  deleteTenantAgreement: (id, documentId) => api.delete(`/tenants/${id}/agreements/${documentId}`),
   
   // Helper function to create form data for upload
   createImageFormData: (frontImageFile, backImageFile) => {

@@ -2,6 +2,7 @@ const pool = require("../config/database");
 const fs = require("fs");
 const NotificationService = require("../services/notificationService");
 const smsService = require("../services/smsService");
+const { deleteCloudinaryImage } = require("../middleware/uploadMiddleware");
 
 // Format phone number to 254 format - UPDATED to support 01xxxxxxxx (new Safaricom)
 const formatPhoneNumber = (phone) => {
@@ -41,6 +42,55 @@ const formatPhoneNumber = (phone) => {
   }
 };
 
+const roundToTwo = (value) => {
+  const num = Number(value) || 0;
+  return Math.round(num * 100) / 100;
+};
+
+const calculateLeaseExpectedMetrics = ({
+  leaseStartDate,
+  leaseEndDate,
+  monthlyRent,
+  referenceDate = new Date(),
+}) => {
+  const parsedMonthlyRent = Number(monthlyRent) || 0;
+  const start = leaseStartDate ? new Date(leaseStartDate) : null;
+
+  if (!start || Number.isNaN(start.getTime()) || parsedMonthlyRent <= 0) {
+    return { monthCount: 0, totalExpected: 0, currentMonthExpected: 0 };
+  }
+
+  const end = leaseEndDate ? new Date(leaseEndDate) : new Date(referenceDate);
+
+  if (!end || Number.isNaN(end.getTime()) || end < start) {
+    return { monthCount: 0, totalExpected: 0, currentMonthExpected: 0 };
+  }
+
+  const monthCount =
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth()) +
+    1;
+
+  const currentMonthStart = new Date(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    1,
+  );
+  const leaseStartMonth = new Date(start.getFullYear(), start.getMonth(), 1);
+  const leaseEndMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+
+  const isCurrentMonthWithinLease =
+    currentMonthStart >= leaseStartMonth && currentMonthStart <= leaseEndMonth;
+
+  return {
+    monthCount: Math.max(0, monthCount),
+    totalExpected: roundToTwo(Math.max(0, monthCount) * parsedMonthlyRent),
+    currentMonthExpected: isCurrentMonthWithinLease
+      ? roundToTwo(parsedMonthlyRent)
+      : 0,
+  };
+};
+
 // Get all tenants with agent data isolation
 const getTenants = async (req, res) => {
   try {
@@ -57,11 +107,33 @@ const getTenants = async (req, res) => {
         ta.lease_start_date,
         ta.lease_end_date,
         ta.arrears_balance,
+        ta.month_count,
+        ta.expected_amount,
+        ta.current_month_expected,
         pu.unit_code,
         pu.unit_number,
         p.name as property_name,
         p.property_code,
-        u.first_name as created_by_name
+        u.first_name as created_by_name,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', td.id,
+                'file_name', td.file_name,
+                'file_url', td.file_url,
+                'file_type', td.file_type,
+                'file_size', td.file_size,
+                'created_at', td.created_at,
+                'uploaded_by', td.uploaded_by
+              )
+              ORDER BY td.created_at DESC
+            )
+            FROM tenant_documents td
+            WHERE td.tenant_id = t.id AND td.is_active = true
+          ),
+          '[]'::json
+        ) as agreement_documents
       FROM tenants t
       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
@@ -114,6 +186,21 @@ const getTenants = async (req, res) => {
 
     const result = await pool.query(query, queryParams);
     const countResult = await pool.query(countQuery, countParams);
+    const enrichedTenants = result.rows.map((row) => {
+      const metrics = calculateLeaseExpectedMetrics({
+        leaseStartDate: row.lease_start_date,
+        leaseEndDate: row.lease_end_date,
+        monthlyRent: row.monthly_rent,
+      });
+
+      return {
+        ...row,
+        month_count: metrics.monthCount,
+        total_expected: metrics.totalExpected,
+        current_month_expected: metrics.currentMonthExpected,
+        stored_expected_amount: roundToTwo(row.expected_amount),
+      };
+    });
 
     const totalCount = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(totalCount / limit);
@@ -121,7 +208,7 @@ const getTenants = async (req, res) => {
     res.json({
       success: true,
       data: {
-        tenants: result.rows,
+        tenants: enrichedTenants,
         pagination: {
           currentPage: parseInt(page),
           totalPages,
@@ -158,7 +245,29 @@ const getTenant = async (req, res) => {
         ta.lease_end_date,
         ta.monthly_rent,
         ta.security_deposit,
-        u.first_name as created_by_name
+        ta.month_count,
+        ta.expected_amount,
+        ta.current_month_expected,
+        u.first_name as created_by_name,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', td.id,
+                'file_name', td.file_name,
+                'file_url', td.file_url,
+                'file_type', td.file_type,
+                'file_size', td.file_size,
+                'created_at', td.created_at,
+                'uploaded_by', td.uploaded_by
+              )
+              ORDER BY td.created_at DESC
+            )
+            FROM tenant_documents td
+            WHERE td.tenant_id = t.id AND td.is_active = true
+          ),
+          '[]'::json
+        ) as agreement_documents
       FROM tenants t
       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
@@ -200,10 +309,20 @@ const getTenant = async (req, res) => {
     `;
     const paymentsResult = await pool.query(paymentsQuery, [id]);
 
+    const metrics = calculateLeaseExpectedMetrics({
+      leaseStartDate: rows[0].lease_start_date,
+      leaseEndDate: rows[0].lease_end_date,
+      monthlyRent: rows[0].monthly_rent,
+    });
+
     res.json({
       success: true,
       data: {
         ...rows[0],
+        month_count: metrics.monthCount,
+        total_expected: metrics.totalExpected,
+        current_month_expected: metrics.currentMonthExpected,
+        stored_expected_amount: roundToTwo(rows[0].expected_amount),
         paymentHistory: paymentsResult.rows,
       },
     });
@@ -372,11 +491,20 @@ const createTenant = async (req, res) => {
       unitCode = unitCheck.rows[0].unit_code;
       propertyName = unitCheck.rows[0].property_name;
 
+      const allocationMetrics = calculateLeaseExpectedMetrics({
+        leaseStartDate: lease_start_date,
+        leaseEndDate: lease_end_date,
+        monthlyRent: monthly_rent,
+      });
+
       // Create tenant allocation
       await client.query(
         `INSERT INTO tenant_allocations 
-          (tenant_id, unit_id, lease_start_date, lease_end_date, monthly_rent, security_deposit, allocated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          (
+            tenant_id, unit_id, lease_start_date, lease_end_date, monthly_rent, security_deposit, allocated_by,
+            month_count, expected_amount, current_month_expected
+          )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           tenantResult.rows[0].id,
           unit_id,
@@ -385,6 +513,9 @@ const createTenant = async (req, res) => {
           monthly_rent,
           security_deposit || 0,
           req.user.id,
+          allocationMetrics.monthCount,
+          allocationMetrics.totalExpected,
+          allocationMetrics.currentMonthExpected,
         ],
       );
 
@@ -517,6 +648,11 @@ const updateTenant = async (req, res) => {
       emergency_contact_name,
       emergency_contact_phone,
       is_active,
+      unit_id,
+      lease_start_date,
+      lease_end_date,
+      monthly_rent,
+      security_deposit,
     } = req.body;
 
     // Check if tenant exists with agent property validation
@@ -547,6 +683,7 @@ const updateTenant = async (req, res) => {
     const tenantCheck = await client.query(tenantCheckQuery, tenantCheckParams);
 
     if (tenantCheck.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(req.user.role === "agent" ? 403 : 404).json({
         success: false,
         message:
@@ -564,6 +701,7 @@ const updateTenant = async (req, res) => {
       );
 
       if (existingNationalId.rows.length > 0) {
+        await client.query("ROLLBACK");
         return res.status(400).json({
           success: false,
           message: "Another tenant with this national ID already exists",
@@ -580,6 +718,7 @@ const updateTenant = async (req, res) => {
       );
 
       if (existingPhone.rows.length > 0) {
+        await client.query("ROLLBACK");
         return res.status(400).json({
           success: false,
           message: "Another tenant with this phone number already exists",
@@ -620,6 +759,238 @@ const updateTenant = async (req, res) => {
         id,
       ],
     );
+
+    const normalizedUnitId =
+      typeof unit_id === "string" && unit_id.trim() === ""
+        ? null
+        : (unit_id ?? null);
+    const normalizedLeaseEndDate =
+      lease_end_date === "" ? null : (lease_end_date ?? undefined);
+    const normalizedMonthlyRent =
+      monthly_rent === undefined ||
+      monthly_rent === null ||
+      monthly_rent === ""
+        ? undefined
+        : Number(monthly_rent);
+    const normalizedSecurityDeposit =
+      security_deposit === undefined ||
+      security_deposit === null ||
+      security_deposit === ""
+        ? undefined
+        : Number(security_deposit);
+
+    const allocationFieldsProvided =
+      normalizedUnitId !== null ||
+      lease_start_date !== undefined ||
+      lease_end_date !== undefined ||
+      monthly_rent !== undefined ||
+      security_deposit !== undefined;
+
+    if (allocationFieldsProvided) {
+      const activeAllocationQuery = await client.query(
+        `SELECT ta.id, ta.unit_id, ta.lease_start_date, ta.lease_end_date, ta.monthly_rent, ta.security_deposit,
+                pu.property_id
+         FROM tenant_allocations ta
+         LEFT JOIN property_units pu ON ta.unit_id = pu.id
+         WHERE ta.tenant_id = $1 AND ta.is_active = true
+         ORDER BY ta.allocation_date DESC
+         LIMIT 1`,
+        [id],
+      );
+
+      const activeAllocation = activeAllocationQuery.rows[0];
+
+      if (!activeAllocation && !normalizedUnitId) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message:
+            "No active allocation found. Provide unit_id to create an allocation.",
+        });
+      }
+
+      const targetUnitId = normalizedUnitId || activeAllocation?.unit_id;
+
+      if (!targetUnitId) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "Unit allocation is required",
+        });
+      }
+
+      let targetUnitPropertyId = activeAllocation?.property_id || null;
+      let unitChanged = false;
+
+      if (!activeAllocation || targetUnitId !== activeAllocation.unit_id) {
+        let unitCheckQuery = `
+          SELECT pu.id, pu.is_occupied, pu.property_id
+          FROM property_units pu
+          WHERE pu.id = $1
+        `;
+        const unitCheckParams = [targetUnitId];
+
+        if (req.user.role === "agent") {
+          unitCheckQuery += `
+            AND EXISTS (
+              SELECT 1 FROM agent_property_assignments apa
+              WHERE apa.property_id = pu.property_id
+              AND apa.agent_id = $2
+              AND apa.is_active = true
+            )
+          `;
+          unitCheckParams.push(req.user.id);
+        }
+
+        const unitCheck = await client.query(unitCheckQuery, unitCheckParams);
+        if (unitCheck.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(req.user.role === "agent" ? 403 : 404).json({
+            success: false,
+            message:
+              req.user.role === "agent"
+                ? "Unit not found or you are not assigned to this property"
+                : "Unit not found",
+          });
+        }
+
+        if (unitCheck.rows[0].is_occupied) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            success: false,
+            message: "Selected unit is already occupied",
+          });
+        }
+
+        targetUnitPropertyId = unitCheck.rows[0].property_id;
+        unitChanged = !!activeAllocation;
+      }
+
+      const finalLeaseStartDate =
+        lease_start_date || activeAllocation?.lease_start_date;
+      const finalLeaseEndDate =
+        normalizedLeaseEndDate !== undefined
+          ? normalizedLeaseEndDate
+          : (activeAllocation?.lease_end_date ?? null);
+      const finalMonthlyRent =
+        normalizedMonthlyRent ?? Number(activeAllocation?.monthly_rent);
+      const finalSecurityDeposit =
+        normalizedSecurityDeposit ?? Number(activeAllocation?.security_deposit || 0);
+
+      if (!finalLeaseStartDate || !finalMonthlyRent) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message:
+            "Allocation updates require lease_start_date and monthly_rent",
+        });
+      }
+
+      const allocationMetrics = calculateLeaseExpectedMetrics({
+        leaseStartDate: finalLeaseStartDate,
+        leaseEndDate: finalLeaseEndDate,
+        monthlyRent: finalMonthlyRent,
+      });
+
+      if (activeAllocation) {
+        if (unitChanged) {
+          await client.query(
+            "UPDATE property_units SET is_occupied = false WHERE id = $1",
+            [activeAllocation.unit_id],
+          );
+          if (activeAllocation.property_id) {
+            await client.query(
+              `UPDATE properties
+               SET available_units = (
+                 SELECT COUNT(*) FROM property_units
+                 WHERE property_id = $1 AND is_active = true AND is_occupied = false
+               )
+               WHERE id = $1`,
+              [activeAllocation.property_id],
+            );
+          }
+
+          await client.query(
+            "UPDATE property_units SET is_occupied = true WHERE id = $1",
+            [targetUnitId],
+          );
+          if (targetUnitPropertyId) {
+            await client.query(
+              `UPDATE properties
+               SET available_units = (
+                 SELECT COUNT(*) FROM property_units
+                 WHERE property_id = $1 AND is_active = true AND is_occupied = false
+               )
+               WHERE id = $1`,
+              [targetUnitPropertyId],
+            );
+          }
+        }
+
+        await client.query(
+          `UPDATE tenant_allocations
+           SET unit_id = $1,
+               lease_start_date = $2,
+               lease_end_date = $3,
+               monthly_rent = $4,
+               security_deposit = $5,
+               month_count = $6,
+               expected_amount = $7,
+               current_month_expected = $8,
+               updated_at = NOW()
+           WHERE id = $9`,
+          [
+            targetUnitId,
+            finalLeaseStartDate,
+            finalLeaseEndDate,
+            finalMonthlyRent,
+            finalSecurityDeposit,
+            allocationMetrics.monthCount,
+            allocationMetrics.totalExpected,
+            allocationMetrics.currentMonthExpected,
+            activeAllocation.id,
+          ],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO tenant_allocations
+           (
+             tenant_id, unit_id, lease_start_date, lease_end_date, monthly_rent, security_deposit,
+             allocated_by, month_count, expected_amount, current_month_expected
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            id,
+            targetUnitId,
+            finalLeaseStartDate,
+            finalLeaseEndDate,
+            finalMonthlyRent,
+            finalSecurityDeposit,
+            req.user.id,
+            allocationMetrics.monthCount,
+            allocationMetrics.totalExpected,
+            allocationMetrics.currentMonthExpected,
+          ],
+        );
+
+        await client.query(
+          "UPDATE property_units SET is_occupied = true WHERE id = $1",
+          [targetUnitId],
+        );
+
+        if (targetUnitPropertyId) {
+          await client.query(
+            `UPDATE properties
+             SET available_units = (
+               SELECT COUNT(*) FROM property_units
+               WHERE property_id = $1 AND is_active = true AND is_occupied = false
+             )
+             WHERE id = $1`,
+            [targetUnitPropertyId],
+          );
+        }
+      }
+    }
 
     await client.query("COMMIT");
 
@@ -903,6 +1274,201 @@ const uploadIDImages = async (req, res) => {
   }
 };
 
+const uploadTenantAgreement = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Validate tenant access
+    let accessQuery = `
+      SELECT t.id, p.id as property_id
+      FROM tenants t
+      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE t.id = $1
+    `;
+    const accessParams = [id];
+    if (req.user.role === "agent") {
+      accessQuery += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa
+          WHERE apa.property_id = p.id
+          AND apa.agent_id = $2
+          AND apa.is_active = true
+        )
+      `;
+      accessParams.push(req.user.id);
+    }
+
+    const accessResult = await pool.query(accessQuery, accessParams);
+    if (accessResult.rows.length === 0) {
+      return res.status(req.user.role === "agent" ? 403 : 404).json({
+        success: false,
+        message:
+          req.user.role === "agent"
+            ? "Tenant not found or you are not assigned to this property"
+            : "Tenant not found",
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No agreement file uploaded",
+      });
+    }
+
+    const fileName = req.body?.file_name || req.file.originalname || "Agreement";
+    const fileType = req.file.mimetype || "application/octet-stream";
+    const fileSize = Number(req.file.size || 0);
+    const fileUrl = req.file.path;
+
+    const result = await pool.query(
+      `INSERT INTO tenant_documents
+        (tenant_id, file_name, file_url, file_type, file_size, uploaded_by, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
+       RETURNING *`,
+      [id, fileName, fileUrl, fileType, fileSize, req.user.id],
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Agreement file uploaded successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Upload tenant agreement error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error uploading agreement file",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+const getTenantAgreements = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    let accessQuery = `
+      SELECT t.id, p.id as property_id
+      FROM tenants t
+      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE t.id = $1
+    `;
+    const accessParams = [id];
+    if (req.user.role === "agent") {
+      accessQuery += `
+        AND EXISTS (
+          SELECT 1 FROM agent_property_assignments apa
+          WHERE apa.property_id = p.id
+          AND apa.agent_id = $2
+          AND apa.is_active = true
+        )
+      `;
+      accessParams.push(req.user.id);
+    }
+
+    const accessResult = await pool.query(accessQuery, accessParams);
+    if (accessResult.rows.length === 0) {
+      return res.status(req.user.role === "agent" ? 403 : 404).json({
+        success: false,
+        message:
+          req.user.role === "agent"
+            ? "Tenant not found or you are not assigned to this property"
+            : "Tenant not found",
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT td.*,
+              u.first_name || ' ' || u.last_name as uploaded_by_name
+       FROM tenant_documents td
+       LEFT JOIN users u ON td.uploaded_by = u.id
+       WHERE td.tenant_id = $1 AND td.is_active = true
+       ORDER BY td.created_at DESC`,
+      [id],
+    );
+
+    return res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error("Get tenant agreements error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error fetching agreement files",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+const deleteTenantAgreement = async (req, res) => {
+  try {
+    const { id, documentId } = req.params;
+
+    const existing = await pool.query(
+      `SELECT td.*, t.id as tenant_id, p.id as property_id
+       FROM tenant_documents td
+       JOIN tenants t ON td.tenant_id = t.id
+       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+       LEFT JOIN property_units pu ON ta.unit_id = pu.id
+       LEFT JOIN properties p ON pu.property_id = p.id
+       WHERE td.id = $1 AND td.tenant_id = $2 AND td.is_active = true`,
+      [documentId, id],
+    );
+
+    if (existing.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Agreement file not found",
+      });
+    }
+
+    if (req.user.role === "agent") {
+      const canAccess = await pool.query(
+        `SELECT 1 FROM agent_property_assignments
+         WHERE property_id = $1 AND agent_id = $2 AND is_active = true`,
+        [existing.rows[0].property_id, req.user.id],
+      );
+
+      if (canAccess.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to delete this agreement file",
+        });
+      }
+    }
+
+    await pool.query(
+      `UPDATE tenant_documents
+       SET is_active = false, updated_at = NOW()
+       WHERE id = $1`,
+      [documentId],
+    );
+
+    if (existing.rows[0].file_url) {
+      await deleteCloudinaryImage(existing.rows[0].file_url);
+    }
+
+    return res.json({
+      success: true,
+      message: "Agreement file deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete tenant agreement error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error deleting agreement file",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
 module.exports = {
   getTenants,
   getTenant,
@@ -911,4 +1477,7 @@ module.exports = {
   deleteTenant,
   getAvailableUnits,
   uploadIDImages,
+  uploadTenantAgreement,
+  getTenantAgreements,
+  deleteTenantAgreement,
 };
