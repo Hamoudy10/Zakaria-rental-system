@@ -528,17 +528,11 @@ const getSMSHistory = async (req, res) => {
     let whereConditions = ["1=1"];
     const params = [];
 
-    // Add agent property filtering for non-admin users
-    // CRITICAL FIX: Allow agents to see their OWN sent SMS (agent_id = userId)
-    // even if the property link is broken (e.g. tenant deleted or moved)
+    // For agents, history should primarily show messages they queued/sent.
+    // This avoids false-empty results when tenant/property joins are missing.
     if (userRole !== "admin") {
-      whereConditions.push(`(
-        p.id IN (
-          SELECT property_id FROM agent_property_assignments 
-          WHERE agent_id = $${params.length + 1}::uuid AND is_active = true
-        ) OR sq.agent_id = $${params.length + 1}::uuid
-      )`);
-      params.push(userId); // Used twice
+      whereConditions.push(`sq.agent_id = $${params.length + 1}::uuid`);
+      params.push(userId);
     }
 
     // Add filters

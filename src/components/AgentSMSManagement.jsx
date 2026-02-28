@@ -257,10 +257,20 @@ const AgentSMSManagement = () => {
       const response = await API.agentSMS.getAgentSMSHistory(params);
 
       if (response.data.success) {
-        setSmsHistory(response.data.data);
+        const historyData =
+          response.data?.data?.rows ||
+          response.data?.data?.history ||
+          response.data?.data ||
+          [];
+        setSmsHistory(Array.isArray(historyData) ? historyData : []);
       }
     } catch (error) {
       console.error("Error fetching SMS history:", error);
+      setSmsHistory([]);
+      alert(
+        error?.response?.data?.message ||
+          "Failed to fetch SMS history. Please try again.",
+      );
     } finally {
       setLoadingHistory(false);
     }
