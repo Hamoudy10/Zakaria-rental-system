@@ -2880,9 +2880,14 @@ const registerC2BUrls = async (req, res) => {
     }
 
     const accessToken = await getAccessToken();
+    const registerVersion =
+      String(process.env.MPESA_C2B_REGISTER_VERSION || "v1").toLowerCase() === "v2"
+        ? "v2"
+        : "v1";
+    const registerUrl = `${getMpesaBaseUrl()}/mpesa/c2b/${registerVersion}/registerurl`;
 
     const response = await axios.post(
-      `${getMpesaBaseUrl()}/mpesa/c2b/v2/registerurl`,
+      registerUrl,
       {
         ShortCode: shortCode,
         ResponseType: "Cancelled",
@@ -2917,6 +2922,7 @@ const registerC2BUrls = async (req, res) => {
         registeredUrls: {
           confirmationUrl,
           validationUrl,
+          registerUrl,
           shortCode,
           responseType: "Cancelled",
         },
