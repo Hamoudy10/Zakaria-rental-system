@@ -155,11 +155,11 @@ const createProperty = async (req, res) => {
       [property_code, name, address, county, town, description, parsedTotalUnits, parsedTotalUnits, unit_type, req.user.id]
     );
 
-    // Create default units with improved unit codes
+    // Create default units with direct concatenated unit codes
     if (parsedTotalUnits > 0) {
       for (let i = 1; i <= parsedTotalUnits; i++) {
-        // Generate unit code: PROP001-001, PROP001-002, etc.
-        const unitCode = `${property_code}-${i.toString().padStart(3, '0')}`;
+        // Generate unit code: PROP001001, PROP001002, etc.
+        const unitCode = `${property_code}${i.toString().padStart(3, '0')}`;
         
         // Generate descriptive unit number based on unit type
         let unitNumber;
@@ -189,7 +189,7 @@ const createProperty = async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             propertyResult.rows[0].id,
-            unitCode, // Format: PROP001-001
+            unitCode, // Format: PROP001001
             unit_type,
             unitNumber, // More descriptive unit number
             0, // default rent amount
