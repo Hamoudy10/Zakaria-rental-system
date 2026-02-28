@@ -351,23 +351,28 @@ const NotificationManagement = () => {
         const params = {
           page,
           limit: 15,
-          ...historyFilters,
         };
+        if (historyFilters.status) params.status = historyFilters.status;
+        if (historyFilters.startDate)
+          params.start_date = historyFilters.startDate;
+        if (historyFilters.endDate) params.end_date = historyFilters.endDate;
+        if (historyFilters.search) params.search = historyFilters.search;
 
-        // Remove empty params
-        Object.keys(params).forEach((key) => {
-          if (!params[key]) delete params[key];
-        });
-
-        const response = await notificationAPI.getSMSHistory(params);
+        // Agent dashboard uses cron agent history endpoint
+        const response = await API.agentSMS.getAgentSMSHistory(params);
         if (response.data.success) {
-          setHistory(response.data.data.history || []);
+          const historyData =
+            response.data?.data?.messages ||
+            response.data?.data?.history ||
+            response.data?.data ||
+            [];
+          setHistory(Array.isArray(historyData) ? historyData : []);
           setHistoryPagination(
-            response.data.data.pagination || {
+            response.data?.data?.pagination || {
               currentPage: 1,
               totalPages: 1,
               totalCount: 0,
-            },
+            }
           );
         }
       } catch (err) {
