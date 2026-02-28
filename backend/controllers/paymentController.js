@@ -2929,15 +2929,24 @@ const registerC2BUrls = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(
-      "Error registering C2B URLs:",
-      error.response?.data || error.message,
-    );
+    const providerError = error.response?.data || null;
+    console.error("Error registering C2B URLs:", providerError || error.message);
     res.status(500).json({
       success: false,
       message: "Failed to register C2B URLs with Safaricom",
-      ...(!isProduction() && {
-        error: error.response?.data || error.message,
+      errorCode: providerError?.errorCode || null,
+      errorMessage: providerError?.errorMessage || error.message,
+      requestId: providerError?.requestId || null,
+      ...(process.env.NODE_ENV !== "production" && {
+        debug: {
+          registerVersion:
+            String(process.env.MPESA_C2B_REGISTER_VERSION || "v1").toLowerCase() === "v2"
+              ? "v2"
+              : "v1",
+          baseUrl: getMpesaBaseUrl(),
+          paybill:
+            process.env.MPESA_PAYBILL_NUMBER || process.env.MPESA_SHORT_CODE || null,
+        },
       }),
     });
   }
