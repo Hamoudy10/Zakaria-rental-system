@@ -461,16 +461,17 @@ const NotificationManagement = () => {
 
   // Bulk check all sent messages
   const checkAllDeliveryStatuses = useCallback(async () => {
-    const sentMessages = history.filter(
-      (h) => h.message_id && h.status === "sent",
-    );
+    const trackableMessages = history.filter((h) => {
+      const status = String(h.status || "").toLowerCase();
+      return Boolean(h.message_id) && ["sent", "pending", "delivered"].includes(status);
+    });
 
-    if (sentMessages.length === 0) {
-      alert("No sent messages with tracking IDs found");
+    if (trackableMessages.length === 0) {
+      alert("No trackable SMS with message IDs found in this list.");
       return;
     }
 
-    for (const sms of sentMessages) {
+    for (const sms of trackableMessages) {
       await checkDeliveryStatus(sms.message_id, sms.id);
       // Small delay to avoid rate limiting
       await new Promise((resolve) => setTimeout(resolve, 500));
