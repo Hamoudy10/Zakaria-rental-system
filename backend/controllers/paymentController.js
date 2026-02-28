@@ -905,6 +905,7 @@ const handleMpesaCallback = async (req, res) => {
     if (!tenant) {
       const phoneForInsert = phone || billRefPhone;
       const safePhone = phoneForInsert || "invalid_msisdn";
+      const unmatchedPaymentMonth = formatPaymentMonth(transTime);
       if (!phoneForInsert) {
         console.error(
           `Unmatched callback ${TransID}: no valid phone from MSISDN/BillRef. Recording as pending with placeholder phone.`,
@@ -938,14 +939,15 @@ const handleMpesaCallback = async (req, res) => {
           notes, created_at
         ) VALUES (
           $1, $1, $2,
-          $3, $4, date_trunc('month', $4::date), 'pending', 'mpesa',
-          $5, NOW()
+          $3, $4, $5, 'pending', 'mpesa',
+          $6, NOW()
         )`,
         [
           TransID,
           safePhone,
           amount,
           transTime,
+          unmatchedPaymentMonth,
           `UNMATCHED C2B: Ref=${BillRefNumber || "none"}, Payer=${payerName}, Phone=${safePhone}, RawMSISDN=${MSISDN}`,
         ],
       );
