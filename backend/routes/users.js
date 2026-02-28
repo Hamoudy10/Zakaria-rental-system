@@ -282,28 +282,93 @@ router.put('/:id', requireAdmin, async (req, res) => {
 
 // DELETE USER (Admin only)
 router.delete('/:id', requireAdmin, async (req, res) => {
+  let client;
   try {
     const { id } = req.params;
 
-    // Check if user exists
-    const checkQuery = 'SELECT id, first_name, last_name FROM users WHERE id = $1';
-    const checkResult = await db.query(checkQuery, [id]);
+    // Prevent self-deactivation
+    if (id === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        error: 'You cannot deactivate your own account'
+      });
+    }
+
+    client = await db.connect();
+    await client.query('BEGIN');
+
+    // Lock target user row to keep operation consistent
+    const checkQuery = `
+      SELECT id, first_name, last_name, role, is_active
+      FROM users
+      WHERE id = $1
+      FOR UPDATE
+    `;
+    const checkResult = await client.query(checkQuery, [id]);
     
     if (checkResult.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({
         success: false,
         error: 'User not found'
       });
     }
 
-    const query = 'DELETE FROM users WHERE id = $1';
-    await db.query(query, [id]);
+    const user = checkResult.rows[0];
+
+    // Already inactive -> treat as successful no-op
+    if (!user.is_active) {
+      await client.query('COMMIT');
+      return res.json({
+        success: true,
+        message: `User ${user.first_name} ${user.last_name} is already inactive`
+      });
+    }
+
+    // Keep at least one active admin in the system
+    if (user.role === 'admin') {
+      const activeAdminsQuery = `
+        SELECT COUNT(*)::int AS count
+        FROM users
+        WHERE role = 'admin' AND is_active = true AND id != $1
+      `;
+      const activeAdminsResult = await client.query(activeAdminsQuery, [id]);
+
+      if (activeAdminsResult.rows[0].count === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          error: 'Cannot deactivate the last active admin account'
+        });
+      }
+    }
+
+    // Graceful delete: soft-deactivate to preserve foreign key integrity
+    const deactivateQuery = `
+      UPDATE users
+      SET is_active = false,
+          is_online = false,
+          last_seen = NOW(),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `;
+    await client.query(deactivateQuery, [id]);
+
+    await client.query('COMMIT');
     
     res.json({
       success: true,
-      message: `User ${checkResult.rows[0].first_name} ${checkResult.rows[0].last_name} deleted successfully`
+      message: `User ${user.first_name} ${user.last_name} deactivated successfully`
     });
   } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Delete user rollback error:', rollbackError);
+      }
+    }
+
     console.error('Delete user error:', error);
     
     // Handle foreign key constraints
@@ -316,8 +381,10 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     
     res.status(500).json({ 
       success: false,
-      error: 'Failed to delete user' 
+      error: 'Failed to deactivate user' 
     });
+  } finally {
+    if (client) client.release();
   }
 });
 
