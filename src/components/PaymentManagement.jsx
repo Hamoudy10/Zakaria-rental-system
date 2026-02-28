@@ -355,6 +355,23 @@ const PaymentManagement = () => {
     }
   }, [filters.month, filters.propertyId, filters.search]);
 
+  // Smooth auto-refresh so new payments appear without manual reload
+  useEffect(() => {
+    const refreshIntervalMs = 15000;
+    const intervalId = setInterval(() => {
+      // Avoid background-tab polling noise
+      if (typeof document !== "undefined" && document.hidden) return;
+
+      if (activeTab === "all") {
+        handleFetchPayments();
+      } else {
+        fetchTenantStatusData();
+      }
+    }, refreshIntervalMs);
+
+    return () => clearInterval(intervalId);
+  }, [activeTab, handleFetchPayments, fetchTenantStatusData]);
+
   // ============================================================
   // FILTERED DATA
   // ============================================================
