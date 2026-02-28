@@ -46,6 +46,7 @@ const TenantManagement = () => {
   const [idBackImage, setIdBackImage] = useState(null);
   const [agreementFiles, setAgreementFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [formErrors, setFormErrors] = useState({});
   // Fetch tenants list
   const fetchTenants = useCallback(
@@ -511,6 +512,17 @@ const TenantManagement = () => {
     e.preventDefault();
     await fetchTenants(1, searchTerm);
   };
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      await Promise.all([
+        fetchTenants(1, searchTerm.trim()),
+        fetchAvailableUnits(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat("en-KE", {
       style: "currency",
@@ -802,6 +814,17 @@ const TenantManagement = () => {
             className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-lg font-medium"
           >
             Search
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={loading || refreshing}
+            className="bg-blue-100 hover:bg-blue-200 text-blue-800 px-4 py-2 rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          >
+            {refreshing && (
+              <span className="inline-block h-4 w-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
+            )}
+            {refreshing ? "Refreshing..." : "Refresh"}
           </button>
         </div>
       </form>
