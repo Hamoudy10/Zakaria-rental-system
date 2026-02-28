@@ -889,10 +889,9 @@ const handleMpesaCallback = async (req, res) => {
     if (!tenant) {
       const phoneForInsert = phone || billRefPhone;
       const safePhone = phoneForInsert || "invalid_msisdn";
-            if (!phoneForInsert) {
-        await client.query("ROLLBACK");
+      if (!phoneForInsert) {
         console.error(
-          `Skipping unmatched callback ${TransID}: no valid phone from MSISDN/BillRef`,
+          `Unmatched callback ${TransID}: no valid phone from MSISDN/BillRef. Recording as pending with placeholder phone.`,
         );
 
         try {
@@ -914,8 +913,6 @@ const handleMpesaCallback = async (req, res) => {
             notifError.message,
           );
         }
-
-        return;
       }
 
       await client.query(
@@ -930,7 +927,7 @@ const handleMpesaCallback = async (req, res) => {
         )`,
         [
           TransID,
-          phoneForInsert,
+          safePhone,
           amount,
           transTime,
           `UNMATCHED C2B: Ref=${BillRefNumber || "none"}, Payer=${payerName}, Phone=${safePhone}, RawMSISDN=${MSISDN}`,
