@@ -258,6 +258,7 @@ const AgentSMSManagement = () => {
 
       if (response.data.success) {
         const historyData =
+          response.data?.data?.messages ||
           response.data?.data?.rows ||
           response.data?.data?.history ||
           response.data?.data ||
