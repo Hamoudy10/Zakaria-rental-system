@@ -162,7 +162,7 @@ export const notificationAPI = {
 
   // NEW: Check delivery status for a specific message
   checkDeliveryStatus: (messageId) =>
-    api.get(`/notifications/delivery-status/${messageId}`),
+    api.get(`/notifications/delivery-status/${encodeURIComponent(messageId)}`),
 
   // NEW: Get SMS statistics
   getSMSStats: () => api.get("/notifications/sms-stats"),
