@@ -785,7 +785,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             propertyResult.rows[0].id,
-            `${property_code}-UNIT-${i}`,
+            `${property_code}UNIT${i}`,
             'bedsitter',
             i.toString(),
             0,
@@ -1266,7 +1266,8 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
     }
     
     const propertyCode = propertyCheck.rows[0].property_code;
-    const prefix = `${propertyCode}-`;
+    const prefix = `${propertyCode}`;
+    const prefixWithHyphen = `${propertyCode}-`;
 
     const toStringSafe = (value) => (value === null || value === undefined ? '' : String(value).trim());
 
@@ -1274,12 +1275,12 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
       const raw = toStringSafe(value);
       if (!raw) return raw;
       let normalized = raw;
-      const doublePrefix = `${prefix}${prefix}`;
-      while (normalized.startsWith(doublePrefix)) {
-        normalized = normalized.slice(prefix.length);
+      // Remove the join hyphen if present: PROP001-101 -> PROP001101
+      while (normalized.startsWith(prefixWithHyphen)) {
+        normalized = `${prefix}${normalized.slice(prefixWithHyphen.length)}`;
       }
       if (!normalized.startsWith(prefix)) {
-        normalized = `${prefix}${normalized}`;
+        normalized = `${prefix}${normalized.replace(/^-+/, '')}`;
       }
       return normalized;
     };
