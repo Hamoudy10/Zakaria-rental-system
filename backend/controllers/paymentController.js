@@ -601,37 +601,51 @@ const handleMpesaValidation = async (req, res) => {
       });
     }
 
-    // 2. Optionally validate the account reference
-    if (BillRefNumber) {
-      const cleanRef = BillRefNumber.trim().toUpperCase();
+    // 2. Strictly validate account reference (reject unknown refs)
+    if (!BillRefNumber || !String(BillRefNumber).trim()) {
+      console.log("VALIDATION REJECTED: Missing BillRefNumber");
+      return res.json({
+        ResultCode: "C2B00011",
+        ResultDesc: "Invalid Account",
+      });
+    }
 
-      // Try matching as unit code
-      const unitCheck = await pool.query(
-        `SELECT pu.id, pu.unit_code, ta.tenant_id 
-         FROM property_units pu
-         LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
-         WHERE UPPER(pu.unit_code) = $1 AND pu.is_active = true`,
-        [cleanRef],
-      );
+    const cleanRef = BillRefNumber.trim().toUpperCase();
 
-      if (unitCheck.rows.length === 0) {
-        // Try matching as phone number
-        const phoneRef = cleanRef.replace(/^0/, "254");
+    // Try matching BillRef as active unit code
+    const unitCheck = await pool.query(
+      `SELECT pu.id, pu.unit_code, ta.tenant_id
+       FROM property_units pu
+       LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
+       LEFT JOIN unit_code_aliases uca ON uca.unit_id = pu.id AND uca.is_active = true
+       WHERE pu.is_active = true
+         AND (UPPER(pu.unit_code) = $1 OR UPPER(uca.alias_code) = $1)`,
+      [cleanRef],
+    );
+
+    let isRecognizedAccount = unitCheck.rows.length > 0;
+
+    // Fallback: allow BillRef that is a registered tenant phone
+    if (!isRecognizedAccount) {
+      const phoneRef = normalizeKenyanPhone(BillRefNumber);
+      if (phoneRef) {
         const phoneCheck = await pool.query(
           `SELECT id FROM tenants WHERE phone_number = $1`,
           [phoneRef],
         );
-
-        if (phoneCheck.rows.length === 0) {
-          console.log(
-            "VALIDATION WARNING: Unrecognized account reference:",
-            cleanRef,
-          );
-          // Accept anyway â€” handle unmatched payments in the callback
-          // To REJECT unknown refs, uncomment:
-          // return res.json({ ResultCode: "C2B00011", ResultDesc: "Invalid Account" });
-        }
+        isRecognizedAccount = phoneCheck.rows.length > 0;
       }
+    }
+
+    if (!isRecognizedAccount) {
+      console.log(
+        "VALIDATION REJECTED: Unrecognized account reference:",
+        cleanRef,
+      );
+      return res.json({
+        ResultCode: "C2B00011",
+        ResultDesc: "Invalid Account",
+      });
     }
 
     // 3. Accept the transaction
@@ -649,10 +663,10 @@ const handleMpesaValidation = async (req, res) => {
     });
   } catch (error) {
     console.error("Validation endpoint error:", error);
-    // On error, accept to avoid blocking payments
+    // Fail closed: reject when validation cannot be performed
     return res.json({
-      ResultCode: "0",
-      ResultDesc: "Accepted",
+      ResultCode: "C2B00013",
+      ResultDesc: "Validation Service Error",
     });
   }
 };
@@ -790,10 +804,12 @@ const handleMpesaCallback = async (req, res) => {
           t.phone_number as tenant_phone,
           p.name as property_name
         FROM property_units pu
+        LEFT JOIN unit_code_aliases uca ON uca.unit_id = pu.id AND uca.is_active = true
         JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
         JOIN tenants t ON ta.tenant_id = t.id
         JOIN properties p ON pu.property_id = p.id
-        WHERE UPPER(pu.unit_code) = $1 AND pu.is_active = true`,
+        WHERE pu.is_active = true
+          AND (UPPER(pu.unit_code) = $1 OR UPPER(uca.alias_code) = $1)`,
         [cleanRef],
       );
 
@@ -2869,7 +2885,7 @@ const registerC2BUrls = async (req, res) => {
       `${getMpesaBaseUrl()}/mpesa/c2b/v2/registerurl`,
       {
         ShortCode: shortCode,
-        ResponseType: "Completed",
+        ResponseType: "Cancelled",
         ConfirmationURL: confirmationUrl,
         ValidationURL: validationUrl,
       },
@@ -2902,7 +2918,7 @@ const registerC2BUrls = async (req, res) => {
           confirmationUrl,
           validationUrl,
           shortCode,
-          responseType: "Completed",
+          responseType: "Cancelled",
         },
       },
     });
