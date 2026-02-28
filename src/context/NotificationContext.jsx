@@ -38,9 +38,11 @@ export const NotificationProvider = ({ children }) => {
 
   const isMountedRef = useRef(true);
   const pollingRef = useRef(null);
+  const isRefreshingRef = useRef(false);
   const backoffRef = useRef(30000); // Start polling every 30s
   const MAX_BACKOFF = 5 * 60 * 1000; // Max 5 minutes
   const lastFetchRef = useRef(0);
+  const lastUnreadFetchRef = useRef(0);
   const MIN_FETCH_INTERVAL = 5000; // Minimum 5s between fetches
 
   useEffect(() => {
@@ -77,9 +79,9 @@ export const NotificationProvider = ({ children }) => {
 
       // Throttle fetches
       const now = Date.now();
-      if (now - lastFetchRef.current < MIN_FETCH_INTERVAL) {
+      if (!params.force && now - lastFetchRef.current < MIN_FETCH_INTERVAL) {
         console.log("🔄 Throttling notification fetch");
-        return;
+        return { success: false, status: "throttled" };
       }
       lastFetchRef.current = now;
 
@@ -115,6 +117,7 @@ export const NotificationProvider = ({ children }) => {
           // Reset backoff on success
           backoffRef.current = 30000;
           setError(null);
+          return { success: true };
         } else if (result.status !== 429) {
           setError(
             result.error?.response?.data?.message ||
@@ -122,6 +125,7 @@ export const NotificationProvider = ({ children }) => {
           );
         }
       }
+      return result;
     },
     [isAuthenticated, handleFetch],
   );
@@ -129,6 +133,11 @@ export const NotificationProvider = ({ children }) => {
   // Fetch unread count only
   const fetchUnreadCount = useCallback(async () => {
     if (!isAuthenticated()) return;
+    const now = Date.now();
+    if (now - lastUnreadFetchRef.current < MIN_FETCH_INTERVAL) {
+      return { success: false, status: "throttled" };
+    }
+    lastUnreadFetchRef.current = now;
 
     const result = await handleFetch(() => notificationAPI.getUnreadCount());
 
@@ -137,20 +146,28 @@ export const NotificationProvider = ({ children }) => {
         result.data.data?.unreadCount ?? result.data.unreadCount ?? 0;
       setUnreadCount(count);
     }
+    return result;
   }, [isAuthenticated, handleFetch]);
 
   // SEQUENTIAL Refresh: List -> Wait -> Count
   const refreshNotifications = useCallback(async () => {
     if (!isAuthenticated()) return;
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
 
-    // 1. Fetch notifications
-    await fetchNotifications({ page: 1 });
+    try {
+      // 1. Fetch notifications
+      const listResult = await fetchNotifications({ page: 1, force: true });
+      if (listResult?.status === 429) return;
 
-    // 2. Wait to clear rate limit window
-    await wait(2500);
+      // 2. Wait to clear rate limit window
+      await wait(1200);
 
-    // 3. Fetch count
-    await fetchUnreadCount();
+      // 3. Fetch count
+      await fetchUnreadCount();
+    } finally {
+      isRefreshingRef.current = false;
+    }
   }, [isAuthenticated, fetchNotifications, fetchUnreadCount]);
 
   // Mark single notification as read
@@ -248,19 +265,36 @@ export const NotificationProvider = ({ children }) => {
     const poll = async () => {
       if (!isMountedRef.current) return;
 
-      await refreshNotifications();
+      if (document.hidden) {
+        pollingRef.current = setTimeout(
+          poll,
+          Math.max(backoffRef.current, 60000),
+        );
+        return;
+      }
+
+      await fetchUnreadCount();
 
       // Schedule next poll based on dynamic backoff
       pollingRef.current = setTimeout(poll, backoffRef.current);
     };
 
-    // Initial fetch
+    // Initial full fetch, then light polling
+    refreshNotifications();
     poll();
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchUnreadCount();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       if (pollingRef.current) clearTimeout(pollingRef.current);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [isAuthenticated, refreshNotifications]);
+  }, [isAuthenticated, refreshNotifications, fetchUnreadCount]);
 
   // Reset state when user changes
   useEffect(() => {

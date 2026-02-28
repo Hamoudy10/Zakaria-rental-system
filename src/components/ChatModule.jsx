@@ -330,7 +330,7 @@ const ChatHeader = ({
 
       {/* Actions */}
       <div className="flex items-center gap-1 flex-shrink-0">
-        <button className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center">
+        <button className="hidden md:flex w-10 h-10 rounded-full hover:bg-slate-200 items-center justify-center">
           <svg
             className="w-5 h-5 text-slate-600"
             fill="none"
@@ -348,6 +348,8 @@ const ChatHeader = ({
         <button
           onClick={onClose}
           className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center"
+          title="Close chat"
+          aria-label="Close chat"
         >
           <svg
             className="w-5 h-5 text-slate-600"
@@ -561,25 +563,47 @@ const ChatModule = () => {
               </span>
             )}
           </div>
-          <button
-            onClick={openNewConversationModal}
-            className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center transition-colors"
-            title="New chat"
-          >
-            <svg
-              className="w-5 h-5 text-slate-600"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          <div className="flex items-center gap-1">
+            <button
+              onClick={openNewConversationModal}
+              className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center transition-colors"
+              title="New chat"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
-          </button>
+              <svg
+                className="w-5 h-5 text-slate-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+            </button>
+            <button
+              onClick={handleCloseChat}
+              className="md:hidden w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center transition-colors"
+              title="Close chat"
+              aria-label="Close chat"
+            >
+              <svg
+                className="w-5 h-5 text-slate-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Search */}
