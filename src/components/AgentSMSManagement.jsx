@@ -35,6 +35,7 @@ const AgentSMSManagement = () => {
 
   // State for SMS History Tab
   const [smsHistory, setSmsHistory] = useState([]);
+  const [smsHistorySummary, setSmsHistorySummary] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyFilters, setHistoryFilters] = useState({
     status: "",
@@ -264,10 +265,15 @@ const AgentSMSManagement = () => {
           response.data?.data ||
           [];
         setSmsHistory(Array.isArray(historyData) ? historyData : []);
+        setSmsHistorySummary(response.data?.data?.summary || null);
+      } else {
+        setSmsHistory([]);
+        setSmsHistorySummary(null);
       }
     } catch (error) {
       console.error("Error fetching SMS history:", error);
       setSmsHistory([]);
+      setSmsHistorySummary(null);
       alert(
         error?.response?.data?.message ||
           "Failed to fetch SMS history. Please try again.",
@@ -698,6 +704,12 @@ const AgentSMSManagement = () => {
           {/* Tab 3: SMS History */}
           {activeTab === "history" && (
             <div className="space-y-6">
+              {smsHistorySummary && (
+                <div className="text-sm text-gray-600">
+                  Showing {smsHistory.length} message(s) • Total:{" "}
+                  {smsHistorySummary.totalCount ?? smsHistory.length}
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -805,7 +817,7 @@ const AgentSMSManagement = () => {
                   <RefreshCw className="w-8 h-8 text-blue-500 animate-spin mx-auto" />
                   <p className="mt-2 text-gray-600">Loading SMS history...</p>
                 </div>
-              ) : smsHistory.length === 0 ? (
+              ) : (Array.isArray(smsHistory) ? smsHistory : []).length === 0 ? (
                 <div className="text-center py-8 bg-gray-50 rounded-md">
                   <p className="text-gray-600">No SMS history found</p>
                 </div>
@@ -835,7 +847,7 @@ const AgentSMSManagement = () => {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {smsHistory.map((sms) => (
+                      {(Array.isArray(smsHistory) ? smsHistory : []).map((sms) => (
                         <tr key={sms.id} className="hover:bg-gray-50">
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
                             {new Date(sms.created_at).toLocaleString()}
