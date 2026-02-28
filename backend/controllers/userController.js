@@ -248,39 +248,96 @@ const userController = {
 
   // Delete user (Admin only)
   deleteUser: async (req, res) => {
+    let client;
     try {
       const userId = req.params.id;
       
-      // Don't allow users to delete themselves
+      // Don't allow users to deactivate themselves
       if (userId === req.user.id) {
         return res.status(400).json({
           success: false,
-          message: 'Cannot delete your own account'
+          message: 'Cannot deactivate your own account'
         });
       }
-      
-      const result = await db.query(
-        'DELETE FROM users WHERE id = $1 RETURNING id',
+
+      client = await db.connect();
+      await client.query('BEGIN');
+
+      const targetUserResult = await client.query(
+        `SELECT id, first_name, last_name, role, is_active
+         FROM users
+         WHERE id = $1
+         FOR UPDATE`,
         [userId]
       );
-      
-      if (result.rows.length === 0) {
+
+      if (targetUserResult.rows.length === 0) {
+        await client.query('ROLLBACK');
         return res.status(404).json({
           success: false,
           message: 'User not found'
         });
       }
+
+      const targetUser = targetUserResult.rows[0];
+
+      if (!targetUser.is_active) {
+        await client.query('COMMIT');
+        return res.json({
+          success: true,
+          message: 'User is already inactive'
+        });
+      }
+
+      if (targetUser.role === 'admin') {
+        const activeAdminsResult = await client.query(
+          `SELECT COUNT(*)::int AS count
+           FROM users
+           WHERE role = 'admin' AND is_active = true AND id != $1`,
+          [userId]
+        );
+
+        if (activeAdminsResult.rows[0].count === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            success: false,
+            message: 'Cannot deactivate the last active admin account'
+          });
+        }
+      }
+
+      await client.query(
+        `UPDATE users
+         SET is_active = false,
+             is_online = false,
+             last_seen = NOW(),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [userId]
+      );
+
+      await client.query('COMMIT');
       
       res.json({
         success: true,
-        message: 'User deleted successfully'
+        message: `User ${targetUser.first_name} ${targetUser.last_name} deactivated successfully`
       });
     } catch (error) {
+      if (client) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          console.error('Error rolling back user deactivation:', rollbackError);
+        }
+      }
+
       console.error('Error deleting user:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to delete user'
+        message: 'Failed to deactivate user'
       });
+    } finally {
+      if (client) client.release();
     }
   },
 
