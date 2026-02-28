@@ -1234,9 +1234,26 @@ const TenantHub = () => {
   const fetchTenants = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await api.get('/tenants');
-      const tenantsData = response.data?.data?.tenants || response.data?.data || [];
-      setTenants(Array.isArray(tenantsData) ? tenantsData : []);
+      const limit = 100;
+      let page = 1;
+      let totalPages = 1;
+      const allTenants = [];
+
+      do {
+        const response = await api.get('/tenants', { params: { page, limit } });
+        const payload = response.data?.data;
+        const tenantsData = payload?.tenants || payload || [];
+        const pagination = payload?.pagination || {};
+
+        if (Array.isArray(tenantsData)) {
+          allTenants.push(...tenantsData);
+        }
+
+        totalPages = Number(pagination.totalPages) || 1;
+        page += 1;
+      } while (page <= totalPages);
+
+      setTenants(allTenants);
     } catch (err) {
       console.error('Error fetching tenants:', err);
       setError('Failed to load tenants');
