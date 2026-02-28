@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { authAPI } from '../services/api';
 import { Eye, EyeOff, Mail, Lock, LogIn, AlertCircle, Building2, Loader2, XCircle, WifiOff, ShieldX, UserX } from 'lucide-react';
 
 const Login = () => {
@@ -12,6 +13,8 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null); // Changed to object: { type, message }
   const [showForgotMessage, setShowForgotMessage] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSuccess, setForgotSuccess] = useState('');
   
   // Company info state
   const [companyInfo, setCompanyInfo] = useState({
@@ -143,7 +146,7 @@ const handleSubmit = async (e) => {
   
   // Clear previous errors
   setError(null);
-  setShowForgotMessage(false);
+  setForgotSuccess('');
   
   // Validate inputs
   if (!email.trim()) {
@@ -246,7 +249,41 @@ const handleSubmit = async (e) => {
   const handleForgotPassword = (e) => {
     e.preventDefault();
     setShowForgotMessage(true);
+    setForgotSuccess('');
     setError(null);
+  };
+
+  const handleForgotSubmit = async (e) => {
+    e?.preventDefault?.();
+    setError(null);
+    setForgotSuccess('');
+
+    if (!email.trim()) {
+      setError({
+        type: 'validation',
+        title: 'Email Required',
+        message: 'Enter your account email to receive a reset link.'
+      });
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const response = await authAPI.forgotPassword({ email: email.trim().toLowerCase() });
+      setForgotSuccess(
+        response?.data?.message ||
+          'If an account with that email exists, a password reset link has been sent.'
+      );
+    } catch (err) {
+      const message = err?.response?.data?.message || 'Unable to process password reset right now.';
+      setError({
+        type: 'server',
+        title: 'Request Failed',
+        message
+      });
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   const clearError = () => {
@@ -394,23 +431,45 @@ const handleSubmit = async (e) => {
                 </div>
               )}
 
-              {/* Forgot Password Message */}
+              {/* Forgot Password */}
               {showForgotMessage && (
-                <div className="bg-blue-500/20 border border-blue-500/50 text-blue-200 px-4 py-3 rounded-xl text-sm flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-medium">Password Reset</p>
-                    <p className="text-blue-300/90 text-xs mt-1">Please contact the administrator to reset your password.</p>
+                <div className="bg-blue-500/20 border border-blue-500/50 text-blue-200 px-4 py-3 rounded-xl text-sm">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-medium">Reset Password</p>
+                      <p className="text-blue-300/90 text-xs mt-1">
+                        Enter your email and we will send a reset link.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowForgotMessage(false);
+                        setForgotSuccess('');
+                      }}
+                      className="text-blue-300 hover:text-white transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
-                  <button 
-                    type="button"
-                    onClick={() => setShowForgotMessage(false)}
-                    className="text-blue-300 hover:text-white transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+
+                  <div className="mt-3 space-y-3">
+                    <button
+                      type="button"
+                      onClick={handleForgotSubmit}
+                      disabled={forgotLoading}
+                      className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+                    >
+                      {forgotLoading ? 'Sending reset link...' : 'Send reset link'}
+                    </button>
+                  </div>
+
+                  {forgotSuccess && (
+                    <p className="text-green-200 text-xs mt-3">{forgotSuccess}</p>
+                  )}
                 </div>
               )}
 

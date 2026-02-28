@@ -304,6 +304,8 @@ export const authAPI = {
   deleteProfileImage: () => api.delete('/auth/profile/image'),
   
   changePassword: (passwordData) => api.put('/auth/change-password', passwordData),
+  forgotPassword: (payload) => api.post('/auth/forgot-password', payload),
+  resetPassword: (payload) => api.post('/auth/reset-password', payload),
 };
 
 // User API
