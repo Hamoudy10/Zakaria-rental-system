@@ -839,12 +839,14 @@ class SMSService {
           await pool.query(
             `UPDATE sms_queue 
              SET status = $1, sent_at = $2, attempts = attempts + 1,
-                 last_attempt_at = NOW(), error_message = $3
-             WHERE id = $4`,
+                 last_attempt_at = NOW(), error_message = $3,
+                 message_id = COALESCE($4, message_id)
+             WHERE id = $5`,
             [
               result.success ? "sent" : "failed",
               result.success ? new Date() : null,
               result.error || null,
+              result.messageId || null,
               sms.id,
             ],
           );

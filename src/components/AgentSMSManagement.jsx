@@ -296,7 +296,11 @@ const AgentSMSManagement = () => {
       }
     } catch (error) {
       console.error("Check delivery error:", error);
-      alert("Failed to check delivery status.");
+      alert(
+        error?.response?.data?.message ||
+          error?.response?.data?.error ||
+          "Failed to check delivery status.",
+      );
     } finally {
       setCheckingDelivery(false);
     }
@@ -727,6 +731,7 @@ const AgentSMSManagement = () => {
                   >
                     <option value="">All Status</option>
                     <option value="sent">Sent</option>
+                    <option value="delivered">Delivered</option>
                     <option value="failed">Failed</option>
                     <option value="pending">Pending</option>
                   </select>
@@ -879,9 +884,9 @@ const AgentSMSManagement = () => {
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm font-medium">
-                            {sms.status === "sent" && (
+                            {sms.status === "sent" && sms.message_id && (
                               <button
-                                onClick={() => handleCheckDelivery(sms.id)}
+                                onClick={() => handleCheckDelivery(sms.message_id)}
                                 className="text-blue-600 hover:text-blue-900 flex items-center"
                               >
                                 <Eye className="w-4 h-4 mr-1" /> Status

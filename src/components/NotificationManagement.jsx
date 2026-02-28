@@ -428,15 +428,15 @@ const NotificationManagement = () => {
           },
         }));
 
-        // Update the history item with new status if delivered
-        if (status.delivery_status === "DeliveredToTerminal") {
+        // Update history row when provider confirms delivery
+        if ((status.delivery_status || status.status) === "delivered") {
           setHistory((prev) =>
             prev.map((item) =>
               item.id === smsId
                 ? {
                     ...item,
                     status: "delivered",
-                    delivery_status: status.delivery_status,
+                    delivery_status: status.delivery_status || status.status,
                   }
                 : item,
             ),

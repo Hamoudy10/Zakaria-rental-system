@@ -740,8 +740,8 @@ const sendBulkSMS = async (req, res) => {
 
         // Log SMS to sms_queue
         await pool.query(
-          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, message_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
           [
             tenant.phone_number,
             finalMessage,
@@ -749,6 +749,7 @@ const sendBulkSMS = async (req, res) => {
             msgResult.sms?.success ? "sent" : "failed",
             userId,
             msgResult.sms?.success ? new Date() : null,
+            msgResult.sms?.messageId || null,
           ],
         );
 
@@ -783,14 +784,15 @@ const sendBulkSMS = async (req, res) => {
         // Log failed SMS
         try {
           await pool.query(
-            `INSERT INTO sms_queue (recipient_phone, message, message_type, status, error_message, agent_id, created_at)
-             VALUES ($1, $2, $3, 'failed', $4, $5, NOW())`,
+            `INSERT INTO sms_queue (recipient_phone, message, message_type, status, error_message, agent_id, message_id, created_at)
+             VALUES ($1, $2, $3, 'failed', $4, $5, $6, NOW())`,
             [
               tenant.phone_number,
               finalMessage,
               messageType,
               sendError.message,
               userId,
+              null,
             ],
           );
         } catch (logError) {
@@ -1037,8 +1039,8 @@ const sendTargetedSMS = async (req, res) => {
 
         // Log SMS to sms_queue
         await pool.query(
-          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, message_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
           [
             tenant.phone_number,
             finalMessage,
@@ -1046,6 +1048,7 @@ const sendTargetedSMS = async (req, res) => {
             msgResult.sms?.success ? "sent" : "failed",
             userId,
             msgResult.sms?.success ? new Date() : null,
+            msgResult.sms?.messageId || null,
           ],
         );
 
@@ -1080,14 +1083,15 @@ const sendTargetedSMS = async (req, res) => {
         // Log failed SMS
         try {
           await pool.query(
-            `INSERT INTO sms_queue (recipient_phone, message, message_type, status, error_message, agent_id, created_at)
-             VALUES ($1, $2, $3, 'failed', $4, $5, NOW())`,
+            `INSERT INTO sms_queue (recipient_phone, message, message_type, status, error_message, agent_id, message_id, created_at)
+             VALUES ($1, $2, $3, 'failed', $4, $5, $6, NOW())`,
             [
               tenant.phone_number,
               finalMessage,
               messageType,
               sendError.message,
               userId,
+              null,
             ],
           );
         } catch (logError) {
@@ -1247,6 +1251,8 @@ const getMessagingHistory = async (req, res) => {
           sq.message,
           sq.message_type,
           sq.status,
+          sq.message_id,
+          sq.delivery_status,
           sq.attempts,
           sq.last_attempt_at,
           sq.sent_at,
@@ -1288,6 +1294,8 @@ const getMessagingHistory = async (req, res) => {
           sn.message_content as message,
           sn.message_type,
           sn.status,
+          NULL::text as message_id,
+          NULL::text as delivery_status,
           NULL::int as attempts,
           NULL::timestamp as last_attempt_at,
           sn.sent_at,
@@ -1328,6 +1336,8 @@ const getMessagingHistory = async (req, res) => {
           wq.fallback_message as message,
           wq.message_type,
           wq.status,
+          NULL::text as message_id,
+          NULL::text as delivery_status,
           wq.attempts,
           wq.last_attempt_at,
           wq.sent_at,
@@ -1369,6 +1379,8 @@ const getMessagingHistory = async (req, res) => {
           wn.template_name as message,
           wn.message_type,
           wn.status,
+          NULL::text as message_id,
+          NULL::text as delivery_status,
           NULL::int as attempts,
           NULL::timestamp as last_attempt_at,
           wn.sent_at,
@@ -1552,9 +1564,16 @@ const checkDeliveryStatus = async (req, res) => {
       }
     }
 
-    // Update sms_queue with delivery status if we can find the record
-    // Note: This is optional - depends on whether you store message_id in sms_queue
-    
+    // Persist delivery outcome for later display in history tables
+    await pool.query(
+      `UPDATE sms_queue
+       SET delivery_status = $1,
+           status = CASE WHEN $1 = 'delivered' THEN 'delivered' ELSE status END,
+           delivered_at = CASE WHEN $1 = 'delivered' THEN COALESCE($2::timestamp, NOW()) ELSE delivered_at END
+       WHERE message_id = $3`,
+      [status, deliveredAt, messageId],
+    );
+
     console.log(`📬 Delivery status for ${messageId}: ${status}`);
 
     res.json({
