@@ -661,15 +661,23 @@ const getRecentActivities = async (req, res) => {
           SELECT
             original_payment_id,
             COALESCE(SUM(amount), 0) AS cf_total,
-            STRING_AGG(
-              DISTINCT to_char(date_trunc('month', payment_month), 'Mon YYYY'),
-              ', ' ORDER BY to_char(date_trunc('month', payment_month), 'YYYY-MM')
+            (
+              SELECT STRING_AGG(month_label, ', ' ORDER BY month_key)
+              FROM (
+                SELECT DISTINCT
+                  to_char(date_trunc('month', rp2.payment_month), 'Mon YYYY') AS month_label,
+                  to_char(date_trunc('month', rp2.payment_month), 'YYYY-MM') AS month_key
+                FROM rent_payments rp2
+                WHERE rp2.original_payment_id = rp.original_payment_id
+                  AND rp2.status = 'completed'
+                  AND rp2.payment_method IN ('carry_forward', 'carry_forward_fix')
+              ) ordered_months
             ) AS cf_months
-          FROM rent_payments
-          WHERE status = 'completed'
-            AND payment_method IN ('carry_forward', 'carry_forward_fix')
-            AND original_payment_id IS NOT NULL
-          GROUP BY original_payment_id
+          FROM rent_payments rp
+          WHERE rp.status = 'completed'
+            AND rp.payment_method IN ('carry_forward', 'carry_forward_fix')
+            AND rp.original_payment_id IS NOT NULL
+          GROUP BY rp.original_payment_id
         ) cf ON cf.original_payment_id = rp.id
         WHERE rp.status = 'completed'
           AND rp.created_at IS NOT NULL
