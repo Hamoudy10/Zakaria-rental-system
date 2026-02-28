@@ -568,7 +568,9 @@ const getSMSHistory = async (req, res) => {
     const countQuery = `
       SELECT COUNT(DISTINCT sq.id) as count
       FROM sms_queue sq
-      LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
+      LEFT JOIN tenants t
+        ON regexp_replace(COALESCE(sq.recipient_phone, ''), '\\D', '', 'g') =
+           regexp_replace(COALESCE(t.phone_number, ''), '\\D', '', 'g')
       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
@@ -600,7 +602,9 @@ const getSMSHistory = async (req, res) => {
         pu.unit_code,
         p.name as property_name
       FROM sms_queue sq
-      LEFT JOIN tenants t ON sq.recipient_phone = t.phone_number
+      LEFT JOIN tenants t
+        ON regexp_replace(COALESCE(sq.recipient_phone, ''), '\\D', '', 'g') =
+           regexp_replace(COALESCE(t.phone_number, ''), '\\D', '', 'g')
       LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
       LEFT JOIN property_units pu ON ta.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id

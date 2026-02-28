@@ -240,15 +240,17 @@ const AgentSMSManagement = () => {
   };
 
   const fetchSMSHistory = async () => {
+    return fetchSMSHistoryWithFilters(historyFilters);
+  };
+
+  const fetchSMSHistoryWithFilters = async (filters) => {
     setLoadingHistory(true);
     try {
       const params = {};
-      if (historyFilters.status) params.status = historyFilters.status;
-      if (historyFilters.startDate)
-        params.start_date = historyFilters.startDate;
-      if (historyFilters.endDate) params.end_date = historyFilters.endDate;
-      if (historyFilters.propertyId)
-        params.property_id = historyFilters.propertyId;
+      if (filters.status) params.status = filters.status;
+      if (filters.startDate) params.start_date = filters.startDate;
+      if (filters.endDate) params.end_date = filters.endDate;
+      if (filters.propertyId) params.property_id = filters.propertyId;
 
       // LOGIC UPDATE: Use agentSMS API (which maps to cronController) for history
       // This ensures we hit the robust controller logic we fixed
@@ -772,13 +774,14 @@ const AgentSMSManagement = () => {
                 </button>
                 <button
                   onClick={() => {
-                    setHistoryFilters({
+                    const clearedFilters = {
                       status: "",
                       startDate: "",
                       endDate: "",
                       propertyId: "",
-                    });
-                    fetchSMSHistory();
+                    };
+                    setHistoryFilters(clearedFilters);
+                    fetchSMSHistoryWithFilters(clearedFilters);
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                 >
