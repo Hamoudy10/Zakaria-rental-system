@@ -9,22 +9,33 @@ const assignPropertiesToAgent = async (req, res) => {
     const { agent_id, property_ids } = req.body;
     const assigned_by = req.user.id;
 
+    if (!agent_id || !Array.isArray(property_ids) || property_ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'agent_id and at least one property_id are required'
+      });
+    }
+
+    const uniquePropertyIds = [...new Set(property_ids.filter(Boolean))];
+
     console.log('Assigning properties to agent:', {
       agent_id,
-      property_ids,
+      property_ids: uniquePropertyIds,
       assigned_by
     });
 
     await client.query('BEGIN');
 
-    // Deactivate existing assignments for this agent
-    await client.query(
-      'UPDATE agent_property_assignments SET is_active = false WHERE agent_id = $1',
-      [agent_id]
-    );
+    // Insert/activate assignments without clearing the agent's existing properties.
+    // A property can only have one active agent, so deactivate active rows for this property first.
+    for (const property_id of uniquePropertyIds) {
+      await client.query(
+        `UPDATE agent_property_assignments
+         SET is_active = false
+         WHERE property_id = $1 AND is_active = true AND agent_id != $2`,
+        [property_id, agent_id]
+      );
 
-    // Insert new assignments
-    for (const property_id of property_ids) {
       // Check if assignment already exists
       const existingAssignment = await client.query(
         'SELECT id FROM agent_property_assignments WHERE agent_id = $1 AND property_id = $2',
@@ -53,7 +64,7 @@ const assignPropertiesToAgent = async (req, res) => {
     res.json({
       success: true,
       message: 'Properties assigned successfully',
-      data: { agent_id, property_ids }
+      data: { agent_id, property_ids: uniquePropertyIds }
     });
 
   } catch (error) {
