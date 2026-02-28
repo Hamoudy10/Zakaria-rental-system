@@ -201,6 +201,8 @@ class CronService {
           ta.id as allocation_id,
           ta.tenant_id,
           ta.monthly_rent,
+          ta.lease_start_date,
+          ta.lease_end_date,
           ta.rent_due_day,
           ta.grace_period_days,
           t.first_name,
@@ -211,7 +213,16 @@ class CronService {
           pu.property_id,
           p.name as property_name,
           COALESCE(
-            (SELECT SUM(amount) FROM rent_payments 
+            (SELECT SUM(
+              CASE
+                WHEN (
+                  COALESCE(allocated_to_rent, 0) +
+                  COALESCE(allocated_to_water, 0) +
+                  COALESCE(allocated_to_arrears, 0)
+                ) > 0 THEN COALESCE(allocated_to_rent, 0)
+                ELSE COALESCE(amount, 0)
+              END
+            ) FROM rent_payments 
              WHERE tenant_id = ta.tenant_id 
              AND unit_id = ta.unit_id 
              AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', CURRENT_DATE)
@@ -222,6 +233,11 @@ class CronService {
         JOIN property_units pu ON ta.unit_id = pu.id
         JOIN properties p ON pu.property_id = p.id
         WHERE ta.is_active = true
+          AND DATE_TRUNC('month', CURRENT_DATE) >= DATE_TRUNC('month', ta.lease_start_date)
+          AND (
+            ta.lease_end_date IS NULL OR
+            DATE_TRUNC('month', CURRENT_DATE) <= DATE_TRUNC('month', ta.lease_end_date)
+          )
           AND EXTRACT(DAY FROM CURRENT_DATE) > (COALESCE(ta.rent_due_day, 1) + COALESCE(ta.grace_period_days, 5))
       `);
 
