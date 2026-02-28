@@ -174,16 +174,19 @@ const TenantManagement = () => {
     },
     [assignedProperties, user?.role],
   );
-  // Initial load
+  // Load units once role context is ready, and refresh when assignments change.
   useEffect(() => {
     console.log("🚀 TenantManagement mounted, user:", user?.role);
 
-    const initializeData = async () => {
-      await fetchAvailableUnits();
-    };
+    if (user?.role === "admin") {
+      fetchAvailableUnits();
+      return;
+    }
 
-    initializeData();
-  }, []);
+    if (user?.role === "agent" && !propertiesLoading) {
+      fetchAvailableUnits();
+    }
+  }, [user?.role, propertiesLoading, assignedProperties, fetchAvailableUnits]);
   // Live search (debounced) as the user types
   useEffect(() => {
     if (!initialSearchRunRef.current) {
@@ -199,12 +202,6 @@ const TenantManagement = () => {
     return () => clearTimeout(timeoutId);
   }, [searchTerm, fetchTenants]);
 
-  // Refresh units when assigned properties change
-  useEffect(() => {
-    if (assignedProperties.length > 0) {
-      fetchAvailableUnits();
-    }
-  }, [assignedProperties, fetchAvailableUnits]);
   // Form handlers
   const handleInputChange = (e) => {
     const { name, value } = e.target;
