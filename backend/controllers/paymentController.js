@@ -954,6 +954,23 @@ const handleMpesaCallback = async (req, res) => {
 
       await client.query("COMMIT");
 
+      // Notify payer if we have a valid phone (helps prevent "money lost" confusion)
+      if (safePhone !== "invalid_msisdn") {
+        try {
+          const unmatchedMessage = `We received your M-Pesa payment of KES ${Number(amount).toLocaleString()} (Receipt: ${TransID}) but the account reference "${BillRefNumber || "N/A"}" is invalid. Please contact support with this receipt for immediate assistance.`;
+          await MessagingService.sendRawMessage(
+            safePhone,
+            unmatchedMessage,
+            "payment_pending",
+          );
+        } catch (payerNotifError) {
+          console.error(
+            "Failed to notify payer for unmatched callback:",
+            payerNotifError.message,
+          );
+        }
+      }
+
       // Notify admins about unmatched payment
       try {
         const adminUsers = await pool.query(
