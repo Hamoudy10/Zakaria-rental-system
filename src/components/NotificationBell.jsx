@@ -470,6 +470,7 @@ const NotificationBell = () => {
   }
 
   const conversations = chatContext?.conversations || [];
+  const getChatUnreadForConversation = chatContext?.getUnreadCount;
   const chatUnreadCount = chatContext?.getTotalUnreadCount?.() || 0;
 
   // Local state
@@ -480,9 +481,14 @@ const NotificationBell = () => {
   const totalUnread = (unreadCount || 0) + chatUnreadCount;
 
   // Get unread conversations
-  const unreadConversations = conversations.filter(
-    (c) => (c.unread_count || 0) > 0,
-  );
+  const unreadConversations = conversations
+    .map((c) => ({
+      ...c,
+      unread_count: getChatUnreadForConversation
+        ? getChatUnreadForConversation(c.id)
+        : c.unread_count || 0,
+    }))
+    .filter((c) => (c.unread_count || 0) > 0);
 
   // Close dropdown when clicking outside
   useEffect(() => {
