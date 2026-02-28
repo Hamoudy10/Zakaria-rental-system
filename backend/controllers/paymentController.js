@@ -1229,13 +1229,13 @@ const getAllPayments = async (req, res) => {
     }
 
     if (startDate) {
-      whereClauses.push(`rp.payment_date >= $${paramIndex}::date`);
+      whereClauses.push(`rp.payment_date::date >= $${paramIndex}::date`);
       queryParams.push(startDate);
       paramIndex++;
     }
 
     if (endDate) {
-      whereClauses.push(`rp.payment_date <= $${paramIndex}::date`);
+      whereClauses.push(`rp.payment_date::date <= $${paramIndex}::date`);
       queryParams.push(endDate);
       paramIndex++;
     }
