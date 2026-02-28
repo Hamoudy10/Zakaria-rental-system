@@ -3,16 +3,40 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const db = require('../config/database');
 const authMiddleware = require('../middleware/authMiddleware').authMiddleware;
 const { uploadProfileImage, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
+const { sendPasswordResetEmail } = require('../services/emailService');
 const JWT_SECRET = process.env.JWT_SECRET;
+const RESET_TOKEN_EXPIRY_MINUTES = Number(process.env.RESET_TOKEN_EXPIRY_MINUTES || 60);
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
 
 if (!JWT_SECRET) {
   throw new Error('Missing required environment variable: JWT_SECRET');
 }
 
 console.log('✅ AUTH ROUTES LOADED');
+
+const validatePasswordStrength = (password) => {
+  if (password.length < 6) {
+    return 'New password must be at least 6 characters long';
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'New password must contain at least one uppercase letter';
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'New password must contain at least one lowercase letter';
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'New password must contain at least one number';
+  }
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+    return 'New password must contain at least one special character (!@#$%^&*)';
+  }
+  return null;
+};
 
 // Token verification endpoint
 router.get('/verify-token', authMiddleware, (req, res) => {
@@ -390,43 +414,11 @@ const changePassword = async (req, res) => {
       });
     }
 
-    // Validate new password strength - Minimum 6 characters
-    if (new_password.length < 6) {
+    const passwordError = validatePasswordStrength(new_password);
+    if (passwordError) {
       return res.status(400).json({
         success: false,
-        message: 'New password must be at least 6 characters long'
-      });
-    }
-
-    // Check for uppercase letter
-    if (!/[A-Z]/.test(new_password)) {
-      return res.status(400).json({
-        success: false,
-        message: 'New password must contain at least one uppercase letter'
-      });
-    }
-
-    // Check for lowercase letter
-    if (!/[a-z]/.test(new_password)) {
-      return res.status(400).json({
-        success: false,
-        message: 'New password must contain at least one lowercase letter'
-      });
-    }
-
-    // Check for number
-    if (!/[0-9]/.test(new_password)) {
-      return res.status(400).json({
-        success: false,
-        message: 'New password must contain at least one number'
-      });
-    }
-
-    // Check for special character
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(new_password)) {
-      return res.status(400).json({
-        success: false,
-        message: 'New password must contain at least one special character (!@#$%^&*)'
+        message: passwordError
       });
     }
 
@@ -487,6 +479,158 @@ const changePassword = async (req, res) => {
       success: false,
       message: 'Server error changing password: ' + error.message
     });
+  }
+};
+
+// ==================== FORGOT / RESET PASSWORD ====================
+const forgotPassword = async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const genericResponse = {
+      success: true,
+      message:
+        'If an account with that email exists, a password reset link has been sent.'
+    };
+
+    const userResult = await db.query(
+      `SELECT id, first_name, email
+       FROM users
+       WHERE email = $1 AND is_active = true
+       LIMIT 1`,
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.json(genericResponse);
+    }
+
+    const user = userResult.rows[0];
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_EXPIRY_MINUTES * 60 * 1000);
+
+    await db.query(
+      `UPDATE password_reset_tokens
+       SET used_at = NOW()
+       WHERE user_id = $1 AND used_at IS NULL`,
+      [user.id]
+    );
+
+    await db.query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3)`,
+      [user.id, tokenHash, expiresAt]
+    );
+
+    const resetUrl = `${FRONTEND_URL.replace(/\/$/, '')}/reset-password?token=${resetToken}`;
+
+    try {
+      await sendPasswordResetEmail({
+        toEmail: user.email,
+        firstName: user.first_name,
+        resetUrl,
+        expiresMinutes: RESET_TOKEN_EXPIRY_MINUTES
+      });
+    } catch (emailError) {
+      console.error('Failed to send password reset email:', emailError.message);
+    }
+
+    return res.json(genericResponse);
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while processing forgot password request'
+    });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  const client = await db.connect();
+
+  try {
+    const token = String(req.body?.token || '').trim();
+    const newPassword = String(req.body?.new_password || '');
+
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token and new password are required'
+      });
+    }
+
+    const passwordError = validatePasswordStrength(newPassword);
+    if (passwordError) {
+      return res.status(400).json({
+        success: false,
+        message: passwordError
+      });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    await client.query('BEGIN');
+
+    const tokenResult = await client.query(
+      `SELECT id, user_id
+       FROM password_reset_tokens
+       WHERE token_hash = $1
+         AND used_at IS NULL
+         AND expires_at > NOW()
+       LIMIT 1
+       FOR UPDATE`,
+      [tokenHash]
+    );
+
+    if (tokenResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired password reset token'
+      });
+    }
+
+    const tokenRow = tokenResult.rows[0];
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    await client.query(
+      `UPDATE users
+       SET password_hash = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [hashedPassword, tokenRow.user_id]
+    );
+
+    await client.query(
+      `UPDATE password_reset_tokens
+       SET used_at = NOW()
+       WHERE user_id = $1
+         AND used_at IS NULL`,
+      [tokenRow.user_id]
+    );
+
+    await client.query('COMMIT');
+
+    return res.json({
+      success: true,
+      message: 'Password reset successful'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Reset password error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while resetting password'
+    });
+  } finally {
+    client.release();
   }
 };
 
@@ -556,6 +700,8 @@ router.post('/debug-login', async (req, res) => {
 // Set up routes
 router.post('/register', register);
 router.post('/login', login);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 router.get('/profile', authMiddleware, getProfile);
 
 // Profile update with optional image upload

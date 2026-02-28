@@ -19,6 +19,7 @@ import { ChatProvider } from './context/ChatContext';
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AgentDashboard = lazy(() => import('./pages/AgentDashboard'));
 const TenantDashboard = lazy(() => import('./pages/TenantDashboard'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const NotificationPage = lazy(() => import('./components/NotificationsPage'));
 const TenantPayment = lazy(() => import('./components/TenantPayment'));
 const ProfilePage = lazy(() => import('./components/ProfilePage'));
@@ -537,6 +538,7 @@ function AppContent() {
           </PublicRoute>
         } 
       />
+      <Route path="/reset-password" element={<ResetPassword />} />
       
       {/* Admin Routes */}
       <Route 
