@@ -456,3 +456,24 @@ app.use(cors({
 ### 5) Tenant Payload Enrichment
 - `GET /tenants` and `GET /tenants/:id` now return aggregated `agreement_documents` for UI display.
 - This allows Tenant Management and Tenant Hub to render downloadable agreement files without extra joins client-side.
+
+---
+
+## RECENT BACKEND SUMMARY (2026-03-01)
+- Payments/M-Pesa:
+  - tighter C2B account-reference validation,
+  - safer callback matching for multi-unit tenants (ambiguous phone matches remain pending instead of auto-posting),
+  - improved unmatched-callback messaging,
+  - manual payment reconciliation for unmatched pending/failed receipts.
+- Tenant allocations:
+  - removed one-active-allocation-per-tenant controller restriction,
+  - preserved one-active-allocation-per-unit safety,
+  - added clearer allocation conflict handling.
+- Tenant lifecycle:
+  - `createTenant` now identity-matches (ID/phone/email) and reuses existing tenant for additional unit allocation when applicable,
+  - duplicate active allocation for same tenant+unit prevented.
+- Allocation integrity logic now targets unit-level duplicates (compatible with multi-unit tenants).
+- Recent migrations:
+  - `008_create_password_reset_tokens.sql`
+  - `009_create_unit_code_aliases.sql`
+  - `010_allow_multiple_active_allocations_per_tenant.sql`

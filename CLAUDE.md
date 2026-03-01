@@ -515,3 +515,14 @@ All SMS messages in the system are now also sent via WhatsApp (Meta Cloud API) i
 ### Validation
 - Backend syntax checks passed for changed files.
 - Frontend production build passed.
+
+---
+
+## RECENT IMPLEMENTATION SUMMARY (2026-03-01)
+- Added secure password reset foundation: `password_reset_tokens` migration (`008`), plus backend reset-flow and login reset integration work.
+- Improved M-Pesa C2B reliability: stricter account-reference validation, safer unmatched-callback handling, and clearer admin/payer guidance messages.
+- Added unit reference compatibility via `unit_code_aliases` migration (`009`) for historical/alternate unit code matching.
+- Improved manual payment recovery: manual modal tenant prefetch + stronger validation + backend reconciliation of unmatched callback receipts.
+- Enabled multi-unit tenancy: one tenant can hold multiple active allocations while preserving one-active-tenant-per-unit safety.
+- Added deallocate-specific-unit flow in Tenant Allocation.
+- Updated tenant create flow to reuse existing profile (same ID/phone/email) and add allocation, instead of failing on duplicate profile fields.

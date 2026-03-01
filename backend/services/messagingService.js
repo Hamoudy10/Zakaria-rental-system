@@ -477,13 +477,19 @@ class MessagingService {
    * Send raw SMS + WhatsApp general announcement
    * For cases where only plain text is available (bulk/targeted SMS)
    */
-  async sendRawMessage(phone, message, messageType = "announcement") {
-    console.log("📨 Messaging: Sending raw message:", {
+  async sendRawMessage(
+    phone,
+    message,
+    messageType = "announcement",
+    options = {},
+  ) {
+    const { logSMSNotification = false } = options;
+    console.log("Messaging: Sending raw message:", {
       to: phone,
       type: messageType,
     });
 
-    return this.sendParallel(
+    const result = await this.sendParallel(
       () => this.sms.sendSMS(phone, message),
       () =>
         this.whatsapp.sendGeneralAnnouncement(
@@ -492,8 +498,18 @@ class MessagingService {
           message,
         ),
     );
-  }
 
+    if (logSMSNotification) {
+      await this.sms.logSMSNotification(
+        this.sms.formatPhoneNumber(phone),
+        messageType,
+        message,
+        !!result.sms?.success,
+      );
+    }
+
+    return result;
+  }
   // ============================================================
   // QUEUE METHODS
   // ============================================================
@@ -682,3 +698,4 @@ class MessagingService {
 // Export singleton instance
 const messagingService = new MessagingService();
 module.exports = messagingService;
+

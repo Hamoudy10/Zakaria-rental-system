@@ -1215,12 +1215,21 @@ const getMessagingHistory = async (req, res) => {
     const includesSMS = !channel || channel === "all" || channel === "sms";
     const includesWhatsApp =
       !channel || channel === "all" || channel === "whatsapp";
-    const [smsNotifTableCheck, waNotifTableCheck] = await Promise.all([
+    const [
+      smsQueueTableCheck,
+      waQueueTableCheck,
+      smsNotifTableCheck,
+      waNotifTableCheck,
+    ] = await Promise.all([
+      pool.query(`SELECT to_regclass('public.sms_queue') as table_name`),
+      pool.query(`SELECT to_regclass('public.whatsapp_queue') as table_name`),
       pool.query(`SELECT to_regclass('public.sms_notifications') as table_name`),
       pool.query(
         `SELECT to_regclass('public.whatsapp_notifications') as table_name`,
       ),
     ]);
+    const hasSMSQueueTable = !!smsQueueTableCheck.rows[0]?.table_name;
+    const hasWhatsAppQueueTable = !!waQueueTableCheck.rows[0]?.table_name;
     const hasSMSNotificationsTable = !!smsNotifTableCheck.rows[0]?.table_name;
     const hasWhatsAppNotificationsTable =
       !!waNotifTableCheck.rows[0]?.table_name;
@@ -1230,7 +1239,7 @@ const getMessagingHistory = async (req, res) => {
     let currentParamIndex = 1;
 
     // SMS queue (agent initiated + queued/retry records)
-    if (includesSMS && hasSMSNotificationsTable) {
+    if (includesSMS && hasSMSQueueTable) {
       const smsWhere = buildWhereClauses(
         "sq",
         "sq.recipient_phone",
@@ -1273,7 +1282,7 @@ const getMessagingHistory = async (req, res) => {
     }
 
     // SMS notifications (automatic immediate sends)
-    if (includesSMS) {
+    if (includesSMS && hasSMSNotificationsTable) {
       const smsNotifWhere = buildWhereClauses(
         "sn",
         "sn.phone_number",
@@ -1315,7 +1324,7 @@ const getMessagingHistory = async (req, res) => {
     }
 
     // WhatsApp queue (agent initiated + queued/retry records)
-    if (includesWhatsApp && hasWhatsAppNotificationsTable) {
+    if (includesWhatsApp && hasWhatsAppQueueTable) {
       const waWhere = buildWhereClauses(
         "wq",
         "wq.recipient_phone",
@@ -1358,7 +1367,7 @@ const getMessagingHistory = async (req, res) => {
     }
 
     // WhatsApp notifications (automatic immediate sends)
-    if (includesWhatsApp) {
+    if (includesWhatsApp && hasWhatsAppNotificationsTable) {
       const waNotifWhere = buildWhereClauses(
         "wn",
         "wn.phone_number",

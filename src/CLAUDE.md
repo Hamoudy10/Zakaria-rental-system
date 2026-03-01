@@ -413,3 +413,16 @@ Your system is now robust, tested, and waiting only for live credentials to laun
 
 ### 5) Build Status
 - Frontend production build passed after these updates.
+
+---
+
+## RECENT FRONTEND SUMMARY (2026-03-01)
+- Payment Management manual posting UX improved:
+  - tenant list prefetch on modal open,
+  - tenant selection always visible/editable,
+  - stronger submit validation (`tenant_id`, `unit_id`, amount > 0, `payment_month`).
+- Tenant Allocation now supports multi-unit tenants:
+  - status shows allocation count,
+  - allocated tenants can add another unit,
+  - deallocate opens a picker modal to deactivate a specific unit/allocation.
+- Tenant Management now clearly communicates duplicate identity behavior (existing profile reused for new unit allocation).

@@ -1087,6 +1087,7 @@ const handleMpesaCallback = async (req, res) => {
             safePhone,
             unmatchedMessage,
             "payment_pending",
+            { logSMSNotification: true },
           );
         } catch (payerNotifError) {
           console.error(
@@ -2017,6 +2018,7 @@ const sendBalanceReminders = async (req, res) => {
                 unit.tenant_phone,
                 rendered.rendered,
                 "balance_reminder",
+                { logSMSNotification: true },
               )
             : await MessagingService.sendBalanceReminder(
                 unit.tenant_phone,
