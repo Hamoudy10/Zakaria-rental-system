@@ -211,6 +211,7 @@ const getComprehensiveStats = async (req, res) => {
     let financialStats = {
       revenue_this_month: 0,
       revenue_this_year: 0,
+      revenue_all_time: 0,
       pending_amount: 0,
       pending_count: 0,
       total_rent_collected: 0,
@@ -229,6 +230,9 @@ const getComprehensiveStats = async (req, res) => {
             WHEN payment_month >= DATE_TRUNC('year', CURRENT_DATE) 
             AND status = 'completed' 
             THEN amount ELSE 0 END), 0) as revenue_this_year,
+          COALESCE(SUM(CASE
+            WHEN status = 'completed'
+            THEN amount ELSE 0 END), 0) as revenue_all_time,
           COALESCE(SUM(CASE 
             WHEN status = 'pending' 
             THEN amount ELSE 0 END), 0) as pending_amount,
@@ -561,6 +565,7 @@ const getComprehensiveStats = async (req, res) => {
         financial: {
           revenueThisMonth: collectedThisMonth,
           revenueThisYear: parseFloat(financialStats.revenue_this_year) || 0,
+          revenueAllTime: parseFloat(financialStats.revenue_all_time) || 0,
           expectedMonthlyRent: expectedRent,
           collectionRate: collectionRate,
           pendingPaymentsAmount: parseFloat(dueSummary.total_due) || 0,

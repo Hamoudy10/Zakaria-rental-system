@@ -421,13 +421,60 @@ const getAgentDashboardStats = async (req, res) => {
         AND c.resolved_at >= date_trunc('week', CURRENT_DATE)
     `, [agent_id]);
 
+    // Accumulated (all-time) portfolio financials for this agent's assigned properties
+    const allTimeRevenueResult = await db.query(
+      `
+      SELECT
+        COALESCE(SUM(rp.amount), 0) AS revenue_all_time,
+        COUNT(*)::int AS payment_count_all_time
+      FROM rent_payments rp
+      JOIN property_units pu ON pu.id = rp.unit_id
+      WHERE rp.status = 'completed'
+        AND EXISTS (
+          SELECT 1
+          FROM agent_property_assignments apa
+          WHERE apa.property_id = pu.property_id
+            AND apa.agent_id = $1
+            AND apa.is_active = true
+        )
+      `,
+      [agent_id]
+    );
+
+    const allTimeExpensesResult = await db.query(
+      `
+      SELECT
+        COALESCE(SUM(e.amount), 0) AS expenses_all_time,
+        COUNT(*)::int AS expense_count_all_time
+      FROM expenses e
+      WHERE e.status = 'approved'
+        AND EXISTS (
+          SELECT 1
+          FROM agent_property_assignments apa
+          WHERE apa.property_id = e.property_id
+            AND apa.agent_id = $1
+            AND apa.is_active = true
+        )
+      `,
+      [agent_id]
+    );
+
+    const revenueAllTime = parseFloat(allTimeRevenueResult.rows[0]?.revenue_all_time) || 0;
+    const expensesAllTime = parseFloat(allTimeExpensesResult.rows[0]?.expenses_all_time) || 0;
+    const netProfitAllTime = revenueAllTime - expensesAllTime;
+
     res.json({
       success: true,
       data: {
         assignedProperties: parseInt(propertiesResult.rows[0].count),
         activeComplaints: parseInt(complaintsResult.rows[0].count),
         pendingPayments: parseInt(paymentsResult.rows[0].count),
-        resolvedThisWeek: parseInt(resolvedResult.rows[0].count)
+        resolvedThisWeek: parseInt(resolvedResult.rows[0].count),
+        revenueAllTime,
+        expensesAllTime,
+        netProfitAllTime,
+        paymentCountAllTime: parseInt(allTimeRevenueResult.rows[0]?.payment_count_all_time) || 0,
+        expenseCountAllTime: parseInt(allTimeExpensesResult.rows[0]?.expense_count_all_time) || 0
       }
     });
 

@@ -273,11 +273,19 @@ const DashboardOverview = ({
 
   const { property, tenant, financial, agent, complaint, sms, payment, unitTypeBreakdown, monthlyTrend } = stats;
 
-  // Calculate net profit
+  // Monthly net figures
   const totalRevenue = financial?.revenueThisMonth || 0;
-  const totalExpenses = expenseStats?.totals?.approved?.amount || netProfitData?.expenses?.total || 0;
-  const netProfit = netProfitData?.netProfit ?? (totalRevenue - totalExpenses);
-  const profitMargin = netProfitData?.profitMargin ?? (totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : 0);
+  const totalExpenses = expenseStats?.totals?.approved?.amount || 0;
+  const netProfit = totalRevenue - totalExpenses;
+  const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : 0;
+
+  // Accumulated all-time business figures
+  const allTimeRevenue = financial?.revenueAllTime || 0;
+  const allTimeExpenses = expenseStats?.allTimeTotals?.approved?.amount || 0;
+  const allTimeNetProfit = allTimeRevenue - allTimeExpenses;
+  const allTimeProfitMargin = allTimeRevenue > 0
+    ? ((allTimeNetProfit / allTimeRevenue) * 100).toFixed(1)
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -374,6 +382,31 @@ const DashboardOverview = ({
           subtitle={`${tenant?.tenantsWithArrears || 0} tenants`}
           icon={AlertTriangle}
           color={(tenant?.totalArrears || 0) > 0 ? 'red' : 'gray'}
+        />
+      </div>
+
+      {/* Accumulated all-time business performance */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <StatCard
+          title="Accumulated Revenue (All Time)"
+          value={formatCurrency(allTimeRevenue)}
+          subtitle="From all completed payments"
+          icon={DollarSign}
+          color="green"
+        />
+        <StatCard
+          title="Accumulated Expenses (All Time)"
+          value={formatCurrency(allTimeExpenses)}
+          subtitle="Approved expenses only"
+          icon={Receipt}
+          color="orange"
+        />
+        <StatCard
+          title="Accumulated Net Profit/Loss"
+          value={formatCurrency(allTimeNetProfit)}
+          subtitle={`${allTimeProfitMargin}% margin`}
+          icon={allTimeNetProfit >= 0 ? TrendingUp : TrendingDown}
+          color={allTimeNetProfit >= 0 ? "green" : "red"}
         />
       </div>
 

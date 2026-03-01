@@ -355,23 +355,6 @@ const PaymentManagement = () => {
     }
   }, [filters.month, filters.propertyId, filters.search]);
 
-  // Smooth auto-refresh so new payments appear without manual reload
-  useEffect(() => {
-    const refreshIntervalMs = 15000;
-    const intervalId = setInterval(() => {
-      // Avoid background-tab polling noise
-      if (typeof document !== "undefined" && document.hidden) return;
-
-      if (activeTab === "all") {
-        handleFetchPayments();
-      } else {
-        fetchTenantStatusData();
-      }
-    }, refreshIntervalMs);
-
-    return () => clearInterval(intervalId);
-  }, [activeTab, handleFetchPayments, fetchTenantStatusData]);
-
   // ============================================================
   // FILTERED DATA
   // ============================================================
@@ -1047,6 +1030,17 @@ const PaymentManagement = () => {
         {/* Export buttons for All Payments tab */}
         {activeTab === "all" && (
           <div className="flex gap-2 pt-2 border-t">
+            <button
+              onClick={handleFetchPayments}
+              disabled={paymentsLoading}
+              className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-60"
+            >
+              <RefreshCw
+                size={16}
+                className={paymentsLoading ? "animate-spin" : ""}
+              />{" "}
+              Refresh
+            </button>
             <button
               onClick={() => handleExportPayments("pdf")}
               className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed"

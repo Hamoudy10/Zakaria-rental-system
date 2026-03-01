@@ -433,6 +433,66 @@ const AgentOverview = ({ setActiveTab, user }) => {
         </div>
       </div>
 
+      {/* Accumulated portfolio performance (all-time) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
+        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Revenue (All Time)</p>
+              <p className="text-lg sm:text-xl font-bold text-green-700">
+                {formatCurrency(dashboardData.stats.revenueAllTime || 0)}
+              </p>
+              <p className="text-xs text-gray-500">
+                {dashboardData.stats.paymentCountAllTime || 0} payments
+              </p>
+            </div>
+            <div className="text-lg sm:text-xl text-green-600">💳</div>
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Expenses (All Time)</p>
+              <p className="text-lg sm:text-xl font-bold text-orange-700">
+                {formatCurrency(dashboardData.stats.expensesAllTime || 0)}
+              </p>
+              <p className="text-xs text-gray-500">
+                {dashboardData.stats.expenseCountAllTime || 0} approved
+              </p>
+            </div>
+            <div className="text-lg sm:text-xl text-orange-600">🧾</div>
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Profit/Loss (All Time)</p>
+              <p
+                className={`text-lg sm:text-xl font-bold ${
+                  Number(dashboardData.stats.netProfitAllTime || 0) >= 0
+                    ? "text-emerald-700"
+                    : "text-red-700"
+                }`}
+              >
+                {formatCurrency(dashboardData.stats.netProfitAllTime || 0)}
+              </p>
+              <p className="text-xs text-gray-500">Portfolio accumulated</p>
+            </div>
+            <div
+              className={`text-lg sm:text-xl ${
+                Number(dashboardData.stats.netProfitAllTime || 0) >= 0
+                  ? "text-emerald-600"
+                  : "text-red-600"
+              }`}
+            >
+              {Number(dashboardData.stats.netProfitAllTime || 0) >= 0 ? "📈" : "📉"}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Quick Actions */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 shadow-sm">
