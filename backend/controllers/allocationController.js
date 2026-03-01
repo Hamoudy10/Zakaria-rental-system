@@ -213,35 +213,6 @@ const createAllocation = async (req, res) => {
       );
     }
 
-    // Check if tenant already has an active allocation (after cleanup)
-    const tenantCheck = await client.query(
-      `SELECT 
-         ta.id,
-         ta.unit_id,
-         pu.unit_code,
-         p.name AS property_name,
-         ta.lease_start_date,
-         ta.lease_end_date
-       FROM tenant_allocations ta
-       LEFT JOIN property_units pu ON pu.id = ta.unit_id
-       LEFT JOIN properties p ON p.id = pu.property_id
-       WHERE ta.tenant_id = $1 
-         AND ta.is_active = true`,
-      [tenant_id],
-    );
-
-    if (tenantCheck.rows.length > 0) {
-      await client.query("ROLLBACK");
-      const existingAllocation = tenantCheck.rows[0];
-      return res.status(409).json({
-        success: false,
-        message: `Tenant already has an active allocation at ${existingAllocation.unit_code} (${existingAllocation.property_name})`,
-        conflictingAllocations: tenantCheck.rows,
-        autoResolvedAllocations: cleanupResult,
-        hint: "Use the deallocate function first, or contact admin if this is an error",
-      });
-    }
-
     // Create the allocation
     const insertQuery = `
       INSERT INTO tenant_allocations (
@@ -305,7 +276,15 @@ const createAllocation = async (req, res) => {
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("❌ Create allocation error:", error);
+    console.error("Create allocation error:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Allocation conflict detected. Unit is already active or legacy tenant allocation uniqueness is still enforced. Run latest migrations and retry.",
+      });
+    }
 
     res.status(500).json({
       success: false,
@@ -504,23 +483,6 @@ const updateAllocation = async (req, res) => {
           success: false,
           message:
             "Cannot reactivate allocation - unit is allocated to another tenant",
-        });
-      }
-
-      // Check if tenant has another active allocation
-      const tenantCheck = await client.query(
-        `SELECT ta.id, pu.unit_code 
-         FROM tenant_allocations ta
-         JOIN property_units pu ON pu.id = ta.unit_id
-         WHERE ta.tenant_id = $1 AND ta.is_active = true AND ta.id != $2`,
-        [currentAllocation.tenant_id, id],
-      );
-
-      if (tenantCheck.rows.length > 0) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          message: `Cannot reactivate - tenant already has an active allocation at ${tenantCheck.rows[0].unit_code}`,
         });
       }
 
@@ -742,3 +704,4 @@ module.exports = {
   updateAllocation,
   deleteAllocation,
 };
+

@@ -734,14 +734,18 @@ const handleMpesaValidation = async (req, res) => {
     let isRecognizedAccount = unitCheck.rows.length > 0;
 
     // Fallback: allow BillRef that is a registered tenant phone
+    // only when it maps to exactly one active unit allocation.
     if (!isRecognizedAccount) {
       const phoneRef = normalizeKenyanPhone(BillRefNumber);
       if (phoneRef) {
         const phoneCheck = await pool.query(
-          `SELECT id FROM tenants WHERE phone_number = $1`,
+          `SELECT ta.unit_id
+           FROM tenants t
+           JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+           WHERE t.phone_number = $1`,
           [phoneRef],
         );
-        isRecognizedAccount = phoneCheck.rows.length > 0;
+        isRecognizedAccount = phoneCheck.rows.length === 1;
       }
     }
 
@@ -899,6 +903,7 @@ const handleMpesaCallback = async (req, res) => {
     let tenant = null;
     let unit = null;
     let property = null;
+    let unmatchedReason = null;
 
     // Strategy 1: Match BillRefNumber as unit_code
     if (BillRefNumber && BillRefNumber.trim()) {
@@ -956,7 +961,7 @@ const handleMpesaCallback = async (req, res) => {
           [phoneRef],
         );
 
-        if (phoneResult.rows.length > 0) {
+        if (phoneResult.rows.length === 1) {
           const row = phoneResult.rows[0];
           tenant = {
             id: row.tenant_id,
@@ -968,6 +973,12 @@ const handleMpesaCallback = async (req, res) => {
           property = { id: row.property_id, name: row.property_name };
           console.log(
             `âœ… Matched by BillRefNumber as phone: ${phoneRef} â†’ ${tenant.first_name} ${tenant.last_name}`,
+          );
+        } else if (phoneResult.rows.length > 1) {
+          unmatchedReason =
+            "Ambiguous BillRef phone: multiple active units for this tenant phone";
+          console.warn(
+            `Ambiguous BillRef phone match for ${phoneRef}: ${phoneResult.rows.length} active allocations`,
           );
         }
       }
@@ -990,7 +1001,7 @@ const handleMpesaCallback = async (req, res) => {
           [phone],
         );
 
-        if (msisdnResult.rows.length > 0) {
+        if (msisdnResult.rows.length === 1) {
           const row = msisdnResult.rows[0];
           tenant = {
             id: row.tenant_id,
@@ -1002,6 +1013,12 @@ const handleMpesaCallback = async (req, res) => {
           property = { id: row.property_id, name: row.property_name };
           console.log(
             `âœ… Matched by MSISDN: ${phone} â†’ ${tenant.first_name} ${tenant.last_name}`,
+          );
+        } else if (msisdnResult.rows.length > 1) {
+          unmatchedReason =
+            "Ambiguous MSISDN: payer phone belongs to tenant with multiple active units";
+          console.warn(
+            `Ambiguous MSISDN match for ${phone}: ${msisdnResult.rows.length} active allocations`,
           );
         }
       }
@@ -1056,7 +1073,7 @@ const handleMpesaCallback = async (req, res) => {
           amount,
           transTime,
           unmatchedPaymentMonth,
-          `UNMATCHED C2B: Ref=${BillRefNumber || "none"}, Payer=${payerName}, Phone=${safePhone}, RawMSISDN=${MSISDN}`,
+          `UNMATCHED C2B: Ref=${BillRefNumber || "none"}, Payer=${payerName}, Phone=${safePhone}, RawMSISDN=${MSISDN}, Reason=${unmatchedReason || "no unit match"}`,
         ],
       );
 
@@ -1065,7 +1082,7 @@ const handleMpesaCallback = async (req, res) => {
       // Notify payer if we have a valid phone (helps prevent "money lost" confusion)
       if (safePhone !== "invalid_msisdn") {
         try {
-          const unmatchedMessage = `We received your M-Pesa payment of KES ${Number(amount).toLocaleString()} (Receipt: ${TransID}) but the account reference "${BillRefNumber || "N/A"}" is invalid. Please contact support with this receipt for immediate assistance.`;
+          const unmatchedMessage = `We received your M-Pesa payment of KES ${Number(amount).toLocaleString()} (Receipt: ${TransID}) but could not map it to one unit. Use the exact unit code as Account Number and contact support with this receipt for allocation.`;
           await MessagingService.sendRawMessage(
             safePhone,
             unmatchedMessage,
@@ -1088,7 +1105,7 @@ const handleMpesaCallback = async (req, res) => {
           await NotificationService.createNotification({
             userId: admin.id,
             title: "âš ï¸ Unmatched M-Pesa Payment",
-            message: `KSh ${amount.toLocaleString()} from ${safePhone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Action: in Payment Management search this receipt, verify debit on M-Pesa statement, then post via Manual Payment to the correct tenant/unit.`,
+            message: `KSh ${amount.toLocaleString()} from ${safePhone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Reason: ${unmatchedReason || "unrecognized unit reference"}. Action: in Payment Management search this receipt, verify debit on M-Pesa statement, then post via Manual Payment to the correct tenant/unit.`,
             type: "payment_pending",
             relatedEntityType: "rent_payment",
           });

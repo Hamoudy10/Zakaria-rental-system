@@ -239,19 +239,20 @@ const getTenants = async (req, res) => {
       SELECT 
         t.*,
         COUNT(*) OVER() as total_count,
-        ta.unit_id,
-        ta.monthly_rent,
-        ta.security_deposit,
-        ta.lease_start_date,
-        ta.lease_end_date,
-        ta.arrears_balance,
-        ta.month_count,
-        ta.expected_amount,
-        ta.current_month_expected,
-        pu.unit_code,
-        pu.unit_number,
-        p.name as property_name,
-        p.property_code,
+        ca.unit_id,
+        ca.monthly_rent,
+        ca.security_deposit,
+        ca.lease_start_date,
+        ca.lease_end_date,
+        ca.arrears_balance,
+        ca.month_count,
+        ca.expected_amount,
+        ca.current_month_expected,
+        ca.unit_code,
+        ca.unit_number,
+        ca.property_name,
+        ca.property_code,
+        COALESCE(ca.active_allocations_count, 0) AS active_allocations_count,
         u.first_name as created_by_name,
         COALESCE(
           (
@@ -273,9 +274,34 @@ const getTenants = async (req, res) => {
           '[]'::json
         ) as agreement_documents
       FROM tenants t
-      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-      LEFT JOIN property_units pu ON ta.unit_id = pu.id
-      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN LATERAL (
+        SELECT 
+          ta.unit_id,
+          ta.monthly_rent,
+          ta.security_deposit,
+          ta.lease_start_date,
+          ta.lease_end_date,
+          ta.arrears_balance,
+          ta.month_count,
+          ta.expected_amount,
+          ta.current_month_expected,
+          pu.unit_code,
+          pu.unit_number,
+          p.name as property_name,
+          p.property_code,
+          (
+            SELECT COUNT(*)
+            FROM tenant_allocations ta_count
+            WHERE ta_count.tenant_id = t.id
+              AND ta_count.is_active = true
+          ) AS active_allocations_count
+        FROM tenant_allocations ta
+        LEFT JOIN property_units pu ON ta.unit_id = pu.id
+        LEFT JOIN properties p ON pu.property_id = p.id
+        WHERE ta.tenant_id = t.id AND ta.is_active = true
+        ORDER BY ta.allocation_date DESC NULLS LAST, ta.id DESC
+        LIMIT 1
+      ) ca ON true
       LEFT JOIN users u ON t.created_by = u.id
     `;
 
@@ -286,17 +312,28 @@ const getTenants = async (req, res) => {
     // Add agent property assignment filter only for agents
     if (req.user.role === "agent") {
       query += ` 
-        INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
-        WHERE apa.agent_id = $${queryParams.length + 1} 
-        AND apa.is_active = true
+        WHERE EXISTS (
+          SELECT 1
+          FROM tenant_allocations ta_agent
+          JOIN property_units pu_agent ON ta_agent.unit_id = pu_agent.id
+          JOIN agent_property_assignments apa ON apa.property_id = pu_agent.property_id
+          WHERE ta_agent.tenant_id = t.id
+            AND ta_agent.is_active = true
+            AND apa.agent_id = $${queryParams.length + 1}
+            AND apa.is_active = true
+        )
       `;
       countQuery += ` 
-        LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-        LEFT JOIN property_units pu ON ta.unit_id = pu.id
-        LEFT JOIN properties p ON pu.property_id = p.id
-        INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
-        WHERE apa.agent_id = $1 
-        AND apa.is_active = true
+        WHERE EXISTS (
+          SELECT 1
+          FROM tenant_allocations ta_agent
+          JOIN property_units pu_agent ON ta_agent.unit_id = pu_agent.id
+          JOIN agent_property_assignments apa ON apa.property_id = pu_agent.property_id
+          WHERE ta_agent.tenant_id = t.id
+            AND ta_agent.is_active = true
+            AND apa.agent_id = $1
+            AND apa.is_active = true
+        )
       `;
       queryParams.push(req.user.id);
       countParams.push(req.user.id);
@@ -374,18 +411,19 @@ const getTenant = async (req, res) => {
     let query = `
       SELECT 
         t.*,
-        ta.unit_id,
-        pu.unit_code,
-        pu.unit_number,
-        p.name as property_name,
-        p.property_code,
-        ta.lease_start_date,
-        ta.lease_end_date,
-        ta.monthly_rent,
-        ta.security_deposit,
-        ta.month_count,
-        ta.expected_amount,
-        ta.current_month_expected,
+        ca.unit_id,
+        ca.unit_code,
+        ca.unit_number,
+        ca.property_name,
+        ca.property_code,
+        ca.lease_start_date,
+        ca.lease_end_date,
+        ca.monthly_rent,
+        ca.security_deposit,
+        ca.month_count,
+        ca.expected_amount,
+        ca.current_month_expected,
+        COALESCE(ca.active_allocations_count, 0) AS active_allocations_count,
         u.first_name as created_by_name,
         COALESCE(
           (
@@ -407,9 +445,33 @@ const getTenant = async (req, res) => {
           '[]'::json
         ) as agreement_documents
       FROM tenants t
-      LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-      LEFT JOIN property_units pu ON ta.unit_id = pu.id
-      LEFT JOIN properties p ON pu.property_id = p.id
+      LEFT JOIN LATERAL (
+        SELECT
+          ta.unit_id,
+          ta.lease_start_date,
+          ta.lease_end_date,
+          ta.monthly_rent,
+          ta.security_deposit,
+          ta.month_count,
+          ta.expected_amount,
+          ta.current_month_expected,
+          pu.unit_code,
+          pu.unit_number,
+          p.name as property_name,
+          p.property_code,
+          (
+            SELECT COUNT(*)
+            FROM tenant_allocations ta_count
+            WHERE ta_count.tenant_id = t.id
+              AND ta_count.is_active = true
+          ) AS active_allocations_count
+        FROM tenant_allocations ta
+        LEFT JOIN property_units pu ON ta.unit_id = pu.id
+        LEFT JOIN properties p ON pu.property_id = p.id
+        WHERE ta.tenant_id = t.id AND ta.is_active = true
+        ORDER BY ta.allocation_date DESC NULLS LAST, ta.id DESC
+        LIMIT 1
+      ) ca ON true
       LEFT JOIN users u ON t.created_by = u.id
       WHERE t.id = $1
     `;
@@ -420,10 +482,14 @@ const getTenant = async (req, res) => {
     if (req.user.role === "agent") {
       query += ` 
         AND EXISTS (
-          SELECT 1 FROM agent_property_assignments apa 
-          WHERE apa.property_id = p.id 
-          AND apa.agent_id = $2 
-          AND apa.is_active = true
+          SELECT 1
+          FROM tenant_allocations ta_agent
+          JOIN property_units pu_agent ON ta_agent.unit_id = pu_agent.id
+          JOIN agent_property_assignments apa ON apa.property_id = pu_agent.property_id
+          WHERE ta_agent.tenant_id = t.id
+            AND ta_agent.is_active = true
+            AND apa.agent_id = $2
+            AND apa.is_active = true
         )
       `;
       queryParams.push(req.user.id);
@@ -516,62 +582,87 @@ const createTenant = async (req, res) => {
     const normalizedEmail =
       typeof email === "string" ? email.trim() || null : (email ?? null);
 
-    console.log("📞 Formatted phone:", formattedPhone);
+    console.log("Formatted phone:", formattedPhone);
 
-    // Check if national ID already exists
+    // Resolve existing tenant by unique identity fields.
+    const identityMatches = [];
+
     const existingNationalId = await client.query(
-      "SELECT id FROM tenants WHERE national_id = $1",
+      "SELECT * FROM tenants WHERE national_id = $1",
       [national_id],
     );
+    if (existingNationalId.rows[0]) identityMatches.push(existingNationalId.rows[0]);
 
-    if (existingNationalId.rows.length > 0) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        success: false,
-        message: "This national ID is already used by another tenant.",
-        fieldErrors: {
-          national_id: "This national ID is already used. Please check and try again.",
-        },
-      });
-    }
-
-    // Check if phone number already exists
     const existingPhone = await client.query(
-      "SELECT id FROM tenants WHERE phone_number = $1",
+      "SELECT * FROM tenants WHERE phone_number = $1",
       [formattedPhone],
     );
+    if (existingPhone.rows[0]) identityMatches.push(existingPhone.rows[0]);
 
-    if (existingPhone.rows.length > 0) {
+    if (normalizedEmail) {
+      const existingEmail = await client.query(
+        "SELECT * FROM tenants WHERE email = $1",
+        [normalizedEmail],
+      );
+      if (existingEmail.rows[0]) identityMatches.push(existingEmail.rows[0]);
+    }
+
+    const uniqueMatchedTenants = Array.from(
+      new Map(identityMatches.map((row) => [row.id, row])).values(),
+    );
+
+    if (uniqueMatchedTenants.length > 1) {
       await client.query("ROLLBACK");
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message: "This phone number is already used by another tenant.",
-        fieldErrors: {
-          phone_number: "This phone number is already used. Please use another number.",
-        },
+        message:
+          "Provided ID/phone/email match different existing tenants. Use the exact existing profile details, then allocate the unit.",
       });
     }
 
-    // Create tenant
-    const tenantResult = await client.query(
-      `INSERT INTO tenants 
-        (national_id, first_name, last_name, email, phone_number, 
-         emergency_contact_name, emergency_contact_phone, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [
-        national_id,
-        first_name,
-        last_name,
-        normalizedEmail,
-        formattedPhone,
-        emergency_contact_name,
-        formattedEmergencyPhone,
-        req.user.id,
-      ],
-    );
+    const matchedExistingTenant = uniqueMatchedTenants[0] || null;
+    let tenantRecord = null;
+    let reusedExistingTenant = false;
 
-    console.log("✅ Tenant created:", tenantResult.rows[0].id);
+    if (matchedExistingTenant) {
+      if (!unit_id) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message:
+            "Tenant already exists. To add another unit, select a unit and lease details.",
+          fieldErrors: {
+            national_id:
+              "Tenant already exists. Add another unit allocation instead of creating a duplicate profile.",
+          },
+        });
+      }
+
+      tenantRecord = matchedExistingTenant;
+      reusedExistingTenant = true;
+      console.log("Existing tenant matched for additional allocation:", tenantRecord.id);
+    } else {
+      const tenantResult = await client.query(
+        `INSERT INTO tenants 
+          (national_id, first_name, last_name, email, phone_number, 
+           emergency_contact_name, emergency_contact_phone, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [
+          national_id,
+          first_name,
+          last_name,
+          normalizedEmail,
+          formattedPhone,
+          emergency_contact_name,
+          formattedEmergencyPhone,
+          req.user.id,
+        ],
+      );
+
+      tenantRecord = tenantResult.rows[0];
+      console.log("Tenant created:", tenantRecord.id);
+    }
 
     // Variables to store unit info for SMS
     let unitCode = null;
@@ -633,6 +724,19 @@ const createTenant = async (req, res) => {
         });
       }
 
+      const existingAllocationForUnit = await client.query(
+        `SELECT id FROM tenant_allocations
+         WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true`,
+        [tenantRecord.id, unit_id],
+      );
+      if (existingAllocationForUnit.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message: "This tenant is already actively allocated to the selected unit.",
+        });
+      }
+
       // Store unit info for SMS
       unitCode = unitCheck.rows[0].unit_code;
       propertyName = unitCheck.rows[0].property_name;
@@ -652,7 +756,7 @@ const createTenant = async (req, res) => {
           )
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
-          tenantResult.rows[0].id,
+          tenantRecord.id,
           unit_id,
           lease_start_date,
           lease_end_date,
@@ -694,7 +798,7 @@ const createTenant = async (req, res) => {
       try {
         console.log("📱 Sending welcome SMS to new tenant...");
 
-        const tenantName = `${first_name} ${last_name}`;
+        const tenantName = `${tenantRecord.first_name} ${tenantRecord.last_name}`;
         const dueDate = "1st"; // Default due date
 
         const smsResult = await smsService.sendWelcomeMessage(
@@ -724,10 +828,12 @@ const createTenant = async (req, res) => {
     // NOTIFY ADMINS ABOUT NEW TENANT
     // ============================================================
     try {
-      const tenantName = `${tenantResult.rows[0].first_name} ${tenantResult.rows[0].last_name}`;
-      const tenantPhone = tenantResult.rows[0].phone_number;
+      const tenantName = `${tenantRecord.first_name} ${tenantRecord.last_name}`;
+      const tenantPhone = tenantRecord.phone_number;
 
-      let notificationMessage = `${tenantName} has been registered in the system. Phone: ${tenantPhone}`;
+      let notificationMessage = reusedExistingTenant
+        ? `${tenantName} has been allocated to an additional unit. Phone: ${tenantPhone}`
+        : `${tenantName} has been registered in the system. Phone: ${tenantPhone}`;
       if (unitCode) {
         notificationMessage += `. Allocated to ${unitCode} at ${propertyName}.`;
       }
@@ -736,7 +842,7 @@ const createTenant = async (req, res) => {
         "New Tenant Registered",
         notificationMessage,
         "tenant_created",
-        tenantResult.rows[0].id,
+        tenantRecord.id,
       );
 
       console.log("✅ New tenant notification sent to all admins");
@@ -751,9 +857,11 @@ const createTenant = async (req, res) => {
     res.status(201).json({
       success: true,
       message:
-        "Tenant created successfully" +
+        (reusedExistingTenant
+          ? "Existing tenant allocated successfully"
+          : "Tenant created successfully") +
         (unitCode ? ` and allocated to ${unitCode}` : ""),
-      data: tenantResult.rows[0],
+      data: tenantRecord,
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1782,3 +1890,7 @@ module.exports = {
   deleteTenantAgreement,
   getTenantAgreementDownloadUrl,
 };
+
+
+
+
