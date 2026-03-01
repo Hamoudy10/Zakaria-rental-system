@@ -525,3 +525,12 @@ Compatibility guard:
   - Dashboard pending-payment logic aligned to computed rent balance (`monthly_rent - rent_paid`).
 - Agent water-bill reporting scope clarified in backend logic:
   - Report queries now include records from assigned properties and valid agent-created entries, preventing historical "no water bills" false negatives.
+
+---
+
+## RECENT DB SCHEMA SUMMARY (2026-03-01)
+- Added `password_reset_tokens` table via migration `008` for one-time password reset tokens.
+- Added `unit_code_aliases` table via migration `009` for alternate/historical unit-code matching.
+- Added migration `010` to allow multiple active allocations per tenant while enforcing:
+  - max one active allocation per unit,
+  - no duplicate active allocation for the same tenant+unit pair.
