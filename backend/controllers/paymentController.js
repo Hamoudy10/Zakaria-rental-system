@@ -210,6 +210,16 @@ const trackRentPayment = async (
     const arrearsPaidForMonth =
       parseFloat(targetMonthResult.rows[0].arrears_paid) || 0;
 
+    // Arrears are cumulative debt, so reductions must be computed from all-time arrears allocations.
+    const arrearsPaidAllTimeResult = await db.query(
+      `SELECT COALESCE(SUM(COALESCE(allocated_to_arrears, 0)), 0) AS arrears_paid_all_time
+       FROM rent_payments
+       WHERE tenant_id = $1 AND unit_id = $2 AND status = 'completed'`,
+      [tenantId, unitId],
+    );
+    const arrearsPaidAllTime =
+      parseFloat(arrearsPaidAllTimeResult.rows[0].arrears_paid_all_time) || 0;
+
     const waterBillResult = await db.query(
       `SELECT COALESCE(wb.amount, 0) AS amount
        FROM water_bills wb
@@ -222,7 +232,7 @@ const trackRentPayment = async (
     );
     const waterAmount = parseFloat(waterBillResult.rows[0]?.amount) || 0;
 
-    const remainingArrears = Math.max(0, arrearsBalance - arrearsPaidForMonth);
+    const remainingArrears = Math.max(0, arrearsBalance - arrearsPaidAllTime);
     const remainingRent = Math.max(0, monthlyRent - rentPaidForMonth);
     const remainingWater = Math.max(0, waterAmount - waterPaidForMonth);
 
@@ -259,6 +269,8 @@ const trackRentPayment = async (
       arrearsBalanceAfterPayment: Math.max(0, remainingArrears - allocatedToArrears),
       targetMonth: paymentMonth,
       isFutureMonth,
+      arrearsPaidForMonth,
+      arrearsPaidAllTime,
     };
   } catch (error) {
     console.error("Error in trackRentPayment:", error);
@@ -3094,6 +3106,13 @@ const getTenantPaymentStatus = async (req, res) => {
           AND rp.status = 'completed'
         ), 0) as water_paid,
         COALESCE((
+          SELECT SUM(COALESCE(rp.allocated_to_arrears, 0))
+          FROM rent_payments rp
+          WHERE rp.tenant_id = t.id
+          AND rp.unit_id = pu.id
+          AND rp.status = 'completed'
+        ), 0) as arrears_paid,
+        COALESCE((
           SELECT SUM(
             CASE
               WHEN (
@@ -3169,12 +3188,13 @@ const getTenantPaymentStatus = async (req, res) => {
       const waterBill = parseFloat(row.water_bill) || 0;
       const waterPaid = parseFloat(row.water_paid) || 0;
       const arrears = parseFloat(row.arrears) || 0;
+      const arrearsPaid = parseFloat(row.arrears_paid) || 0;
       const advanceAmount = parseFloat(row.advance_amount) || 0;
       const totalLeaseExpected = parseFloat(row.expected_amount) || 0;
 
       const rawRentDue = Math.max(0, monthlyRent - rentPaid);
       const rawWaterDue = Math.max(0, waterBill - waterPaid);
-      const rawArrearsDue = Math.max(0, arrears);
+      const rawArrearsDue = Math.max(0, arrears - arrearsPaid);
       const grossDue = rawRentDue + rawWaterDue + rawArrearsDue;
 
       // Apply available advance credit using system allocation priority:
@@ -3218,6 +3238,7 @@ const getTenantPaymentStatus = async (req, res) => {
         water_due: effectiveWaterDue,
         raw_water_due: rawWaterDue,
         arrears,
+        arrears_paid: arrearsPaid,
         arrears_due: effectiveArrearsDue,
         raw_arrears_due: rawArrearsDue,
         total_due: totalDue,

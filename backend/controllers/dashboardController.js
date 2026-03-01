@@ -57,7 +57,7 @@ const getAdminStats = async (req, res) => {
           (
             GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
             GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
-            GREATEST(0, COALESCE(ta.arrears_balance, 0))
+            GREATEST(0, COALESCE(ta.arrears_balance, 0) - COALESCE(ap.arrears_paid, 0))
           ) AS total_due
         FROM tenant_allocations ta
         JOIN property_units pu ON pu.id = ta.unit_id
@@ -98,6 +98,13 @@ const getAdminStats = async (req, res) => {
                 AND rp.status = 'completed'
             ), 0) AS water_paid
         ) wp ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(COALESCE(rp.allocated_to_arrears, 0)), 0) AS arrears_paid
+          FROM rent_payments rp
+          WHERE rp.tenant_id = ta.tenant_id
+            AND rp.unit_id = ta.unit_id
+            AND rp.status = 'completed'
+        ) ap ON TRUE
         WHERE ta.is_active = true
       ) balances
       WHERE balances.total_due > 0
@@ -294,11 +301,11 @@ const getComprehensiveStats = async (req, res) => {
             ta.id,
             GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) AS rent_due,
             GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) AS water_due,
-            GREATEST(0, COALESCE(ta.arrears_balance, 0)) AS arrears_due,
+            GREATEST(0, COALESCE(ta.arrears_balance, 0) - COALESCE(ap.arrears_paid, 0)) AS arrears_due,
             (
               GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
               GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
-              GREATEST(0, COALESCE(ta.arrears_balance, 0))
+              GREATEST(0, COALESCE(ta.arrears_balance, 0) - COALESCE(ap.arrears_paid, 0))
             ) AS total_due
           FROM tenant_allocations ta
           JOIN property_units pu ON pu.id = ta.unit_id
@@ -336,9 +343,16 @@ const getComprehensiveStats = async (req, res) => {
                 WHERE rp.tenant_id = ta.tenant_id
                   AND rp.unit_id = ta.unit_id
                   AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
-                  AND rp.status = 'completed'
-              ), 0) AS water_paid
+                AND rp.status = 'completed'
+            ), 0) AS water_paid
           ) wp ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(COALESCE(rp.allocated_to_arrears, 0)), 0) AS arrears_paid
+            FROM rent_payments rp
+            WHERE rp.tenant_id = ta.tenant_id
+              AND rp.unit_id = ta.unit_id
+              AND rp.status = 'completed'
+          ) ap ON TRUE
           WHERE ta.is_active = true
         ) dues
       `);
@@ -348,26 +362,8 @@ const getComprehensiveStats = async (req, res) => {
       console.error('Error fetching due summary:', e.message);
     }
 
-    // Outstanding water bills calculation
-    let outstandingWater = 0;
-    try {
-      const waterBalanceResult = await pool.query(`
-        SELECT COALESCE(SUM(wb.amount), 0) as total_billed
-        FROM water_bills wb
-        JOIN tenant_allocations ta ON wb.tenant_id = ta.tenant_id AND ta.is_active = true
-      `);
-      const waterPaidResult = await pool.query(`
-        SELECT COALESCE(SUM(COALESCE(allocated_to_water, 0)), 0) as total_paid
-        FROM rent_payments
-        WHERE status = 'completed'
-      `);
-      const totalWaterBilled = parseFloat(waterBalanceResult.rows[0]?.total_billed) || 0;
-      const totalWaterPaid = parseFloat(waterPaidResult.rows[0]?.total_paid) || 0;
-      outstandingWater = Math.max(0, totalWaterBilled - totalWaterPaid);
-      console.log('✅ Water balance fetched');
-    } catch (e) {
-      console.error('Error fetching water balance:', e.message);
-    }
+    // Keep water outstanding aligned with current due summary to avoid drift/duplication.
+    const outstandingWater = parseFloat(dueSummary.water_due_total) || 0;
 
     // ═══════════════════════════════════════════════════════════════
     // AGENT STATISTICS (properties has NO is_active column)
