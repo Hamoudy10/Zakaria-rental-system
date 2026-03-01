@@ -4,7 +4,10 @@ const NotificationService = require("../services/notificationService");
 const smsService = require("../services/smsService");
 const { deleteCloudinaryImage } = require("../middleware/uploadMiddleware");
 const cloudinary = require("../config/cloudinary");
-const { ensureDepositCharge } = require("../services/depositService");
+const {
+  ensureDepositCharge,
+  ensureDepositPaid,
+} = require("../services/depositService");
 
 // Format phone number to 254 format - UPDATED to support 01xxxxxxxx (new Safaricom)
 const formatPhoneNumber = (phone) => {
@@ -561,6 +564,7 @@ const createTenant = async (req, res) => {
       lease_end_date,
       monthly_rent,
       security_deposit,
+      deposit_status,
     } = req.body;
 
     console.log("📝 Creating tenant with data:", req.body);
@@ -582,6 +586,10 @@ const createTenant = async (req, res) => {
       : null;
     const normalizedEmail =
       typeof email === "string" ? email.trim() || null : (email ?? null);
+    const normalizedDepositStatus =
+      String(deposit_status || "unpaid").toLowerCase() === "paid"
+        ? "paid"
+        : "unpaid";
 
     console.log("Formatted phone:", formattedPhone);
 
@@ -780,6 +788,20 @@ const createTenant = async (req, res) => {
         createdBy: req.user.id,
       });
 
+      if (normalizedDepositStatus === "paid") {
+        await ensureDepositPaid({
+          client,
+          tenantId: tenantRecord.id,
+          unitId: unit_id,
+          allocationId: allocationInsert.rows?.[0]?.id,
+          requiredDeposit: security_deposit || 0,
+          createdBy: req.user.id,
+          transactionDate: allocationInsert.rows?.[0]?.allocation_date || null,
+          paymentMethod: "system",
+          notes: "Auto-marked as paid from Tenant Management setup.",
+        });
+      }
+
       // Mark unit as occupied
       await client.query(
         `UPDATE property_units SET is_occupied = true WHERE id = $1`,
@@ -927,6 +949,7 @@ const updateTenant = async (req, res) => {
       lease_end_date,
       monthly_rent,
       security_deposit,
+      deposit_status,
     } = req.body;
 
     // Check if tenant exists with agent property validation
@@ -1064,6 +1087,10 @@ const updateTenant = async (req, res) => {
       req.body,
       "security_deposit",
     );
+    const hasDepositStatus = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "deposit_status",
+    );
 
     const normalizedUnitId = hasUnitId
       ? typeof unit_id === "string" && unit_id.trim() === ""
@@ -1085,13 +1112,19 @@ const updateTenant = async (req, res) => {
       !hasSecurityDeposit || security_deposit === null || security_deposit === ""
         ? undefined
         : Number(security_deposit);
+    const normalizedDepositStatus = hasDepositStatus
+      ? String(deposit_status || "").toLowerCase() === "paid"
+        ? "paid"
+        : "unpaid"
+      : undefined;
 
     const allocationFieldsProvided =
       normalizedUnitId !== undefined ||
       normalizedLeaseStartDate !== undefined ||
       normalizedLeaseEndDate !== undefined ||
       normalizedMonthlyRent !== undefined ||
-      normalizedSecurityDeposit !== undefined;
+      normalizedSecurityDeposit !== undefined ||
+      normalizedDepositStatus !== undefined;
 
     if (allocationFieldsProvided) {
       const activeAllocationQuery = await client.query(
@@ -1263,6 +1296,28 @@ const updateTenant = async (req, res) => {
             activeAllocation.id,
           ],
         );
+
+        await ensureDepositCharge({
+          client,
+          tenantId: id,
+          unitId: targetUnitId,
+          allocationId: activeAllocation.id,
+          requiredDeposit: finalSecurityDeposit,
+          createdBy: req.user.id,
+        });
+
+        if (normalizedDepositStatus === "paid") {
+          await ensureDepositPaid({
+            client,
+            tenantId: id,
+            unitId: targetUnitId,
+            allocationId: activeAllocation.id,
+            requiredDeposit: finalSecurityDeposit,
+            createdBy: req.user.id,
+            paymentMethod: "system",
+            notes: "Auto-marked as paid from Tenant Management update.",
+          });
+        }
       } else {
         const allocationInsert = await client.query(
           `INSERT INTO tenant_allocations
@@ -1294,6 +1349,20 @@ const updateTenant = async (req, res) => {
           requiredDeposit: finalSecurityDeposit,
           createdBy: req.user.id,
         });
+
+        if (normalizedDepositStatus === "paid") {
+          await ensureDepositPaid({
+            client,
+            tenantId: id,
+            unitId: targetUnitId,
+            allocationId: allocationInsert.rows?.[0]?.id,
+            requiredDeposit: finalSecurityDeposit,
+            createdBy: req.user.id,
+            transactionDate: allocationInsert.rows?.[0]?.allocation_date || null,
+            paymentMethod: "system",
+            notes: "Auto-marked as paid from Tenant Management update.",
+          });
+        }
 
         await client.query(
           "UPDATE property_units SET is_occupied = true WHERE id = $1",
@@ -1911,7 +1980,3 @@ module.exports = {
   deleteTenantAgreement,
   getTenantAgreementDownloadUrl,
 };
-
-
-
-

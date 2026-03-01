@@ -78,6 +78,15 @@ Full-stack rental management platform for Kenya with multi-role access (Admin/Ag
 ## CONVENTIONS
 1. Database uses UUIDs, soft deletes (`is_active`)
 2. All agent queries join `agent_property_assignments`
+
+## RECENT UPDATES (2026-03-01)
+- Added tenant deposit ledger support using `tenant_deposit_transactions` (migration `011`), including backfill of `deposit_charge` from `tenant_allocations.security_deposit`.
+- Added backend deposit APIs:
+  - `POST /api/payments/deposits/record`
+  - `GET /api/payments/deposits/summary/:tenantId`
+  - `GET /api/payments/deposits/history/:tenantId`
+- Wired frontend payment API methods for deposit record/summary/history in `src/services/api.jsx`.
+- Updated manual payment modal in `PaymentManagement.jsx` to support both `Rent` and `Deposit` posting with tenant/unit allocation awareness.
 3. Controllers check role: Admin = all data, Agent = filtered
 4. Notifications reference `users.id`, NOT `tenants.id`
 5. tenant_allocations has `updated_at` column (added via migration)

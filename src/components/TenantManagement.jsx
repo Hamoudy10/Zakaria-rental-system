@@ -41,6 +41,7 @@ const TenantManagement = () => {
     lease_end_date: "",
     monthly_rent: "",
     security_deposit: "",
+    deposit_status: "unpaid",
   });
   const [idFrontImage, setIdFrontImage] = useState(null);
   const [idBackImage, setIdBackImage] = useState(null);
@@ -374,6 +375,7 @@ const TenantManagement = () => {
           : "",
         monthly_rent: parseFloat(formData.monthly_rent) || 0,
         security_deposit: parseFloat(formData.security_deposit) || 0,
+        deposit_status: formData.deposit_status || "unpaid",
       };
       if (editingTenant) {
         response = await API.tenants.updateTenant(
@@ -477,6 +479,7 @@ const TenantManagement = () => {
         (
           tenant.security_deposit ?? tenant.current_allocation?.security_deposit
         )?.toString() || "",
+      deposit_status: "unpaid",
     });
 
     setFormErrors({});
@@ -496,6 +499,7 @@ const TenantManagement = () => {
       lease_end_date: "",
       monthly_rent: "",
       security_deposit: "",
+      deposit_status: "unpaid",
     });
     setIdFrontImage(null);
     setIdBackImage(null);
@@ -1156,6 +1160,23 @@ const TenantManagement = () => {
                             min="0"
                             step="100"
                           />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Deposit Status
+                          </label>
+                          <select
+                            name="deposit_status"
+                            value={formData.deposit_status}
+                            onChange={handleInputChange}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="unpaid">Unpaid (new tenant pays later)</option>
+                            <option value="paid">Paid (auto-record now)</option>
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">
+                            If set to Paid, system auto-records deposit payment.
+                          </p>
                         </div>
                       </div>
                     </div>
