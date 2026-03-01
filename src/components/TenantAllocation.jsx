@@ -28,6 +28,9 @@ const TenantAllocation = () => {
   
   const [showAllocationModal, setShowAllocationModal] = useState(false)
   const [selectedTenantForAllocation, setSelectedTenantForAllocation] = useState(null)
+  const [showDeallocateModal, setShowDeallocateModal] = useState(false)
+  const [selectedTenantForDeallocation, setSelectedTenantForDeallocation] = useState(null)
+  const [deallocating, setDeallocating] = useState(false)
   const [selectedUnit, setSelectedUnit] = useState('')
   const [allocationError, setAllocationError] = useState('')
   const [conflictAllocations, setConflictAllocations] = useState([])
@@ -81,13 +84,16 @@ const TenantAllocation = () => {
   // Merge tenants with allocation data
   const tenantsWithAllocationStatus = useMemo(() => {
     return safeTenants.map(tenant => {
-      // Find active allocation for this tenant
-      const activeAllocation = safeAllocations.find(
+      // Keep all active allocations; newest allocation is the primary display row
+      const tenantActiveAllocations = safeAllocations.filter(
         alloc => alloc.tenant_id === tenant.id && alloc.is_active
       )
+      const activeAllocation = tenantActiveAllocations[0] || null
       
       return {
         ...tenant,
+        active_allocations: tenantActiveAllocations,
+        active_allocations_count: tenantActiveAllocations.length,
         allocation: activeAllocation || null,
         isAllocated: !!activeAllocation,
         allocation_id: activeAllocation?.id || null
@@ -132,8 +138,9 @@ const TenantAllocation = () => {
 
   // Reset form when modal closes
   useEffect(() => {
-    if (!showAllocationModal) {
+    if (!showAllocationModal && !showDeallocateModal) {
       setSelectedTenantForAllocation(null)
+      setSelectedTenantForDeallocation(null)
       setSelectedUnit('')
       setAllocationError('')
       clearError()
@@ -149,7 +156,7 @@ const TenantAllocation = () => {
         grace_period_days: 7
       })
     }
-  }, [showAllocationModal, clearError])
+  }, [showAllocationModal, showDeallocateModal, clearError])
 
   // Open allocation modal for a specific tenant
   const openAllocationModal = (tenant) => {
@@ -242,35 +249,34 @@ const TenantAllocation = () => {
     }
   }
 
-  // Handle deallocation - ONLY sets allocation to inactive, does NOT delete tenant
-  const handleDeallocate = async (tenant) => {
-    const allocationId = tenant.allocation_id
-    
-    if (!allocationId) {
+  // Handle deallocation - choose specific allocation/unit to deactivate
+  const openDeallocateModal = (tenant) => {
+    if (!tenant?.active_allocations || tenant.active_allocations.length === 0) {
       alert('No active allocation found for this tenant.')
       return
     }
+    setSelectedTenantForDeallocation(tenant)
+    setShowDeallocateModal(true)
+  }
 
-    if (window.confirm(
-      `Are you sure you want to deallocate ${tenant.first_name} ${tenant.last_name}?\n\n` +
-      `This will end their lease and free up the unit.\n` +
-      `The tenant will NOT be deleted from the system.`
-    )) {
-      try {
-        console.log(`🔄 Deallocating tenant: ${tenant.first_name} ${tenant.last_name} (Allocation ID: ${allocationId})`)
-        
-        // This only sets is_active = false on the allocation
-        await deallocateTenant(allocationId)
-        
-        // Refresh data
-        await fetchAllocations()
-        await fetchTenants()
-        
-        alert(`${tenant.first_name} ${tenant.last_name} has been deallocated successfully.\nThe tenant remains in the system.`)
-      } catch (error) {
-        console.error('Error deallocating tenant:', error)
-        setAllocationError('Failed to deallocate tenant. Please try again.')
-      }
+  const handleConfirmDeallocate = async (allocationId) => {
+    if (!allocationId || !selectedTenantForDeallocation) return
+
+    try {
+      setDeallocating(true)
+      setAllocationError('')
+
+      await deallocateTenant(allocationId)
+      await fetchAllocations()
+      await fetchTenants()
+
+      setShowDeallocateModal(false)
+      alert(`${selectedTenantForDeallocation.first_name} ${selectedTenantForDeallocation.last_name} unit deallocated successfully.`)
+    } catch (error) {
+      console.error('Error deallocating tenant unit:', error)
+      setAllocationError('Failed to deallocate selected unit. Please try again.')
+    } finally {
+      setDeallocating(false)
     }
   }
 
@@ -524,7 +530,9 @@ const TenantAllocation = () => {
                           ? 'bg-green-100 text-green-800' 
                           : 'bg-orange-100 text-orange-800'
                       }`}>
-                        {tenant.isAllocated ? 'Allocated' : 'Unallocated'}
+                        {tenant.isAllocated
+                          ? `Allocated (${tenant.active_allocations_count || 1} unit${(tenant.active_allocations_count || 1) > 1 ? 's' : ''})`
+                          : 'Unallocated'}
                       </span>
                     </div>
                     
@@ -556,29 +564,28 @@ const TenantAllocation = () => {
                     </div>
                     
                     <div className="pt-3 border-t border-gray-200 space-y-2">
-                      {tenant.isAllocated ? (
+                      {tenant.isAllocated && (
                         <button
-                          onClick={() => handleDeallocate(tenant)}
+                          onClick={() => openDeallocateModal(tenant)}
                           className="w-full bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700 text-sm font-medium min-h-[44px] touch-manipulation transition-colors"
                         >
-                          Deallocate Tenant
+                          Deallocate Unit
                         </button>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => openAllocationModal(tenant)}
-                            disabled={availableUnits.length === 0}
-                            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 text-sm font-medium min-h-[44px] touch-manipulation transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-                          >
-                            {availableUnits.length === 0 ? 'No Units Available' : 'Allocate to Unit'}
-                          </button>
-                          <button
-                            onClick={() => handleDeleteTenant(tenant)}
-                            className="w-full bg-gray-100 text-red-600 py-2 px-4 rounded-md hover:bg-red-50 border border-red-200 text-sm font-medium min-h-[44px] touch-manipulation transition-colors"
-                          >
-                            Delete Tenant
-                          </button>
-                        </>
+                      )}
+                      <button
+                        onClick={() => openAllocationModal(tenant)}
+                        disabled={availableUnits.length === 0}
+                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 text-sm font-medium min-h-[44px] touch-manipulation transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                      >
+                        {availableUnits.length === 0 ? 'No Units Available' : tenant.isAllocated ? 'Add Another Unit' : 'Allocate to Unit'}
+                      </button>
+                      {!tenant.isAllocated && (
+                        <button
+                          onClick={() => handleDeleteTenant(tenant)}
+                          className="w-full bg-gray-100 text-red-600 py-2 px-4 rounded-md hover:bg-red-50 border border-red-200 text-sm font-medium min-h-[44px] touch-manipulation transition-colors"
+                        >
+                          Delete Tenant
+                        </button>
                       )}
                     </div>
                   </div>
@@ -636,7 +643,9 @@ const TenantAllocation = () => {
                               ? 'bg-green-100 text-green-800' 
                               : 'bg-orange-100 text-orange-800'
                           }`}>
-                            {tenant.isAllocated ? 'Allocated' : 'Unallocated'}
+                            {tenant.isAllocated
+                              ? `Allocated (${tenant.active_allocations_count || 1})`
+                              : 'Unallocated'}
                           </span>
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap">
@@ -671,30 +680,29 @@ const TenantAllocation = () => {
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex items-center gap-2">
-                            {tenant.isAllocated ? (
+                            {tenant.isAllocated && (
                               <button
-                                onClick={() => handleDeallocate(tenant)}
+                                onClick={() => openDeallocateModal(tenant)}
                                 className="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
                               >
-                                Deallocate
+                                Deallocate Unit
                               </button>
-                            ) : (
-                              <>
-                                <button
-                                  onClick={() => openAllocationModal(tenant)}
-                                  disabled={availableUnits.length === 0}
-                                  className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded hover:bg-blue-50 transition-colors disabled:text-gray-400 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-                                >
-                                  {availableUnits.length === 0 ? 'No Units' : 'Allocate'}
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteTenant(tenant)}
-                                  className="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
-                                  title="Permanently delete tenant"
-                                >
-                                  Delete
-                                </button>
-                              </>
+                            )}
+                            <button
+                              onClick={() => openAllocationModal(tenant)}
+                              disabled={availableUnits.length === 0}
+                              className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded hover:bg-blue-50 transition-colors disabled:text-gray-400 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                            >
+                              {availableUnits.length === 0 ? 'No Units' : tenant.isAllocated ? 'Add Unit' : 'Allocate'}
+                            </button>
+                            {!tenant.isAllocated && (
+                              <button
+                                onClick={() => handleDeleteTenant(tenant)}
+                                className="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
+                                title="Permanently delete tenant"
+                              >
+                                Delete
+                              </button>
                             )}
                           </div>
                         </td>
@@ -741,6 +749,63 @@ const TenantAllocation = () => {
           </div>
         )}
       </div>
+
+      {/* Deallocate Specific Unit Modal */}
+      {showDeallocateModal && selectedTenantForDeallocation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="bg-white rounded-lg p-4 md:p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-2">
+            <h3 className="text-lg md:text-xl font-bold mb-2">
+              Deallocate Specific Unit
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Select which unit to deallocate for{' '}
+              <span className="font-medium">
+                {selectedTenantForDeallocation.first_name} {selectedTenantForDeallocation.last_name}
+              </span>.
+            </p>
+
+            <div className="space-y-3">
+              {(selectedTenantForDeallocation.active_allocations || []).map((alloc) => (
+                <div
+                  key={alloc.id}
+                  className="border border-gray-200 rounded-lg p-3 flex items-center justify-between"
+                >
+                  <div>
+                    <p className="font-medium text-gray-900">
+                      {alloc.unit_code || 'Unit'}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {alloc.property_name || 'Property'} • Rent {formatCurrency(alloc.monthly_rent)}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Lease start: {formatDate(alloc.lease_start_date)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmDeallocate(alloc.id)}
+                    disabled={deallocating}
+                    className="bg-red-600 text-white px-3 py-2 rounded-md hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed text-sm"
+                  >
+                    {deallocating ? 'Deallocating...' : 'Deallocate This Unit'}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-4">
+              <button
+                type="button"
+                onClick={() => setShowDeallocateModal(false)}
+                disabled={deallocating}
+                className="w-full bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 disabled:opacity-60"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Allocation Modal */}
       {showAllocationModal && selectedTenantForAllocation && (
@@ -909,3 +974,4 @@ const TenantAllocation = () => {
 }
 
 export default TenantAllocation
+

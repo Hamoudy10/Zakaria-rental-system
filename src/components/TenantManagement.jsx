@@ -843,9 +843,18 @@ const TenantManagement = () => {
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold text-gray-900">
-                  {editingTenant ? "Edit Tenant" : "Add New Tenant"}
-                </h3>
+                <div>
+                  <h3 className="text-xl font-bold text-gray-900">
+                    {editingTenant ? "Edit Tenant" : "Add New Tenant"}
+                  </h3>
+                  {!editingTenant && (
+                    <p className="text-sm text-blue-700 mt-1">
+                      If ID/phone/email already exist, the system will allocate
+                      that existing tenant to the selected unit instead of
+                      creating a duplicate profile.
+                    </p>
+                  )}
+                </div>
                 <button
                   onClick={resetForm}
                   className="text-gray-400 hover:text-gray-600"

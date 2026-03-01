@@ -24,19 +24,18 @@ const mapRowsWithLimit = (rows) => rows.slice(0, SAMPLE_LIMIT);
  * Diagnostic queries to identify allocation integrity issues
  */
 const diagnosticsQueries = {
-  // Tenants with multiple active allocations (should only have 1)
+  // Units with multiple active allocations (should only have 1 active tenant per unit)
   duplicateActiveAllocations: `
     SELECT 
-      ta.tenant_id,
+      ta.unit_id,
       COUNT(*) AS active_allocations,
-      MIN(t.first_name) AS first_name,
-      MIN(t.last_name) AS last_name,
-      ARRAY_AGG(pu.unit_code) AS unit_codes
+      MIN(pu.unit_code) AS unit_code,
+      ARRAY_AGG(CONCAT(t.first_name, ' ', t.last_name)) AS tenant_names
     FROM tenant_allocations ta
     LEFT JOIN tenants t ON t.id = ta.tenant_id
     LEFT JOIN property_units pu ON pu.id = ta.unit_id
     WHERE ta.is_active = true
-    GROUP BY ta.tenant_id
+    GROUP BY ta.unit_id
     HAVING COUNT(*) > 1
     ORDER BY active_allocations DESC
   `,
@@ -266,7 +265,7 @@ async function autoResolveTenantConflicts(client, tenantId) {
 async function reconcileAllocations(options = {}, clientOverride) {
   const {
     dryRun = false,
-    fixDuplicateTenants = true,
+    fixDuplicateTenants = false,
     fixVacantUnitAllocations = true,
     syncUnitOccupancy = true,
     fixOccupiedUnitsWithoutAllocation = true,
@@ -289,7 +288,7 @@ async function reconcileAllocations(options = {}, clientOverride) {
     await client.query("BEGIN");
 
     try {
-      // Fix 1: Deactivate duplicate active allocations (keep newest)
+      // Fix 1: Deactivate duplicate active allocations on the same unit (keep newest)
       if (fixDuplicateTenants) {
         const duplicateResult = await client.query(
           `
@@ -299,7 +298,7 @@ async function reconcileAllocations(options = {}, clientOverride) {
                 tenant_id,
                 unit_id,
                 ROW_NUMBER() OVER (
-                  PARTITION BY tenant_id 
+                  PARTITION BY unit_id 
                   ORDER BY allocation_date DESC NULLS LAST, id DESC
                 ) AS rn
               FROM tenant_allocations
