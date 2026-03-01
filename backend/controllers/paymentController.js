@@ -2078,18 +2078,33 @@ const recordManualPayment = async (req, res) => {
       });
     }
 
+    let existingUnmatchedPayment = null;
     // Check for duplicate receipt if provided
     if (mpesa_receipt_number) {
+      const normalizedReceipt = String(mpesa_receipt_number).trim();
       const duplicateCheck = await client.query(
-        "SELECT id FROM rent_payments WHERE mpesa_receipt_number = $1",
-        [mpesa_receipt_number],
+        `SELECT id, tenant_id, unit_id, status
+         FROM rent_payments
+         WHERE mpesa_receipt_number = $1`,
+        [normalizedReceipt],
       );
       if (duplicateCheck.rows.length > 0) {
-        await client.query("ROLLBACK");
-        return res.status(409).json({
-          success: false,
-          message: "Payment with this M-Pesa receipt number already exists",
-        });
+        const existing = duplicateCheck.rows[0];
+        const isUnallocated = !existing.tenant_id && !existing.unit_id;
+        const isReconciliableStatus =
+          existing.status === "pending" || existing.status === "failed";
+
+        if (isUnallocated && isReconciliableStatus) {
+          // This is a previously unmatched/unallocated callback entry; allow reconciliation.
+          existingUnmatchedPayment = existing;
+        } else {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            success: false,
+            message:
+              "Payment with this M-Pesa receipt number already exists and is already allocated. Open that payment and correct/reverse it instead of creating another entry.",
+          });
+        }
       }
     }
 
@@ -2108,6 +2123,9 @@ const recordManualPayment = async (req, res) => {
 
     const paymentDate = new Date();
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
+    const normalizedReceipt = mpesa_receipt_number
+      ? String(mpesa_receipt_number).trim()
+      : null;
     const normalizedPhone = phone_number
       ? normalizeKenyanPhone(phone_number)
       : null;
@@ -2131,31 +2149,74 @@ const recordManualPayment = async (req, res) => {
       client,
     );
 
-    const paymentResult = await client.query(
-      `INSERT INTO rent_payments 
-       (tenant_id, unit_id, property_id, amount, payment_month, payment_date, status,
-        mpesa_receipt_number, phone_number, notes, 
-        payment_method, mpesa_transaction_id, allocated_to_rent, allocated_to_water, allocated_to_arrears)
-       VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9, 'manual', $10, $11, $12, $13)
-       RETURNING *`,
-      [
-        tenant_id,
-        unit_id,
-        propertyId,
-        trackingResult.allocatedAmount,
-        formattedPaymentMonth,
-        paymentDate,
-        mpesa_receipt_number,
-        normalizedPhone,
-        notes,
-        mpesa_receipt_number
-          ? `MANUAL_${mpesa_receipt_number}`
-          : `MANUAL_${Date.now()}`,
-        trackingResult.allocatedToRent || 0,
-        trackingResult.allocatedToWater || 0,
-        trackingResult.allocatedToArrears || 0,
-      ],
-    );
+    let paymentResult;
+    if (existingUnmatchedPayment) {
+      paymentResult = await client.query(
+        `UPDATE rent_payments
+         SET tenant_id = $1,
+             unit_id = $2,
+             property_id = $3,
+             amount = $4,
+             payment_month = $5,
+             payment_date = $6,
+             status = 'completed',
+             phone_number = COALESCE($7, phone_number),
+             notes = CASE
+               WHEN notes IS NULL OR notes = '' THEN $8
+               ELSE CONCAT(notes, ' | RECONCILED MANUALLY: ', COALESCE($8, 'no additional notes'))
+             END,
+             payment_method = 'manual_reconciled',
+             mpesa_transaction_id = COALESCE(mpesa_transaction_id, $9),
+             allocated_to_rent = $10,
+             allocated_to_water = $11,
+             allocated_to_arrears = $12
+         WHERE id = $13
+         RETURNING *`,
+        [
+          tenant_id,
+          unit_id,
+          propertyId,
+          trackingResult.allocatedAmount,
+          formattedPaymentMonth,
+          paymentDate,
+          normalizedPhone,
+          notes,
+          normalizedReceipt
+            ? `MANUAL_${normalizedReceipt}`
+            : `MANUAL_${Date.now()}`,
+          trackingResult.allocatedToRent || 0,
+          trackingResult.allocatedToWater || 0,
+          trackingResult.allocatedToArrears || 0,
+          existingUnmatchedPayment.id,
+        ],
+      );
+    } else {
+      paymentResult = await client.query(
+        `INSERT INTO rent_payments 
+         (tenant_id, unit_id, property_id, amount, payment_month, payment_date, status,
+          mpesa_receipt_number, phone_number, notes, 
+          payment_method, mpesa_transaction_id, allocated_to_rent, allocated_to_water, allocated_to_arrears)
+         VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9, 'manual', $10, $11, $12, $13)
+         RETURNING *`,
+        [
+          tenant_id,
+          unit_id,
+          propertyId,
+          trackingResult.allocatedAmount,
+          formattedPaymentMonth,
+          paymentDate,
+          normalizedReceipt,
+          normalizedPhone,
+          notes,
+          normalizedReceipt
+            ? `MANUAL_${normalizedReceipt}`
+            : `MANUAL_${Date.now()}`,
+          trackingResult.allocatedToRent || 0,
+          trackingResult.allocatedToWater || 0,
+          trackingResult.allocatedToArrears || 0,
+        ],
+      );
+    }
 
     const paymentRecord = paymentResult.rows[0];
 
@@ -2168,7 +2229,7 @@ const recordManualPayment = async (req, res) => {
         trackingResult.carryForwardAmount,
         paymentRecord.id,
         paymentDate,
-        mpesa_receipt_number || "MANUAL",
+        normalizedReceipt || "MANUAL",
         normalizedPhone,
         req.user.id,
         client,
@@ -2188,7 +2249,9 @@ const recordManualPayment = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Manual payment recorded successfully",
+      message: existingUnmatchedPayment
+        ? "Manual payment reconciled successfully from unmatched callback"
+        : "Manual payment recorded successfully",
       data: {
         payment: paymentRecord,
         tracking: trackingResult,
