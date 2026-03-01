@@ -117,11 +117,19 @@ const allocatePayment = (amount, arrearsDue, waterDue, rentDue) => {
   
   allocation.rent = Math.min(remaining, rentDue);
   remaining -= allocation.rent;
-  
+
   allocation.advance = remaining;
   return allocation;
 };
 ```
+
+## RECENT UPDATES (2026-03-01)
+- Added deposit ledger migration: `backend/migrations/011_create_tenant_deposit_transactions.sql`.
+- Added deposit endpoints in payment controller/routes:
+  - `recordDepositPayment`
+  - `getTenantDepositSummary`
+  - `getTenantDepositTransactions`
+- Deposit records are scoped by tenant/unit/allocation and support manual posting with receipt de-duplication and phone normalization.
 
 ## ROUTE ORDER (CRITICAL)
 ```javascript
