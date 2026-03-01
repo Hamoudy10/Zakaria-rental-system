@@ -127,6 +127,102 @@ const formatCoveredMonths = (carryForwardPayments = []) => {
   });
 };
 
+const getPaymentFailureGuidance = (rawError = "", context = {}) => {
+  const text = String(rawError || "").toLowerCase();
+  const requestId = context?.requestId ? `Request ID: ${context.requestId}. ` : "";
+
+  const manualSteps =
+    "Action: 1) Confirm on M-Pesa statement if tenant was debited. 2) Search payment by receipt in Payment Management. 3) If not auto-posted but debited, record via Manual Payment using the exact receipt, amount, phone, and unit. 4) If unit/reference is invalid, correct the unit or add alias and reconcile.";
+
+  // Safaricom / M-Pesa known patterns
+  if (text.includes("401.003.01") || text.includes("invalid access token")) {
+    return {
+      short: "M-Pesa authentication failed (invalid/expired access token).",
+      action:
+        `${requestId}Action: verify MPESA_CONSUMER_KEY/MPESA_CONSUMER_SECRET, environment (sandbox vs production), and regenerate token; then retry.`,
+    };
+  }
+
+  if (text.includes("500.003.1001") || text.includes("urls are already registered")) {
+    return {
+      short: "C2B URLs are already registered at Safaricom.",
+      action:
+        `${requestId}Action: no payment loss. Keep existing URLs or re-register only when URLs change.`,
+    };
+  }
+
+  if (text.includes("c2b00011") || text.includes("invalid account")) {
+    return {
+      short: "Payment rejected: invalid account reference (unit code).",
+      action:
+        `${manualSteps} Also confirm Validation URL is active and ResponseType is set to Cancelled for strict validation.`,
+    };
+  }
+
+  if (text.includes("c2b00012") || text.includes("invalid amount")) {
+    return {
+      short: "Payment rejected: invalid amount format/amount.",
+      action:
+        "Action: ask tenant to retry with valid amount; verify callback payload parsing and amount validation rules.",
+    };
+  }
+
+  if (text.includes("c2b00013") || text.includes("validation service error")) {
+    return {
+      short: "Validation endpoint error at callback time.",
+      action:
+        "Action: check API uptime/logs and DB connectivity, then retry payment flow; if tenant debited, manually reconcile by receipt.",
+    };
+  }
+
+  if (text.includes("timeout") || text.includes("timed out")) {
+    return {
+      short: "Timeout while processing payment callback.",
+      action:
+        `${manualSteps} Wait 1-2 minutes for callback retries before manual entry.`,
+    };
+  }
+
+  if (text.includes("duplicate") || text.includes("already exists")) {
+    return {
+      short: "Duplicate transaction/receipt detected.",
+      action:
+        "Action: do not record again. Verify existing receipt record and mark as reconciled if needed.",
+    };
+  }
+
+  if (text.includes("inconsistent types deduced for parameter")) {
+    return {
+      short: "Internal query type mismatch while processing callback.",
+      action:
+        `${manualSteps} Escalate to technical support with the exact error and receipt.`,
+    };
+  }
+
+  if (text.includes("no valid phone") || text.includes("invalid phone") || text.includes("msisdn")) {
+    return {
+      short: "Could not parse payer phone number from callback.",
+      action:
+        `${manualSteps} Confirm tenant phone is stored in 2547XXXXXXXX / 2541XXXXXXXX format.`,
+    };
+  }
+
+  if (text.includes("no active tenant allocation found") || text.includes("tenant allocation")) {
+    return {
+      short: "Tenant has no active allocation for the referenced unit.",
+      action:
+        "Action: verify tenant allocation is active for that unit; if payment was debited, manually post using correct active tenant/unit.",
+    };
+  }
+
+  // Generic fallback
+  return {
+    short: "Payment callback failed due to a processing error.",
+    action:
+      `${manualSteps} Escalate to support with receipt, amount, phone, and callback timestamp.`,
+  };
+};
+
 // ==================== CORE BUSINESS LOGIC ====================
 
 /**
@@ -931,7 +1027,7 @@ const handleMpesaCallback = async (req, res) => {
             await NotificationService.createNotification({
               userId: admin.id,
               title: "⚠️ Unmatched M-Pesa Callback (Invalid Phone)",
-              message: `Callback received but no valid phone could be parsed (Receipt: ${TransID}, Ref: ${BillRefNumber || "none"}, Raw MSISDN: ${MSISDN || "none"}).`,
+              message: `Callback received but no valid phone could be parsed (Receipt: ${TransID}, Ref: ${BillRefNumber || "none"}, Raw MSISDN: ${MSISDN || "none"}). Action: verify tenant phone format (2547XXXXXXXX/2541XXXXXXXX), then reconcile manually by receipt if tenant was debited.`,
               type: "payment_pending",
               relatedEntityType: "rent_payment",
             });
@@ -992,7 +1088,7 @@ const handleMpesaCallback = async (req, res) => {
           await NotificationService.createNotification({
             userId: admin.id,
             title: "âš ï¸ Unmatched M-Pesa Payment",
-            message: `KSh ${amount.toLocaleString()} from ${safePhone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Manual allocation required.`,
+            message: `KSh ${amount.toLocaleString()} from ${safePhone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Action: in Payment Management search this receipt, verify debit on M-Pesa statement, then post via Manual Payment to the correct tenant/unit.`,
             type: "payment_pending",
             relatedEntityType: "rent_payment",
           });
@@ -1158,18 +1254,21 @@ const handleMpesaCallback = async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("C2B CALLBACK PROCESSING ERROR:", error);
+    const guidance = getPaymentFailureGuidance(error.message, {
+      requestId: error?.response?.data?.requestId,
+    });
 
     // Notify admins of system error
     try {
       const adminUsers = await pool.query(
-        "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
+        "SELECT id FROM users WHERE role IN ('admin', 'agent') AND is_active = true",
       );
       for (const admin of adminUsers.rows) {
         await NotificationService.createNotification({
           userId: admin.id,
-          title: "Payment System Error",
-          message: `Error processing M-Pesa C2B callback: ${error.message}`,
-          type: "system_alert",
+          title: "Payment Failed - Action Needed",
+          message: `${guidance.short} ${guidance.action} Technical detail: ${error.message}`,
+          type: "payment_failed",
           relatedEntityType: "system",
         });
       }

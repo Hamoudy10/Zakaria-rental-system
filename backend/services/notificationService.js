@@ -354,6 +354,7 @@ class NotificationService {
       amount,
       paymentMonth,
       failureReason,
+      nextSteps,
       paymentId,
     } = paymentData;
 
@@ -364,7 +365,7 @@ class NotificationService {
       notifications.push({
         userId: tenantId,
         title: "Payment Failed",
-        message: `Your payment of KSh ${amount.toLocaleString()} for ${paymentMonth} failed. Reason: ${failureReason}. Please try again.`,
+        message: `Your payment of KSh ${amount.toLocaleString()} for ${paymentMonth} failed. Reason: ${failureReason}. ${nextSteps || "Please retry, and contact support if the amount was debited."}`,
         type: "payment_failed",
         relatedEntityType: "rent_payment",
         relatedEntityId: paymentId,
@@ -379,7 +380,7 @@ class NotificationService {
         notifications.push({
           userId: admin.id,
           title: "Payment Failed",
-          message: `Payment failed for ${tenantName} (${propertyInfo} - ${unitInfo}). Amount: KSh ${amount.toLocaleString()}, Reason: ${failureReason}`,
+          message: `Payment failed for ${tenantName} (${propertyInfo} - ${unitInfo}). Amount: KSh ${amount.toLocaleString()}, Reason: ${failureReason}. ${nextSteps || "Check receipt status and reconcile manually if debited."}`,
           type: "payment_failed",
           relatedEntityType: "rent_payment",
           relatedEntityId: paymentId,
