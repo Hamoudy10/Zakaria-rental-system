@@ -280,8 +280,12 @@ const DashboardOverview = ({
   const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : 0;
 
   // Accumulated all-time business figures
-  const allTimeRevenue = financial?.revenueAllTime || 0;
-  const allTimeExpenses = expenseStats?.allTimeTotals?.approved?.amount || 0;
+  const allTimeRevenue =
+    financial?.revenueAllTime ?? netProfitData?.revenue?.total ?? 0;
+  const allTimeExpenses =
+    expenseStats?.allTimeTotals?.approved?.amount ??
+    netProfitData?.expenses?.total ??
+    0;
   const allTimeNetProfit = allTimeRevenue - allTimeExpenses;
   const allTimeProfitMargin = allTimeRevenue > 0
     ? ((allTimeNetProfit / allTimeRevenue) * 100).toFixed(1)
