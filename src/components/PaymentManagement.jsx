@@ -305,7 +305,8 @@ const PaymentManagement = () => {
     fetchPayments,
   ]);
 
-  const fetchTenantStatusData = useCallback(async () => {
+  const fetchTenantStatusData = useCallback(async (options = {}) => {
+    const { ignoreSearch = false } = options;
     setStatusLoading(true);
     setStatusError("");
 
@@ -314,7 +315,7 @@ const PaymentManagement = () => {
       const params = {
         month: filters.month,
         propertyId: filters.propertyId || undefined,
-        search: filters.search || undefined,
+        search: ignoreSearch ? undefined : filters.search || undefined,
       };
 
       const response = await API.payments.getTenantPaymentStatus(params);
@@ -451,7 +452,17 @@ const PaymentManagement = () => {
   // MANUAL PAYMENT HANDLER
   // ============================================================
 
-  const handleOpenManualPayment = (tenant = null) => {
+  const handleOpenManualPayment = async (tenant = null) => {
+    // Always load tenant list without search filter so manual posting can target any tenant.
+    try {
+      setManualPaymentLoading(true);
+      await fetchTenantStatusData({ ignoreSearch: true });
+    } catch (err) {
+      console.error("Failed to prefetch tenants for manual payment:", err);
+    } finally {
+      setManualPaymentLoading(false);
+    }
+
     if (tenant) {
       setManualPaymentData({
         tenant_id: tenant.tenant_id,
@@ -1741,6 +1752,7 @@ const ManualPaymentModal = ({
   monthOptions,
   tenants,
 }) => {
+  const noTenants = !tenants || tenants.length === 0;
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border">
@@ -1766,7 +1778,7 @@ const ManualPaymentModal = ({
             </div>
           )}
 
-          {!data.tenant_id && tenants && tenants.length > 0 && (
+          {tenants && tenants.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Select Tenant
@@ -1785,6 +1797,12 @@ const ManualPaymentModal = ({
                       phone_number:
                         tenant.phone_number?.replace(/^254/, "0") || "",
                     });
+                  } else {
+                    setData({
+                      ...data,
+                      tenant_id: "",
+                      unit_id: "",
+                    });
                   }
                 }}
                 className="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -1797,6 +1815,13 @@ const ManualPaymentModal = ({
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {noTenants && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
+              No active tenants were loaded for manual posting. Refresh tenant
+              data or confirm tenants have active unit allocations.
             </div>
           )}
 
@@ -1896,7 +1921,14 @@ const ManualPaymentModal = ({
             </button>
             <button
               type="submit"
-              disabled={loading || !data.tenant_id || !data.amount}
+              disabled={
+                loading ||
+                !data.tenant_id ||
+                !data.unit_id ||
+                !data.amount ||
+                Number(data.amount) <= 0 ||
+                !data.payment_month
+              }
               className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? "Recording..." : "Record Payment"}
