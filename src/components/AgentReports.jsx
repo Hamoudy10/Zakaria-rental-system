@@ -288,20 +288,78 @@ const AgentReports = () => {
     return params;
   };
 
+  const fetchAllPayments = async (baseParams = {}, pageSize = 1000) => {
+    let page = 1;
+    let totalPages = 1;
+    const allRows = [];
+
+    do {
+      const resp = await safeAPICall(() =>
+        API.payments.getPayments({ ...baseParams, page, limit: pageSize }),
+      );
+      const rows = extractDataArray(resp, "payments");
+      allRows.push(...(Array.isArray(rows) ? rows : []));
+      totalPages = resp?.data?.data?.pagination?.totalPages || 1;
+      page += 1;
+    } while (page <= totalPages);
+
+    return allRows;
+  };
+
+  const fetchAllMessaging = async (baseParams = {}, pageSize = 1000) => {
+    let page = 1;
+    let totalPages = 1;
+    const allRows = [];
+
+    do {
+      const resp = await safeAPICall(() =>
+        API.notifications.getSMSHistory({ ...baseParams, page, limit: pageSize }),
+      );
+      const rows =
+        resp?.data?.data?.messages ||
+        resp?.data?.data?.history ||
+        extractDataArray(resp, "sms");
+      allRows.push(...(Array.isArray(rows) ? rows : []));
+      totalPages = resp?.data?.data?.pagination?.totalPages || 1;
+      page += 1;
+    } while (page <= totalPages);
+
+    return allRows;
+  };
+
+  const fetchAllWaterBills = async (baseParams = {}, batchSize = 500) => {
+    let offset = 0;
+    let hasMore = true;
+    const allRows = [];
+
+    while (hasMore) {
+      const resp = await safeAPICall(() =>
+        api.get("/agent-properties/water-bills", {
+          params: { ...baseParams, limit: batchSize, offset },
+        }),
+      );
+      const rows = extractDataArray(resp, "water");
+      const pageRows = Array.isArray(rows) ? rows : [];
+      allRows.push(...pageRows);
+      hasMore = pageRows.length === batchSize;
+      offset += batchSize;
+    }
+
+    return allRows;
+  };
+
   // Fetch SMS/WhatsApp history using the correct endpoint
   const fetchMessagingHistory = async () => {
     setLoading(true);
     setApiErrors([]);
 
     try {
-      console.log("📱 Fetching messaging history...");
+      console.log("Fetching messaging history...");
 
       const params = {
         ...buildFilterParams(),
-        limit: 100, // Get more records for reports
       };
 
-      // Add messaging-specific filters
       if (messagingFilters.status && messagingFilters.status !== "all") {
         params.status = messagingFilters.status;
       }
@@ -309,65 +367,46 @@ const AgentReports = () => {
         params.channel = messagingFilters.channel;
       }
 
-      // Use the correct endpoint: /notifications/sms-history
-      // The API.notifications.getSMSHistory points to this endpoint
-      const response = await API.notifications.getSMSHistory(params);
+      const messages = await fetchAllMessaging(params);
+      console.log("Messaging history records:", messages.length);
 
-      console.log("📦 Messaging history response:", response);
-
-      if (response?.data?.success) {
-        // Extract messages array - could be 'messages' or 'history'
-        const messages =
-          response.data.data?.messages || response.data.data?.history || [];
+      if (Array.isArray(messages)) {
         setData(messages);
 
-        // Set summary if available
-        if (response.data.data?.summary) {
-          setMessagingSummary(response.data.data.summary);
-        } else {
-          // Calculate summary from data
-          const statusCounts = { sent: 0, pending: 0, failed: 0, skipped: 0 };
-          const channelCounts = { sms: 0, whatsapp: 0 };
+        const statusCounts = { sent: 0, pending: 0, failed: 0, skipped: 0 };
+        const channelCounts = { sms: 0, whatsapp: 0 };
 
-          messages.forEach((msg) => {
-            if (msg.status && statusCounts[msg.status] !== undefined) {
-              statusCounts[msg.status]++;
-            }
-            if (msg.channel === "whatsapp") {
-              channelCounts.whatsapp++;
-            } else {
-              channelCounts.sms++;
-            }
-          });
+        messages.forEach((msg) => {
+          if (msg.status && statusCounts[msg.status] !== undefined) {
+            statusCounts[msg.status]++;
+          }
+          if (msg.channel === "whatsapp") {
+            channelCounts.whatsapp++;
+          } else {
+            channelCounts.sms++;
+          }
+        });
 
-          setMessagingSummary({
-            totalCount: messages.length,
-            statusCounts,
-            channelCounts,
-          });
-        }
+        setMessagingSummary({
+          totalCount: messages.length,
+          statusCounts,
+          channelCounts,
+        });
 
-        console.log(`✅ Loaded ${messages.length} messaging records`);
+        console.log(`Loaded ${messages.length} messaging records`);
       } else {
-        console.warn(
-          "❌ Messaging history fetch failed:",
-          response?.data?.message,
-        );
+        console.warn("Messaging history fetch failed");
         setData([]);
-        setApiErrors((prev) => [
-          ...prev,
-          `sms report: ${response?.data?.message || "API endpoint may not exist"}`,
-        ]);
+        setApiErrors((prev) => [...prev, "sms report: failed to load messaging data"]);
       }
     } catch (error) {
-      console.error("❌ Messaging history error:", error);
+      console.error("Messaging history error:", error);
       setData([]);
       setApiErrors((prev) => [...prev, `Error: ${error.message}`]);
     } finally {
       setLoading(false);
     }
   };
-
   // Fetch report data based on active report
   const fetchReportData = async () => {
     // Special handling for SMS/WhatsApp report
@@ -405,7 +444,12 @@ const AgentReports = () => {
           break;
 
         case "payments":
-          response = await safeAPICall(() => API.payments.getPayments(params));
+          response = {
+            data: {
+              success: true,
+              data: { payments: await fetchAllPayments(params) },
+            },
+          };
           break;
 
         case "properties":
@@ -434,10 +478,12 @@ const AgentReports = () => {
 
         case "water":
           try {
-            response = await api.get("/agent-properties/water-bills", {
-              params: { ...params, limit: 5000, offset: 0 },
-            });
-            response = { data: response.data };
+            response = {
+              data: {
+                success: true,
+                data: { waterBills: await fetchAllWaterBills(params) },
+              },
+            };
           } catch (err) {
             console.error("Water bills API error:", err);
             response = {
@@ -451,17 +497,12 @@ const AgentReports = () => {
           break;
 
         case "revenue":
-          const paymentsResponse = await safeAPICall(() =>
-            API.payments.getPayments(params),
-          );
-          if (paymentsResponse.data?.success) {
-            const paymentsArray = extractDataArray(
-              paymentsResponse,
-              "payments",
-            );
+          try {
+            const paymentsArray = await fetchAllPayments(params);
             const revenueData = calculateRevenue(paymentsArray);
             response = { data: { success: true, data: revenueData } };
-          } else {
+          } catch (err) {
+            console.error("Revenue API error:", err);
             response = { data: { success: false, data: [] } };
           }
           break;
@@ -531,72 +572,28 @@ const AgentReports = () => {
 
       switch (activeReport) {
         case "payments": {
-          let page = 1;
-          let totalPages = 1;
-          const allRows = [];
-          do {
-            const resp = await safeAPICall(() =>
-              API.payments.getPayments({ ...params, page, limit: EXPORT_LIMIT }),
-            );
-            const rows = extractPaginatedArray(resp, "payments");
-            allRows.push(...rows);
-            totalPages = resp?.data?.data?.pagination?.totalPages || 1;
-            page += 1;
-          } while (page <= totalPages);
-          return allRows;
+          return fetchAllPayments(params, EXPORT_LIMIT);
         }
 
         case "water": {
-          const resp = await safeAPICall(() =>
-            api.get("/agent-properties/water-bills", {
-              params: { ...params, limit: EXPORT_LIMIT, offset: 0 },
-            }),
-          );
-          return extractPaginatedArray(resp, "water");
+          return fetchAllWaterBills(params, EXPORT_LIMIT);
         }
 
         case "sms": {
-          let page = 1;
-          let totalPages = 1;
-          const allRows = [];
-          do {
-            const smsParams = {
-              ...params,
-              page,
-              limit: 1000,
-              ...(messagingFilters.status !== "all" && {
-                status: messagingFilters.status,
-              }),
-              ...(messagingFilters.channel !== "all" && {
-                channel: messagingFilters.channel,
-              }),
-            };
-            const resp = await safeAPICall(() =>
-              API.notifications.getSMSHistory(smsParams),
-            );
-            const rows =
-              resp?.data?.data?.messages ||
-              resp?.data?.data?.history ||
-              extractPaginatedArray(resp, "sms");
-            allRows.push(...(Array.isArray(rows) ? rows : []));
-            totalPages = resp?.data?.data?.pagination?.totalPages || 1;
-            page += 1;
-          } while (page <= totalPages);
-          return allRows;
+          const smsParams = {
+            ...params,
+            ...(messagingFilters.status !== "all" && {
+              status: messagingFilters.status,
+            }),
+            ...(messagingFilters.channel !== "all" && {
+              channel: messagingFilters.channel,
+            }),
+          };
+          return fetchAllMessaging(smsParams, 1000);
         }
 
         case "revenue": {
-          let page = 1;
-          let totalPages = 1;
-          const allPayments = [];
-          do {
-            const resp = await safeAPICall(() =>
-              API.payments.getPayments({ ...params, page, limit: EXPORT_LIMIT }),
-            );
-            allPayments.push(...extractPaginatedArray(resp, "payments"));
-            totalPages = resp?.data?.data?.pagination?.totalPages || 1;
-            page += 1;
-          } while (page <= totalPages);
+          const allPayments = await fetchAllPayments(params, EXPORT_LIMIT);
           return calculateRevenue(allPayments);
         }
 
@@ -1134,7 +1131,7 @@ const AgentReports = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
+                {data.map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.first_name || item.name} {item.last_name || ""}
@@ -1199,7 +1196,7 @@ const AgentReports = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
+                {data.map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.mpesa_receipt_number ||
@@ -1271,7 +1268,7 @@ const AgentReports = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
+                {data.map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.property_code || item.id?.substring(0, 8)}
@@ -1325,7 +1322,7 @@ const AgentReports = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
+                {data.map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.title || "N/A"}
@@ -1492,7 +1489,7 @@ const AgentReports = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
+                {data.map((item, index) => (
                   <tr key={index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.month || "N/A"}
@@ -1545,7 +1542,7 @@ const AgentReports = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.slice(0, 10).map((item, index) => (
+                {data.map((item, index) => (
                   <tr key={item.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.id?.substring(0, 8) || index + 1}
@@ -1799,10 +1796,10 @@ const AgentReports = () => {
             </div>
               <div className="text-xs text-gray-400">
                 {activeReport === "sms"
-                  ? `Showing ${Math.min(Array.isArray(data) ? data.length : 0, 100)} messages`
+                  ? `Showing all ${Array.isArray(data) ? data.length : 0} messages`
                   : activeReport === "water"
                     ? `Showing all ${Array.isArray(data) ? data.length : 0} records`
-                    : `Showing first ${Math.min(Array.isArray(data) ? data.length : 0, 10)} of ${Array.isArray(data) ? data.length : 0} records`}
+                    : `Showing all ${Array.isArray(data) ? data.length : 0} records`}
               </div>
           </div>
         </div>
@@ -1825,3 +1822,4 @@ const AgentReports = () => {
 };
 
 export default AgentReports;
+
