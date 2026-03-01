@@ -1,6 +1,7 @@
 const pool = require("../config/database");
 const NotificationService = require("../services/notificationService");
 const AllocationIntegrityService = require("../services/allocationIntegrityService");
+const { ensureDepositCharge } = require("../services/depositService");
 
 // @desc    Get all allocations
 // @route   GET /api/allocations
@@ -233,6 +234,16 @@ const createAllocation = async (req, res) => {
     ]);
 
     const allocation = rows[0];
+
+    await ensureDepositCharge({
+      client,
+      tenantId: tenant_id,
+      unitId: unit_id,
+      allocationId: allocation.id,
+      requiredDeposit: security_deposit,
+      createdBy: req.user.id,
+      transactionDate: allocation.allocation_date,
+    });
 
     // Update unit occupancy status
     await client.query(

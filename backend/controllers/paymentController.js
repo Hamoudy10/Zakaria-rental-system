@@ -3165,6 +3165,363 @@ const registerC2BUrls = async (req, res) => {
 };
 
 /**
+ * Get deposit summary for a tenant (optionally scoped by unit/allocation).
+ */
+const getTenantDepositSummary = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const { unitId, allocationId } = req.query;
+
+    const params = [tenantId];
+    const filters = ["tenant_id = $1"];
+    let idx = 2;
+
+    if (unitId) {
+      filters.push(`unit_id = $${idx}`);
+      params.push(unitId);
+      idx++;
+    }
+
+    if (allocationId) {
+      filters.push(`allocation_id = $${idx}`);
+      params.push(allocationId);
+      idx++;
+    }
+
+    const whereClause = filters.join(" AND ");
+
+    const summaryResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN transaction_type = 'deposit_charge' AND status = 'completed' THEN amount ELSE 0 END), 0) AS total_charged,
+         COALESCE(SUM(CASE WHEN transaction_type = 'deposit_payment' AND status = 'completed' THEN amount ELSE 0 END), 0) AS total_paid,
+         COALESCE(SUM(CASE WHEN transaction_type = 'deposit_adjustment' AND status = 'completed' THEN amount ELSE 0 END), 0) AS total_adjusted,
+         COALESCE(SUM(CASE WHEN transaction_type = 'deposit_refund' AND status = 'completed' THEN amount ELSE 0 END), 0) AS total_refunded
+       FROM tenant_deposit_transactions
+       WHERE ${whereClause}`,
+      params,
+    );
+
+    const breakdownResult = await pool.query(
+      `SELECT
+         tdt.allocation_id,
+         tdt.unit_id,
+         pu.unit_code,
+         p.name AS property_name,
+         COALESCE(SUM(CASE WHEN tdt.transaction_type = 'deposit_charge' AND tdt.status = 'completed' THEN tdt.amount ELSE 0 END), 0) AS charged,
+         COALESCE(SUM(CASE WHEN tdt.transaction_type = 'deposit_payment' AND tdt.status = 'completed' THEN tdt.amount ELSE 0 END), 0) AS paid,
+         COALESCE(SUM(CASE WHEN tdt.transaction_type = 'deposit_adjustment' AND tdt.status = 'completed' THEN tdt.amount ELSE 0 END), 0) AS adjusted,
+         COALESCE(SUM(CASE WHEN tdt.transaction_type = 'deposit_refund' AND tdt.status = 'completed' THEN tdt.amount ELSE 0 END), 0) AS refunded
+       FROM tenant_deposit_transactions tdt
+       LEFT JOIN property_units pu ON pu.id = tdt.unit_id
+       LEFT JOIN properties p ON p.id = pu.property_id
+       WHERE ${whereClause}
+       GROUP BY tdt.allocation_id, tdt.unit_id, pu.unit_code, p.name
+       ORDER BY p.name NULLS LAST, pu.unit_code NULLS LAST`,
+      params,
+    );
+
+    const totals = summaryResult.rows[0] || {};
+    const totalCharged = parseFloat(totals.total_charged) || 0;
+    const totalPaid = parseFloat(totals.total_paid) || 0;
+    const totalAdjusted = parseFloat(totals.total_adjusted) || 0;
+    const totalRefunded = parseFloat(totals.total_refunded) || 0;
+
+    const effectiveRequired = totalCharged + totalAdjusted;
+    const netHeld = Math.max(0, effectiveRequired - totalRefunded);
+    const balanceDue = Math.max(0, netHeld - totalPaid);
+    const overpaid = Math.max(0, totalPaid - netHeld);
+
+    const status =
+      balanceDue <= 0 ? "paid" : totalPaid > 0 ? "partial" : "unpaid";
+
+    res.json({
+      success: true,
+      data: {
+        tenantId,
+        totals: {
+          totalCharged,
+          totalAdjusted,
+          totalRefunded,
+          totalPaid,
+          effectiveRequired,
+          netHeld,
+          balanceDue,
+          overpaid,
+          status,
+        },
+        allocations: breakdownResult.rows.map((row) => {
+          const charged = parseFloat(row.charged) || 0;
+          const adjusted = parseFloat(row.adjusted) || 0;
+          const refunded = parseFloat(row.refunded) || 0;
+          const paid = parseFloat(row.paid) || 0;
+          const required = charged + adjusted;
+          const held = Math.max(0, required - refunded);
+          return {
+            allocation_id: row.allocation_id,
+            unit_id: row.unit_id,
+            unit_code: row.unit_code,
+            property_name: row.property_name,
+            charged,
+            adjusted,
+            refunded,
+            paid,
+            required,
+            held,
+            balance_due: Math.max(0, held - paid),
+            overpaid: Math.max(0, paid - held),
+          };
+        }),
+      },
+    });
+  } catch (error) {
+    console.error("Error getting tenant deposit summary:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get tenant deposit summary",
+      ...(!isProduction() && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * Get tenant deposit transaction history (optionally scoped by unit/allocation).
+ */
+const getTenantDepositTransactions = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const { unitId, allocationId, limit = 100 } = req.query;
+
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+    const params = [tenantId];
+    const filters = ["tdt.tenant_id = $1"];
+    let idx = 2;
+
+    if (unitId) {
+      filters.push(`tdt.unit_id = $${idx}`);
+      params.push(unitId);
+      idx++;
+    }
+
+    if (allocationId) {
+      filters.push(`tdt.allocation_id = $${idx}`);
+      params.push(allocationId);
+      idx++;
+    }
+
+    params.push(safeLimit);
+
+    const result = await pool.query(
+      `SELECT
+         tdt.*,
+         pu.unit_code,
+         p.name AS property_name,
+         u.first_name AS created_by_first_name,
+         u.last_name AS created_by_last_name
+       FROM tenant_deposit_transactions tdt
+       LEFT JOIN property_units pu ON pu.id = tdt.unit_id
+       LEFT JOIN properties p ON p.id = pu.property_id
+       LEFT JOIN users u ON u.id = tdt.created_by
+       WHERE ${filters.join(" AND ")}
+       ORDER BY tdt.transaction_date DESC, tdt.created_at DESC
+       LIMIT $${idx}`,
+      params,
+    );
+
+    res.json({
+      success: true,
+      data: {
+        transactions: result.rows,
+      },
+    });
+  } catch (error) {
+    console.error("Error getting tenant deposit transactions:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get tenant deposit transactions",
+      ...(!isProduction() && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * Record manual deposit payment (cash/mpesa/bank/manual correction).
+ */
+const recordDepositPayment = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const {
+      tenant_id,
+      unit_id,
+      allocation_id,
+      amount,
+      payment_method = "manual",
+      mpesa_receipt_number,
+      phone_number,
+      notes,
+      transaction_date,
+    } = req.body;
+
+    const parsedAmount = parseFloat(amount);
+    if (!tenant_id || !parsedAmount || parsedAmount <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: tenant_id, amount",
+      });
+    }
+
+    const normalizedReceipt = mpesa_receipt_number
+      ? String(mpesa_receipt_number).trim()
+      : null;
+    const normalizedPhone = phone_number
+      ? normalizeKenyanPhone(phone_number)
+      : null;
+
+    if (phone_number && !normalizedPhone) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid phone number format. Use Kenyan format (07XXXXXXXX / 2547XXXXXXXX).",
+      });
+    }
+
+    if (normalizedReceipt) {
+      const dup = await client.query(
+        `SELECT id
+         FROM tenant_deposit_transactions
+         WHERE mpesa_receipt_number = $1
+         LIMIT 1`,
+        [normalizedReceipt],
+      );
+      if (dup.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message: "This M-Pesa receipt is already used in deposit records",
+        });
+      }
+    }
+
+    let resolvedAllocationId = allocation_id || null;
+    let resolvedUnitId = unit_id || null;
+
+    if (resolvedAllocationId) {
+      const alloc = await client.query(
+        `SELECT id, tenant_id, unit_id, is_active
+         FROM tenant_allocations
+         WHERE id = $1`,
+        [resolvedAllocationId],
+      );
+
+      if (alloc.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          success: false,
+          message: "Allocation not found",
+        });
+      }
+
+      const a = alloc.rows[0];
+      if (a.tenant_id !== tenant_id) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "Allocation does not belong to the selected tenant",
+        });
+      }
+
+      resolvedUnitId = a.unit_id;
+    } else if (resolvedUnitId) {
+      const alloc = await client.query(
+        `SELECT id
+         FROM tenant_allocations
+         WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
+         ORDER BY allocation_date DESC NULLS LAST
+         LIMIT 1`,
+        [tenant_id, resolvedUnitId],
+      );
+
+      if (alloc.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message:
+            "No active allocation found for selected tenant and unit. Select a valid tenant-unit allocation.",
+        });
+      }
+
+      resolvedAllocationId = alloc.rows[0].id;
+    } else {
+      const activeAllocations = await client.query(
+        `SELECT id, unit_id
+         FROM tenant_allocations
+         WHERE tenant_id = $1 AND is_active = true
+         ORDER BY allocation_date DESC NULLS LAST`,
+        [tenant_id],
+      );
+
+      if (activeAllocations.rows.length !== 1) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message:
+            "Tenant has multiple active allocations. Please select the unit/allocation for this deposit payment.",
+        });
+      }
+
+      resolvedAllocationId = activeAllocations.rows[0].id;
+      resolvedUnitId = activeAllocations.rows[0].unit_id;
+    }
+
+    const result = await client.query(
+      `INSERT INTO tenant_deposit_transactions (
+         tenant_id, unit_id, allocation_id, transaction_type, amount, status,
+         payment_method, mpesa_receipt_number, phone_number, transaction_date, notes, created_by
+       ) VALUES (
+         $1, $2, $3, 'deposit_payment', $4, 'completed',
+         $5, $6, $7, COALESCE($8, NOW()), $9, $10
+       )
+       RETURNING *`,
+      [
+        tenant_id,
+        resolvedUnitId,
+        resolvedAllocationId,
+        parsedAmount,
+        payment_method,
+        normalizedReceipt,
+        normalizedPhone,
+        transaction_date || null,
+        notes || null,
+        req.user.id,
+      ],
+    );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      success: true,
+      message: "Deposit payment recorded successfully",
+      data: {
+        transaction: result.rows[0],
+      },
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Error recording deposit payment:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to record deposit payment",
+      ...(!isProduction() && { error: error.message }),
+    });
+  } finally {
+    client.release();
+  }
+};
+
+/**
  * Get a single payment by ID
  */
 const getPaymentById = async (req, res) => {
@@ -3495,6 +3852,9 @@ module.exports = {
   getPaymentHistory,
   getFuturePaymentsStatus,
   getTenantPaymentStatus,
+  getTenantDepositSummary,
+  getTenantDepositTransactions,
+  recordDepositPayment,
 
   // Tenant allocations
   getTenantAllocations,

@@ -284,6 +284,25 @@ router.get(
 // Record manual payment (admin/agent enters cash/bank payment)
 router.post("/manual", protect, paymentController.recordManualPayment);
 
+// ==================== DEPOSIT PAYMENT ROUTES ====================
+
+// Record manual tenant deposit payment
+router.post("/deposits/record", protect, paymentController.recordDepositPayment);
+
+// Get tenant deposit summary
+router.get(
+  "/deposits/summary/:tenantId",
+  protect,
+  paymentController.getTenantDepositSummary,
+);
+
+// Get tenant deposit transaction history
+router.get(
+  "/deposits/history/:tenantId",
+  protect,
+  paymentController.getTenantDepositTransactions,
+);
+
 // ==================== CORE PAYMENT CRUD ====================
 
 // Get all payments with filters, pagination, sorting
