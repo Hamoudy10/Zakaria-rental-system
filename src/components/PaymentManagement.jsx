@@ -177,8 +177,11 @@ const PaymentManagement = () => {
   // Manual Payment Modal
   const [showManualPayment, setShowManualPayment] = useState(false);
   const [manualPaymentData, setManualPaymentData] = useState({
+    payment_type: "rent",
+    payment_method: "manual",
     tenant_id: "",
     unit_id: "",
+    allocation_id: "",
     amount: "",
     payment_month: "",
     mpesa_receipt_number: "",
@@ -465,8 +468,11 @@ const PaymentManagement = () => {
 
     if (tenant) {
       setManualPaymentData({
+        payment_type: "rent",
+        payment_method: "manual",
         tenant_id: tenant.tenant_id,
         unit_id: tenant.unit_id,
+        allocation_id: tenant.allocation_id || "",
         amount: "",
         payment_month: filters.month,
         mpesa_receipt_number: "",
@@ -475,8 +481,11 @@ const PaymentManagement = () => {
       });
     } else {
       setManualPaymentData({
+        payment_type: "rent",
+        payment_method: "manual",
         tenant_id: "",
         unit_id: "",
+        allocation_id: "",
         amount: "",
         payment_month: filters.month,
         mpesa_receipt_number: "",
@@ -494,10 +503,32 @@ const PaymentManagement = () => {
     setManualPaymentError("");
 
     try {
-      const response = await paymentAPI.recordManualPayment({
+      const payload = {
         ...manualPaymentData,
         amount: parseFloat(manualPaymentData.amount),
-      });
+      };
+
+      const response =
+        manualPaymentData.payment_type === "deposit"
+          ? await paymentAPI.recordDepositPayment({
+              tenant_id: payload.tenant_id,
+              unit_id: payload.unit_id || null,
+              allocation_id: payload.allocation_id || null,
+              amount: payload.amount,
+              payment_method: payload.payment_method || "manual",
+              mpesa_receipt_number: payload.mpesa_receipt_number || null,
+              phone_number: payload.phone_number || null,
+              notes: payload.notes || null,
+            })
+          : await paymentAPI.recordManualPayment({
+              tenant_id: payload.tenant_id,
+              unit_id: payload.unit_id,
+              amount: payload.amount,
+              payment_month: payload.payment_month,
+              mpesa_receipt_number: payload.mpesa_receipt_number || null,
+              phone_number: payload.phone_number || null,
+              notes: payload.notes || null,
+            });
 
       if (response.data.success) {
         setShowManualPayment(false);
@@ -1753,6 +1784,12 @@ const ManualPaymentModal = ({
   tenants,
 }) => {
   const noTenants = !tenants || tenants.length === 0;
+  const selectedTenantRow = tenants?.find(
+    (t) =>
+      t.tenant_id === data.tenant_id &&
+      (!data.unit_id || t.unit_id === data.unit_id),
+  );
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border">
@@ -1781,6 +1818,29 @@ const ManualPaymentModal = ({
           {tenants && tenants.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
+                Payment Type
+              </label>
+              <select
+                value={data.payment_type}
+                onChange={(e) => {
+                  const type = e.target.value;
+                  setData({
+                    ...data,
+                    payment_type: type,
+                    payment_method:
+                      type === "deposit"
+                        ? data.payment_method || "cash"
+                        : "manual",
+                  });
+                }}
+                className="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none mb-3"
+                required
+              >
+                <option value="rent">Rent Payment</option>
+                <option value="deposit">Deposit Payment</option>
+              </select>
+
+              <label className="block text-sm font-medium text-gray-700 mb-1">
                 Select Tenant
               </label>
               <select
@@ -1794,6 +1854,7 @@ const ManualPaymentModal = ({
                       ...data,
                       tenant_id: tenant.tenant_id,
                       unit_id: tenant.unit_id,
+                      allocation_id: tenant.allocation_id || "",
                       phone_number:
                         tenant.phone_number?.replace(/^254/, "0") || "",
                     });
@@ -1802,6 +1863,7 @@ const ManualPaymentModal = ({
                       ...data,
                       tenant_id: "",
                       unit_id: "",
+                      allocation_id: "",
                     });
                   }
                 }}
@@ -1828,8 +1890,29 @@ const ManualPaymentModal = ({
           {data.tenant_id && (
             <div className="p-3 bg-blue-50 rounded-lg text-sm">
               <span className="font-medium">Selected:</span>{" "}
-              {tenants?.find((t) => t.tenant_id === data.tenant_id)
-                ?.tenant_name || "Tenant"}
+              {selectedTenantRow?.tenant_name || "Tenant"}
+              {selectedTenantRow?.unit_code ? ` (${selectedTenantRow.unit_code})` : ""}
+            </div>
+          )}
+
+          {data.payment_type === "deposit" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Payment Method
+              </label>
+              <select
+                value={data.payment_method}
+                onChange={(e) =>
+                  setData({ ...data, payment_method: e.target.value })
+                }
+                className="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
+                required
+              >
+                <option value="cash">Cash</option>
+                <option value="mpesa">M-Pesa</option>
+                <option value="bank">Bank</option>
+                <option value="manual">Manual</option>
+              </select>
             </div>
           )}
 
@@ -1848,25 +1931,27 @@ const ManualPaymentModal = ({
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Payment Month
-            </label>
-            <select
-              value={data.payment_month}
-              onChange={(e) =>
-                setData({ ...data, payment_month: e.target.value })
-              }
-              className="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
-              required
-            >
-              {monthOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {data.payment_type === "rent" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Payment Month
+              </label>
+              <select
+                value={data.payment_month}
+                onChange={(e) =>
+                  setData({ ...data, payment_month: e.target.value })
+                }
+                className="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
+                required
+              >
+                {monthOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1927,11 +2012,15 @@ const ManualPaymentModal = ({
                 !data.unit_id ||
                 !data.amount ||
                 Number(data.amount) <= 0 ||
-                !data.payment_month
+                (data.payment_type === "rent" && !data.payment_month)
               }
               className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? "Recording..." : "Record Payment"}
+              {loading
+                ? "Recording..."
+                : data.payment_type === "deposit"
+                  ? "Record Deposit"
+                  : "Record Payment"}
             </button>
           </div>
         </form>

@@ -191,6 +191,12 @@ export const paymentAPI = {
   // ==================== MANUAL PAYMENT ====================
   recordManualPayment: (paymentData) =>
     api.post("/payments/manual", paymentData),
+  recordDepositPayment: (paymentData) =>
+    api.post("/payments/deposits/record", paymentData),
+  getTenantDepositSummary: (tenantId, params = {}) =>
+    api.get(`/payments/deposits/summary/${tenantId}`, { params }),
+  getTenantDepositHistory: (tenantId, params = {}) =>
+    api.get(`/payments/deposits/history/${tenantId}`, { params }),
 
   // ==================== PAYBILL ====================
   processPaybillPayment: (paymentData) =>

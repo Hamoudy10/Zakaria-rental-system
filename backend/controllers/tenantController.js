@@ -4,6 +4,7 @@ const NotificationService = require("../services/notificationService");
 const smsService = require("../services/smsService");
 const { deleteCloudinaryImage } = require("../middleware/uploadMiddleware");
 const cloudinary = require("../config/cloudinary");
+const { ensureDepositCharge } = require("../services/depositService");
 
 // Format phone number to 254 format - UPDATED to support 01xxxxxxxx (new Safaricom)
 const formatPhoneNumber = (phone) => {
@@ -748,13 +749,14 @@ const createTenant = async (req, res) => {
       });
 
       // Create tenant allocation
-      await client.query(
+      const allocationInsert = await client.query(
         `INSERT INTO tenant_allocations 
           (
             tenant_id, unit_id, lease_start_date, lease_end_date, monthly_rent, security_deposit, allocated_by,
             month_count, expected_amount, current_month_expected
           )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
         [
           tenantRecord.id,
           unit_id,
@@ -768,6 +770,15 @@ const createTenant = async (req, res) => {
           allocationMetrics.currentMonthExpected,
         ],
       );
+
+      await ensureDepositCharge({
+        client,
+        tenantId: tenantRecord.id,
+        unitId: unit_id,
+        allocationId: allocationInsert.rows?.[0]?.id,
+        requiredDeposit: security_deposit || 0,
+        createdBy: req.user.id,
+      });
 
       // Mark unit as occupied
       await client.query(
@@ -1253,13 +1264,14 @@ const updateTenant = async (req, res) => {
           ],
         );
       } else {
-        await client.query(
+        const allocationInsert = await client.query(
           `INSERT INTO tenant_allocations
            (
              tenant_id, unit_id, lease_start_date, lease_end_date, monthly_rent, security_deposit,
              allocated_by, month_count, expected_amount, current_month_expected
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING *`,
           [
             id,
             targetUnitId,
@@ -1273,6 +1285,15 @@ const updateTenant = async (req, res) => {
             allocationMetrics.currentMonthExpected,
           ],
         );
+
+        await ensureDepositCharge({
+          client,
+          tenantId: id,
+          unitId: targetUnitId,
+          allocationId: allocationInsert.rows?.[0]?.id,
+          requiredDeposit: finalSecurityDeposit,
+          createdBy: req.user.id,
+        });
 
         await client.query(
           "UPDATE property_units SET is_occupied = true WHERE id = $1",
