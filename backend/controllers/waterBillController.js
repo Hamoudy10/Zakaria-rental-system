@@ -338,13 +338,24 @@ const listWaterBills = async (req, res) => {
   try {
     const agentId = req.user.id;
     const userRole = req.user.role;
-    const { propertyId, tenantId, month, limit = 50, offset = 0 } = req.query;
+    const {
+      propertyId,
+      tenantId,
+      month,
+      fromDate,
+      toDate,
+      limit = 50,
+      offset = 0,
+      all = false,
+    } = req.query;
+    const fetchAll =
+      all === true || String(all).toLowerCase() === 'true' || String(all) === '1';
 
-    const params = [];
+    const filterParams = [];
     let where = `WHERE 1=1`;
 
     if (userRole !== 'admin') {
-      params.push(agentId);
+      filterParams.push(agentId);
       where += `
         AND (
           wb.property_id IN (
@@ -358,23 +369,27 @@ const listWaterBills = async (req, res) => {
     }
 
     if (propertyId) {
-      params.push(propertyId);
-      where += ` AND wb.property_id = $${params.length}`;
+      filterParams.push(propertyId);
+      where += ` AND wb.property_id = $${filterParams.length}`;
     }
     if (tenantId) {
-      params.push(tenantId);
-      where += ` AND wb.tenant_id = $${params.length}`;
+      filterParams.push(tenantId);
+      where += ` AND wb.tenant_id = $${filterParams.length}`;
     }
     if (month) {
-      params.push(`${month}-01`);
-      where += ` AND wb.bill_month = $${params.length}`;
+      filterParams.push(`${month}-01`);
+      where += ` AND wb.bill_month = $${filterParams.length}`;
+    }
+    if (fromDate) {
+      filterParams.push(fromDate);
+      where += ` AND wb.created_at::date >= $${filterParams.length}::date`;
+    }
+    if (toDate) {
+      filterParams.push(toDate);
+      where += ` AND wb.created_at::date <= $${filterParams.length}::date`;
     }
 
-    // Pagination
-    params.push(parseInt(limit, 10));
-    params.push(parseInt(offset, 10));
-
-    const query = `
+    const baseQuery = `
       SELECT wb.*, t.first_name, t.last_name, t.phone_number, pu.unit_code, p.name as property_name, u.first_name AS agent_first, u.last_name AS agent_last
       FROM water_bills wb
       LEFT JOIN tenants t ON t.id = wb.tenant_id
@@ -383,11 +398,42 @@ const listWaterBills = async (req, res) => {
       LEFT JOIN users u ON u.id = wb.agent_id
       ${where}
       ORDER BY wb.bill_month DESC, wb.created_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length};
     `;
 
-    const { rows } = await db.query(query, params);
-    res.json({ success: true, data: rows });
+    let query = baseQuery;
+    let queryParams = [...filterParams];
+    let pagination = null;
+    if (!fetchAll) {
+      const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+      const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
+
+      const countQuery = `
+        SELECT COUNT(*)::int as total
+        FROM water_bills wb
+        ${where}
+      `;
+      const countResult = await db.query(countQuery, filterParams);
+      const total = countResult.rows?.[0]?.total || 0;
+
+      queryParams.push(safeLimit);
+      queryParams.push(safeOffset);
+      query += ` LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`;
+
+      pagination = {
+        total,
+        limit: safeLimit,
+        offset: safeOffset,
+        page: Math.floor(safeOffset / safeLimit) + 1,
+        totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+      };
+    }
+
+    const { rows } = await db.query(query, queryParams);
+    res.json({
+      success: true,
+      data: rows,
+      ...(pagination ? { pagination } : {}),
+    });
   } catch (err) {
     console.error('❌ listWaterBills error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch water bills', error: err.message });
