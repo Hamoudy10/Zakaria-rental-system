@@ -1003,15 +1003,20 @@ class SMSService {
             continue;
           }
 
-          const deliveredAt =
+          const deliveredAtRaw =
             response["dlr-time"] || response["delivered-time"] || null;
+          const deliveredAt = (() => {
+            if (!deliveredAtRaw) return null;
+            const parsed = new Date(deliveredAtRaw);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+          })();
 
           await pool.query(
             `UPDATE sms_queue
              SET delivery_status = $1,
                  status = $1,
                  delivered_at = CASE
-                   WHEN $1 = 'delivered' THEN COALESCE($2::timestamp, delivered_at, NOW())
+                   WHEN $1 = 'delivered' THEN COALESCE($2, delivered_at, NOW())
                    ELSE delivered_at
                  END
              WHERE id = $3`,
