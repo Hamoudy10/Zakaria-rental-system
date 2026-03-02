@@ -14,6 +14,19 @@ const AgentWaterBills = () => {
   const [allTenants, setAllTenants] = useState([]);
   const [propertyTenants, setPropertyTenants] = useState([]);
   const [recentBills, setRecentBills] = useState([]);
+  const [billFilters, setBillFilters] = useState({
+    fromDate: '',
+    toDate: '',
+    page: 1,
+    limit: 20,
+  });
+  const [billPagination, setBillPagination] = useState({
+    total: 0,
+    page: 1,
+    totalPages: 1,
+    limit: 20,
+    offset: 0,
+  });
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -37,7 +50,37 @@ const AgentWaterBills = () => {
 
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
 
-  // Load properties, tenants, and recent bills on mount
+  const fetchWaterBills = async () => {
+    try {
+      const params = {
+        limit: billFilters.limit,
+        offset: (billFilters.page - 1) * billFilters.limit,
+      };
+      if (billFilters.fromDate) params.fromDate = billFilters.fromDate;
+      if (billFilters.toDate) params.toDate = billFilters.toDate;
+
+      const response = await agentService.listWaterBills(params);
+      const rows = Array.isArray(response?.data?.data)
+        ? response.data.data
+        : [];
+      const pagination = response?.data?.pagination || {
+        total: rows.length,
+        page: 1,
+        totalPages: 1,
+        limit: billFilters.limit,
+        offset: 0,
+      };
+
+      setRecentBills(rows);
+      setBillPagination(pagination);
+    } catch (err) {
+      console.error('listWaterBills error', err);
+      setMessage({ type: 'error', text: 'Failed to fetch water bills' });
+      setRecentBills([]);
+    }
+  };
+
+  // Load properties + tenants on mount
   useEffect(() => {
     const load = async () => {
       try {
@@ -56,20 +99,16 @@ const AgentWaterBills = () => {
         });
         const tenantsData = t?.data?.data || t?.data || [];
         setAllTenants(Array.isArray(tenantsData) ? tenantsData : []);
-
-        // Recent water bills
-        const b = await agentService.listWaterBills({ limit: 10 }).catch(err => {
-          console.error('listWaterBills error', err);
-          return null;
-        });
-        const billsData = b?.data?.data || b?.data || [];
-        setRecentBills(Array.isArray(billsData) ? billsData : []);
       } catch (err) {
         console.error('Failed to load agent data', err);
       }
     };
     load();
   }, []);
+
+  useEffect(() => {
+    fetchWaterBills();
+  }, [billFilters.page, billFilters.limit, billFilters.fromDate, billFilters.toDate]);
 
   // Filter tenants when property changes
   const handlePropertyChange = (e) => {
@@ -170,9 +209,7 @@ const AgentWaterBills = () => {
             : 'Water bill saved successfully'
         });
         // Refresh recent list
-        const b = await agentService.listWaterBills({ limit: 10 });
-        const billsData = b?.data?.data || b?.data || [];
-        setRecentBills(Array.isArray(billsData) ? billsData : []);
+        await fetchWaterBills();
         // Reset form
         setForm({
           propertyId: '',
@@ -255,9 +292,7 @@ const AgentWaterBills = () => {
       const res = await agentService.deleteWaterBill(bill.id);
       if (res?.data?.success) {
         setMessage({ type: 'success', text: 'Water bill deleted successfully' });
-        const b = await agentService.listWaterBills({ limit: 10 });
-        const billsData = b?.data?.data || b?.data || [];
-        setRecentBills(Array.isArray(billsData) ? billsData : []);
+        await fetchWaterBills();
         if (editingBillId === bill.id) {
           cancelEdit();
         }
@@ -460,9 +495,7 @@ const AgentWaterBills = () => {
             onClick={async () => {
               try {
                 setLoading(true);
-                const b = await agentService.listWaterBills({ limit: 10 });
-                const billsData = b?.data?.data || b?.data || [];
-                setRecentBills(Array.isArray(billsData) ? billsData : []);
+                await fetchWaterBills();
                 setMessage({ type: 'success', text: 'Water bills list refreshed' });
               } catch (err) {
                 console.error('refresh list error', err);
@@ -481,11 +514,73 @@ const AgentWaterBills = () => {
 
       {/* Recent Bills Section */}
       <div className="mt-6">
-        <div className="flex justify-between items-center mb-4">
-          <h4 className="text-sm font-semibold">Recent Water Bills</h4>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+          <h4 className="text-sm font-semibold">All Water Bills</h4>
           <span className="text-xs text-gray-500">
-            Showing {recentBills.length} recent bills
+            Showing {recentBills.length} of {billPagination.total} bill(s)
           </span>
+        </div>
+
+        <div className="bg-white rounded shadow-sm p-3 mb-4 border">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">From Date</label>
+              <input
+                type="date"
+                value={billFilters.fromDate}
+                onChange={(e) =>
+                  setBillFilters(prev => ({ ...prev, fromDate: e.target.value, page: 1 }))
+                }
+                className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">To Date</label>
+              <input
+                type="date"
+                value={billFilters.toDate}
+                onChange={(e) =>
+                  setBillFilters(prev => ({ ...prev, toDate: e.target.value, page: 1 }))
+                }
+                className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Per Page</label>
+              <select
+                value={billFilters.limit}
+                onChange={(e) =>
+                  setBillFilters(prev => ({
+                    ...prev,
+                    limit: parseInt(e.target.value, 10),
+                    page: 1,
+                  }))
+                }
+                className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() =>
+                  setBillFilters(prev => ({
+                    ...prev,
+                    fromDate: '',
+                    toDate: '',
+                    page: 1,
+                  }))
+                }
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50"
+              >
+                Clear Date Filters
+              </button>
+            </div>
+          </div>
         </div>
         
         {recentBills.length === 0 ? (
@@ -560,6 +655,39 @@ const AgentWaterBills = () => {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {billPagination.totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-between bg-white rounded shadow-sm p-3 border">
+            <div className="text-xs text-gray-600">
+              Page {billPagination.page} of {billPagination.totalPages}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setBillFilters(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))
+                }
+                disabled={billPagination.page <= 1}
+                className="px-3 py-1 text-sm border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setBillFilters(prev => ({
+                    ...prev,
+                    page: Math.min(billPagination.totalPages, prev.page + 1),
+                  }))
+                }
+                disabled={billPagination.page >= billPagination.totalPages}
+                className="px-3 py-1 text-sm border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </div>
