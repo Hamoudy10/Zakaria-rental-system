@@ -731,23 +731,7 @@ const handleMpesaValidation = async (req, res) => {
       [cleanRef],
     );
 
-    let isRecognizedAccount = unitCheck.rows.length > 0;
-
-    // Fallback: allow BillRef that is a registered tenant phone
-    // only when it maps to exactly one active unit allocation.
-    if (!isRecognizedAccount) {
-      const phoneRef = normalizeKenyanPhone(BillRefNumber);
-      if (phoneRef) {
-        const phoneCheck = await pool.query(
-          `SELECT ta.unit_id
-           FROM tenants t
-           JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
-           WHERE t.phone_number = $1`,
-          [phoneRef],
-        );
-        isRecognizedAccount = phoneCheck.rows.length === 1;
-      }
-    }
+    const isRecognizedAccount = unitCheck.rows.length > 0;
 
     if (!isRecognizedAccount) {
       console.log(
