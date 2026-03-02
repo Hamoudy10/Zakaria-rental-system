@@ -1133,8 +1133,16 @@ const getMessagingHistory = async (req, res) => {
       channel, // 'sms', 'whatsapp', or 'all'
       startDate,
       endDate,
+      start_date,
+      end_date,
       search,
+      propertyId,
+      property_id,
     } = req.query;
+
+    const normalizedStartDate = startDate || start_date || null;
+    const normalizedEndDate = endDate || end_date || null;
+    const selectedPropertyId = propertyId || property_id || null;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -1189,16 +1197,35 @@ const getMessagingHistory = async (req, res) => {
       }
 
       // Date range filters
-      if (startDate) {
+      if (normalizedStartDate) {
         whereClauses.push(`${dateColumn} >= $${paramIndex++}`);
-        queryParams.push(startDate);
+        queryParams.push(normalizedStartDate);
       }
 
-      if (endDate) {
+      if (normalizedEndDate) {
         whereClauses.push(
           `${dateColumn} <= $${paramIndex++}::date + interval '1 day'`,
         );
-        queryParams.push(endDate);
+        queryParams.push(normalizedEndDate);
+      }
+
+      // Property filter
+      if (selectedPropertyId) {
+        whereClauses.push(`EXISTS (
+          SELECT 1
+          FROM tenants t_prop
+          JOIN tenant_allocations ta_prop
+            ON ta_prop.tenant_id = t_prop.id
+           AND ta_prop.is_active = true
+          JOIN property_units pu_prop ON pu_prop.id = ta_prop.unit_id
+          WHERE pu_prop.property_id = $${paramIndex++}::uuid
+            AND (
+              REPLACE(t_prop.phone_number, '+', '') = REPLACE(${phoneColumn}, '+', '')
+              OR REPLACE(t_prop.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(${phoneColumn}, '+', ''), 9))
+              OR REPLACE(${phoneColumn}, '+', '') = CONCAT('254', RIGHT(REPLACE(t_prop.phone_number, '+', ''), 9))
+            )
+        )`);
+        queryParams.push(selectedPropertyId);
       }
 
       // Search filter
@@ -1579,8 +1606,14 @@ const checkDeliveryStatus = async (req, res) => {
       await pool.query(
         `UPDATE sms_queue
          SET delivery_status = $1,
-             status = CASE WHEN $1 = 'delivered' THEN 'delivered' ELSE status END,
-             delivered_at = CASE WHEN $1 = 'delivered' THEN COALESCE($2::timestamp, NOW()) ELSE delivered_at END
+             status = CASE
+               WHEN $1 IN ('delivered', 'failed', 'pending', 'sent') THEN $1
+               ELSE status
+             END,
+             delivered_at = CASE
+               WHEN $1 = 'delivered' THEN COALESCE($2::timestamp, NOW())
+               ELSE delivered_at
+             END
          WHERE message_id = $3`,
         [status, deliveredAt, messageId],
       );
@@ -1588,11 +1621,14 @@ const checkDeliveryStatus = async (req, res) => {
       // 42703 = undefined_column (migration not applied yet)
       if (persistError.code === '42703') {
         console.warn(
-          'Delivery persistence columns missing. Falling back to basic status update only.',
+          'Delivery persistence columns missing. Falling back to status-only update.',
         );
         await pool.query(
           `UPDATE sms_queue
-           SET status = CASE WHEN $1 = 'delivered' THEN 'delivered' ELSE status END
+           SET status = CASE
+             WHEN $1 IN ('delivered', 'failed', 'pending', 'sent') THEN $1
+             ELSE status
+           END
            WHERE message_id = $2`,
           [status, messageId],
         );
@@ -1632,33 +1668,205 @@ const getSMSStats = async (req, res) => {
     const userId = req.user.id;
     const isAdmin = req.user.role === 'admin';
 
-    let agentFilter = '';
-    const queryParams = [];
+    const parseBalance = (raw) => {
+      if (!raw) return null;
 
-    if (!isAdmin) {
-      agentFilter = 'WHERE sq.agent_id = $1';
-      queryParams.push(userId);
-    }
+      const findFirstNumber = (input) => {
+        if (input === null || input === undefined) return null;
+        if (typeof input === 'number') return input;
+        const match = String(input).match(/-?\d+(\.\d+)?/);
+        return match ? Number(match[0]) : null;
+      };
 
-    const statsQuery = `
-      SELECT 
-        COUNT(*) as total_sms,
-        COUNT(CASE WHEN status = 'sent' THEN 1 END) as sent_count,
-        COUNT(CASE WHEN status = 'delivered' THEN 1 END) as delivered_count,
-        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count,
-        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
-        COUNT(CASE WHEN created_at >= CURRENT_DATE THEN 1 END) as today_count,
-        COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as week_count,
-        COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as month_count
-      FROM sms_queue sq
-      ${agentFilter}
-    `;
+      const candidateFields = [
+        'balance',
+        'credit',
+        'credits',
+        'sms_balance',
+        'available_units',
+        'units',
+        'unit_balance',
+        'wallet_balance',
+      ];
 
-    const result = await pool.query(statsQuery, queryParams);
+      const topLevelObj =
+        typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+          ? raw
+          : {};
+
+      for (const key of candidateFields) {
+        if (Object.prototype.hasOwnProperty.call(topLevelObj, key)) {
+          const parsed = findFirstNumber(topLevelObj[key]);
+          if (parsed !== null) return parsed;
+        }
+      }
+
+      const asJsonString = JSON.stringify(raw);
+      return findFirstNumber(asJsonString);
+    };
+
+    const queueWhere = isAdmin
+      ? ''
+      : `
+        WHERE (
+          sq.agent_id = $1
+          OR EXISTS (
+            SELECT 1
+            FROM tenants t
+            JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+            JOIN property_units pu ON pu.id = ta.unit_id
+            JOIN agent_property_assignments apa
+              ON apa.property_id = pu.property_id
+             AND apa.is_active = true
+            WHERE apa.agent_id = $1
+              AND (
+                REPLACE(t.phone_number, '+', '') = REPLACE(sq.recipient_phone, '+', '')
+                OR REPLACE(t.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(sq.recipient_phone, '+', ''), 9))
+                OR REPLACE(sq.recipient_phone, '+', '') = CONCAT('254', RIGHT(REPLACE(t.phone_number, '+', ''), 9))
+              )
+          )
+        )
+      `;
+    const queueParams = isAdmin ? [] : [userId];
+
+    const notifWhere = isAdmin
+      ? ''
+      : `
+        WHERE EXISTS (
+          SELECT 1
+          FROM tenants t
+          JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+          JOIN property_units pu ON pu.id = ta.unit_id
+          JOIN agent_property_assignments apa
+            ON apa.property_id = pu.property_id
+           AND apa.is_active = true
+          WHERE apa.agent_id = $1
+            AND (
+              REPLACE(t.phone_number, '+', '') = REPLACE(sn.phone_number, '+', '')
+              OR REPLACE(t.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(sn.phone_number, '+', ''), 9))
+              OR REPLACE(sn.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(t.phone_number, '+', ''), 9))
+            )
+        )
+      `;
+    const notifParams = isAdmin ? [] : [userId];
+
+    const paymentTypes = [
+      "payment_confirmation",
+      "payment_reminder",
+      "admin_payment_alert",
+      "admin_alert",
+      "balance_reminder",
+    ];
+
+    const [queueResult, notifResult, balanceResult, paymentQueueResult, paymentNotifResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT
+            COUNT(*)::int AS total_sms,
+            COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
+            COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered_count,
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+            COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+            COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)::int AS today_count,
+            COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days')::int AS week_count,
+            COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '30 days')::int AS month_count
+          FROM sms_queue sq
+          ${queueWhere}
+        `,
+        queueParams,
+      ),
+      pool.query(
+        `
+          SELECT
+            COUNT(*)::int AS total_sms,
+            COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
+            COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered_count,
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+            COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+            COUNT(*) FILTER (WHERE sent_at >= CURRENT_DATE)::int AS today_count,
+            COUNT(*) FILTER (WHERE sent_at >= CURRENT_DATE - INTERVAL '7 days')::int AS week_count,
+            COUNT(*) FILTER (WHERE sent_at >= CURRENT_DATE - INTERVAL '30 days')::int AS month_count
+          FROM sms_notifications sn
+          ${notifWhere}
+        `,
+        notifParams,
+      ),
+      SMSService.checkBalance(),
+      pool.query(
+        `
+          SELECT
+            COUNT(*)::int AS total_sms,
+            COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
+            COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered_count,
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+            COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count
+          FROM sms_queue sq
+          ${queueWhere}
+          ${queueWhere ? " AND " : " WHERE "}sq.message_type = ANY($${queueParams.length + 1}::text[])
+        `,
+        [...queueParams, paymentTypes],
+      ),
+      pool.query(
+        `
+          SELECT
+            COUNT(*)::int AS total_sms,
+            COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
+            COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered_count,
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+            COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count
+          FROM sms_notifications sn
+          ${notifWhere}
+          ${notifWhere ? " AND " : " WHERE "}sn.message_type = ANY($${notifParams.length + 1}::text[])
+        `,
+        [...notifParams, paymentTypes],
+      ),
+    ]);
+
+    const queueStats = queueResult.rows[0] || {};
+    const notifStats = notifResult.rows[0] || {};
+    const sum = (key) =>
+      Number(queueStats[key] || 0) + Number(notifStats[key] || 0);
+
+    const smsUnitCost = Number(process.env.SMS_UNIT_COST || 0.8);
+    const billedCount = sum('sent_count') + sum('delivered_count');
+    const estimatedCost = Number((billedCount * smsUnitCost).toFixed(2));
+    const rawBalance = balanceResult?.success ? balanceResult.data : null;
+    const parsedBalance = parseBalance(rawBalance);
+    const paymentQueueStats = paymentQueueResult.rows[0] || {};
+    const paymentNotifStats = paymentNotifResult.rows[0] || {};
+    const paymentSum = (key) =>
+      Number(paymentQueueStats[key] || 0) + Number(paymentNotifStats[key] || 0);
 
     res.json({
       success: true,
-      data: result.rows[0]
+      data: {
+        total_sms: sum('total_sms'),
+        sent_count: sum('sent_count'),
+        delivered_count: sum('delivered_count'),
+        failed_count: sum('failed_count'),
+        pending_count: sum('pending_count'),
+        today_count: sum('today_count'),
+        week_count: sum('week_count'),
+        month_count: sum('month_count'),
+        queue: queueStats,
+        notifications: notifStats,
+        sms_unit_cost: smsUnitCost,
+        estimated_sms_spend: estimatedCost,
+        balance: {
+          provider: 'celcom',
+          available_units: parsedBalance,
+          raw: rawBalance,
+          fetch_success: Boolean(balanceResult?.success),
+          fetch_error: balanceResult?.success ? null : balanceResult?.error,
+        },
+        payment_sms: {
+          total_sms: paymentSum('total_sms'),
+          sent_count: paymentSum('sent_count'),
+          delivered_count: paymentSum('delivered_count'),
+          failed_count: paymentSum('failed_count'),
+          pending_count: paymentSum('pending_count'),
+        },
+      },
     });
 
   } catch (error) {

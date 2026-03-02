@@ -45,6 +45,8 @@ const AgentSMSManagement = () => {
     endDate: "",
     propertyId: "",
   });
+  const [smsStats, setSmsStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(false);
 
   // State for Delivery Details Modal
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
@@ -69,7 +71,25 @@ const AgentSMSManagement = () => {
     } else if (activeTab === "history") {
       fetchSMSHistory();
     }
+    fetchSMSStats();
   }, [activeTab]);
+
+  const fetchSMSStats = async () => {
+    setLoadingStats(true);
+    try {
+      const response = await API.notifications.getSMSStats();
+      if (response.data?.success) {
+        setSmsStats(response.data.data);
+      } else {
+        setSmsStats(null);
+      }
+    } catch (error) {
+      console.error("Error fetching SMS stats:", error);
+      setSmsStats(null);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
 
   const fetchAgentProperties = async () => {
     try {
@@ -195,18 +215,37 @@ const AgentSMSManagement = () => {
   const fetchFailedSMS = async () => {
     setLoadingFailed(true);
     try {
-      const response = await API.billing.getAgentFailedSMS();
+      const params = {
+        status: "failed",
+        channel: "sms",
+        limit: 200,
+      };
+      if (historyFilters.propertyId) {
+        params.propertyId = historyFilters.propertyId;
+      }
+      const response = await API.notifications.getSMSHistory(params);
       if (response.data.success) {
-        setFailedSMS(response.data.data);
+        const items = response?.data?.data?.messages || [];
+        setFailedSMS(Array.isArray(items) ? items : []);
       }
     } catch (error) {
       console.error("Error fetching failed SMS:", error);
+      setFailedSMS([]);
     } finally {
       setLoadingFailed(false);
     }
   };
 
   const handleRetrySMS = async (smsId) => {
+    const isQueueId =
+      typeof smsId === "string" &&
+      /^[0-9a-fA-F-]{36}$/.test(smsId) &&
+      !smsId.startsWith("smsn_") &&
+      !smsId.startsWith("wan_");
+    if (!isQueueId) {
+      alert("This failed item is not retryable from queue.");
+      return;
+    }
     try {
       const response = await API.billing.retryAgentFailedSMS({
         sms_ids: [smsId],
@@ -229,9 +268,21 @@ const AgentSMSManagement = () => {
       return;
     }
 
+    const retryableIds = selectedFailedSMS.filter(
+      (id) =>
+        typeof id === "string" &&
+        /^[0-9a-fA-F-]{36}$/.test(id) &&
+        !id.startsWith("smsn_") &&
+        !id.startsWith("wan_"),
+    );
+    if (retryableIds.length === 0) {
+      alert("No retryable queue SMS selected.");
+      return;
+    }
+
     try {
       const response = await API.billing.retryAgentFailedSMS({
-        sms_ids: selectedFailedSMS,
+        sms_ids: retryableIds,
       });
 
       if (response.data.success) {
@@ -255,13 +306,13 @@ const AgentSMSManagement = () => {
     try {
       const params = {};
       if (filters.status) params.status = filters.status;
-      if (filters.startDate) params.start_date = filters.startDate;
-      if (filters.endDate) params.end_date = filters.endDate;
-      if (filters.propertyId) params.property_id = filters.propertyId;
+      if (filters.startDate) params.startDate = filters.startDate;
+      if (filters.endDate) params.endDate = filters.endDate;
+      if (filters.propertyId) params.propertyId = filters.propertyId;
+      params.channel = "sms";
+      params.limit = 200;
 
-      // LOGIC UPDATE: Use agentSMS API (which maps to cronController) for history
-      // This ensures we hit the robust controller logic we fixed
-      const response = await API.agentSMS.getAgentSMSHistory(params);
+      const response = await API.notifications.getSMSHistory(params);
 
       if (response.data.success) {
         const historyData =
@@ -387,6 +438,50 @@ const AgentSMSManagement = () => {
           {/* Tab 1: Trigger Billing SMS */}
           {activeTab === "trigger" && (
             <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div className="bg-gray-50 border rounded-md p-4">
+                  <p className="text-xs text-gray-500">Delivered SMS</p>
+                  <p className="text-xl font-semibold text-green-700">
+                    {loadingStats ? "..." : (smsStats?.delivered_count ?? 0)}
+                  </p>
+                </div>
+                <div className="bg-gray-50 border rounded-md p-4">
+                  <p className="text-xs text-gray-500">Failed SMS</p>
+                  <p className="text-xl font-semibold text-red-700">
+                    {loadingStats ? "..." : (smsStats?.failed_count ?? 0)}
+                  </p>
+                </div>
+                <div className="bg-gray-50 border rounded-md p-4">
+                  <p className="text-xs text-gray-500">Pending SMS</p>
+                  <p className="text-xl font-semibold text-yellow-700">
+                    {loadingStats ? "..." : (smsStats?.pending_count ?? 0)}
+                  </p>
+                </div>
+                <div className="bg-gray-50 border rounded-md p-4">
+                  <p className="text-xs text-gray-500">Celcom Units Left</p>
+                  <p className="text-xl font-semibold text-blue-700">
+                    {loadingStats
+                      ? "..."
+                      : (smsStats?.balance?.available_units ?? "N/A")}
+                  </p>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Est. spend: KSh{" "}
+                    {Number(smsStats?.estimated_sms_spend || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-gray-50 border rounded-md p-4">
+                  <p className="text-xs text-gray-500">Payment SMS (D/F)</p>
+                  <p className="text-xl font-semibold text-gray-800">
+                    {loadingStats
+                      ? "..."
+                      : `${smsStats?.payment_sms?.delivered_count ?? 0} / ${smsStats?.payment_sms?.failed_count ?? 0}`}
+                  </p>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Total: {smsStats?.payment_sms?.total_sms ?? 0}
+                  </p>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -697,15 +792,17 @@ const AgentSMSManagement = () => {
                           </td>
                           <td className="px-4 py-4">
                             <div className="font-medium text-gray-900">
-                              {sms.first_name} {sms.last_name}
+                              {sms.first_name && sms.last_name
+                                ? `${sms.first_name} ${sms.last_name}`
+                                : "Unknown Tenant"}
                             </div>
                           </td>
                           <td className="px-4 py-4">
                             <div className="text-sm text-gray-900">
-                              {sms.property_name}
+                              {sms.property_name || "-"}
                             </div>
                             <div className="text-sm text-gray-500">
-                              {sms.unit_code}
+                              {sms.unit_code || "-"}
                             </div>
                           </td>
                           <td className="px-4 py-4 text-sm text-gray-500">
@@ -717,13 +814,19 @@ const AgentSMSManagement = () => {
                               title={sms.error_message}
                             >
                               <span className="text-sm text-red-600">
-                                {sms.error_message}
+                                {sms.error_message || sms.message || "Failed delivery"}
                               </span>
                             </div>
                           </td>
                           <td className="px-4 py-4">
                             <button
                               onClick={() => handleRetrySMS(sms.id)}
+                              disabled={
+                                !(
+                                  typeof sms.id === "string" &&
+                                  /^[0-9a-fA-F-]{36}$/.test(sms.id)
+                                )
+                              }
                               className="text-blue-600 hover:text-blue-900 text-sm font-medium"
                             >
                               Retry

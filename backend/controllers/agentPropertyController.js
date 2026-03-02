@@ -158,6 +158,13 @@ const getMyProperties = async (req, res) => {
 const getMyTenants = async (req, res) => {
   try {
     const { user } = req;
+    const {
+      propertyId,
+      property_id,
+      status,
+      search,
+    } = req.query;
+    const selectedPropertyId = propertyId || property_id || null;
 
     let query = `
       SELECT DISTINCT
@@ -265,6 +272,36 @@ const getMyTenants = async (req, res) => {
       query += ` WHERE ta.is_active = true `;
     }
 
+    if (selectedPropertyId) {
+      query += ` AND p.id = $${params.length + 1}::uuid`;
+      params.push(selectedPropertyId);
+    }
+
+    if (status && status !== "all") {
+      query += ` AND (
+        CASE 
+          WHEN (
+            GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+            GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
+            GREATEST(0, COALESCE(ta.arrears_balance, 0))
+          ) <= 0 THEN 'paid'
+          ELSE 'pending'
+        END
+      ) = $${params.length + 1}`;
+      params.push(status);
+    }
+
+    if (search) {
+      query += ` AND (
+        CONCAT(COALESCE(t.first_name, ''), ' ', COALESCE(t.last_name, '')) ILIKE $${params.length + 1}
+        OR COALESCE(t.phone_number, '') ILIKE $${params.length + 1}
+        OR COALESCE(t.national_id, '') ILIKE $${params.length + 1}
+        OR COALESCE(pu.unit_code, '') ILIKE $${params.length + 1}
+        OR COALESCE(p.name, '') ILIKE $${params.length + 1}
+      )`;
+      params.push(`%${search}%`);
+    }
+
     query += ` ORDER BY p.name, pu.unit_code`;
 
     const { rows } = await db.query(query, params);
@@ -281,7 +318,8 @@ const getMyTenants = async (req, res) => {
 const getMyComplaints = async (req, res) => {
   try {
     const { user } = req;
-    const { status } = req.query;
+    const { status, propertyId, property_id, search } = req.query;
+    const selectedPropertyId = propertyId || property_id || null;
 
     let query = `
       SELECT 
@@ -316,6 +354,23 @@ const getMyComplaints = async (req, res) => {
     if (status && status !== 'all') {
       query += ` AND c.status = $${params.length + 1}`;
       params.push(status);
+    }
+
+    if (selectedPropertyId) {
+      query += ` AND p.id = $${params.length + 1}::uuid`;
+      params.push(selectedPropertyId);
+    }
+
+    if (search) {
+      query += ` AND (
+        CONCAT(COALESCE(t.first_name, ''), ' ', COALESCE(t.last_name, '')) ILIKE $${params.length + 1}
+        OR COALESCE(c.description, '') ILIKE $${params.length + 1}
+        OR COALESCE(c.category, '') ILIKE $${params.length + 1}
+        OR COALESCE(c.priority, '') ILIKE $${params.length + 1}
+        OR COALESCE(pu.unit_code, '') ILIKE $${params.length + 1}
+        OR COALESCE(p.name, '') ILIKE $${params.length + 1}
+      )`;
+      params.push(`%${search}%`);
     }
 
     query += ` ORDER BY c.raised_at DESC`;
