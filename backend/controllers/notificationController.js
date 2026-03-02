@@ -1602,6 +1602,12 @@ const checkDeliveryStatus = async (req, res) => {
 
     // Persist delivery outcome for later display in history tables.
     // Be defensive in case migration columns are missing in some environments.
+    const parsedDeliveredAt = (() => {
+      if (!deliveredAt) return null;
+      const parsed = new Date(deliveredAt);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    })();
+
     try {
       await pool.query(
         `UPDATE sms_queue
@@ -1611,11 +1617,11 @@ const checkDeliveryStatus = async (req, res) => {
                ELSE status
              END,
              delivered_at = CASE
-               WHEN $1 = 'delivered' THEN COALESCE($2::timestamp, NOW())
+               WHEN $1 = 'delivered' THEN COALESCE($2, NOW())
                ELSE delivered_at
              END
          WHERE message_id = $3`,
-        [status, deliveredAt, messageId],
+        [status, parsedDeliveredAt, messageId],
       );
     } catch (persistError) {
       // 42703 = undefined_column (migration not applied yet)
