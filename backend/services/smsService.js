@@ -946,6 +946,91 @@ class SMSService {
     }
   }
 
+  mapDeliveryStatus(dlrStatus) {
+    const normalized = String(dlrStatus || "").trim().toUpperCase();
+    if (!normalized) return "unknown";
+    if (["DELIVERED", "DELIVEREDTOTERMINAL", "SUCCESS"].includes(normalized)) {
+      return "delivered";
+    }
+    if (["EXPIRED", "REJECTED", "UNDELIVERED", "FAILED"].includes(normalized)) {
+      return "failed";
+    }
+    if (["ACCEPTED", "SENT", "SUBMITTED"].includes(normalized)) {
+      return "sent";
+    }
+    if (["PENDING", "BUFFERED", "QUEUED"].includes(normalized)) {
+      return "pending";
+    }
+    return "unknown";
+  }
+
+  /**
+   * Poll delivery reports for recent messages and persist status transitions.
+   * This allows failed deliveries (e.g., other networks) to appear without manual checks.
+   */
+  async syncDeliveryStatuses(limit = 40) {
+    try {
+      const candidates = await pool.query(
+        `SELECT id, message_id
+         FROM sms_queue
+         WHERE message_id IS NOT NULL
+           AND status IN ('sent', 'pending')
+           AND created_at >= NOW() - INTERVAL '7 days'
+         ORDER BY created_at DESC
+         LIMIT $1`,
+        [Math.max(1, Number(limit) || 40)],
+      );
+
+      if (!candidates.rows.length) {
+        return { checked: 0, updated: 0, failed: 0 };
+      }
+
+      let updated = 0;
+      let failed = 0;
+
+      for (const row of candidates.rows) {
+        try {
+          const dlr = await this.checkDeliveryReport(row.message_id);
+          if (!dlr.success) {
+            failed += 1;
+            continue;
+          }
+
+          const response = dlr?.data?.responses?.[0] || {};
+          const providerStatus = response["dlr-status"] || response.status;
+          const mapped = this.mapDeliveryStatus(providerStatus);
+          if (!["delivered", "failed", "pending", "sent"].includes(mapped)) {
+            continue;
+          }
+
+          const deliveredAt =
+            response["dlr-time"] || response["delivered-time"] || null;
+
+          await pool.query(
+            `UPDATE sms_queue
+             SET delivery_status = $1,
+                 status = $1,
+                 delivered_at = CASE
+                   WHEN $1 = 'delivered' THEN COALESCE($2::timestamp, delivered_at, NOW())
+                   ELSE delivered_at
+                 END
+             WHERE id = $3`,
+            [mapped, deliveredAt, row.id],
+          );
+          updated += 1;
+        } catch (innerError) {
+          failed += 1;
+          console.warn("SMS DLR sync item failed:", innerError.message);
+        }
+      }
+
+      return { checked: candidates.rows.length, updated, failed };
+    } catch (error) {
+      console.error("SMS DLR sync error:", error.message);
+      return { checked: 0, updated: 0, failed: 0, error: error.message };
+    }
+  }
+
   // ============================================================
   // LOGGING & STATISTICS
   // ============================================================

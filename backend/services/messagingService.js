@@ -578,6 +578,10 @@ class MessagingService {
       const smsResults = await this.sms.processQueuedSMS();
       results.sms = smsResults;
 
+      // Sync delivery reports for already-sent SMS so failed deliveries are reflected.
+      const dlrSync = await this.sms.syncDeliveryStatuses(40);
+      results.sms.delivery_sync = dlrSync;
+
       // Process WhatsApp queue
       if (this.whatsapp.configured) {
         console.log("🔄 Messaging: Processing WhatsApp queue...");
