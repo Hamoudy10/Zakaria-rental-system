@@ -429,8 +429,119 @@ const getWaterBill = async (req, res) => {
 };
 
 /**
- * Delete a water bill (soft/hard — here hard delete)
+ * Update a water bill
  */
+const updateWaterBill = async (req, res) => {
+  try {
+    const agentId = req.user.id;
+    const { id } = req.params;
+    const { amount, notes, billMonth, unitId, tenantId, propertyId } = req.body;
+
+    const existingResult = await db.query(
+      `SELECT * FROM water_bills WHERE id = $1`,
+      [id],
+    );
+
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Water bill not found' });
+    }
+
+    const existingBill = existingResult.rows[0];
+    const nextPropertyId = propertyId || existingBill.property_id;
+
+    if (req.user.role !== 'admin') {
+      const ok = await agentManagesProperty(agentId, nextPropertyId);
+      if (!ok) return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+
+    const nextAmount =
+      amount === undefined || amount === null || amount === ''
+        ? Number(existingBill.amount)
+        : Number(amount);
+    if (!Number.isFinite(nextAmount) || nextAmount < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount must be a valid non-negative number',
+      });
+    }
+
+    let nextBillMonth = existingBill.bill_month;
+    if (billMonth) {
+      if (!/^\d{4}-\d{2}$/.test(String(billMonth))) {
+        return res.status(400).json({
+          success: false,
+          message: 'billMonth must be in YYYY-MM format',
+        });
+      }
+      nextBillMonth = `${billMonth}-01`;
+    }
+
+    const nextTenantId = tenantId || existingBill.tenant_id;
+    const nextUnitId =
+      Object.prototype.hasOwnProperty.call(req.body, 'unitId')
+        ? unitId || null
+        : existingBill.unit_id;
+    const nextNotes =
+      Object.prototype.hasOwnProperty.call(req.body, 'notes')
+        ? notes || null
+        : existingBill.notes;
+
+    const conflictCheck = await db.query(
+      `SELECT id
+       FROM water_bills
+       WHERE tenant_id = $1
+         AND bill_month = $2::date
+         AND id != $3
+       LIMIT 1`,
+      [nextTenantId, nextBillMonth, id],
+    );
+
+    if (conflictCheck.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'Another water bill already exists for this tenant and month',
+      });
+    }
+
+    const updateResult = await db.query(
+      `UPDATE water_bills
+       SET tenant_id = $1,
+           unit_id = $2,
+           property_id = $3,
+           amount = $4,
+           bill_month = $5::date,
+           notes = $6,
+           agent_id = $7,
+           created_at = NOW()
+       WHERE id = $8
+       RETURNING *`,
+      [
+        nextTenantId,
+        nextUnitId,
+        nextPropertyId,
+        nextAmount,
+        nextBillMonth,
+        nextNotes,
+        agentId,
+        id,
+      ],
+    );
+
+    return res.json({
+      success: true,
+      message: 'Water bill updated successfully',
+      data: updateResult.rows[0],
+    });
+  } catch (err) {
+    console.error('❌ updateWaterBill error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update water bill',
+      error: err.message,
+    });
+  }
+};
+
 const deleteWaterBill = async (req, res) => {
   try {
     const agentId = req.user.id;
@@ -541,6 +652,7 @@ module.exports = {
   createWaterBill,
   listWaterBills,
   getWaterBill,
+  updateWaterBill,
   deleteWaterBill,
   checkMissingWaterBills,
   getTenantWaterBalance

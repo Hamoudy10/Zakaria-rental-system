@@ -34,6 +34,7 @@ router.get('/water-bills/balance/:tenantId', requireRole(['agent', 'admin']), wa
 router.post('/water-bills', requireRole(['agent', 'admin']), waterBillController.createWaterBill);
 router.get('/water-bills', requireRole(['agent', 'admin']), waterBillController.listWaterBills);
 router.get('/water-bills/:id', requireRole(['agent', 'admin']), waterBillController.getWaterBill);
+router.put('/water-bills/:id', requireRole(['agent', 'admin']), waterBillController.updateWaterBill);
 router.delete('/water-bills/:id', requireRole(['agent', 'admin']), waterBillController.deleteWaterBill);
 
 console.log('✅ AGENT PROPERTIES ROUTES LOADED');

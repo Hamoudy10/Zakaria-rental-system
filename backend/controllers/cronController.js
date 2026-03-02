@@ -357,8 +357,9 @@ const triggerAgentBillingSMS = async (req, res) => {
 
     if (missingBills.length > 0 && !include_missing_water_bills) {
       return res.json({
-        success: false,
+        success: true,
         requires_confirmation: true,
+        warning: true,
         message: `${missingBills.length} tenant(s) have no water bills for ${month}.`,
         data: {
           missing_count: missingBills.length,
@@ -405,13 +406,43 @@ const triggerAgentBillingSMS = async (req, res) => {
     const tenantsQuery = `
       SELECT 
         ta.tenant_id, t.first_name, t.last_name, t.phone_number, pu.unit_code,
-        ta.monthly_rent, ta.arrears_balance, COALESCE(wb.amount, 0) as water_amount
+        ta.monthly_rent, ta.arrears_balance, COALESCE(wb.amount, 0) as water_amount,
+        COALESCE(pm.rent_paid, 0) as rent_paid,
+        COALESCE(pm.water_paid, 0) as water_paid,
+        COALESCE(pa.arrears_paid_all_time, 0) as arrears_paid_all_time
       FROM tenant_allocations ta
       JOIN tenants t ON ta.tenant_id = t.id
       JOIN property_units pu ON ta.unit_id = pu.id
       JOIN properties p ON pu.property_id = p.id
       LEFT JOIN water_bills wb ON wb.tenant_id = ta.tenant_id 
         AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $2::date)
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ), 0) AS rent_paid,
+          COALESCE(SUM(COALESCE(rp.allocated_to_water, 0)), 0) AS water_paid
+        FROM rent_payments rp
+        WHERE rp.tenant_id = ta.tenant_id
+          AND rp.unit_id = ta.unit_id
+          AND rp.status = 'completed'
+          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $2::date)
+      ) pm ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(COALESCE(rp_all.allocated_to_arrears, 0)), 0) AS arrears_paid_all_time
+        FROM rent_payments rp_all
+        WHERE rp_all.tenant_id = ta.tenant_id
+          AND rp_all.unit_id = ta.unit_id
+          AND rp_all.status = 'completed'
+      ) pa ON true
       WHERE ta.is_active = true AND p.id = ANY($1)
     `;
 
@@ -431,23 +462,44 @@ const triggerAgentBillingSMS = async (req, res) => {
       total: tenants.length,
       queued: 0,
       failed: 0,
+      skipped_paid: 0,
       details: [],
     };
 
     for (const tenant of tenants) {
       try {
-        const totalDue =
-          Number(tenant.monthly_rent || 0) +
-          Number(tenant.water_amount || 0) +
-          Number(tenant.arrears_balance || 0);
+        const rentDue = Math.max(
+          0,
+          Number(tenant.monthly_rent || 0) - Number(tenant.rent_paid || 0),
+        );
+        const waterDue = Math.max(
+          0,
+          Number(tenant.water_amount || 0) - Number(tenant.water_paid || 0),
+        );
+        const arrearsDue = Math.max(
+          0,
+          Number(tenant.arrears_balance || 0) -
+            Number(tenant.arrears_paid_all_time || 0),
+        );
+        const totalDue = rentDue + waterDue + arrearsDue;
+
+        if (totalDue <= 0) {
+          results.skipped_paid++;
+          results.details.push({
+            tenant: `${tenant.first_name} ${tenant.last_name}`.trim(),
+            unit: tenant.unit_code,
+            status: "skipped_fully_paid",
+          });
+          continue;
+        }
 
         let message = renderBillingTemplate(config.smsBillingTemplate, {
           tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
           month: targetMonth,
           unitCode: tenant.unit_code,
-          rent: formatCurrency(tenant.monthly_rent),
-          water: formatCurrency(tenant.water_amount),
-          arrears: formatCurrency(tenant.arrears_balance),
+          rent: formatCurrency(rentDue),
+          water: formatCurrency(waterDue),
+          arrears: formatCurrency(arrearsDue),
           total: formatCurrency(totalDue),
           paybill: config.paybillNumber,
           companyName: config.companyName,
@@ -461,9 +513,9 @@ const triggerAgentBillingSMS = async (req, res) => {
             tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
             month: targetMonth,
             unitCode: tenant.unit_code,
-            rent: formatCurrency(tenant.monthly_rent),
-            water: formatCurrency(tenant.water_amount),
-            arrears: formatCurrency(tenant.arrears_balance),
+            rent: formatCurrency(rentDue),
+            water: formatCurrency(waterDue),
+            arrears: formatCurrency(arrearsDue),
             total: formatCurrency(totalDue),
             paybill: config.paybillNumber,
             companyName: config.companyName,
@@ -479,18 +531,37 @@ const triggerAgentBillingSMS = async (req, res) => {
           [tenant.phone_number, message, targetMonth, agentId],
         );
         results.queued++;
+        results.details.push({
+          tenant: `${tenant.first_name} ${tenant.last_name}`.trim(),
+          unit: tenant.unit_code,
+          status: "queued",
+          due: totalDue,
+        });
       } catch (error) {
         results.failed++;
         console.error(`Failed to queue SMS for ${tenant.first_name}:`, error);
+        results.details.push({
+          tenant: `${tenant.first_name} ${tenant.last_name}`.trim(),
+          unit: tenant.unit_code,
+          status: "failed",
+          error: error.message,
+        });
       }
     }
 
     res.json({
       success: true,
-      message: `Billing SMS triggered for ${results.queued} tenant(s)`,
+      message: `Billing SMS triggered for ${results.queued} tenant(s). Skipped ${results.skipped_paid} fully paid tenant(s).`,
       data: {
         ...results,
         template_id_used: useTemplateId || null,
+        property_count: targetProperties.length,
+        month: targetMonth,
+        missing_water_bills: {
+          count: missingBills.length,
+          billed_with_zero_water:
+            missingBills.length > 0 && include_missing_water_bills === true,
+        },
       },
     });
   } catch (error) {

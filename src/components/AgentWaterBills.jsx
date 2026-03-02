@@ -2,6 +2,13 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import agentService from '../services/AgentService';
 
+const getCurrentMonth = () => {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+};
+
 const AgentWaterBills = () => {
   const [properties, setProperties] = useState([]);
   const [allTenants, setAllTenants] = useState([]);
@@ -10,12 +17,14 @@ const AgentWaterBills = () => {
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
+  const [editingBillId, setEditingBillId] = useState(null);
 
   const [form, setForm] = useState({
     propertyId: '',
     tenantId: '',
     tenantName: '',
     unitId: '',
+    billMonth: getCurrentMonth(),
     amount: '',
     notes: ''
   });
@@ -133,32 +142,33 @@ const AgentWaterBills = () => {
     e?.preventDefault();
     setMessage(null);
 
-    if (!form.propertyId || !form.tenantId || !form.amount) {
-      setMessage({ type: 'error', text: 'Please select property, tenant, and enter amount' });
+    if (!form.propertyId || !form.tenantId || !form.amount || !form.billMonth) {
+      setMessage({ type: 'error', text: 'Please select property, tenant, month, and enter amount' });
       return;
     }
 
     setLoading(true);
     try {
-      // Use current month in YYYY-MM, backend will append "-01"
-      const now = new Date();
-      const yyyy = now.getFullYear();
-      const mm = String(now.getMonth() + 1).padStart(2, '0');
-      const billMonth = `${yyyy}-${mm}`;
-
       const payload = {
         tenantId: form.tenantId || null,
         tenantName: form.tenantName || null,
         unitId: form.unitId || null,  // UUID
         propertyId: form.propertyId,
         amount: parseFloat(form.amount),
-        billMonth,                     // backend will store as YYYY-MM-01
+        billMonth: form.billMonth,     // backend will store as YYYY-MM-01
         notes: form.notes || null
       };
 
-      const res = await agentService.createWaterBill(payload);
+      const res = editingBillId
+        ? await agentService.updateWaterBill(editingBillId, payload)
+        : await agentService.createWaterBill(payload);
       if (res?.data?.success) {
-        setMessage({ type: 'success', text: 'Water bill saved successfully' });
+        setMessage({
+          type: 'success',
+          text: editingBillId
+            ? 'Water bill updated successfully'
+            : 'Water bill saved successfully'
+        });
         // Refresh recent list
         const b = await agentService.listWaterBills({ limit: 10 });
         const billsData = b?.data?.data || b?.data || [];
@@ -169,19 +179,96 @@ const AgentWaterBills = () => {
           tenantId: '',
           tenantName: '',
           unitId: '',
+          billMonth: getCurrentMonth(),
           amount: '',
           notes: ''
         });
+        setEditingBillId(null);
         setPropertyTenants([]);
         setWaterBalance({ loading: false, arrears: 0, advance: 0 });
       } else {
-        setMessage({ type: 'error', text: res?.data?.message || 'Failed to save water bill' });
+        setMessage({
+          type: 'error',
+          text: res?.data?.message || (editingBillId ? 'Failed to update water bill' : 'Failed to save water bill')
+        });
       }
     } catch (err) {
       console.error(err);
       setMessage({
         type: 'error',
-        text: err?.response?.data?.message || err.message || 'Error saving water bill'
+        text:
+          err?.response?.data?.message ||
+          err.message ||
+          (editingBillId ? 'Error updating water bill' : 'Error saving water bill')
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const beginEditBill = (bill) => {
+    const propertyId = bill.property_id || '';
+    const filtered = Array.isArray(allTenants)
+      ? allTenants.filter(t => t.property_id === propertyId)
+      : [];
+    setPropertyTenants(filtered);
+    setEditingBillId(bill.id);
+    setForm({
+      propertyId,
+      tenantId: bill.tenant_id || '',
+      tenantName: `${bill.first_name || ''} ${bill.last_name || ''}`.trim(),
+      unitId: bill.unit_id || '',
+      billMonth: bill.bill_month ? String(bill.bill_month).slice(0, 7) : getCurrentMonth(),
+      amount: bill.amount != null ? String(bill.amount) : '',
+      notes: bill.notes || ''
+    });
+    if (bill.tenant_id) {
+      updateWaterBalanceForTenant(bill.tenant_id);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const cancelEdit = () => {
+    setEditingBillId(null);
+    setForm({
+      propertyId: '',
+      tenantId: '',
+      tenantName: '',
+      unitId: '',
+      billMonth: getCurrentMonth(),
+      amount: '',
+      notes: ''
+    });
+    setPropertyTenants([]);
+    setWaterBalance({ loading: false, arrears: 0, advance: 0 });
+    setMessage(null);
+  };
+
+  const handleDeleteBill = async (bill) => {
+    const ok = window.confirm(
+      `Delete water bill for ${bill.first_name || ''} ${bill.last_name || ''} (${formatMonth(bill.bill_month)})?`,
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      const res = await agentService.deleteWaterBill(bill.id);
+      if (res?.data?.success) {
+        setMessage({ type: 'success', text: 'Water bill deleted successfully' });
+        const b = await agentService.listWaterBills({ limit: 10 });
+        const billsData = b?.data?.data || b?.data || [];
+        setRecentBills(Array.isArray(billsData) ? billsData : []);
+        if (editingBillId === bill.id) {
+          cancelEdit();
+        }
+      } else {
+        setMessage({ type: 'error', text: res?.data?.message || 'Failed to delete water bill' });
+      }
+    } catch (err) {
+      console.error('delete water bill error', err);
+      setMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Failed to delete water bill',
       });
     } finally {
       setLoading(false);
@@ -291,6 +378,20 @@ const AgentWaterBills = () => {
             />
           </div>
 
+          {/* Bill Month */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Bill Month <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="month"
+              value={form.billMonth}
+              onChange={e => update('billMonth', e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
           {/* Water Balance (Arrears / Advance) */}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -342,8 +443,18 @@ const AgentWaterBills = () => {
             disabled={loading} 
             className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {loading ? 'Saving...' : 'Save Water Bill'}
+            {loading ? 'Saving...' : editingBillId ? 'Update Water Bill' : 'Save Water Bill'}
           </button>
+
+          {editingBillId && (
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded text-sm hover:bg-gray-50"
+            >
+              Cancel Edit
+            </button>
+          )}
 
           <button 
             onClick={async () => {
@@ -429,6 +540,22 @@ const AgentWaterBills = () => {
                   </div>
                   <div className="text-xs text-gray-300 mt-1">
                     by {bill.agent_first} {bill.agent_last}
+                  </div>
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => beginEditBill(bill)}
+                      className="px-2 py-1 text-xs bg-amber-100 text-amber-700 rounded hover:bg-amber-200"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteBill(bill)}
+                      className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
               </div>
