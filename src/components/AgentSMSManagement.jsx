@@ -25,6 +25,8 @@ const AgentSMSManagement = () => {
   const [triggerResult, setTriggerResult] = useState(null);
   const [missingBillsConfirmation, setMissingBillsConfirmation] =
     useState(null);
+  const [autoIncludeMissingWaterBills, setAutoIncludeMissingWaterBills] =
+    useState(false);
   const [billingTemplates, setBillingTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
 
@@ -109,29 +111,33 @@ const AgentSMSManagement = () => {
       if (propertyId) {
         payload.property_id = propertyId;
       }
+      if (autoIncludeMissingWaterBills) {
+        payload.include_missing_water_bills = true;
+      }
       if (selectedTemplateId) {
         payload.template_id = selectedTemplateId;
       }
 
       const response = await API.billing.triggerAgentBilling(payload);
+      const responseData = response.data || {};
 
-      if (response.data.success) {
-        if (response.data.requires_confirmation) {
-          // Show confirmation modal for missing water bills
-          setMissingBillsConfirmation(response.data);
-        } else {
-          setTriggerResult({
-            type: "success",
-            message: response.data.message,
-            data: response.data.data,
-          });
-          // Reset confirmation state
-          setMissingBillsConfirmation(null);
-        }
+      if (responseData.requires_confirmation) {
+        // Show confirmation modal for missing water bills.
+        // Support both legacy and updated backend response shapes.
+        setMissingBillsConfirmation(responseData);
+        setTriggerResult(null);
+      } else if (responseData.success) {
+        setTriggerResult({
+          type: "success",
+          message: responseData.message,
+          data: responseData.data,
+        });
+        // Reset confirmation state
+        setMissingBillsConfirmation(null);
       } else {
         setTriggerResult({
           type: "error",
-          message: response.data.message,
+          message: responseData.message,
         });
       }
     } catch (error) {
@@ -474,6 +480,7 @@ const AgentSMSManagement = () => {
                     setMonth("");
                     setPropertyId("");
                     setSelectedTemplateId("");
+                    setAutoIncludeMissingWaterBills(false);
                     setTriggerResult(null);
                     setMissingBillsConfirmation(null);
                   }}
@@ -481,6 +488,24 @@ const AgentSMSManagement = () => {
                 >
                   Reset
                 </button>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  id="autoIncludeMissingWaterBills"
+                  type="checkbox"
+                  checked={autoIncludeMissingWaterBills}
+                  onChange={(e) =>
+                    setAutoIncludeMissingWaterBills(e.target.checked)
+                  }
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label
+                  htmlFor="autoIncludeMissingWaterBills"
+                  className="ml-2 text-sm text-gray-700"
+                >
+                  Auto-include tenants with missing water bills (Water = KSh 0)
+                </label>
               </div>
 
               {/* Result Display */}
@@ -514,11 +539,19 @@ const AgentSMSManagement = () => {
                             SMS
                           </p>
                           <p>
+                            <strong>Skipped (Fully Paid):</strong>{" "}
+                            {triggerResult.data.skipped_paid || 0}
+                          </p>
+                          <p>
                             <strong>Properties:</strong>{" "}
                             {triggerResult.data.property_count}
                           </p>
                           <p>
                             <strong>Month:</strong> {triggerResult.data.month}
+                          </p>
+                          <p>
+                            <strong>Missing Water Bills:</strong>{" "}
+                            {triggerResult.data.missing_water_bills?.count || 0}
                           </p>
                         </div>
                       )}

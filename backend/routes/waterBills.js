@@ -24,6 +24,7 @@ router.get('/balance/:tenantId', requireAgent, waterBillController.getTenantWate
 router.post('/', requireAgent, waterBillController.createWaterBill);
 router.get('/', requireAgent, waterBillController.listWaterBills);
 router.get('/:id', requireAgent, waterBillController.getWaterBill);
+router.put('/:id', requireAgent, waterBillController.updateWaterBill);
 router.delete('/:id', requireAgent, waterBillController.deleteWaterBill);
 
 console.log('✅ WATER BILLS ROUTES LOADED');
