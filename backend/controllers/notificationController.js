@@ -616,13 +616,6 @@ const createBroadcastNotification = async (req, res) => {
 // NEW: Send Bulk SMS to property tenants
 const sendBulkSMS = async (req, res) => {
   try {
-    if (!["admin", "agent"].includes(req.user?.role)) {
-      return res.status(403).json({
-        success: false,
-        message: "Only admin/agent can send bulk SMS",
-      });
-    }
-
     const {
       propertyId,
       message,
@@ -910,13 +903,6 @@ const getPropertyTenants = async (req, res) => {
 
 const sendTargetedSMS = async (req, res) => {
   try {
-    if (!["admin", "agent"].includes(req.user?.role)) {
-      return res.status(403).json({
-        success: false,
-        message: "Only admin/agent can send targeted SMS",
-      });
-    }
-
     const {
       tenantIds,
       message,
