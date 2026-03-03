@@ -181,10 +181,12 @@ const PaymentManagement = () => {
   // Manual Payment Modal
   const [showManualPayment, setShowManualPayment] = useState(false);
   const [manualPaymentData, setManualPaymentData] = useState({
+    entry_mode: "manual",
     payment_type: "rent",
     payment_method: "manual",
     tenant_id: "",
     unit_id: "",
+    unit_code: "",
     allocation_id: "",
     amount: "",
     payment_month: "",
@@ -487,10 +489,12 @@ const PaymentManagement = () => {
 
     if (tenant) {
       setManualPaymentData({
+        entry_mode: "manual",
         payment_type: "rent",
         payment_method: "manual",
         tenant_id: tenant.tenant_id,
         unit_id: tenant.unit_id,
+        unit_code: tenant.unit_code || "",
         allocation_id: tenant.allocation_id || "",
         amount: "",
         payment_month: filters.month,
@@ -500,10 +504,12 @@ const PaymentManagement = () => {
       });
     } else {
       setManualPaymentData({
+        entry_mode: "manual",
         payment_type: "rent",
         payment_method: "manual",
         tenant_id: "",
         unit_id: "",
+        unit_code: "",
         allocation_id: "",
         amount: "",
         payment_month: filters.month,
@@ -522,14 +528,39 @@ const PaymentManagement = () => {
     setManualPaymentError("");
 
     try {
+      const selectedTenantRow = tenantStatus.find(
+        (t) =>
+          t.tenant_id === manualPaymentData.tenant_id &&
+          (!manualPaymentData.unit_id || t.unit_id === manualPaymentData.unit_id),
+      );
+      const resolvedUnitCode =
+        selectedTenantRow?.unit_code?.trim() ||
+        manualPaymentData.unit_code?.trim() ||
+        "";
+      const isPaybillEntry =
+        manualPaymentData.payment_type === "rent" &&
+        manualPaymentData.entry_mode === "paybill";
+
+      if (isPaybillEntry && !resolvedUnitCode) {
+        setManualPaymentError("Unit code is required for Paybill entry.");
+        return;
+      }
+      if (isPaybillEntry && !manualPaymentData.mpesa_receipt_number?.trim()) {
+        setManualPaymentError("M-Pesa receipt number is required for Paybill entry.");
+        return;
+      }
+      if (isPaybillEntry && !manualPaymentData.phone_number?.trim()) {
+        setManualPaymentError("Phone number is required for Paybill entry.");
+        return;
+      }
+
       const payload = {
         ...manualPaymentData,
         amount: parseFloat(manualPaymentData.amount),
       };
 
-      const response =
-        manualPaymentData.payment_type === "deposit"
-          ? await paymentAPI.recordDepositPayment({
+      const response = manualPaymentData.payment_type === "deposit"
+        ? await paymentAPI.recordDepositPayment({
               tenant_id: payload.tenant_id,
               unit_id: payload.unit_id || null,
               allocation_id: payload.allocation_id || null,
@@ -537,6 +568,16 @@ const PaymentManagement = () => {
               payment_method: payload.payment_method || "manual",
               mpesa_receipt_number: payload.mpesa_receipt_number || null,
               phone_number: payload.phone_number || null,
+              notes: payload.notes || null,
+            })
+        : manualPaymentData.entry_mode === "paybill"
+          ? await paymentAPI.processPaybillPayment({
+              unit_code: resolvedUnitCode,
+              amount: payload.amount,
+              mpesa_receipt_number:
+                payload.mpesa_receipt_number?.trim() || null,
+              phone_number: payload.phone_number || null,
+              payment_month: payload.payment_month || filters.month,
               notes: payload.notes || null,
             })
           : await paymentAPI.recordManualPayment({
@@ -1980,6 +2021,7 @@ const ManualPaymentModal = ({
                   setData({
                     ...data,
                     payment_type: type,
+                    entry_mode: type === "deposit" ? "manual" : data.entry_mode || "manual",
                     payment_method:
                       type === "deposit"
                         ? data.payment_method || "cash"
@@ -2007,6 +2049,7 @@ const ManualPaymentModal = ({
                       ...data,
                       tenant_id: tenant.tenant_id,
                       unit_id: tenant.unit_id,
+                      unit_code: tenant.unit_code || "",
                       allocation_id: tenant.allocation_id || "",
                       phone_number:
                         tenant.phone_number?.replace(/^254/, "0") || "",
@@ -2016,6 +2059,7 @@ const ManualPaymentModal = ({
                       ...data,
                       tenant_id: "",
                       unit_id: "",
+                      unit_code: "",
                       allocation_id: "",
                     });
                   }
@@ -2029,6 +2073,22 @@ const ManualPaymentModal = ({
                     {t.tenant_name} - {t.unit_code}
                   </option>
                 ))}
+              </select>
+            </div>
+          )}
+
+          {data.payment_type === "rent" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Entry Mode
+              </label>
+              <select
+                value={data.entry_mode || "manual"}
+                onChange={(e) => setData({ ...data, entry_mode: e.target.value })}
+                className="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="manual">Manual (cash/bank/manual)</option>
+                <option value="paybill">Paybill (M-Pesa receipt)</option>
               </select>
             </div>
           )}
@@ -2106,9 +2166,28 @@ const ManualPaymentModal = ({
             </div>
           )}
 
+          {data.payment_type === "rent" && data.entry_mode === "paybill" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Unit Code (Paybill Account)
+              </label>
+              <input
+                type="text"
+                value={data.unit_code || ""}
+                onChange={(e) => setData({ ...data, unit_code: e.target.value })}
+                className="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none"
+                placeholder="e.g., KBA2"
+                required
+              />
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              M-Pesa Receipt Number (optional)
+              M-Pesa Receipt Number{" "}
+              {data.payment_type === "rent" && data.entry_mode === "paybill"
+                ? "(required)"
+                : "(optional)"}
             </label>
             <input
               type="text"
@@ -2123,7 +2202,10 @@ const ManualPaymentModal = ({
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Phone Number (optional)
+              Phone Number{" "}
+              {data.payment_type === "rent" && data.entry_mode === "paybill"
+                ? "(required)"
+                : "(optional)"}
             </label>
             <input
               type="text"
@@ -2165,7 +2247,12 @@ const ManualPaymentModal = ({
                 !data.unit_id ||
                 !data.amount ||
                 Number(data.amount) <= 0 ||
-                (data.payment_type === "rent" && !data.payment_month)
+                (data.payment_type === "rent" && !data.payment_month) ||
+                (data.payment_type === "rent" &&
+                  data.entry_mode === "paybill" &&
+                  (!data.unit_code ||
+                    !data.mpesa_receipt_number ||
+                    !data.phone_number))
               }
               className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
             >
@@ -2173,6 +2260,8 @@ const ManualPaymentModal = ({
                 ? "Recording..."
                 : data.payment_type === "deposit"
                   ? "Record Deposit"
+                  : data.entry_mode === "paybill"
+                    ? "Post Paybill Receipt"
                   : "Record Payment"}
             </button>
           </div>
