@@ -101,6 +101,24 @@ const normalizeKenyanPhone = (input) => {
   return normalized;
 };
 
+const getActiveAdminPhones = async () => {
+  const adminUsers = await pool.query(
+    `SELECT phone_number
+     FROM users
+     WHERE role = 'admin'
+       AND is_active = true
+       AND phone_number IS NOT NULL`,
+  );
+
+  const uniquePhones = new Set();
+  for (const row of adminUsers.rows) {
+    const normalized = normalizeKenyanPhone(row.phone_number);
+    if (normalized) uniquePhones.add(normalized);
+  }
+
+  return [...uniquePhones];
+};
+
 const isProduction = () => process.env.NODE_ENV === "production";
 
 const formatCoveredMonths = (carryForwardPayments = []) => {
@@ -643,21 +661,25 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
       month,
     );
 
-    // Send admin notifications via SMS + WhatsApp
-    const adminUsers = await pool.query(
-      "SELECT phone_number FROM users WHERE role = $1 AND phone_number IS NOT NULL",
-      ["admin"],
-    );
-
-    for (const admin of adminUsers.rows) {
-      await MessagingService.sendAdminAlert(
-        admin.phone_number,
-        tenantName,
-        payment.amount,
-        unitCode,
-        balance,
-        month,
-      );
+    // Send admin notifications via SMS + WhatsApp to all active admins.
+    // Keep sending even when one recipient fails.
+    const adminPhones = await getActiveAdminPhones();
+    for (const adminPhone of adminPhones) {
+      try {
+        await MessagingService.sendAdminAlert(
+          adminPhone,
+          tenantName,
+          payment.amount,
+          unitCode,
+          balance,
+          month,
+        );
+      } catch (adminAlertError) {
+        console.error(
+          `Failed admin payment alert for ${adminPhone}:`,
+          adminAlertError.message,
+        );
+      }
     }
 
     // Log notification (non-fatal)
@@ -1235,19 +1257,25 @@ const handleMpesaCallback = async (req, res) => {
         currentMonth,
       );
 
-      // SMS + WhatsApp to admins
-      const adminUsers = await pool.query(
-        "SELECT phone_number FROM users WHERE role = 'admin' AND phone_number IS NOT NULL",
-      );
-      for (const admin of adminUsers.rows) {
-        await MessagingService.sendAdminAlert(
-          admin.phone_number,
-          tenantName,
-          amount,
-          unit.unit_code,
-          balance,
-          currentMonth,
-        );
+      // SMS + WhatsApp to all active admins.
+      // Keep iterating if one admin delivery fails.
+      const adminPhones = await getActiveAdminPhones();
+      for (const adminPhone of adminPhones) {
+        try {
+          await MessagingService.sendAdminAlert(
+            adminPhone,
+            tenantName,
+            amount,
+            unit.unit_code,
+            balance,
+            currentMonth,
+          );
+        } catch (adminAlertError) {
+          console.error(
+            `Failed admin callback alert for ${adminPhone}:`,
+            adminAlertError.message,
+          );
+        }
       }
 
       // Advance payment notification to tenant
