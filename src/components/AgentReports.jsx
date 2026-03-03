@@ -1,5 +1,5 @@
 // /src/components/AgentReports.jsx - FIXED SMS/WHATSAPP REPORT WITH PROPER API CALLS
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import api, { API } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -57,6 +57,7 @@ const AgentReports = () => {
   });
   const [apiErrors, setApiErrors] = useState([]);
   const [availableProperties, setAvailableProperties] = useState([]);
+  const messagingRequestRef = useRef(0);
 
   const reportTypes = [
     {
@@ -350,6 +351,7 @@ const AgentReports = () => {
 
   // Fetch SMS/WhatsApp history using the correct endpoint
   const fetchMessagingHistory = async () => {
+    const requestId = ++messagingRequestRef.current;
     setLoading(true);
     setApiErrors([]);
 
@@ -369,6 +371,8 @@ const AgentReports = () => {
 
       const messages = await fetchAllMessaging(params);
       console.log("Messaging history records:", messages.length);
+
+      if (requestId !== messagingRequestRef.current) return;
 
       if (Array.isArray(messages)) {
         setData(messages);
@@ -400,11 +404,14 @@ const AgentReports = () => {
         setApiErrors((prev) => [...prev, "sms report: failed to load messaging data"]);
       }
     } catch (error) {
+      if (requestId !== messagingRequestRef.current) return;
       console.error("Messaging history error:", error);
       setData([]);
       setApiErrors((prev) => [...prev, `Error: ${error.message}`]);
     } finally {
-      setLoading(false);
+      if (requestId === messagingRequestRef.current) {
+        setLoading(false);
+      }
     }
   };
   // Fetch report data based on active report

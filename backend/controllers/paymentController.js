@@ -246,13 +246,31 @@ const trackRentPayment = async (
       JOIN property_units pu ON ta.unit_id = pu.id 
       WHERE ta.tenant_id = $1 AND ta.unit_id = $2 AND ta.is_active = true
     `;
-    const allocationResult = await db.query(allocationQuery, [
+    let allocationResult = await db.query(allocationQuery, [
       tenantId,
       unitId,
     ]);
 
+    // Fallback for correction flows: allow latest historical allocation if none is active.
     if (allocationResult.rows.length === 0) {
-      throw new Error("No active tenant allocation found");
+      const historicalAllocationQuery = `
+        SELECT ta.*, pu.rent_amount
+        FROM tenant_allocations ta
+        JOIN property_units pu ON ta.unit_id = pu.id
+        WHERE ta.tenant_id = $1 AND ta.unit_id = $2
+        ORDER BY
+          ta.is_active DESC,
+          COALESCE(ta.updated_at, ta.created_at, ta.allocation_date, NOW()) DESC
+        LIMIT 1
+      `;
+      allocationResult = await db.query(historicalAllocationQuery, [
+        tenantId,
+        unitId,
+      ]);
+    }
+
+    if (allocationResult.rows.length === 0) {
+      throw new Error("No tenant allocation found for this tenant and unit");
     }
 
     const allocation = allocationResult.rows[0];

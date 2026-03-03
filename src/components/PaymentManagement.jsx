@@ -199,12 +199,12 @@ const PaymentManagement = () => {
   const [showEditManualPayment, setShowEditManualPayment] = useState(false);
   const [editManualPaymentData, setEditManualPaymentData] = useState({
     id: "",
-    amount: "",
-    payment_month: "",
     mpesa_receipt_number: "",
     phone_number: "",
     notes: "",
-    status: "completed",
+    amount: "",
+    payment_month: "",
+    status: "",
   });
   const [editManualPaymentLoading, setEditManualPaymentLoading] =
     useState(false);
@@ -635,12 +635,12 @@ const PaymentManagement = () => {
 
     setEditManualPaymentData({
       id: payment.id,
-      amount: payment.amount ? String(payment.amount) : "",
-      payment_month: rawMonth,
       mpesa_receipt_number: payment.mpesa_receipt_number || "",
       phone_number: payment.phone_number || "",
       notes: payment.notes || "",
-      status: payment.status || "completed",
+      amount: payment.amount ? String(payment.amount) : "",
+      payment_month: rawMonth,
+      status: payment.status || "",
     });
     setEditManualPaymentError("");
     setShowEditManualPayment(true);
@@ -657,13 +657,13 @@ const PaymentManagement = () => {
       const payload = {
         amount: editManualPaymentData.amount
           ? parseFloat(editManualPaymentData.amount)
-          : null,
-        payment_month: editManualPaymentData.payment_month || null,
+          : undefined,
+        payment_month: editManualPaymentData.payment_month || undefined,
+        status: editManualPaymentData.status || undefined,
         mpesa_receipt_number:
           editManualPaymentData.mpesa_receipt_number?.trim() || null,
         phone_number: editManualPaymentData.phone_number?.trim() || null,
         notes: editManualPaymentData.notes?.trim() || null,
-        status: editManualPaymentData.status || null,
       };
 
       await updatePayment(editManualPaymentData.id, payload);
@@ -1220,7 +1220,7 @@ const PaymentManagement = () => {
           onSort={handleSort}
           onViewHistory={handleViewHistory}
           onDeleteManualPayment={handleDeleteManualPayment}
-          canDeleteManual={user?.role === "admin"}
+          canDeleteManual={user?.role === "admin" || user?.role === "agent"}
           onEditManualPayment={handleOpenEditManualPayment}
           canEditManual={user?.role === "admin" || user?.role === "agent"}
           pagination={pagination}
@@ -2217,33 +2217,50 @@ const EditManualPaymentModal = ({
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Amount (KES)
-            </label>
-            <input
-              type="number"
-              min="1"
-              step="0.01"
-              value={data.amount}
-              onChange={(e) => setData({ ...data, amount: e.target.value })}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Payment Month
-            </label>
-            <input
-              type="month"
-              value={data.payment_month}
-              onChange={(e) =>
-                setData({ ...data, payment_month: e.target.value })
-              }
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Amount (KES)
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="0.01"
+                value={data.amount}
+                onChange={(e) => setData({ ...data, amount: e.target.value })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                placeholder="Enter amount"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Payment Month
+              </label>
+              <input
+                type="month"
+                value={data.payment_month}
+                onChange={(e) =>
+                  setData({ ...data, payment_month: e.target.value })
+                }
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Status
+              </label>
+              <select
+                value={data.status || "completed"}
+                onChange={(e) => setData({ ...data, status: e.target.value })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              >
+                <option value="completed">Completed</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
           </div>
 
           <div>
@@ -2274,22 +2291,6 @@ const EditManualPaymentModal = ({
               className="w-full rounded-lg border border-gray-300 px-3 py-2"
               placeholder="2547XXXXXXXX"
             />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Status
-            </label>
-            <select
-              value={data.status}
-              onChange={(e) => setData({ ...data, status: e.target.value })}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-            >
-              <option value="completed">Completed</option>
-              <option value="pending">Pending</option>
-              <option value="failed">Failed</option>
-              <option value="overdue">Overdue</option>
-            </select>
           </div>
 
           <div>
