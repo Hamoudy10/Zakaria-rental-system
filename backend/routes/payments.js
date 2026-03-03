@@ -472,14 +472,16 @@ router.put("/:id", protect, async (req, res) => {
 
     const payment = paymentCheck.rows[0];
     const method = String(payment.payment_method || "").toLowerCase();
-    const isManual =
-      method === "manual" || method === "manual_reconciled";
+    const isEditable =
+      method === "manual" ||
+      method === "manual_reconciled" ||
+      method === "paybill";
 
-    if (!isManual) {
+    if (!isEditable) {
       await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
-        message: "Only manual payments can be edited",
+        message: "Only manual or paybill payments can be edited",
       });
     }
 
