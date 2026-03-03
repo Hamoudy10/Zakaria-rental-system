@@ -1351,6 +1351,7 @@ const getAllPayments = async (req, res) => {
       tenantId,
       startDate,
       endDate,
+      status,
       search,
       sortBy = "payment_date",
       sortOrder = "desc",
@@ -1421,6 +1422,12 @@ const getAllPayments = async (req, res) => {
     if (endDate) {
       whereClauses.push(`rp.payment_date::date <= $${paramIndex}::date`);
       queryParams.push(endDate);
+      paramIndex++;
+    }
+
+    if (status) {
+      whereClauses.push(`rp.status = $${paramIndex}`);
+      queryParams.push(status);
       paramIndex++;
     }
 
