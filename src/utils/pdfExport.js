@@ -427,6 +427,7 @@ export const exportToPDF = async (config) => {
     user,
     title = "Report",
     totalsOverride,
+    exportSource,
   } = config;
 
   if (!data || data.length === 0) {
@@ -486,6 +487,8 @@ export const exportToPDF = async (config) => {
     const companyName = companyInfo.name || DEFAULT_COMPANY.name;
 
     // Generate table
+    const isAgentReportsExport = exportSource === "agent_reports";
+
     autoTable(doc, {
       head: [headers],
       body: rows,
@@ -504,8 +507,8 @@ export const exportToPDF = async (config) => {
         cellPadding: 2.5,
         lineColor: [220, 220, 220],
         lineWidth: 0.1,
-        overflow: "linebreak",
-        valign: "top",
+        overflow: isAgentReportsExport ? "ellipsize" : "linebreak",
+        valign: "middle",
       },
       alternateRowStyles: {
         fillColor: [248, 250, 252],
@@ -981,25 +984,37 @@ const prepareTableData = (reportType, data) => {
         "#",
         "Channel",
         "Recipient",
-        "Message",
+        "Property",
+        "Unit",
         "Type",
         "Status",
+        "Sent By",
         "Date",
+        "Message",
       ];
       rows = data.map((item, index) => [
         index + 1,
         item.channel || "SMS",
         formatPhone(item.recipient_phone || item.phone_number),
-        item.message || "N/A",
+        item.property_name || "N/A",
+        item.unit_code || "N/A",
         item.message_type || item.template_name || "General",
         capitalizeFirst(item.status) || "Pending",
+        item.sent_by_name || "System",
         formatDate(item.created_at || item.sent_at),
+        item.message || "N/A",
       ]);
       columnStyles = {
         0: { halign: "center", cellWidth: 10 },
-        1: { halign: "center" },
-        5: { halign: "center" },
-        6: { halign: "center" },
+        1: { halign: "center", cellWidth: 18 },
+        2: { halign: "left", cellWidth: 26 },
+        3: { halign: "left", cellWidth: 24 },
+        4: { halign: "center", cellWidth: 14 },
+        5: { halign: "center", cellWidth: 22 },
+        6: { halign: "center", cellWidth: 18 },
+        7: { halign: "left", cellWidth: 22 },
+        8: { halign: "center", cellWidth: 20 },
+        9: { halign: "left", cellWidth: 70 },
       };
       break;
 

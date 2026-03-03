@@ -841,8 +841,8 @@ class WhatsAppService {
 
   /**
    * Send monthly bill (cron job format) via WhatsApp
-   * Template: monthly_bill_cron (8 params)
-   * {{1}}=name, {{2}}=month, {{3}}=unit, {{4}}=items, {{5}}=total, {{6}}=paybill, {{7}}=account, {{8}}=company
+   * Template: monthly_bill_cron (7 params)
+   * {{1}}=name, {{2}}=month, {{3}}=unit, {{4}}=items, {{5}}=total, {{6}}=paybill, {{7}}=account
    */
   async sendMonthlyBillCron(
     tenantPhone,
@@ -863,7 +863,6 @@ class WhatsAppService {
         this.formatAmount(totalDue),
         paybillNumber,
         unitCode, // {{7}} = Account number (same as unit code)
-        companyName,
       ];
 
       console.log("📋 WhatsApp: Sending monthly bill (cron):", {

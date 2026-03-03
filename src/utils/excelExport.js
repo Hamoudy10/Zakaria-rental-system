@@ -304,8 +304,8 @@ const styleDataRow = (row, isAlternate) => {
   row.eachCell((cell) => {
     const existingAlignment = cell.alignment || {};
     cell.alignment = {
-      vertical: "top",
-      wrapText: true,
+      vertical: "middle",
+      wrapText: false,
       ...existingAlignment,
     };
 
@@ -506,6 +506,28 @@ export const exportToExcel = async (config) => {
 
       column.width = Math.min(Math.max(maxLength + 2, 10), 80);
     });
+
+    // Report-specific width tuning to keep columns spread and readable.
+    const preferredWidthsByReport = {
+      sms: [6, 12, 18, 22, 12, 14, 12, 16, 16, 20, 60, 10, 30, 18],
+      messaging: [6, 12, 18, 22, 12, 14, 12, 16, 16, 20, 60, 10, 30, 18],
+      complaints: [6, 26, 45, 20, 12, 24, 12, 12, 16, 16],
+      water: [6, 24, 16, 20, 12, 14, 14, 12, 35, 16],
+      payments: [6, 14, 24, 16, 14, 14, 16, 12, 16],
+      properties: [6, 12, 24, 32, 14, 14, 12, 12, 12, 12],
+      tenants: [6, 16, 16, 16, 16, 22, 12, 14, 12],
+      revenue: [6, 14, 18, 14, 12, 12, 18],
+    };
+
+    const preferredWidths = preferredWidthsByReport[reportType];
+    if (preferredWidths) {
+      preferredWidths.forEach((width, idx) => {
+        const col = worksheet.getColumn(idx + 1);
+        if (col) {
+          col.width = Math.max(col.width || 0, width);
+        }
+      });
+    }
 
     // Generate and download
     const buffer = await workbook.xlsx.writeBuffer();
@@ -874,9 +896,14 @@ const prepareExcelData = (reportType, data) => {
         "#",
         "Channel",
         "Recipient Phone",
-        "Message",
+        "Property",
+        "Unit",
         "Type",
         "Status",
+        "Sent By",
+        "Delivery Status",
+        "Message ID",
+        "Message",
         "Attempts",
         "Error",
         "Date",
@@ -885,9 +912,14 @@ const prepareExcelData = (reportType, data) => {
         index + 1,
         item.channel || "SMS",
         formatPhone(item.recipient_phone || item.phone_number),
-        item.message || "N/A",
+        item.property_name || "N/A",
+        item.unit_code || "N/A",
         item.message_type || item.template_name || "General",
         capitalizeFirst(item.status) || "Pending",
+        item.sent_by_name || "System",
+        item.delivery_status || "N/A",
+        item.message_id || "N/A",
+        item.message || "N/A",
         item.attempts || 0,
         item.error_message || "",
         formatDate(item.created_at || item.sent_at),

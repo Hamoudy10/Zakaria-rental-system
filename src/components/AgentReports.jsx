@@ -748,6 +748,7 @@ const AgentReports = () => {
           companyInfo: companyInfo,
           user: user,
           title: reportTitle,
+          exportSource: "agent_reports",
         });
       } else if (format === "excel") {
         await exportToExcel({
@@ -757,6 +758,7 @@ const AgentReports = () => {
           companyInfo: companyInfo,
           user: user,
           title: reportTitle,
+          exportSource: "agent_reports",
         });
       }
     } catch (error) {
