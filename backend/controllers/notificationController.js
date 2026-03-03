@@ -1295,12 +1295,33 @@ const getMessagingHistory = async (req, res) => {
           sq.created_at,
           sq.error_message,
           sq.agent_id,
+          tinfo.first_name,
+          tinfo.last_name,
+          tinfo.unit_code,
+          tinfo.property_name,
           'sms' as channel,
           NULL as template_name,
           'queue' as source,
           CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
         FROM sms_queue sq
         LEFT JOIN users u ON sq.agent_id = u.id
+        LEFT JOIN LATERAL (
+          SELECT
+            t.first_name,
+            t.last_name,
+            pu.unit_code,
+            p.name AS property_name
+          FROM tenants t
+          JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+          JOIN property_units pu ON pu.id = ta.unit_id
+          JOIN properties p ON p.id = pu.property_id
+          WHERE (
+            REPLACE(t.phone_number, '+', '') = REPLACE(sq.recipient_phone, '+', '')
+            OR REPLACE(t.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(sq.recipient_phone, '+', ''), 9))
+            OR REPLACE(sq.recipient_phone, '+', '') = CONCAT('254', RIGHT(REPLACE(t.phone_number, '+', ''), 9))
+          )
+          LIMIT 1
+        ) tinfo ON true
         ${smsWhereClause}
       `);
 
@@ -1338,11 +1359,32 @@ const getMessagingHistory = async (req, res) => {
           sn.sent_at as created_at,
           NULL::text as error_message,
           NULL::uuid as agent_id,
+          tinfo.first_name,
+          tinfo.last_name,
+          tinfo.unit_code,
+          tinfo.property_name,
           'sms' as channel,
           NULL as template_name,
           'notification' as source,
           'System (Auto)' as sent_by_name
         FROM sms_notifications sn
+        LEFT JOIN LATERAL (
+          SELECT
+            t.first_name,
+            t.last_name,
+            pu.unit_code,
+            p.name AS property_name
+          FROM tenants t
+          JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+          JOIN property_units pu ON pu.id = ta.unit_id
+          JOIN properties p ON p.id = pu.property_id
+          WHERE (
+            REPLACE(t.phone_number, '+', '') = REPLACE(sn.phone_number, '+', '')
+            OR REPLACE(t.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(sn.phone_number, '+', ''), 9))
+            OR REPLACE(sn.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(t.phone_number, '+', ''), 9))
+          )
+          LIMIT 1
+        ) tinfo ON true
         ${smsNotifWhereClause}
       `);
 
@@ -1380,6 +1422,10 @@ const getMessagingHistory = async (req, res) => {
           wq.created_at,
           wq.error_message,
           wq.agent_id,
+          NULL::text as first_name,
+          NULL::text as last_name,
+          NULL::text as unit_code,
+          NULL::text as property_name,
           'whatsapp' as channel,
           wq.template_name,
           'queue' as source,
@@ -1423,6 +1469,10 @@ const getMessagingHistory = async (req, res) => {
           wn.sent_at as created_at,
           wn.error_message,
           NULL::uuid as agent_id,
+          NULL::text as first_name,
+          NULL::text as last_name,
+          NULL::text as unit_code,
+          NULL::text as property_name,
           'whatsapp' as channel,
           wn.template_name,
           'notification' as source,

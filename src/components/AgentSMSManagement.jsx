@@ -34,6 +34,11 @@ const AgentSMSManagement = () => {
   const [failedSMS, setFailedSMS] = useState([]);
   const [loadingFailed, setLoadingFailed] = useState(false);
   const [selectedFailedSMS, setSelectedFailedSMS] = useState([]);
+  const [failedFilters, setFailedFilters] = useState({
+    propertyId: "",
+    startDate: "",
+    endDate: "",
+  });
 
   // State for SMS History Tab
   const [smsHistory, setSmsHistory] = useState([]);
@@ -67,7 +72,7 @@ const AgentSMSManagement = () => {
   // Load data based on active tab
   useEffect(() => {
     if (activeTab === "failed") {
-      fetchFailedSMS();
+      fetchFailedSMS(failedFilters);
     } else if (activeTab === "history") {
       fetchSMSHistory();
     }
@@ -212,7 +217,7 @@ const AgentSMSManagement = () => {
     }
   };
 
-  const fetchFailedSMS = async () => {
+  const fetchFailedSMS = async (filters = failedFilters) => {
     setLoadingFailed(true);
     try {
       const params = {
@@ -220,8 +225,14 @@ const AgentSMSManagement = () => {
         channel: "sms",
         limit: 200,
       };
-      if (historyFilters.propertyId) {
-        params.propertyId = historyFilters.propertyId;
+      if (filters.propertyId) {
+        params.propertyId = filters.propertyId;
+      }
+      if (filters.startDate) {
+        params.startDate = filters.startDate;
+      }
+      if (filters.endDate) {
+        params.endDate = filters.endDate;
       }
       const response = await API.notifications.getSMSHistory(params);
       if (response.data.success) {
@@ -254,7 +265,7 @@ const AgentSMSManagement = () => {
       if (response.data.success) {
         alert("SMS queued for retry");
         // Refresh the list
-        fetchFailedSMS();
+        fetchFailedSMS(failedFilters);
       }
     } catch (error) {
       console.error("Error retrying SMS:", error);
@@ -288,7 +299,7 @@ const AgentSMSManagement = () => {
       if (response.data.success) {
         alert(`${response.data.message}`);
         // Refresh and clear selection
-        fetchFailedSMS();
+        fetchFailedSMS(failedFilters);
         setSelectedFailedSMS([]);
       }
     } catch (error) {
@@ -353,6 +364,15 @@ const AgentSMSManagement = () => {
       }
     } catch (error) {
       console.error("Check delivery error:", error);
+      const statusCode = error?.response?.status;
+      const providerError =
+        error?.response?.data?.error || error?.response?.data?.message;
+      if (statusCode === 402) {
+        alert(
+          `Delivery status lookup rejected by provider (402). This is usually provider credit/permission limitation.\n\n${providerError || ""}`,
+        );
+        return;
+      }
       alert(
         error?.response?.data?.message ||
           error?.response?.data?.error ||
@@ -717,6 +737,85 @@ const AgentSMSManagement = () => {
           {/* Tab 2: Failed SMS Management */}
           {activeTab === "failed" && (
             <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Property
+                  </label>
+                  <select
+                    value={failedFilters.propertyId}
+                    onChange={(e) =>
+                      setFailedFilters((prev) => ({
+                        ...prev,
+                        propertyId: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">All Properties</option>
+                    {properties.map((property) => (
+                      <option key={property.id} value={property.id}>
+                        {property.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={failedFilters.startDate}
+                    onChange={(e) =>
+                      setFailedFilters((prev) => ({
+                        ...prev,
+                        startDate: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    value={failedFilters.endDate}
+                    onChange={(e) =>
+                      setFailedFilters((prev) => ({
+                        ...prev,
+                        endDate: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex items-end gap-2">
+                  <button
+                    onClick={() => fetchFailedSMS(failedFilters)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm"
+                  >
+                    Apply
+                  </button>
+                  <button
+                    onClick={() => {
+                      const cleared = {
+                        propertyId: "",
+                        startDate: "",
+                        endDate: "",
+                      };
+                      setFailedFilters(cleared);
+                      fetchFailedSMS(cleared);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-medium text-gray-900">
                   Failed SMS Messages
@@ -953,6 +1052,32 @@ const AgentSMSManagement = () => {
                 </button>
               </div>
 
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { id: "", label: "All" },
+                  { id: "sent", label: "Sent" },
+                  { id: "delivered", label: "Delivered" },
+                  { id: "failed", label: "Failed" },
+                  { id: "pending", label: "Pending" },
+                ].map((f) => (
+                  <button
+                    key={f.id || "all"}
+                    onClick={() => {
+                      const next = { ...historyFilters, status: f.id };
+                      setHistoryFilters(next);
+                      fetchSMSHistoryWithFilters(next);
+                    }}
+                    className={`px-3 py-1.5 rounded-md text-xs border ${
+                      historyFilters.status === f.id
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
               {loadingHistory ? (
                 <div className="text-center py-8">
                   <RefreshCw className="w-8 h-8 text-blue-500 animate-spin mx-auto" />
@@ -1004,11 +1129,13 @@ const AgentSMSManagement = () => {
                           <td className="px-4 py-4 whitespace-nowrap">
                             <span
                               className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                sms.status === "sent"
+                                sms.status === "sent" || sms.status === "delivered"
                                   ? "bg-green-100 text-green-800"
-                                  : sms.status === "failed"
-                                    ? "bg-red-100 text-red-800"
-                                    : "bg-yellow-100 text-yellow-800"
+                                : sms.status === "failed"
+                                  ? "bg-red-100 text-red-800"
+                                  : sms.status === "pending"
+                                    ? "bg-yellow-100 text-yellow-800"
+                                    : "bg-gray-100 text-gray-700"
                               }`}
                             >
                               {sms.status}
