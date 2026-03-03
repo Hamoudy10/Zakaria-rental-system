@@ -223,6 +223,90 @@ const getPaymentFailureGuidance = (rawError = "", context = {}) => {
   };
 };
 
+const upsertMpesaCallbackEvent = async (payload = {}) => {
+  const {
+    transId,
+    amount = null,
+    msisdn = null,
+    billRef = null,
+    transTime = null,
+    rawPayload = {},
+  } = payload;
+
+  if (!transId) return null;
+
+  const result = await pool.query(
+    `INSERT INTO mpesa_callback_events (
+      trans_id,
+      amount,
+      msisdn,
+      bill_ref_number,
+      trans_time,
+      raw_payload,
+      status,
+      first_received_at,
+      last_received_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6::jsonb, 'received', NOW(), NOW()
+    )
+    ON CONFLICT (trans_id)
+    DO UPDATE SET
+      amount = COALESCE(EXCLUDED.amount, mpesa_callback_events.amount),
+      msisdn = COALESCE(EXCLUDED.msisdn, mpesa_callback_events.msisdn),
+      bill_ref_number = COALESCE(EXCLUDED.bill_ref_number, mpesa_callback_events.bill_ref_number),
+      trans_time = COALESCE(EXCLUDED.trans_time, mpesa_callback_events.trans_time),
+      raw_payload = EXCLUDED.raw_payload,
+      last_received_at = NOW()
+    RETURNING id, status, attempts, processed_at`,
+    [transId, amount, msisdn, billRef, transTime, JSON.stringify(rawPayload || {})],
+  );
+
+  return result.rows[0] || null;
+};
+
+const markMpesaCallbackProcessing = async (eventId) => {
+  if (!eventId) return;
+  await pool.query(
+    `UPDATE mpesa_callback_events
+     SET status = 'processing',
+         attempts = COALESCE(attempts, 0) + 1,
+         processing_started_at = NOW(),
+         last_error = NULL,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [eventId],
+  );
+};
+
+const markMpesaCallbackProcessed = async (
+  eventId,
+  { rentPaymentId = null, processingResult = null } = {},
+) => {
+  if (!eventId) return;
+  await pool.query(
+    `UPDATE mpesa_callback_events
+     SET status = 'processed',
+         processed_at = NOW(),
+         processing_result = $2,
+         rent_payment_id = COALESCE($3, rent_payment_id),
+         updated_at = NOW()
+     WHERE id = $1`,
+    [eventId, processingResult, rentPaymentId],
+  );
+};
+
+const markMpesaCallbackFailed = async (eventId, errorMessage = "Unknown error") => {
+  if (!eventId) return;
+  await pool.query(
+    `UPDATE mpesa_callback_events
+     SET status = 'failed',
+         last_error = LEFT($2, 2000),
+         updated_at = NOW()
+     WHERE id = $1`,
+    [eventId, String(errorMessage || "Unknown error")],
+  );
+};
+
 // ==================== CORE BUSINESS LOGIC ====================
 
 /**
@@ -809,8 +893,12 @@ const handleMpesaValidation = async (req, res) => {
  * }
  */
 const handleMpesaCallback = async (req, res) => {
-  // ALWAYS respond to Safaricom immediately (they timeout after ~5 seconds)
-  res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
+  let callbackEventId = null;
+  const safeAck = () => {
+    if (!res.headersSent) {
+      res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
+    }
+  };
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // DEBUG: Log ALL fields and their lengths from real Safaricom callback
@@ -827,6 +915,52 @@ const handleMpesaCallback = async (req, res) => {
   });
   console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
+  // C2B Paybill payload is FLAT JSON
+  const {
+    TransID,
+    TransAmount,
+    BillRefNumber,
+    MSISDN,
+    FirstName,
+    MiddleName,
+    LastName,
+    TransTime,
+    BusinessShortCode,
+    OrgAccountBalance,
+  } = req.body || {};
+
+  // Persist ingress before ACK so callback cannot disappear if processing fails later.
+  try {
+    if (TransID) {
+      const callbackEvent = await upsertMpesaCallbackEvent({
+        transId: TransID,
+        amount: TransAmount ? parseFloat(TransAmount) : null,
+        msisdn: MSISDN || null,
+        billRef: BillRefNumber || null,
+        transTime: TransTime || null,
+        rawPayload: req.body || {},
+      });
+      callbackEventId = callbackEvent?.id || null;
+
+      if (callbackEvent?.status === "processed") {
+        safeAck();
+        return;
+      }
+
+      await markMpesaCallbackProcessing(callbackEventId);
+    }
+  } catch (ingressError) {
+    console.error("Failed to persist callback ingress:", ingressError);
+    if (!res.headersSent) {
+      return res
+        .status(500)
+        .json({ ResultCode: 1, ResultDesc: "Temporary system error" });
+    }
+    return;
+  }
+
+  safeAck();
+
   const client = await pool.connect();
   try {
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
@@ -835,24 +969,14 @@ const handleMpesaCallback = async (req, res) => {
     console.log("Body:", JSON.stringify(req.body, null, 2));
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
-    // C2B Paybill payload is FLAT JSON
-    const {
-      TransID,
-      TransAmount,
-      BillRefNumber,
-      MSISDN,
-      FirstName,
-      MiddleName,
-      LastName,
-      TransTime,
-      BusinessShortCode,
-      OrgAccountBalance,
-    } = req.body;
-
     // Validate required fields
     if (!TransID || !TransAmount || !MSISDN) {
       console.error(
         "Invalid C2B callback: missing TransID, TransAmount, or MSISDN",
+      );
+      await markMpesaCallbackFailed(
+        callbackEventId,
+        "Missing required callback fields: TransID, TransAmount, or MSISDN",
       );
       return;
     }
@@ -860,6 +984,10 @@ const handleMpesaCallback = async (req, res) => {
     const amount = parseFloat(TransAmount);
     if (!amount || amount <= 0) {
       console.log("Invalid payment amount, skipping:", TransAmount);
+      await markMpesaCallbackFailed(
+        callbackEventId,
+        `Invalid callback amount: ${TransAmount}`,
+      );
       return;
     }
 
@@ -870,6 +998,10 @@ const handleMpesaCallback = async (req, res) => {
     );
     if (duplicateCheck.rows.length > 0) {
       console.log("Duplicate C2B callback ignored:", TransID);
+      await markMpesaCallbackProcessed(callbackEventId, {
+        rentPaymentId: duplicateCheck.rows[0].id || null,
+        processingResult: "duplicate_ignored",
+      });
       return;
     }
 
@@ -1059,7 +1191,7 @@ const handleMpesaCallback = async (req, res) => {
         }
       }
 
-      await client.query(
+      const unmatchedInsert = await client.query(
         `INSERT INTO rent_payments (
           mpesa_transaction_id, mpesa_receipt_number, phone_number,
           amount, payment_date, payment_month, status, payment_method,
@@ -1068,7 +1200,7 @@ const handleMpesaCallback = async (req, res) => {
           $1, $1, $2,
           $3, $4, $5, 'pending', 'mpesa',
           $6, NOW()
-        )`,
+        ) RETURNING id`,
         [
           TransID,
           safePhone,
@@ -1080,6 +1212,10 @@ const handleMpesaCallback = async (req, res) => {
       );
 
       await client.query("COMMIT");
+      await markMpesaCallbackProcessed(callbackEventId, {
+        rentPaymentId: unmatchedInsert.rows[0]?.id || null,
+        processingResult: "unmatched_pending_recorded",
+      });
 
       // Notify payer if we have a valid phone (helps prevent "money lost" confusion)
       if (safePhone !== "invalid_msisdn") {
@@ -1197,6 +1333,10 @@ const handleMpesaCallback = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    await markMpesaCallbackProcessed(callbackEventId, {
+      rentPaymentId: paymentRecord.id,
+      processingResult: "matched_completed",
+    });
 
     console.log("âœ… PAYMENT PROCESSED:", {
       transId: TransID,
@@ -1272,8 +1412,13 @@ const handleMpesaCallback = async (req, res) => {
       );
     }
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("Rollback failed in C2B callback handler:", rollbackError);
+    }
     console.error("C2B CALLBACK PROCESSING ERROR:", error);
+    await markMpesaCallbackFailed(callbackEventId, error.message);
     const guidance = getPaymentFailureGuidance(error.message, {
       requestId: error?.response?.data?.requestId,
     });
