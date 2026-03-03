@@ -1631,22 +1631,23 @@ const checkDeliveryStatus = async (req, res) => {
 
     if (dlrData && dlrData.responses && dlrData.responses.length > 0) {
       const response = dlrData.responses[0];
-      const dlrStatus = response['dlr-status'] || response['status'];
+      const dlrStatusRaw = response['dlr-status'] || response['status'];
+      const dlrStatus = String(dlrStatusRaw || "").trim().toUpperCase();
       
-      // Map Celcom status to our status
-      if (dlrStatus === 'DELIVERED' || dlrStatus === 'DeliveredToTerminal') {
+      // Map Celcom status to our status (case-insensitive and tolerant to variants)
+      if (["DELIVERED", "DELIVEREDTOTERMINAL", "SUCCESS"].includes(dlrStatus)) {
         status = 'delivered';
         deliveredAt = response['dlr-time'] || response['delivered-time'] || new Date().toISOString();
-      } else if (dlrStatus === 'EXPIRED' || dlrStatus === 'REJECTED' || dlrStatus === 'UNDELIVERED') {
+      } else if (["EXPIRED", "REJECTED", "UNDELIVERED", "FAILED"].includes(dlrStatus)) {
         status = 'failed';
-        reason = dlrStatus;
-      } else if (dlrStatus === 'ACCEPTED' || dlrStatus === 'SENT') {
+        reason = dlrStatusRaw;
+      } else if (["ACCEPTED", "SENT", "SUBMITTED"].includes(dlrStatus)) {
         status = 'sent';
-      } else if (dlrStatus === 'PENDING' || dlrStatus === 'BUFFERED') {
+      } else if (["PENDING", "BUFFERED", "QUEUED"].includes(dlrStatus)) {
         status = 'pending';
       } else {
         status = 'unknown';
-        reason = `Unknown status: ${dlrStatus}`;
+        reason = `Unknown status: ${dlrStatusRaw}`;
       }
     }
 
