@@ -1,8 +1,8 @@
 // ============================================================
 // MESSAGING SERVICE - UNIFIED SMS + WHATSAPP
 // ============================================================
-// Sends messages via both SMS (Celcom) and WhatsApp (Meta) in parallel.
-// If recipient has no WhatsApp, SMS is still sent (default fallback).
+// Sends messages with WhatsApp-first strategy and SMS fallback.
+// If WhatsApp is unavailable/fails, SMS is sent as fallback.
 // This is the SINGLE entry point all controllers should use for messaging.
 // ============================================================
 
@@ -18,18 +18,17 @@ class MessagingService {
       sms: this.sms ? "✅ Loaded" : "❌ Missing",
       whatsapp: this.whatsapp ? "✅ Loaded" : "❌ Missing",
       whatsappConfigured: this.whatsapp.configured,
-      mode: "parallel",
+      mode: "whatsapp_first_with_sms_fallback",
     });
   }
 
   // ============================================================
-  // CORE PARALLEL SEND
+  // CORE SEND STRATEGY
   // ============================================================
 
   /**
-   * Send message via both SMS and WhatsApp in parallel.
-   * SMS always sends. WhatsApp sends if configured.
-   * If WhatsApp fails (recipient not on WhatsApp), SMS still succeeds.
+   * Send with WhatsApp-first strategy.
+   * WhatsApp attempts first; SMS sends only when WhatsApp is skipped/failed.
    *
    * @param {Function} smsFn - Async function that sends SMS (must return result object)
    * @param {Function} whatsappFn - Async function that sends WhatsApp (must return result object)
@@ -42,16 +41,9 @@ class MessagingService {
     };
 
     try {
-      // Always attempt SMS
-      const smsPromise = smsFn().catch((error) => {
-        console.error("❌ SMS send error:", error.message);
-        return { success: false, error: error.message, channel: "sms" };
-      });
-
-      // Attempt WhatsApp only if configured
-      let whatsappPromise;
+      let whatsappResult;
       if (this.whatsapp.configured) {
-        whatsappPromise = whatsappFn().catch((error) => {
+        whatsappResult = await whatsappFn().catch((error) => {
           console.error("❌ WhatsApp send error:", error.message);
           return {
             success: false,
@@ -60,26 +52,43 @@ class MessagingService {
           };
         });
       } else {
-        whatsappPromise = Promise.resolve({
+        whatsappResult = {
           success: false,
           error: "WhatsApp not configured",
           skipped: true,
           channel: "whatsapp",
-        });
+        };
       }
 
-      // Wait for both to complete
-      const [smsResult, whatsappResult] = await Promise.all([
-        smsPromise,
-        whatsappPromise,
-      ]);
-
-      results.sms = smsResult;
       results.whatsapp = whatsappResult;
+
+      const shouldFallbackToSMS =
+        !whatsappResult?.success &&
+        (whatsappResult?.skipped ||
+          whatsappResult?.notOnWhatsApp ||
+          !!whatsappResult?.error);
+
+      if (shouldFallbackToSMS) {
+        results.sms = await smsFn().catch((error) => {
+          console.error("❌ SMS fallback send error:", error.message);
+          return { success: false, error: error.message, channel: "sms" };
+        });
+      } else {
+        results.sms = {
+          success: false,
+          skipped: true,
+          error: "Skipped because WhatsApp send was accepted",
+          channel: "sms",
+        };
+      }
 
       // Log combined result
       console.log("📨 Messaging results:", {
-        sms: results.sms.success ? "✅" : "❌",
+        sms: results.sms.success
+          ? "✅ Fallback sent"
+          : results.sms.skipped
+            ? "⏭️ Skipped"
+            : "❌",
         whatsapp: results.whatsapp.success
           ? "✅"
           : results.whatsapp.skipped
@@ -91,7 +100,7 @@ class MessagingService {
 
       return results;
     } catch (error) {
-      console.error("❌ Messaging parallel send error:", error);
+      console.error("❌ Messaging send error:", error);
       return results;
     }
   }
@@ -635,9 +644,9 @@ class MessagingService {
       return {
         sms: smsStatus,
         whatsapp: whatsappStatus,
-        mode: "parallel",
+        mode: "whatsapp_first_with_sms_fallback",
         description:
-          "SMS always sends. WhatsApp sends in parallel if configured and recipient has WhatsApp.",
+          "WhatsApp sends first; SMS only sends when WhatsApp fails or is unavailable.",
       };
     } catch (error) {
       console.error("❌ Messaging: Service status error:", error);
