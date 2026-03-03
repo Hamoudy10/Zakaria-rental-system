@@ -4,7 +4,7 @@ const router = express.Router();
 const notificationController = require('../controllers/notificationController');
 const pool = require('../config/database');
 
-const { authMiddleware, requireAdmin } = require('../middleware/authMiddleware');
+const { authMiddleware, requireAdmin, requireAgent } = require('../middleware/authMiddleware');
 
 // Helper to call controller safely
 const callController = (fn) => async (req, res, next) => {
@@ -213,20 +213,20 @@ router.delete('/admin/clear-all/:userId', authMiddleware, requireAdmin, async (r
 router.post('/broadcast', authMiddleware, requireAdmin, callController(notificationController.createBroadcastNotification));
 
 // Send bulk SMS to property tenants (admin or agent)
-router.post('/bulk-sms', authMiddleware, callController(notificationController.sendBulkSMS));
+router.post('/bulk-sms', authMiddleware, requireAgent, callController(notificationController.sendBulkSMS));
 
 // Create broadcast notification (admin only)
 router.post('/broadcast', authMiddleware, requireAdmin, callController(notificationController.createBroadcastNotification));
 
 // Send bulk SMS to property tenants (admin or agent)
-router.post('/bulk-sms', authMiddleware, callController(notificationController.sendBulkSMS));
+router.post('/bulk-sms', authMiddleware, requireAgent, callController(notificationController.sendBulkSMS));
 
 // Get tenants by property (for targeted SMS)
-router.get('/tenants/:propertyId', authMiddleware, callController(notificationController.getTenantsByProperty));
+router.get('/tenants/:propertyId', authMiddleware, requireAgent, callController(notificationController.getTenantsByProperty));
 
 
 // NEW: Send targeted SMS to selected tenants
-router.post('/targeted-sms', authMiddleware, callController(notificationController.sendTargetedSMS));
+router.post('/targeted-sms', authMiddleware, requireAgent, callController(notificationController.sendTargetedSMS));
 
 // NEW: Get SMS history with filters and pagination
 router.get('/sms-history', authMiddleware, callController(notificationController.getMessagingHistory));

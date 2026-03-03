@@ -4,6 +4,7 @@
 // Tenants do NOT use the system. Payments are recorded by admins/agents or arrive via M-Pesa C2B callback.
 
 const axios = require("axios");
+const crypto = require("crypto");
 const pool = require("../config/database");
 const NotificationService = require("../services/notificationService");
 const SMSService = require("../services/smsService");
@@ -125,6 +126,96 @@ const formatCoveredMonths = (carryForwardPayments = []) => {
       },
     );
   });
+};
+
+const isTruthy = (value) => {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+};
+
+const normalizeIp = (ip) => {
+  if (!ip) return "";
+  const first = String(ip).split(",")[0].trim();
+  if (first.startsWith("::ffff:")) return first.replace("::ffff:", "");
+  if (first === "::1") return "127.0.0.1";
+  return first;
+};
+
+const getRequestIp = (req) => {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) return normalizeIp(forwarded);
+  const realIp = req.headers["x-real-ip"];
+  if (realIp) return normalizeIp(realIp);
+  return normalizeIp(req.socket?.remoteAddress || req.ip || "");
+};
+
+const getTrustedMpesaIps = () => {
+  const raw = process.env.MPESA_TRUSTED_IPS || "";
+  return raw
+    .split(",")
+    .map((value) => normalizeIp(value))
+    .filter(Boolean);
+};
+
+const timingSafeEquals = (a, b) => {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+};
+
+const verifyMpesaRequestSource = (req) => {
+  const strictMode = isTruthy(process.env.MPESA_STRICT_SOURCE_VERIFICATION ?? "false");
+  const requestIp = getRequestIp(req);
+  const trustedIps = getTrustedMpesaIps();
+  const configuredSecret = String(process.env.MPESA_CALLBACK_SECRET || "").trim();
+  const requestSecret = String(
+    req.headers["x-mpesa-callback-secret"] ||
+      req.headers["x-callback-secret"] ||
+      req.query?.secret ||
+      "",
+  ).trim();
+
+  const ipCheckEnabled = trustedIps.length > 0;
+  const secretCheckEnabled = configuredSecret.length > 0;
+
+  const ipVerified = ipCheckEnabled && trustedIps.includes(requestIp);
+  const secretVerified =
+    secretCheckEnabled && timingSafeEquals(requestSecret, configuredSecret);
+
+  const hasAnyVerificationMethod = ipCheckEnabled || secretCheckEnabled;
+  const verified = ipVerified || secretVerified;
+
+  if (!strictMode) {
+    return { verified: true, strictMode, requestIp, reason: "strict_mode_disabled" };
+  }
+
+  if (!hasAnyVerificationMethod) {
+    return {
+      verified: false,
+      strictMode,
+      requestIp,
+      reason:
+        "strict verification enabled but no verifier configured (set MPESA_TRUSTED_IPS and/or MPESA_CALLBACK_SECRET)",
+    };
+  }
+
+  if (!verified) {
+    return {
+      verified: false,
+      strictMode,
+      requestIp,
+      reason: "request did not match trusted IPs or callback secret",
+    };
+  }
+
+  return {
+    verified: true,
+    strictMode,
+    requestIp,
+    method: ipVerified ? "ip_allowlist" : "shared_secret",
+  };
 };
 
 const getPaymentFailureGuidance = (rawError = "", context = {}) => {
@@ -785,6 +876,18 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
  */
 const handleMpesaValidation = async (req, res) => {
   try {
+    const sourceCheck = verifyMpesaRequestSource(req);
+    if (!sourceCheck.verified) {
+      console.warn("Blocked unverified M-Pesa validation request:", {
+        ip: sourceCheck.requestIp,
+        reason: sourceCheck.reason,
+      });
+      return res.status(403).json({
+        ResultCode: "C2B00013",
+        ResultDesc: "Validation Service Error",
+      });
+    }
+
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
     console.log("M-PESA C2B VALIDATION REQUEST");
     console.log("Timestamp:", new Date().toISOString());
@@ -900,6 +1003,20 @@ const handleMpesaCallback = async (req, res) => {
     }
   };
 
+  const sourceCheck = verifyMpesaRequestSource(req);
+  if (!sourceCheck.verified) {
+    console.warn("Blocked unverified M-Pesa callback request:", {
+      ip: sourceCheck.requestIp,
+      reason: sourceCheck.reason,
+    });
+    if (!res.headersSent) {
+      return res
+        .status(403)
+        .json({ ResultCode: 1, ResultDesc: "Unauthorized callback source" });
+    }
+    return;
+  }
+
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // DEBUG: Log ALL fields and their lengths from real Safaricom callback
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -950,13 +1067,21 @@ const handleMpesaCallback = async (req, res) => {
       await markMpesaCallbackProcessing(callbackEventId);
     }
   } catch (ingressError) {
-    console.error("Failed to persist callback ingress:", ingressError);
-    if (!res.headersSent) {
-      return res
-        .status(500)
-        .json({ ResultCode: 1, ResultDesc: "Temporary system error" });
+    // Temporary compatibility fallback:
+    // if migration 012 is not yet applied, continue legacy processing to avoid payment downtime.
+    if (ingressError?.code === "42P01") {
+      console.error(
+        "mpesa_callback_events table missing (migration 012 not applied). Continuing without durable ingress for now.",
+      );
+    } else {
+      console.error("Failed to persist callback ingress:", ingressError);
+      if (!res.headersSent) {
+        return res
+          .status(500)
+          .json({ ResultCode: 1, ResultDesc: "Temporary system error" });
+      }
+      return;
     }
-    return;
   }
 
   safeAck();
@@ -1713,6 +1838,13 @@ const getTenantPaymentHistory = async (req, res) => {
 const processPaybillPayment = async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!["admin", "agent"].includes(req.user?.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only admin/agent can process paybill payments",
+      });
+    }
+
     await client.query("BEGIN");
 
     const {
@@ -2223,6 +2355,13 @@ const sendBalanceReminders = async (req, res) => {
 const recordManualPayment = async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!["admin", "agent"].includes(req.user?.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only admin/agent can record manual payments",
+      });
+    }
+
     await client.query("BEGIN");
 
     const {
