@@ -289,6 +289,145 @@ const AgentReports = () => {
     return params;
   };
 
+  const parseFilterDate = (value) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+  };
+
+  const getRecordDate = (item, reportType) => {
+    const candidatesByType = {
+      payments: [
+        item.payment_date,
+        item.created_at,
+        item.updated_at,
+        item.payment_month ? `${String(item.payment_month).slice(0, 7)}-01` : null,
+      ],
+      complaints: [item.raised_at, item.created_at, item.updated_at],
+      water: [
+        item.created_at,
+        item.updated_at,
+        item.bill_month ? `${String(item.bill_month).slice(0, 7)}-01` : null,
+      ],
+      tenants: [item.created_at, item.updated_at, item.allocation_date],
+      properties: [item.created_at, item.updated_at],
+      revenue: [item.month ? `${String(item.month).slice(0, 7)}-01` : null],
+      sms: [item.created_at, item.sent_at, item.last_attempt_at],
+    };
+
+    const candidates = candidatesByType[reportType] || [
+      item.created_at,
+      item.updated_at,
+    ];
+
+    for (const candidate of candidates) {
+      const parsed = parseFilterDate(candidate);
+      if (parsed) return parsed;
+    }
+
+    return null;
+  };
+
+  const applyStrictFilters = (rows, reportType) => {
+    let filtered = Array.isArray(rows) ? [...rows] : [];
+
+    const searchText = String(filters.search || "").trim().toLowerCase();
+    const startDate = parseFilterDate(filters.startDate);
+    const endDate = parseFilterDate(filters.endDate);
+
+    if (filters.propertyId) {
+      filtered = filtered.filter((item) => {
+        if (reportType === "sms") {
+          // SMS property scoping is enforced by backend lookup using tenant phone mapping.
+          return true;
+        }
+        const itemPropertyId =
+          reportType === "properties"
+            ? item.id
+            : item.property_id || item.propertyId;
+        return String(itemPropertyId || "") === String(filters.propertyId);
+      });
+    }
+
+    if (filters.status) {
+      filtered = filtered.filter((item) => {
+        if (reportType === "tenants") {
+          const tenantStatus = String(
+            item.payment_status ||
+              item.status ||
+              (item.is_active ? "active" : "inactive"),
+          ).toLowerCase();
+          return tenantStatus === String(filters.status).toLowerCase();
+        }
+        return (
+          String(item.status || "").toLowerCase() ===
+          String(filters.status).toLowerCase()
+        );
+      });
+    }
+
+    if (startDate || endDate) {
+      filtered = filtered.filter((item) => {
+        const itemDate = getRecordDate(item, reportType);
+        if (!itemDate) return false;
+        if (startDate && itemDate < startDate) return false;
+        if (endDate && itemDate > endDate) return false;
+        return true;
+      });
+    }
+
+    if (searchText) {
+      filtered = filtered.filter((item) => {
+        const haystack = [
+          item.first_name,
+          item.last_name,
+          item.tenant_name,
+          item.property_name,
+          item.unit_code,
+          item.phone_number,
+          item.recipient_phone,
+          item.message,
+          item.message_type,
+          item.mpesa_receipt_number,
+          item.description,
+          item.title,
+          item.category,
+          item.priority,
+          item.status,
+          item.name,
+          item.address,
+          item.month,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(searchText);
+      });
+    }
+
+    if (reportType === "sms") {
+      if (messagingFilters.status && messagingFilters.status !== "all") {
+        filtered = filtered.filter(
+          (item) =>
+            String(item.status || "").toLowerCase() ===
+            String(messagingFilters.status).toLowerCase(),
+        );
+      }
+
+      if (messagingFilters.channel && messagingFilters.channel !== "all") {
+        filtered = filtered.filter(
+          (item) =>
+            String(item.channel || "").toLowerCase() ===
+            String(messagingFilters.channel).toLowerCase(),
+        );
+      }
+    }
+
+    return filtered;
+  };
+
   const fetchAllPayments = async (baseParams = {}, pageSize = 1000) => {
     let page = 1;
     let totalPages = 1;
@@ -329,6 +468,16 @@ const AgentReports = () => {
   };
 
   const fetchAllWaterBills = async (baseParams = {}, batchSize = 500) => {
+    const waterParams = { ...baseParams };
+    if (waterParams.startDate) {
+      waterParams.fromDate = waterParams.startDate;
+      delete waterParams.startDate;
+    }
+    if (waterParams.endDate) {
+      waterParams.toDate = waterParams.endDate;
+      delete waterParams.endDate;
+    }
+
     let offset = 0;
     let hasMore = true;
     const allRows = [];
@@ -336,7 +485,7 @@ const AgentReports = () => {
     while (hasMore) {
       const resp = await safeAPICall(() =>
         api.get("/agent-properties/water-bills", {
-          params: { ...baseParams, limit: batchSize, offset },
+          params: { ...waterParams, limit: batchSize, offset },
         }),
       );
       const rows = extractDataArray(resp, "water");
@@ -375,12 +524,13 @@ const AgentReports = () => {
       if (requestId !== messagingRequestRef.current) return;
 
       if (Array.isArray(messages)) {
-        setData(messages);
+        const strictMessages = applyStrictFilters(messages, "sms");
+        setData(strictMessages);
 
         const statusCounts = { sent: 0, pending: 0, failed: 0, skipped: 0 };
         const channelCounts = { sms: 0, whatsapp: 0 };
 
-        messages.forEach((msg) => {
+        strictMessages.forEach((msg) => {
           if (msg.status && statusCounts[msg.status] !== undefined) {
             statusCounts[msg.status]++;
           }
@@ -392,12 +542,12 @@ const AgentReports = () => {
         });
 
         setMessagingSummary({
-          totalCount: messages.length,
+          totalCount: strictMessages.length,
           statusCounts,
           channelCounts,
         });
 
-        console.log(`Loaded ${messages.length} messaging records`);
+        console.log(`Loaded ${strictMessages.length} messaging records`);
       } else {
         console.warn("Messaging history fetch failed");
         setData([]);
@@ -522,9 +672,10 @@ const AgentReports = () => {
 
       if (response?.data?.success) {
         const extractedData = extractDataArray(response, activeReport);
-        setData(extractedData);
+        const strictData = applyStrictFilters(extractedData, activeReport);
+        setData(strictData);
         console.log(
-          `✅ Loaded ${extractedData.length} records for ${activeReport} report`,
+          `✅ Loaded ${strictData.length} records for ${activeReport} report`,
         );
       } else {
         console.warn(

@@ -329,6 +329,7 @@ const getMyComplaints = async (req, res) => {
         t.phone_number as tenant_phone,
         pu.unit_code,
         p.name as property_name,
+        p.id as property_id,
         agent.first_name as assigned_agent_first_name,
         agent.last_name as assigned_agent_last_name
       FROM complaints c
