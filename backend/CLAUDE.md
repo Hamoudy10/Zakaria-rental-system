@@ -131,6 +131,23 @@ const allocatePayment = (amount, arrearsDue, waterDue, rentDue) => {
   - `getTenantDepositTransactions`
 - Deposit records are scoped by tenant/unit/allocation and support manual posting with receipt de-duplication and phone normalization.
 
+## RECENT UPDATES (2026-03-03)
+- Added durable M-Pesa callback ingress tracking via migration:
+  - `backend/migrations/012_create_mpesa_callback_events.sql`
+- Hardened C2B flow to prevent silent transaction loss:
+  - callback payload is persisted to `mpesa_callback_events` before acknowledgement
+  - callback processing status is tracked (`received` → `processing` → `processed`/`failed`)
+  - duplicate callbacks are marked as processed instead of re-applying payments
+- Added strict callback source verification helper in `paymentController.js`:
+  - supports `MPESA_TRUSTED_IPS` allowlisting
+  - supports optional `MPESA_CALLBACK_SECRET` header check
+  - `MPESA_STRICT_SOURCE_VERIFICATION` defaults to `false` (safe rollout), enable to fail closed
+- Secured high-risk routes:
+  - `POST /payments/paybill`, `POST /payments/manual`, `POST /payments/deposits/record` now require agent/admin access
+  - `POST /notifications/bulk-sms` and `POST /notifications/targeted-sms` now require agent/admin access
+  - `POST /payments/c2b/callback-debug` now requires admin auth and returns 404 in production
+- Added controller-level defense-in-depth role checks for manual/paybill payment and bulk/targeted messaging handlers.
+
 ## ROUTE ORDER (CRITICAL)
 ```javascript
 // ✅ CORRECT - specific before generic

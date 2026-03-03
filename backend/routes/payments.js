@@ -5,7 +5,7 @@
 const express = require("express");
 const router = express.Router();
 const paymentController = require("../controllers/paymentController");
-const { protect, adminOnly } = require("../middleware/authMiddleware");
+const { protect, adminOnly, requireAgent } = require("../middleware/authMiddleware");
 
 const normalizePaymentMonthInput = (value) => {
   if (value === undefined) return undefined;
@@ -147,7 +147,10 @@ router.post("/c2b/callback", paymentController.handleMpesaCallback);
 
 // ==================== DEBUG CALLBACK ENDPOINT ====================
 // Temporary route to debug column length issues
-router.post("/c2b/callback-debug", async (req, res) => {
+router.post("/c2b/callback-debug", protect, adminOnly, async (req, res) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).json({ success: false, message: "Not found" });
+  }
   const pool = require("../config/database");
 
   console.log("═══════════════════════════════════════");
@@ -296,7 +299,7 @@ router.post("/test-sms", protect, adminOnly, paymentController.testSMSService);
 // ==================== PAYBILL ROUTES ====================
 
 // Process paybill payment (admin/agent manually enters M-Pesa receipt)
-router.post("/paybill", protect, paymentController.processPaybillPayment);
+router.post("/paybill", protect, requireAgent, paymentController.processPaybillPayment);
 
 // Get payment status by unit code
 router.get(
@@ -402,12 +405,12 @@ router.get(
 // ==================== MANUAL PAYMENT RECORDING ====================
 
 // Record manual payment (admin/agent enters cash/bank payment)
-router.post("/manual", protect, paymentController.recordManualPayment);
+router.post("/manual", protect, requireAgent, paymentController.recordManualPayment);
 
 // ==================== DEPOSIT PAYMENT ROUTES ====================
 
 // Record manual tenant deposit payment
-router.post("/deposits/record", protect, paymentController.recordDepositPayment);
+router.post("/deposits/record", protect, requireAgent, paymentController.recordDepositPayment);
 
 // Get tenant deposit summary
 router.get(
