@@ -36,6 +36,8 @@ import {
   Filter,
   Eye,
   Phone,
+  Trash2,
+  Pencil,
 } from "lucide-react";
 
 // ============================================================
@@ -116,6 +118,8 @@ const PaymentManagement = () => {
     error: paymentsError,
     fetchPayments,
     fetchTenantHistory,
+    deletePayment,
+    updatePayment,
   } = usePayment();
 
   const propertyContext = useProperty();
@@ -190,6 +194,21 @@ const PaymentManagement = () => {
   });
   const [manualPaymentLoading, setManualPaymentLoading] = useState(false);
   const [manualPaymentError, setManualPaymentError] = useState("");
+
+  // Edit Manual Payment Modal
+  const [showEditManualPayment, setShowEditManualPayment] = useState(false);
+  const [editManualPaymentData, setEditManualPaymentData] = useState({
+    id: "",
+    amount: "",
+    payment_month: "",
+    mpesa_receipt_number: "",
+    phone_number: "",
+    notes: "",
+    status: "completed",
+  });
+  const [editManualPaymentLoading, setEditManualPaymentLoading] =
+    useState(false);
+  const [editManualPaymentError, setEditManualPaymentError] = useState("");
 
   // SMS Reminder Modal
   const [showSMSModal, setShowSMSModal] = useState(false);
@@ -570,6 +589,95 @@ const PaymentManagement = () => {
     setSmsTemplateId("");
     setSmsResult(null);
     setShowSMSModal(true);
+  };
+
+  const handleDeleteManualPayment = async (payment) => {
+    if (!payment?.id) return;
+
+    const method = String(payment.payment_method || "").toLowerCase();
+    const isManual =
+      method === "manual" || method === "manual_reconciled";
+    if (!isManual) {
+      alert("Only manual payments can be deleted from this screen.");
+      return;
+    }
+
+    const receipt = payment.mpesa_receipt_number || payment.mpesa_transaction_id || "N/A";
+    const confirmDelete = window.confirm(
+      `Delete this manual payment?\n\nAmount: ${formatCurrency(payment.amount)}\nReference: ${receipt}\n\nThis action cannot be undone.`,
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await deletePayment(payment.id);
+      await handleFetchPayments();
+      alert("Manual payment deleted successfully.");
+    } catch (err) {
+      console.error("Delete manual payment error:", err);
+      alert(err.response?.data?.message || "Failed to delete manual payment.");
+    }
+  };
+
+  const handleOpenEditManualPayment = (payment) => {
+    if (!payment?.id) return;
+
+    const method = String(payment.payment_method || "").toLowerCase();
+    const isManual =
+      method === "manual" || method === "manual_reconciled";
+    if (!isManual) {
+      alert("Only manual payments can be edited.");
+      return;
+    }
+
+    const rawMonth = payment.payment_month
+      ? String(payment.payment_month).slice(0, 7)
+      : "";
+
+    setEditManualPaymentData({
+      id: payment.id,
+      amount: payment.amount ? String(payment.amount) : "",
+      payment_month: rawMonth,
+      mpesa_receipt_number: payment.mpesa_receipt_number || "",
+      phone_number: payment.phone_number || "",
+      notes: payment.notes || "",
+      status: payment.status || "completed",
+    });
+    setEditManualPaymentError("");
+    setShowEditManualPayment(true);
+  };
+
+  const handleSubmitEditManualPayment = async (e) => {
+    e.preventDefault();
+    if (!editManualPaymentData.id) return;
+
+    setEditManualPaymentLoading(true);
+    setEditManualPaymentError("");
+
+    try {
+      const payload = {
+        amount: editManualPaymentData.amount
+          ? parseFloat(editManualPaymentData.amount)
+          : null,
+        payment_month: editManualPaymentData.payment_month || null,
+        mpesa_receipt_number:
+          editManualPaymentData.mpesa_receipt_number?.trim() || null,
+        phone_number: editManualPaymentData.phone_number?.trim() || null,
+        notes: editManualPaymentData.notes?.trim() || null,
+        status: editManualPaymentData.status || null,
+      };
+
+      await updatePayment(editManualPaymentData.id, payload);
+      await handleFetchPayments();
+      setShowEditManualPayment(false);
+      alert("Manual payment updated successfully.");
+    } catch (err) {
+      console.error("Edit manual payment error:", err);
+      setEditManualPaymentError(
+        err.response?.data?.message || "Failed to update manual payment.",
+      );
+    } finally {
+      setEditManualPaymentLoading(false);
+    }
   };
 
   const fetchReminderTemplates = useCallback(async () => {
@@ -1111,6 +1219,10 @@ const PaymentManagement = () => {
           sort={sort}
           onSort={handleSort}
           onViewHistory={handleViewHistory}
+          onDeleteManualPayment={handleDeleteManualPayment}
+          canDeleteManual={user?.role === "admin"}
+          onEditManualPayment={handleOpenEditManualPayment}
+          canEditManual={user?.role === "admin" || user?.role === "agent"}
           pagination={pagination}
           currentPage={currentPage}
           setCurrentPage={setCurrentPage}
@@ -1160,6 +1272,17 @@ const PaymentManagement = () => {
         />
       )}
 
+      {showEditManualPayment && (
+        <EditManualPaymentModal
+          data={editManualPaymentData}
+          setData={setEditManualPaymentData}
+          loading={editManualPaymentLoading}
+          error={editManualPaymentError}
+          onSubmit={handleSubmitEditManualPayment}
+          onClose={() => setShowEditManualPayment(false)}
+        />
+      )}
+
       {/* SMS Reminder Modal */}
       {showSMSModal && (
         <SMSReminderModal
@@ -1191,6 +1314,10 @@ const AllPaymentsTable = ({
   sort,
   onSort,
   onViewHistory,
+  onDeleteManualPayment,
+  canDeleteManual,
+  onEditManualPayment,
+  canEditManual,
   pagination,
   currentPage,
   setCurrentPage,
@@ -1295,17 +1422,43 @@ const AllPaymentsTable = ({
                       {formatDate(p.payment_date)}
                     </td>
                     <td className="p-4 text-center whitespace-nowrap">
-                      <button
-                        onClick={() =>
-                          onViewHistory(
-                            p.tenant_id,
-                            `${p.first_name} ${p.last_name}`,
-                          )
-                        }
-                        className="bg-blue-50 text-blue-600 px-3 py-1 rounded-md text-xs font-bold hover:bg-blue-600 hover:text-white transition-all touch-manipulation"
-                      >
-                        View History
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() =>
+                            onViewHistory(
+                              p.tenant_id,
+                              `${p.first_name} ${p.last_name}`,
+                            )
+                          }
+                          className="bg-blue-50 text-blue-600 px-3 py-1 rounded-md text-xs font-bold hover:bg-blue-600 hover:text-white transition-all touch-manipulation"
+                        >
+                          View History
+                        </button>
+                        {canEditManual &&
+                          (p.payment_method === "manual" ||
+                            p.payment_method === "manual_reconciled") && (
+                            <button
+                              onClick={() => onEditManualPayment?.(p)}
+                              className="bg-amber-50 text-amber-700 p-1.5 rounded-md hover:bg-amber-600 hover:text-white transition-all"
+                              title="Edit manual payment"
+                              aria-label="Edit manual payment"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
+                        {canDeleteManual &&
+                          (p.payment_method === "manual" ||
+                            p.payment_method === "manual_reconciled") && (
+                            <button
+                              onClick={() => onDeleteManualPayment?.(p)}
+                              className="bg-red-50 text-red-600 p-1.5 rounded-md hover:bg-red-600 hover:text-white transition-all"
+                              title="Delete manual payment"
+                              aria-label="Delete manual payment"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -2021,6 +2174,151 @@ const ManualPaymentModal = ({
                 : data.payment_type === "deposit"
                   ? "Record Deposit"
                   : "Record Payment"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const EditManualPaymentModal = ({
+  data,
+  setData,
+  loading,
+  error,
+  onSubmit,
+  onClose,
+}) => {
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border">
+        <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
+          <div>
+            <h3 className="font-bold text-xl text-gray-800">
+              Edit Manual Payment
+            </h3>
+            <p className="text-gray-500 text-sm">
+              Update details for this manual payment
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <form onSubmit={onSubmit} className="p-6 space-y-4">
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Amount (KES)
+            </label>
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              value={data.amount}
+              onChange={(e) => setData({ ...data, amount: e.target.value })}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Payment Month
+            </label>
+            <input
+              type="month"
+              value={data.payment_month}
+              onChange={(e) =>
+                setData({ ...data, payment_month: e.target.value })
+              }
+              className="w-full rounded-lg border border-gray-300 px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              M-Pesa Receipt
+            </label>
+            <input
+              type="text"
+              value={data.mpesa_receipt_number}
+              onChange={(e) =>
+                setData({ ...data, mpesa_receipt_number: e.target.value })
+              }
+              className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="e.g. UC3IX89BKM"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Phone Number
+            </label>
+            <input
+              type="text"
+              value={data.phone_number}
+              onChange={(e) =>
+                setData({ ...data, phone_number: e.target.value })
+              }
+              className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="2547XXXXXXXX"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Status
+            </label>
+            <select
+              value={data.status}
+              onChange={(e) => setData({ ...data, status: e.target.value })}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2"
+            >
+              <option value="completed">Completed</option>
+              <option value="pending">Pending</option>
+              <option value="failed">Failed</option>
+              <option value="overdue">Overdue</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Notes
+            </label>
+            <textarea
+              rows={3}
+              value={data.notes}
+              onChange={(e) => setData({ ...data, notes: e.target.value })}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="Optional notes"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60"
+            >
+              {loading ? "Saving..." : "Save Changes"}
             </button>
           </div>
         </form>

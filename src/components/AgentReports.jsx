@@ -826,7 +826,7 @@ const AgentReports = () => {
             </div>
           </div>
 
-          {availableProperties.length > 0 && activeReport !== "sms" && (
+          {availableProperties.length > 0 && (
             <div className="flex-1 min-w-[200px]">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Property
@@ -858,7 +858,7 @@ const AgentReports = () => {
                 type="text"
                 placeholder={
                   activeReport === "sms"
-                    ? "Search phone or message..."
+                    ? "Search phone, message, tenant, property..."
                     : "Search..."
                 }
                 value={filters.search}
@@ -881,13 +881,14 @@ const AgentReports = () => {
 
           <button
             onClick={() => {
-              setFilters({
+              const clearedFilters = {
                 startDate: "",
                 endDate: "",
                 propertyId: "",
                 status: "",
                 search: "",
-              });
+              };
+              setFilters(clearedFilters);
               setMessagingFilters({ status: "all", channel: "all" });
             }}
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"

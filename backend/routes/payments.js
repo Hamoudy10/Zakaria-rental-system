@@ -322,11 +322,27 @@ router.put("/:id", protect, async (req, res) => {
   try {
     await client.query("BEGIN");
 
+    const role = req.user?.role;
+    if (!["admin", "agent"].includes(role)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({
+        success: false,
+        message: "Only admin/agent can update payments",
+      });
+    }
+
     const { id } = req.params;
-    const { mpesa_receipt_number, amount, status } = req.body;
+    let {
+      mpesa_receipt_number,
+      amount,
+      status,
+      payment_month,
+      phone_number,
+      notes,
+    } = req.body;
 
     const paymentCheck = await client.query(
-      "SELECT id FROM rent_payments WHERE id = $1",
+      "SELECT id, payment_method, property_id FROM rent_payments WHERE id = $1",
       [id],
     );
 
@@ -338,19 +354,134 @@ router.put("/:id", protect, async (req, res) => {
       });
     }
 
+    const payment = paymentCheck.rows[0];
+    const method = String(payment.payment_method || "").toLowerCase();
+    const isManual =
+      method === "manual" || method === "manual_reconciled";
+
+    if (!isManual) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Only manual payments can be edited",
+      });
+    }
+
+    if (role === "agent") {
+      if (!payment.property_id) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to this payment",
+        });
+      }
+
+      const assignmentCheck = await client.query(
+        `SELECT 1
+         FROM agent_property_assignments
+         WHERE agent_id = $1 AND property_id = $2 AND is_active = true
+         LIMIT 1`,
+        [req.user.id, payment.property_id],
+      );
+
+      if (assignmentCheck.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to this payment",
+        });
+      }
+    }
+
+    if (amount !== undefined && amount !== null && Number(amount) <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Amount must be greater than 0",
+      });
+    }
+
+    if (status) {
+      const allowedStatuses = ["pending", "completed", "failed", "overdue"];
+      if (!allowedStatuses.includes(String(status).toLowerCase())) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "Invalid status value",
+        });
+      }
+      status = String(status).toLowerCase();
+    }
+
+    let normalizedReceipt =
+      mpesa_receipt_number !== undefined && mpesa_receipt_number !== null
+        ? String(mpesa_receipt_number).trim()
+        : null;
+    if (normalizedReceipt === "") normalizedReceipt = null;
+
+    if (normalizedReceipt) {
+      const duplicateCheck = await client.query(
+        "SELECT id FROM rent_payments WHERE mpesa_receipt_number = $1 AND id <> $2",
+        [normalizedReceipt, id],
+      );
+      if (duplicateCheck.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message: "Another payment already uses this M-Pesa receipt number",
+        });
+      }
+    }
+
+    let normalizedMonth = null;
+    if (payment_month !== undefined && payment_month !== null && payment_month !== "") {
+      const monthText = String(payment_month).trim();
+      if (/^\d{4}-\d{2}$/.test(monthText)) {
+        normalizedMonth = `${monthText}-01`;
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(monthText)) {
+        normalizedMonth = monthText;
+      } else {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "Invalid payment_month format (use YYYY-MM or YYYY-MM-DD)",
+        });
+      }
+    }
+
+    const normalizedPhone =
+      phone_number !== undefined && phone_number !== null && String(phone_number).trim() !== ""
+        ? String(phone_number).trim()
+        : null;
+    const normalizedNotes =
+      notes !== undefined && notes !== null && String(notes).trim() !== ""
+        ? String(notes).trim()
+        : null;
+
     const result = await client.query(
       `UPDATE rent_payments
        SET mpesa_receipt_number = COALESCE($1, mpesa_receipt_number),
            amount = COALESCE($2, amount),
            status = COALESCE($3, status),
+           payment_month = COALESCE($4::date, payment_month),
+           phone_number = COALESCE($5, phone_number),
+           notes = COALESCE($6, notes),
            payment_date = CASE
              WHEN $3 = 'completed' AND payment_date IS NULL THEN NOW()
              ELSE payment_date
            END,
            updated_at = NOW()
-       WHERE id = $4
+       WHERE id = $7
        RETURNING *`,
-      [mpesa_receipt_number, amount, status, id],
+      [
+        normalizedReceipt,
+        amount ?? null,
+        status ?? null,
+        normalizedMonth,
+        normalizedPhone,
+        normalizedNotes,
+        id,
+      ],
     );
 
     await client.query("COMMIT");

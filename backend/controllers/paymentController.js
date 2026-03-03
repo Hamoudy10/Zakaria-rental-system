@@ -1321,7 +1321,7 @@ const getAllPayments = async (req, res) => {
 
     let baseQuery = `
       SELECT 
-        rp.id, rp.amount, rp.payment_month, rp.payment_date, rp.status, 
+        rp.id, rp.amount, rp.payment_month, rp.payment_date, rp.status, rp.payment_method, rp.notes,
         rp.mpesa_receipt_number, rp.mpesa_transaction_id, rp.phone_number,
         t.id as tenant_id, t.first_name, t.last_name,
         p.id as property_id, p.name as property_name,
