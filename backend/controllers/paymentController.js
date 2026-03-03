@@ -103,7 +103,7 @@ const normalizeKenyanPhone = (input) => {
 
 const getActiveAdminPhones = async () => {
   const adminUsers = await pool.query(
-    `SELECT phone_number
+    `SELECT id, email, phone_number
      FROM users
      WHERE role = 'admin'
        AND is_active = true
@@ -113,7 +113,13 @@ const getActiveAdminPhones = async () => {
   const uniquePhones = new Set();
   for (const row of adminUsers.rows) {
     const normalized = normalizeKenyanPhone(row.phone_number);
-    if (normalized) uniquePhones.add(normalized);
+    if (normalized) {
+      uniquePhones.add(normalized);
+      continue;
+    }
+    console.warn(
+      `Admin ${row.id} (${row.email || "no-email"}) skipped for SMS: invalid phone "${row.phone_number}"`,
+    );
   }
 
   return [...uniquePhones];

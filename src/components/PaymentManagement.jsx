@@ -664,10 +664,12 @@ const PaymentManagement = () => {
     if (!payment?.id) return;
 
     const method = String(payment.payment_method || "").toLowerCase();
-    const isManual =
-      method === "manual" || method === "manual_reconciled";
-    if (!isManual) {
-      alert("Only manual payments can be edited.");
+    const isEditable =
+      method === "manual" ||
+      method === "manual_reconciled" ||
+      method === "paybill";
+    if (!isEditable) {
+      alert("Only manual or paybill payments can be edited.");
       return;
     }
 
@@ -711,11 +713,11 @@ const PaymentManagement = () => {
       await updatePayment(editManualPaymentData.id, payload);
       await handleFetchPayments();
       setShowEditManualPayment(false);
-      alert("Manual payment updated successfully.");
+      alert("Payment updated successfully.");
     } catch (err) {
       console.error("Edit manual payment error:", err);
       setEditManualPaymentError(
-        err.response?.data?.message || "Failed to update manual payment.",
+        err.response?.data?.message || "Failed to update payment.",
       );
     } finally {
       setEditManualPaymentLoading(false);
@@ -1478,12 +1480,13 @@ const AllPaymentsTable = ({
                         </button>
                         {canEditManual &&
                           (p.payment_method === "manual" ||
-                            p.payment_method === "manual_reconciled") && (
+                            p.payment_method === "manual_reconciled" ||
+                            p.payment_method === "paybill") && (
                             <button
                               onClick={() => onEditManualPayment?.(p)}
                               className="bg-amber-50 text-amber-700 p-1.5 rounded-md hover:bg-amber-600 hover:text-white transition-all"
-                              title="Edit manual payment"
-                              aria-label="Edit manual payment"
+                              title="Edit payment"
+                              aria-label="Edit payment"
                             >
                               <Pencil size={14} />
                             </button>
@@ -2286,10 +2289,10 @@ const EditManualPaymentModal = ({
         <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
           <div>
             <h3 className="font-bold text-xl text-gray-800">
-              Edit Manual Payment
+              Edit Payment
             </h3>
             <p className="text-gray-500 text-sm">
-              Update details for this manual payment
+              Update details for manual or paybill payment
             </p>
           </div>
           <button
