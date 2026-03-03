@@ -820,15 +820,25 @@ class SMSService {
   async processQueuedSMS() {
     try {
       console.log("🔄 Processing SMS queue...");
+      const retryDelayMinutes = Number(process.env.SMS_RETRY_DELAY_MINUTES || 60);
 
       const queuedSMS = await pool.query(
         `SELECT * FROM sms_queue 
-         WHERE status = 'pending' AND attempts < 3
+         WHERE status = 'pending'
+           AND attempts < 3
+           AND message_id IS NULL
+           AND (
+             attempts = 0
+             OR COALESCE(last_attempt_at, created_at) <= NOW() - ($1::int * INTERVAL '1 minute')
+           )
          ORDER BY created_at ASC 
          LIMIT 10`,
+        [retryDelayMinutes],
       );
 
-      console.log(`📨 Found ${queuedSMS.rows.length} queued messages`);
+      console.log(
+        `📨 Found ${queuedSMS.rows.length} queued messages (retry delay: ${retryDelayMinutes} min)`,
+      );
 
       const results = { processed: 0, successful: 0, failed: 0 };
 
