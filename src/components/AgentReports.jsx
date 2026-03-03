@@ -568,10 +568,75 @@ const AgentReports = () => {
   }, [messagingFilters]);
 
   const handleExport = async (format) => {
-    // Export exactly what is currently in view (already filtered).
-    const exportData = Array.isArray(data) ? data : [];
+    const fetchExportData = async () => {
+      const params = buildFilterParams();
+      const EXPORT_LIMIT = 5000;
 
-    if (exportData.length === 0) {
+      const extractPaginatedArray = (response, type) => {
+        const extracted = extractDataArray(response, type);
+        return Array.isArray(extracted) ? extracted : [];
+      };
+
+      switch (activeReport) {
+        case "payments": {
+          return fetchAllPayments(params, EXPORT_LIMIT);
+        }
+
+        case "water": {
+          return fetchAllWaterBills(params, EXPORT_LIMIT);
+        }
+
+        case "sms": {
+          const smsParams = {
+            ...params,
+            ...(messagingFilters.status !== "all" && {
+              status: messagingFilters.status,
+            }),
+            ...(messagingFilters.channel !== "all" && {
+              channel: messagingFilters.channel,
+            }),
+          };
+          return fetchAllMessaging(smsParams, 1000);
+        }
+
+        case "revenue": {
+          const allPayments = await fetchAllPayments(params, EXPORT_LIMIT);
+          return calculateRevenue(allPayments);
+        }
+
+        case "tenants": {
+          const resp = await safeAPICall(() =>
+            api.get("/agent-properties/my-tenants", { params }),
+          );
+          return extractPaginatedArray(resp, "tenants");
+        }
+
+        case "complaints": {
+          const resp = await safeAPICall(() =>
+            api.get("/agent-properties/my-complaints", { params }),
+          );
+          return extractPaginatedArray(resp, "complaints");
+        }
+
+        case "properties": {
+          const resp = await safeAPICall(() => API.properties.getAgentProperties());
+          return extractPaginatedArray(resp, "properties");
+        }
+
+        default:
+          return Array.isArray(data) ? data : [];
+      }
+    };
+
+    let exportData = [];
+    try {
+      exportData = await fetchExportData();
+    } catch (e) {
+      console.warn("Falling back to loaded data for export:", e);
+      exportData = Array.isArray(data) ? data : [];
+    }
+
+    if (!Array.isArray(exportData) || exportData.length === 0) {
       alert(
         "No data to export. Please wait for data to load or check if the report has any records.",
       );
@@ -580,20 +645,12 @@ const AgentReports = () => {
 
     try {
       const reportTitle = reportTypes.find((r) => r.id === activeReport)?.name;
-      const exportFilters =
-        activeReport === "sms"
-          ? {
-              ...filters,
-              messagingStatus: messagingFilters.status,
-              messagingChannel: messagingFilters.channel,
-            }
-          : filters;
 
       if (format === "pdf") {
         await exportToPDF({
           reportType: activeReport,
           data: exportData,
-          filters: exportFilters,
+          filters: filters,
           companyInfo: companyInfo,
           user: user,
           title: reportTitle,
@@ -602,7 +659,7 @@ const AgentReports = () => {
         await exportToExcel({
           reportType: activeReport,
           data: exportData,
-          filters: exportFilters,
+          filters: filters,
           companyInfo: companyInfo,
           user: user,
           title: reportTitle,

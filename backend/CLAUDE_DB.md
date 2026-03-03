@@ -106,29 +106,6 @@ payment_method VARCHAR                   -- 'mpesa', 'carry_forward'
 created_at, updated_at TIMESTAMP
 ```
 
-### mpesa_callback_events (NEW - migration 012)
-```sql
-id UUID PRIMARY KEY
-trans_id VARCHAR UNIQUE NOT NULL
-amount NUMERIC(12,2)
-msisdn VARCHAR
-bill_ref_number VARCHAR
-trans_time VARCHAR
-raw_payload JSONB NOT NULL
-status VARCHAR CHECK IN ('received','processing','processed','failed')
-attempts INTEGER DEFAULT 0
-processing_started_at TIMESTAMPTZ
-processed_at TIMESTAMPTZ
-processing_result TEXT
-last_error TEXT
-rent_payment_id UUID REFERENCES rent_payments(id)
-first_received_at, last_received_at TIMESTAMPTZ
-created_at, updated_at TIMESTAMPTZ
-```
-Purpose:
-- Durable ingress log for M-Pesa C2B callbacks so receipts are never lost if downstream processing fails after receipt.
-- Enables idempotent handling and operational audit trail for callback retries/failures.
-
 ### water_bills
 ```sql
 id UUID PRIMARY KEY

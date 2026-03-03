@@ -4,7 +4,6 @@
 // Tenants do NOT use the system. Payments are recorded by admins/agents or arrive via M-Pesa C2B callback.
 
 const axios = require("axios");
-const crypto = require("crypto");
 const pool = require("../config/database");
 const NotificationService = require("../services/notificationService");
 const SMSService = require("../services/smsService");
@@ -128,96 +127,6 @@ const formatCoveredMonths = (carryForwardPayments = []) => {
   });
 };
 
-const isTruthy = (value) => {
-  if (typeof value === "boolean") return value;
-  const normalized = String(value || "").trim().toLowerCase();
-  return ["1", "true", "yes", "on"].includes(normalized);
-};
-
-const normalizeIp = (ip) => {
-  if (!ip) return "";
-  const first = String(ip).split(",")[0].trim();
-  if (first.startsWith("::ffff:")) return first.replace("::ffff:", "");
-  if (first === "::1") return "127.0.0.1";
-  return first;
-};
-
-const getRequestIp = (req) => {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (forwarded) return normalizeIp(forwarded);
-  const realIp = req.headers["x-real-ip"];
-  if (realIp) return normalizeIp(realIp);
-  return normalizeIp(req.socket?.remoteAddress || req.ip || "");
-};
-
-const getTrustedMpesaIps = () => {
-  const raw = process.env.MPESA_TRUSTED_IPS || "";
-  return raw
-    .split(",")
-    .map((value) => normalizeIp(value))
-    .filter(Boolean);
-};
-
-const timingSafeEquals = (a, b) => {
-  const left = Buffer.from(String(a || ""));
-  const right = Buffer.from(String(b || ""));
-  if (left.length !== right.length) return false;
-  return crypto.timingSafeEqual(left, right);
-};
-
-const verifyMpesaRequestSource = (req) => {
-  const strictMode = isTruthy(process.env.MPESA_STRICT_SOURCE_VERIFICATION ?? "false");
-  const requestIp = getRequestIp(req);
-  const trustedIps = getTrustedMpesaIps();
-  const configuredSecret = String(process.env.MPESA_CALLBACK_SECRET || "").trim();
-  const requestSecret = String(
-    req.headers["x-mpesa-callback-secret"] ||
-      req.headers["x-callback-secret"] ||
-      req.query?.secret ||
-      "",
-  ).trim();
-
-  const ipCheckEnabled = trustedIps.length > 0;
-  const secretCheckEnabled = configuredSecret.length > 0;
-
-  const ipVerified = ipCheckEnabled && trustedIps.includes(requestIp);
-  const secretVerified =
-    secretCheckEnabled && timingSafeEquals(requestSecret, configuredSecret);
-
-  const hasAnyVerificationMethod = ipCheckEnabled || secretCheckEnabled;
-  const verified = ipVerified || secretVerified;
-
-  if (!strictMode) {
-    return { verified: true, strictMode, requestIp, reason: "strict_mode_disabled" };
-  }
-
-  if (!hasAnyVerificationMethod) {
-    return {
-      verified: false,
-      strictMode,
-      requestIp,
-      reason:
-        "strict verification enabled but no verifier configured (set MPESA_TRUSTED_IPS and/or MPESA_CALLBACK_SECRET)",
-    };
-  }
-
-  if (!verified) {
-    return {
-      verified: false,
-      strictMode,
-      requestIp,
-      reason: "request did not match trusted IPs or callback secret",
-    };
-  }
-
-  return {
-    verified: true,
-    strictMode,
-    requestIp,
-    method: ipVerified ? "ip_allowlist" : "shared_secret",
-  };
-};
-
 const getPaymentFailureGuidance = (rawError = "", context = {}) => {
   const text = String(rawError || "").toLowerCase();
   const requestId = context?.requestId ? `Request ID: ${context.requestId}. ` : "";
@@ -312,90 +221,6 @@ const getPaymentFailureGuidance = (rawError = "", context = {}) => {
     action:
       `${manualSteps} Escalate to support with receipt, amount, phone, and callback timestamp.`,
   };
-};
-
-const upsertMpesaCallbackEvent = async (payload = {}) => {
-  const {
-    transId,
-    amount = null,
-    msisdn = null,
-    billRef = null,
-    transTime = null,
-    rawPayload = {},
-  } = payload;
-
-  if (!transId) return null;
-
-  const result = await pool.query(
-    `INSERT INTO mpesa_callback_events (
-      trans_id,
-      amount,
-      msisdn,
-      bill_ref_number,
-      trans_time,
-      raw_payload,
-      status,
-      first_received_at,
-      last_received_at
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6::jsonb, 'received', NOW(), NOW()
-    )
-    ON CONFLICT (trans_id)
-    DO UPDATE SET
-      amount = COALESCE(EXCLUDED.amount, mpesa_callback_events.amount),
-      msisdn = COALESCE(EXCLUDED.msisdn, mpesa_callback_events.msisdn),
-      bill_ref_number = COALESCE(EXCLUDED.bill_ref_number, mpesa_callback_events.bill_ref_number),
-      trans_time = COALESCE(EXCLUDED.trans_time, mpesa_callback_events.trans_time),
-      raw_payload = EXCLUDED.raw_payload,
-      last_received_at = NOW()
-    RETURNING id, status, attempts, processed_at`,
-    [transId, amount, msisdn, billRef, transTime, JSON.stringify(rawPayload || {})],
-  );
-
-  return result.rows[0] || null;
-};
-
-const markMpesaCallbackProcessing = async (eventId) => {
-  if (!eventId) return;
-  await pool.query(
-    `UPDATE mpesa_callback_events
-     SET status = 'processing',
-         attempts = COALESCE(attempts, 0) + 1,
-         processing_started_at = NOW(),
-         last_error = NULL,
-         updated_at = NOW()
-     WHERE id = $1`,
-    [eventId],
-  );
-};
-
-const markMpesaCallbackProcessed = async (
-  eventId,
-  { rentPaymentId = null, processingResult = null } = {},
-) => {
-  if (!eventId) return;
-  await pool.query(
-    `UPDATE mpesa_callback_events
-     SET status = 'processed',
-         processed_at = NOW(),
-         processing_result = $2,
-         rent_payment_id = COALESCE($3, rent_payment_id),
-         updated_at = NOW()
-     WHERE id = $1`,
-    [eventId, processingResult, rentPaymentId],
-  );
-};
-
-const markMpesaCallbackFailed = async (eventId, errorMessage = "Unknown error") => {
-  if (!eventId) return;
-  await pool.query(
-    `UPDATE mpesa_callback_events
-     SET status = 'failed',
-         last_error = LEFT($2, 2000),
-         updated_at = NOW()
-     WHERE id = $1`,
-    [eventId, String(errorMessage || "Unknown error")],
-  );
 };
 
 // ==================== CORE BUSINESS LOGIC ====================
@@ -876,18 +701,6 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
  */
 const handleMpesaValidation = async (req, res) => {
   try {
-    const sourceCheck = verifyMpesaRequestSource(req);
-    if (!sourceCheck.verified) {
-      console.warn("Blocked unverified M-Pesa validation request:", {
-        ip: sourceCheck.requestIp,
-        reason: sourceCheck.reason,
-      });
-      return res.status(403).json({
-        ResultCode: "C2B00013",
-        ResultDesc: "Validation Service Error",
-      });
-    }
-
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
     console.log("M-PESA C2B VALIDATION REQUEST");
     console.log("Timestamp:", new Date().toISOString());
@@ -996,26 +809,8 @@ const handleMpesaValidation = async (req, res) => {
  * }
  */
 const handleMpesaCallback = async (req, res) => {
-  let callbackEventId = null;
-  const safeAck = () => {
-    if (!res.headersSent) {
-      res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
-    }
-  };
-
-  const sourceCheck = verifyMpesaRequestSource(req);
-  if (!sourceCheck.verified) {
-    console.warn("Blocked unverified M-Pesa callback request:", {
-      ip: sourceCheck.requestIp,
-      reason: sourceCheck.reason,
-    });
-    if (!res.headersSent) {
-      return res
-        .status(403)
-        .json({ ResultCode: 1, ResultDesc: "Unauthorized callback source" });
-    }
-    return;
-  }
+  // ALWAYS respond to Safaricom immediately (they timeout after ~5 seconds)
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // DEBUG: Log ALL fields and their lengths from real Safaricom callback
@@ -1032,60 +827,6 @@ const handleMpesaCallback = async (req, res) => {
   });
   console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
-  // C2B Paybill payload is FLAT JSON
-  const {
-    TransID,
-    TransAmount,
-    BillRefNumber,
-    MSISDN,
-    FirstName,
-    MiddleName,
-    LastName,
-    TransTime,
-    BusinessShortCode,
-    OrgAccountBalance,
-  } = req.body || {};
-
-  // Persist ingress before ACK so callback cannot disappear if processing fails later.
-  try {
-    if (TransID) {
-      const callbackEvent = await upsertMpesaCallbackEvent({
-        transId: TransID,
-        amount: TransAmount ? parseFloat(TransAmount) : null,
-        msisdn: MSISDN || null,
-        billRef: BillRefNumber || null,
-        transTime: TransTime || null,
-        rawPayload: req.body || {},
-      });
-      callbackEventId = callbackEvent?.id || null;
-
-      if (callbackEvent?.status === "processed") {
-        safeAck();
-        return;
-      }
-
-      await markMpesaCallbackProcessing(callbackEventId);
-    }
-  } catch (ingressError) {
-    // Temporary compatibility fallback:
-    // if migration 012 is not yet applied, continue legacy processing to avoid payment downtime.
-    if (ingressError?.code === "42P01") {
-      console.error(
-        "mpesa_callback_events table missing (migration 012 not applied). Continuing without durable ingress for now.",
-      );
-    } else {
-      console.error("Failed to persist callback ingress:", ingressError);
-      if (!res.headersSent) {
-        return res
-          .status(500)
-          .json({ ResultCode: 1, ResultDesc: "Temporary system error" });
-      }
-      return;
-    }
-  }
-
-  safeAck();
-
   const client = await pool.connect();
   try {
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
@@ -1094,14 +835,24 @@ const handleMpesaCallback = async (req, res) => {
     console.log("Body:", JSON.stringify(req.body, null, 2));
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
+    // C2B Paybill payload is FLAT JSON
+    const {
+      TransID,
+      TransAmount,
+      BillRefNumber,
+      MSISDN,
+      FirstName,
+      MiddleName,
+      LastName,
+      TransTime,
+      BusinessShortCode,
+      OrgAccountBalance,
+    } = req.body;
+
     // Validate required fields
     if (!TransID || !TransAmount || !MSISDN) {
       console.error(
         "Invalid C2B callback: missing TransID, TransAmount, or MSISDN",
-      );
-      await markMpesaCallbackFailed(
-        callbackEventId,
-        "Missing required callback fields: TransID, TransAmount, or MSISDN",
       );
       return;
     }
@@ -1109,10 +860,6 @@ const handleMpesaCallback = async (req, res) => {
     const amount = parseFloat(TransAmount);
     if (!amount || amount <= 0) {
       console.log("Invalid payment amount, skipping:", TransAmount);
-      await markMpesaCallbackFailed(
-        callbackEventId,
-        `Invalid callback amount: ${TransAmount}`,
-      );
       return;
     }
 
@@ -1123,10 +870,6 @@ const handleMpesaCallback = async (req, res) => {
     );
     if (duplicateCheck.rows.length > 0) {
       console.log("Duplicate C2B callback ignored:", TransID);
-      await markMpesaCallbackProcessed(callbackEventId, {
-        rentPaymentId: duplicateCheck.rows[0].id || null,
-        processingResult: "duplicate_ignored",
-      });
       return;
     }
 
@@ -1316,7 +1059,7 @@ const handleMpesaCallback = async (req, res) => {
         }
       }
 
-      const unmatchedInsert = await client.query(
+      await client.query(
         `INSERT INTO rent_payments (
           mpesa_transaction_id, mpesa_receipt_number, phone_number,
           amount, payment_date, payment_month, status, payment_method,
@@ -1325,7 +1068,7 @@ const handleMpesaCallback = async (req, res) => {
           $1, $1, $2,
           $3, $4, $5, 'pending', 'mpesa',
           $6, NOW()
-        ) RETURNING id`,
+        )`,
         [
           TransID,
           safePhone,
@@ -1337,10 +1080,6 @@ const handleMpesaCallback = async (req, res) => {
       );
 
       await client.query("COMMIT");
-      await markMpesaCallbackProcessed(callbackEventId, {
-        rentPaymentId: unmatchedInsert.rows[0]?.id || null,
-        processingResult: "unmatched_pending_recorded",
-      });
 
       // Notify payer if we have a valid phone (helps prevent "money lost" confusion)
       if (safePhone !== "invalid_msisdn") {
@@ -1458,10 +1197,6 @@ const handleMpesaCallback = async (req, res) => {
     }
 
     await client.query("COMMIT");
-    await markMpesaCallbackProcessed(callbackEventId, {
-      rentPaymentId: paymentRecord.id,
-      processingResult: "matched_completed",
-    });
 
     console.log("âœ… PAYMENT PROCESSED:", {
       transId: TransID,
@@ -1537,13 +1272,8 @@ const handleMpesaCallback = async (req, res) => {
       );
     }
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch (rollbackError) {
-      console.error("Rollback failed in C2B callback handler:", rollbackError);
-    }
+    await client.query("ROLLBACK");
     console.error("C2B CALLBACK PROCESSING ERROR:", error);
-    await markMpesaCallbackFailed(callbackEventId, error.message);
     const guidance = getPaymentFailureGuidance(error.message, {
       requestId: error?.response?.data?.requestId,
     });
@@ -1838,13 +1568,6 @@ const getTenantPaymentHistory = async (req, res) => {
 const processPaybillPayment = async (req, res) => {
   const client = await pool.connect();
   try {
-    if (!["admin", "agent"].includes(req.user?.role)) {
-      return res.status(403).json({
-        success: false,
-        message: "Only admin/agent can process paybill payments",
-      });
-    }
-
     await client.query("BEGIN");
 
     const {
@@ -2355,13 +2078,6 @@ const sendBalanceReminders = async (req, res) => {
 const recordManualPayment = async (req, res) => {
   const client = await pool.connect();
   try {
-    if (!["admin", "agent"].includes(req.user?.role)) {
-      return res.status(403).json({
-        success: false,
-        message: "Only admin/agent can record manual payments",
-      });
-    }
-
     await client.query("BEGIN");
 
     const {
