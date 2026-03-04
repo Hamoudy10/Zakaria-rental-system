@@ -492,7 +492,11 @@ class MessagingService {
     messageType = "announcement",
     options = {},
   ) {
-    const { logSMSNotification = false } = options;
+    const {
+      logSMSNotification = false,
+      whatsappTemplateName = null,
+      whatsappTemplateParams = [],
+    } = options;
     console.log("Messaging: Sending raw message:", {
       to: phone,
       type: messageType,
@@ -500,12 +504,22 @@ class MessagingService {
 
     const result = await this.sendParallel(
       () => this.sms.sendSMS(phone, message),
-      () =>
-        this.whatsapp.sendGeneralAnnouncement(
+      () => {
+        if (whatsappTemplateName) {
+          return this.whatsapp.sendTemplateMessage(
+            phone,
+            whatsappTemplateName,
+            Array.isArray(whatsappTemplateParams)
+              ? whatsappTemplateParams
+              : [],
+          );
+        }
+        return this.whatsapp.sendGeneralAnnouncement(
           phone,
           this.getAnnouncementTitle(messageType),
           message,
-        ),
+        );
+      },
     );
 
     if (logSMSNotification) {
