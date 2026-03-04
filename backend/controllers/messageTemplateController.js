@@ -479,6 +479,62 @@ const restoreTemplate = async (req, res) => {
   }
 };
 
+const deleteTemplatePermanent = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    await client.query("BEGIN");
+
+    const existing = await client.query(
+      `SELECT id, name, template_key, is_archived FROM message_templates WHERE id = $1`,
+      [id],
+    );
+    if (!existing.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ success: false, message: "Template not found" });
+    }
+
+    if (!existing.rows[0].is_archived) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Archive template before permanent deletion",
+      });
+    }
+
+    await client.query(
+      `UPDATE message_template_bindings
+       SET default_template_id = NULL,
+           updated_by = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE default_template_id = $2`,
+      [req.user?.id || null, id],
+    );
+
+    const deleted = await client.query(
+      `DELETE FROM message_templates WHERE id = $1 RETURNING id, name, template_key`,
+      [id],
+    );
+
+    await client.query("COMMIT");
+    return res.json({
+      success: true,
+      message: "Template permanently deleted",
+      data: deleted.rows[0],
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Delete template permanently error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to permanently delete template",
+      error: error.message,
+    });
+  } finally {
+    client.release();
+  }
+};
+
 const previewTemplate = async (req, res) => {
   try {
     const { id } = req.params;
@@ -684,6 +740,91 @@ const getTemplatesForEvent = async (req, res) => {
   }
 };
 
+const getTemplatesForAllActiveEvents = async (req, res) => {
+  try {
+    const channelCapability = String(
+      req.query.channel_capability || "any",
+    ).toLowerCase();
+
+    const validCapabilities = new Set(["any", "sms", "whatsapp", "both"]);
+    if (!validCapabilities.has(channelCapability)) {
+      return res.status(400).json({
+        success: false,
+        message: "channel_capability must be one of: any, sms, whatsapp, both",
+      });
+    }
+
+    const bindingsRes = await pool.query(
+      `SELECT *
+       FROM message_template_bindings
+       WHERE is_active = true
+       ORDER BY event_key ASC`,
+    );
+    const bindings = bindingsRes.rows;
+
+    const templateMap = new Map();
+
+    for (const binding of bindings) {
+      const params = [binding.template_category];
+      const filters = [
+        `is_archived = false`,
+        `is_active = true`,
+        `category = $1`,
+      ];
+
+      if (binding.channel_preference !== "any") {
+        params.push(binding.channel_preference);
+        filters.push(`(channel = $${params.length} OR channel = 'both')`);
+      }
+
+      if (channelCapability === "sms") {
+        filters.push(`channel IN ('sms', 'both')`);
+      } else if (channelCapability === "whatsapp") {
+        filters.push(`(channel IN ('whatsapp', 'both') OR COALESCE(whatsapp_template_name, '') <> '')`);
+      } else if (channelCapability === "both") {
+        filters.push(`channel = 'both'`);
+      }
+
+      const rows = await pool.query(
+        `SELECT id, template_key, name, description, category, channel, variables,
+                sms_body, whatsapp_template_name, whatsapp_fallback_body
+         FROM message_templates
+         WHERE ${filters.join(" AND ")}`,
+        params,
+      );
+
+      rows.rows.forEach((template) => {
+        const existing = templateMap.get(template.id);
+        if (!existing) {
+          templateMap.set(template.id, {
+            ...template,
+            event_keys: [binding.event_key],
+          });
+        } else if (!existing.event_keys.includes(binding.event_key)) {
+          existing.event_keys.push(binding.event_key);
+        }
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        bindings,
+        templates: Array.from(templateMap.values()).sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || "")),
+        ),
+      },
+    });
+  } catch (error) {
+    console.error("Get templates for all active events error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch active-event templates",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   initializeMessageTemplateSystem,
   listTemplates,
@@ -692,9 +833,11 @@ module.exports = {
   updateTemplate,
   archiveTemplate,
   restoreTemplate,
+  deleteTemplatePermanent,
   previewTemplate,
   listBindings,
   updateBinding,
   getTemplatesForEvent,
+  getTemplatesForAllActiveEvents,
   renderTemplate,
 };

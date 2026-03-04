@@ -31,6 +31,9 @@ const SystemSettings = () => {
   const [includeArchivedTemplates, setIncludeArchivedTemplates] = useState(false);
   const [templatePreview, setTemplatePreview] = useState("");
   const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [templateChannelFilter, setTemplateChannelFilter] = useState('all');
+  const [templateCategoryFilter, setTemplateCategoryFilter] = useState('all');
   const [templateForm, setTemplateForm] = useState({
     template_key: '',
     name: '',
@@ -496,7 +499,9 @@ const SystemSettings = () => {
     setTemplatesLoading(true);
     try {
       const response = await API.settings.getMessageTemplates({
-        include_archived: includeArchivedTemplates
+        include_archived: includeArchivedTemplates,
+        limit: 500,
+        page: 1,
       });
       setMessageTemplates(response.data?.data || []);
     } catch (err) {
@@ -599,6 +604,21 @@ const SystemSettings = () => {
     }
   };
 
+  const handlePermanentDeleteTemplate = async (id) => {
+    if (!window.confirm('Permanently delete this archived template? This cannot be undone.')) return;
+    try {
+      await API.settings.deleteMessageTemplatePermanent(id);
+      setTemplateMessage({ type: 'success', text: 'Template permanently deleted' });
+      await loadMessageTemplates();
+      await loadTemplateBindings();
+    } catch (err) {
+      setTemplateMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Failed to permanently delete template'
+      });
+    }
+  };
+
   const handleBindingChange = async (eventKey, defaultTemplateId) => {
     try {
       await API.settings.updateTemplateBinding(eventKey, {
@@ -643,6 +663,23 @@ const SystemSettings = () => {
       });
     }
   };
+
+  const templateLibrary = useMemo(() => {
+    return (messageTemplates || []).filter((template) => {
+      const matchesChannel =
+        templateChannelFilter === 'all' || template.channel === templateChannelFilter;
+      const matchesCategory =
+        templateCategoryFilter === 'all' || template.category === templateCategoryFilter;
+      const query = templateSearch.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        String(template.name || '').toLowerCase().includes(query) ||
+        String(template.template_key || '').toLowerCase().includes(query) ||
+        String(template.whatsapp_template_name || '').toLowerCase().includes(query);
+
+      return matchesChannel && matchesCategory && matchesSearch;
+    });
+  }, [messageTemplates, templateChannelFilter, templateCategoryFilter, templateSearch]);
 
   /* ---------------- Document Preview Component ---------------- */
   const DocumentPreview = () => (
@@ -1293,11 +1330,42 @@ const SystemSettings = () => {
 
                   <div className="border border-gray-200 rounded-lg p-4">
                     <h4 className="font-semibold text-gray-900 mb-3">Template Library</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+                      <input
+                        type="text"
+                        placeholder="Search name, key, WhatsApp template..."
+                        value={templateSearch}
+                        onChange={(e) => setTemplateSearch(e.target.value)}
+                        className="border rounded p-2 text-sm"
+                      />
+                      <select
+                        value={templateChannelFilter}
+                        onChange={(e) => setTemplateChannelFilter(e.target.value)}
+                        className="border rounded p-2 text-sm"
+                      >
+                        <option value="all">All channels</option>
+                        <option value="sms">SMS only</option>
+                        <option value="whatsapp">WhatsApp only</option>
+                        <option value="both">Both channels</option>
+                      </select>
+                      <select
+                        value={templateCategoryFilter}
+                        onChange={(e) => setTemplateCategoryFilter(e.target.value)}
+                        className="border rounded p-2 text-sm"
+                      >
+                        <option value="all">All categories</option>
+                        {Array.from(new Set((messageTemplates || []).map((t) => t.category).filter(Boolean))).map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     {templatesLoading ? (
                       <p className="text-sm text-gray-500">Loading templates...</p>
                     ) : (
                       <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-                        {messageTemplates.map(template => (
+                        {templateLibrary.map(template => (
                           <div key={template.id} className="border rounded p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div>
@@ -1322,18 +1390,26 @@ const SystemSettings = () => {
                                     Archive
                                   </button>
                                 ) : (
-                                  <button
-                                    onClick={() => handleRestoreTemplate(template.id)}
-                                    className="text-xs px-2 py-1 border border-green-300 text-green-600 rounded hover:bg-green-50"
-                                  >
-                                    Restore
-                                  </button>
+                                  <>
+                                    <button
+                                      onClick={() => handleRestoreTemplate(template.id)}
+                                      className="text-xs px-2 py-1 border border-green-300 text-green-600 rounded hover:bg-green-50"
+                                    >
+                                      Restore
+                                    </button>
+                                    <button
+                                      onClick={() => handlePermanentDeleteTemplate(template.id)}
+                                      className="text-xs px-2 py-1 border border-red-500 text-red-700 rounded hover:bg-red-50"
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </div>
                           </div>
                         ))}
-                        {!messageTemplates.length && (
+                        {!templateLibrary.length && (
                           <p className="text-sm text-gray-500">No templates found.</p>
                         )}
                       </div>
