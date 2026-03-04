@@ -438,7 +438,7 @@ class CronService {
             billItemsText,
             this.formatAmount(totalDue),
             config.paybillNumber,
-            config.companyName,
+            bill.unitCode,
           ];
 
           // Queue SMS
