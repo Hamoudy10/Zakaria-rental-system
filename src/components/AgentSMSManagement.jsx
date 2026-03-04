@@ -100,6 +100,7 @@ const AgentSMSManagement = () => {
   const [sendingTest, setSendingTest] = useState(false);
   const [testSendResult, setTestSendResult] = useState(null);
   const [resolvedTemplateVariables, setResolvedTemplateVariables] = useState({});
+  const [systemPaybill, setSystemPaybill] = useState("");
   const [loadingNotificationTemplates, setLoadingNotificationTemplates] =
     useState(false);
   const [loadingSendBalances, setLoadingSendBalances] = useState(false);
@@ -130,6 +131,7 @@ const AgentSMSManagement = () => {
     fetchAgentProperties();
     fetchBillingTemplates();
     fetchNotificationTemplates();
+    fetchSystemPaybill();
     // Set default month to current month
     const today = new Date();
     const year = today.getFullYear();
@@ -218,6 +220,17 @@ const AgentSMSManagement = () => {
     }
   };
 
+  const fetchSystemPaybill = async () => {
+    try {
+      const response = await API.settings.getSettingByKey("paybill_number");
+      const value = response?.data?.setting?.value;
+      setSystemPaybill(value ? String(value).trim() : "");
+    } catch (error) {
+      console.error("Error fetching system paybill:", error);
+      setSystemPaybill("");
+    }
+  };
+
   const buildVariableContext = (tenant) => {
     const now = new Date();
     const monthLong = now.toLocaleDateString("en-US", {
@@ -254,7 +267,11 @@ const AgentSMSManagement = () => {
       month_short: monthShort,
       propertyName: property?.name || "",
       property_name: property?.name || "",
-      paybill: property?.paybill_number || property?.paybill || "",
+      paybill:
+        property?.paybill_number ||
+        property?.paybill ||
+        systemPaybill ||
+        "",
       account: tenant.unit_code || "",
       accountNumber: tenant.unit_code || "",
       message: testMessage?.trim() || "",
@@ -340,6 +357,7 @@ const AgentSMSManagement = () => {
     sendPropertyId,
     testAmount,
     sendTenantBalances,
+    systemPaybill,
   ]);
 
   const fetchSendTenantsByProperty = async (selectedProperty) => {
@@ -473,6 +491,7 @@ const AgentSMSManagement = () => {
         paybill:
           selectedProperty?.paybill_number ||
           selectedProperty?.paybill ||
+          systemPaybill ||
           "",
       };
       const payload = {
