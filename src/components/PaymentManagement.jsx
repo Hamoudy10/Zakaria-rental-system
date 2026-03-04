@@ -762,8 +762,15 @@ const PaymentManagement = () => {
   useEffect(() => {
     const fetchSystemPaybill = async () => {
       try {
-        const response = await API.settings.getSettingByKey("paybill_number");
-        let value = response?.data?.setting?.value;
+        const infoResponse = await API.settings.getCompanyInfo();
+        let value =
+          infoResponse?.data?.data?.paybill_number ||
+          infoResponse?.data?.data?.mpesa_paybill_number ||
+          "";
+        if (!value) {
+          const response = await API.settings.getSettingByKey("paybill_number");
+          value = response?.data?.setting?.value;
+        }
         if (!value) {
           const alt = await API.settings.getSettingByKey("mpesa_paybill_number");
           value = alt?.data?.setting?.value;

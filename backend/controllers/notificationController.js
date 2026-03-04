@@ -1633,14 +1633,28 @@ const getMessagingHistory = async (req, res) => {
           wq.agent_id,
           tinfo.first_name,
           tinfo.last_name,
-          tinfo.unit_code,
-          tinfo.property_name,
+          COALESCE(tinfo.unit_code, tpl.unit_code) as unit_code,
+          COALESCE(tinfo.property_name, pinfo.property_name) as property_name,
           'whatsapp' as channel,
           wq.template_name,
           'queue' as source,
           CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
         FROM whatsapp_queue wq
         LEFT JOIN users u ON wq.agent_id = u.id
+        LEFT JOIN LATERAL (
+          SELECT CASE
+            WHEN wq.template_name = 'payment_confirmation' THEN (wq.template_params::jsonb ->> 2)
+            WHEN wq.template_name = 'payment_confirmation_detailed' THEN (wq.template_params::jsonb ->> 2)
+            WHEN wq.template_name = 'admin_payment_alert' THEN (wq.template_params::jsonb ->> 1)
+            WHEN wq.template_name = 'admin_payment_alert_detailed' THEN (wq.template_params::jsonb ->> 1)
+            WHEN wq.template_name = 'balance_reminder' THEN (wq.template_params::jsonb ->> 1)
+            WHEN wq.template_name = 'bill_notification' THEN (wq.template_params::jsonb ->> 2)
+            WHEN wq.template_name = 'rental_welcome' THEN (wq.template_params::jsonb ->> 2)
+            WHEN wq.template_name = 'advance_payment' THEN (wq.template_params::jsonb ->> 2)
+            WHEN wq.template_name = 'monthly_bill_cron' THEN (wq.template_params::jsonb ->> 2)
+            ELSE NULL
+          END AS unit_code
+        ) tpl ON true
         LEFT JOIN LATERAL (
           SELECT
             t.first_name,
@@ -1658,6 +1672,13 @@ const getMessagingHistory = async (req, res) => {
           )
           LIMIT 1
         ) tinfo ON true
+        LEFT JOIN LATERAL (
+          SELECT p.name AS property_name
+          FROM property_units pu
+          JOIN properties p ON p.id = pu.property_id
+          WHERE pu.unit_code = COALESCE(tpl.unit_code, tinfo.unit_code)
+          LIMIT 1
+        ) pinfo ON true
         ${waWhereClause}
       `);
 
@@ -1704,13 +1725,27 @@ const getMessagingHistory = async (req, res) => {
           NULL::uuid as agent_id,
           tinfo.first_name,
           tinfo.last_name,
-          tinfo.unit_code,
-          tinfo.property_name,
+          COALESCE(tinfo.unit_code, tpl.unit_code) as unit_code,
+          COALESCE(tinfo.property_name, pinfo.property_name) as property_name,
           'whatsapp' as channel,
           wn.template_name,
           'notification' as source,
           'System (Auto)' as sent_by_name
         FROM whatsapp_notifications wn
+        LEFT JOIN LATERAL (
+          SELECT CASE
+            WHEN wn.template_name = 'payment_confirmation' THEN (wn.template_params::jsonb ->> 2)
+            WHEN wn.template_name = 'payment_confirmation_detailed' THEN (wn.template_params::jsonb ->> 2)
+            WHEN wn.template_name = 'admin_payment_alert' THEN (wn.template_params::jsonb ->> 1)
+            WHEN wn.template_name = 'admin_payment_alert_detailed' THEN (wn.template_params::jsonb ->> 1)
+            WHEN wn.template_name = 'balance_reminder' THEN (wn.template_params::jsonb ->> 1)
+            WHEN wn.template_name = 'bill_notification' THEN (wn.template_params::jsonb ->> 2)
+            WHEN wn.template_name = 'rental_welcome' THEN (wn.template_params::jsonb ->> 2)
+            WHEN wn.template_name = 'advance_payment' THEN (wn.template_params::jsonb ->> 2)
+            WHEN wn.template_name = 'monthly_bill_cron' THEN (wn.template_params::jsonb ->> 2)
+            ELSE NULL
+          END AS unit_code
+        ) tpl ON true
         LEFT JOIN LATERAL (
           SELECT
             t.first_name,
@@ -1728,6 +1763,13 @@ const getMessagingHistory = async (req, res) => {
           )
           LIMIT 1
         ) tinfo ON true
+        LEFT JOIN LATERAL (
+          SELECT p.name AS property_name
+          FROM property_units pu
+          JOIN properties p ON p.id = pu.property_id
+          WHERE pu.unit_code = COALESCE(tpl.unit_code, tinfo.unit_code)
+          LIMIT 1
+        ) pinfo ON true
         ${waNotifWhereClause}
       `);
 
