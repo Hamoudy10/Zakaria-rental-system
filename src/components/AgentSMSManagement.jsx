@@ -65,11 +65,14 @@ const AgentSMSManagement = () => {
   const [loadingSendTenants, setLoadingSendTenants] = useState(false);
   const [selectedSendTenantId, setSelectedSendTenantId] = useState("");
   const [testMessage, setTestMessage] = useState("");
+  const [testAmount, setTestAmount] = useState("");
   const [testTemplateId, setTestTemplateId] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
   const [testSendResult, setTestSendResult] = useState(null);
   const [loadingNotificationTemplates, setLoadingNotificationTemplates] =
     useState(false);
+  const [loadingSendBalances, setLoadingSendBalances] = useState(false);
+  const [sendTenantBalances, setSendTenantBalances] = useState({});
 
   // Load agent's assigned properties
   useEffect(() => {
@@ -201,6 +204,7 @@ const AgentSMSManagement = () => {
       paybill: property?.paybill_number || property?.paybill || "",
       account: tenant.unit_code || "",
       message: testMessage?.trim() || "",
+      total: testAmount?.trim() || "",
     };
 
     return base.replace(/\{([^}]+)\}/g, (_, key) => {
@@ -220,12 +224,21 @@ const AgentSMSManagement = () => {
     if (rendered) {
       setTestMessage(rendered);
     }
-  }, [testTemplateId, selectedSendTenantId, sendTenants, notificationTemplates, sendPropertyId]);
+  }, [
+    testTemplateId,
+    selectedSendTenantId,
+    sendTenants,
+    notificationTemplates,
+    sendPropertyId,
+    testAmount,
+  ]);
 
   const fetchSendTenantsByProperty = async (selectedProperty) => {
     if (!selectedProperty) {
       setSendTenants([]);
       setSelectedSendTenantId("");
+      setSendTenantBalances({});
+      setTestAmount("");
       return;
     }
 
@@ -242,10 +255,38 @@ const AgentSMSManagement = () => {
           : [];
       setSendTenants(tenants);
       setSelectedSendTenantId("");
+      setTestAmount("");
+
+      // Auto-load balance snapshot for current month to prefill amount on tenant select.
+      setLoadingSendBalances(true);
+      try {
+        const balanceMonth =
+          month ||
+          `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+        const statusResponse = await API.payments.getTenantPaymentStatus({
+          propertyId: selectedProperty,
+          month: balanceMonth,
+        });
+        const statusTenants = statusResponse?.data?.data?.tenants || [];
+        const balanceMap = {};
+        statusTenants.forEach((row) => {
+          const id = String(row.tenant_id || row.id || "");
+          if (!id) return;
+          const rawDue = Number(row.total_due ?? row.balance ?? row.rent_due ?? 0);
+          balanceMap[id] = Number.isFinite(rawDue) ? rawDue : 0;
+        });
+        setSendTenantBalances(balanceMap);
+      } catch (balanceError) {
+        console.error("Error fetching tenant balances for prefill:", balanceError);
+        setSendTenantBalances({});
+      } finally {
+        setLoadingSendBalances(false);
+      }
     } catch (error) {
       console.error("Error fetching property tenants for test send:", error);
       setSendTenants([]);
       setSelectedSendTenantId("");
+      setSendTenantBalances({});
       alert(
         error?.response?.data?.message ||
           "Failed to load tenants for selected property.",
@@ -254,6 +295,13 @@ const AgentSMSManagement = () => {
       setLoadingSendTenants(false);
     }
   };
+
+  useEffect(() => {
+    if (!selectedSendTenantId) return;
+    const due = Number(sendTenantBalances[selectedSendTenantId]);
+    if (!Number.isFinite(due)) return;
+    setTestAmount(due > 0 ? String(due) : "0");
+  }, [selectedSendTenantId, sendTenantBalances]);
 
   const handleSendTestNotification = async () => {
     if (!sendPropertyId) {
@@ -296,6 +344,9 @@ const AgentSMSManagement = () => {
             month: "long",
             year: "numeric",
           }),
+          total: testAmount.trim(),
+          outstanding: testAmount.trim(),
+          account: selectedTenant?.unit_code || "",
         },
       };
 
@@ -751,6 +802,31 @@ const AgentSMSManagement = () => {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Outstanding Amount (KES)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={testAmount}
+                    onChange={(e) => setTestAmount(e.target.value)}
+                    placeholder="e.g. 35000"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Used for templates with <code>{"{total}"}</code>.
+                  </p>
+                  {selectedSendTenantId && (
+                    <p className="mt-1 text-xs text-blue-600">
+                      {loadingSendBalances
+                        ? "Loading balance snapshot..."
+                        : "Auto-filled from tenant outstanding balance (editable)."}
+                    </p>
+                  )}
+                </div>
+
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Message {testTemplateId ? "(Optional with template)" : "*"}
@@ -798,6 +874,7 @@ const AgentSMSManagement = () => {
                     setSelectedSendTenantId("");
                     setTestTemplateId("");
                     setTestMessage("");
+                    setTestAmount("");
                     setTestSendResult(null);
                   }}
                   className="px-6 py-3 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
