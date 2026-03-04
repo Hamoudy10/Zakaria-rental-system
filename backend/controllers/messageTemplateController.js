@@ -136,28 +136,72 @@ const initializeMessageTemplateSystem = async () => {
          sms_body, whatsapp_template_name, whatsapp_fallback_body, variables
        ) VALUES
        ('monthly_bill_default', 'Monthly Bill Default', 'Default monthly billing message for cron and manual billing triggers', 'billing', 'both',
-        'Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.',
+        'Hello {tenantName}, your {month} bill for unit {unitCode} is ready. {items} Total Due: KES {total}. Paybill: {paybill}, Account: {account}.',
         'monthly_bill_cron',
-        'Hello {tenantName}, your {month} bill for {unitCode}: Rent: KSh {rent}, Water: KSh {water}, Arrears: KSh {arrears}. Total: KSh {total}. Pay via paybill {paybill}, Account: {unitCode}. Due by end of month.',
-        '["tenantName","month","unitCode","rent","water","arrears","total","paybill"]'::jsonb
+        'Hello {tenantName}, your {month} bill for unit {unitCode} is ready. {items} Total Due: KES {total}. Paybill: {paybill}, Account: {account}.',
+        '["tenantName","month","unitCode","items","total","paybill","account"]'::jsonb
        ),
        ('balance_reminder_default', 'Balance Reminder Default', 'Default reminder for overdue balances', 'reminder', 'both',
-        'Reminder: Dear {tenantName}, your outstanding balance for {month} is KSh {total}. Please pay via paybill {paybill}, Account: {unitCode}.',
+        'Reminder: Dear {tenantName}, your outstanding balance for {month} is KES {total}. Please pay via paybill {paybill}, Account: {account}.',
         'balance_reminder',
-        'Reminder: Dear {tenantName}, your outstanding balance for {month} is KSh {total}. Please pay via paybill {paybill}, Account: {unitCode}.',
-        '["tenantName","month","unitCode","total","paybill"]'::jsonb
+        'Reminder: Dear {tenantName}, your outstanding balance for {month} is KES {total}. Please pay via paybill {paybill}, Account: {account}.',
+        '["tenantName","unitCode","month","total","dueDate","paybill","account"]'::jsonb
        ),
        ('payment_confirmation_default', 'Payment Confirmation Default', 'Default payment confirmation sent after successful payment posting', 'payment', 'both',
-        'Payment received. Dear {tenantName}, we have received KSh {total} for {unitCode}. Thank you.',
+        'Dear {tenantName}, your payment has been received. Amount: KES {total}. Unit: {unitCode}. Month: {month}. Status: {status}.',
         'payment_confirmation',
-        'Payment received. Dear {tenantName}, we have received KSh {total} for {unitCode}. Thank you.',
-        '["tenantName","unitCode","total"]'::jsonb
+        'Dear {tenantName}, your payment has been received. Amount: KES {total}. Unit: {unitCode}. Month: {month}. Status: {status}.',
+        '["tenantName","total","unitCode","month","status"]'::jsonb
        ),
        ('general_announcement_default', 'General Announcement Default', 'Default template for admin/agent bulk announcements', 'announcement', 'both',
         '{message}',
         'general_announcement',
         '{message}',
-        '["message"]'::jsonb
+        '["title","message"]'::jsonb
+       )
+       ON CONFLICT (template_key) DO NOTHING`,
+    );
+
+    await client.query(
+      `INSERT INTO message_templates (
+         template_key, name, description, category, channel,
+         sms_body, whatsapp_template_name, whatsapp_fallback_body, variables
+       ) VALUES
+       ('rental_welcome_default', 'Rental Welcome', 'Tenant onboarding/welcome template', 'announcement', 'both',
+        'Dear {tenantName}, your tenancy at {propertyName} has been registered. Unit: {unitCode}. Monthly Rent: KES {rent}. Due Date: {dueDay}. Paybill: {paybill}. Account: {account}.',
+        'rental_welcome',
+        'Dear {tenantName}, your tenancy at {propertyName} has been registered. Unit: {unitCode}. Monthly Rent: KES {rent}. Due Date: {dueDay}. Paybill: {paybill}. Account: {account}.',
+        '["tenantName","propertyName","unitCode","rent","dueDay","paybill","account"]'::jsonb
+       ),
+       ('payment_confirmation_detailed_default', 'Payment Confirmation Detailed', 'Detailed payment confirmation with allocation', 'payment', 'both',
+        'Dear {tenantName}, payment received and allocated. Total Paid: KES {total}. Unit: {unitCode}. Month: {month}. Allocation: {allocation}. Status: {status}.',
+        'payment_confirmation_detailed',
+        'Dear {tenantName}, payment received and allocated. Total Paid: KES {total}. Unit: {unitCode}. Month: {month}. Allocation: {allocation}. Status: {status}.',
+        '["tenantName","total","unitCode","month","allocation","status"]'::jsonb
+       ),
+       ('admin_payment_alert_default', 'Admin Payment Alert', 'Admin payment alert summary', 'payment', 'both',
+        'Payment notification: Tenant {tenantName}, Unit {unitCode}, Amount KES {total}, Month {month}, Status {status}.',
+        'admin_payment_alert',
+        'Payment notification: Tenant {tenantName}, Unit {unitCode}, Amount KES {total}, Month {month}, Status {status}.',
+        '["tenantName","unitCode","total","month","status"]'::jsonb
+       ),
+       ('admin_payment_alert_detailed_default', 'Admin Payment Alert Detailed', 'Admin payment alert with allocation details', 'payment', 'both',
+        'Payment notification: Tenant {tenantName}, Unit {unitCode}, Month {month}, Amount KES {total}, Allocation {allocation}, Status {status}.',
+        'admin_payment_alert_detailed',
+        'Payment notification: Tenant {tenantName}, Unit {unitCode}, Month {month}, Amount KES {total}, Allocation {allocation}, Status {status}.',
+        '["tenantName","unitCode","month","total","allocation","status"]'::jsonb
+       ),
+       ('advance_payment_default', 'Advance Payment', 'Advance payment confirmation template', 'payment', 'both',
+        'Dear {tenantName}, an advance payment has been recorded. Amount: KES {total}. Unit: {unitCode}. Coverage: {months}.',
+        'advance_payment',
+        'Dear {tenantName}, an advance payment has been recorded. Amount: KES {total}. Unit: {unitCode}. Coverage: {months}.',
+        '["tenantName","total","unitCode","months"]'::jsonb
+       ),
+       ('bill_notification_default', 'Bill Notification', 'Manual bill notification template', 'billing', 'both',
+        'Dear {tenantName}, your bill for {month} is ready. Unit: {unitCode}. {items} Total Due: KES {total}. Paybill: {paybill}. Account: {account}.',
+        'bill_notification',
+        'Dear {tenantName}, your bill for {month} is ready. Unit: {unitCode}. {items} Total Due: KES {total}. Paybill: {paybill}. Account: {account}.',
+        '["tenantName","month","unitCode","items","total","paybill","account"]'::jsonb
        )
        ON CONFLICT (template_key) DO NOTHING`,
     );

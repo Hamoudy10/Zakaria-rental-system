@@ -485,3 +485,73 @@ app.use(cors({
   - `008_create_password_reset_tokens.sql`
   - `009_create_unit_code_aliases.sql`
   - `010_allow_multiple_active_allocations_per_tenant.sql`
+
+---
+
+## RECENT BACKEND SUMMARY (2026-03-04)
+
+### 1) Agent Send Notifications Tab Stabilized
+- File: `src/components/AgentSMSManagement.jsx`
+- Fixed tenant dropdown population bug caused by response-shape mismatch (`data` array vs `data.tenants`).
+- Added robust tenant ID handling (`id || tenant_id`).
+- Added dedicated "Send Notifications" flow improvements:
+  - property -> tenant dependent loading,
+  - template selection + auto-rendered message for selected tenant,
+  - improved success/error result block.
+
+### 2) WhatsApp Template Availability Expanded
+- Agent template fetch now uses dynamic active-event options instead of a single event.
+- New backend endpoint:
+  - `GET /api/admin/message-template-options-all`
+- Files:
+  - `backend/controllers/messageTemplateController.js`
+  - `backend/routes/adminRoutes.js`
+  - `src/services/api.jsx`
+  - `src/components/AgentSMSManagement.jsx`
+
+### 3) Message Template Management in System Settings Enhanced
+- Existing CRUD in System Settings retained and strengthened.
+- Added template library filters in UI:
+  - search,
+  - channel filter (`sms|whatsapp|both`),
+  - category filter.
+- Added permanent delete API path for archived templates:
+  - `DELETE /api/admin/message-templates/:id/permanent`
+- Safety behavior:
+  - template must be archived first,
+  - any binding using it is detached (`default_template_id = NULL`) before deletion.
+- Files:
+  - `backend/controllers/messageTemplateController.js`
+  - `backend/routes/adminRoutes.js`
+  - `src/services/api.jsx`
+  - `src/components/SystemSettings.jsx`
+
+### 4) Targeted/Bulk Messaging Rendering + WhatsApp Routing Fixes
+- Files:
+  - `backend/controllers/notificationController.js`
+  - `backend/services/messagingService.js`
+- Fixes:
+  - selected template WhatsApp metadata (`whatsapp_template_name`) is now used in send path,
+  - WhatsApp template params are derived from template variable order,
+  - fallback SMS still applies when WhatsApp fails,
+  - variable enrichment added for targeted/bulk sends (`paybill`, `total`, `month`, `account`, `dueDate`).
+
+### 5) WhatsApp Failure Diagnostics Exposed
+- API response now includes structured WhatsApp failure details (`whatsapp_errors`) with:
+  - tenant/unit/phone,
+  - template used,
+  - provider error message and code.
+- Agent UI now surfaces first failure reason directly in the result card.
+- This enabled quick root-cause detection (e.g., Meta error `190` expired token).
+
+### 6) Auto-Prefill Outstanding Amount for Reminder Templates
+- File: `src/components/AgentSMSManagement.jsx`
+- Added `Outstanding Amount (KES)` field in send form.
+- Auto-populates from `API.payments.getTenantPaymentStatus` after property/tenant selection.
+- Still editable by user before send.
+- Value is injected into template variables as `total` and `outstanding`.
+
+### 7) Operational Note Recorded During Validation
+- WhatsApp failure case confirmed in production logs:
+  - Meta error code `190` (expired/invalid access token).
+- Behavior confirmed: WhatsApp fails -> SMS fallback succeeds (intended resilience behavior).
