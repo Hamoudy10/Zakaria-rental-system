@@ -738,7 +738,9 @@ const sendBulkSMS = async (req, res) => {
           messageType,
         );
 
-        // Log SMS to sms_queue
+        const anySent = !!(msgResult.sms?.success || msgResult.whatsapp?.success);
+
+        // Log notification attempt to sms_queue (status reflects any successful channel)
         await pool.query(
           `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, message_id, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
@@ -746,15 +748,15 @@ const sendBulkSMS = async (req, res) => {
             tenant.phone_number,
             finalMessage,
             messageType,
-            msgResult.sms?.success ? "sent" : "failed",
+            anySent ? "sent" : "failed",
             userId,
-            msgResult.sms?.success ? new Date() : null,
+            anySent ? new Date() : null,
             msgResult.sms?.messageId || null,
           ],
         );
 
-        // Track SMS result
-        if (msgResult.sms?.success) {
+        // Track overall delivery result (WhatsApp-first with SMS fallback)
+        if (anySent) {
           results.sent++;
         } else {
           results.failed++;
@@ -766,7 +768,7 @@ const sendBulkSMS = async (req, res) => {
           });
         }
 
-        // Track WhatsApp result
+        // Track WhatsApp result details
         if (msgResult.whatsapp?.success) {
           results.whatsapp_sent++;
         } else if (!msgResult.whatsapp?.skipped) {
@@ -807,7 +809,7 @@ const sendBulkSMS = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Messages sent to ${results.sent} of ${results.total} tenants via SMS. ${results.whatsapp_sent} also received WhatsApp.`,
+      message: `Messages delivered to ${results.sent} of ${results.total} tenants. WhatsApp: ${results.whatsapp_sent} sent, ${results.whatsapp_failed} failed.`,
       data: {
         ...results,
         template_id_used: useTemplateId || null,
@@ -1037,7 +1039,9 @@ const sendTargetedSMS = async (req, res) => {
           messageType,
         );
 
-        // Log SMS to sms_queue
+        const anySent = !!(msgResult.sms?.success || msgResult.whatsapp?.success);
+
+        // Log notification attempt to sms_queue (status reflects any successful channel)
         await pool.query(
           `INSERT INTO sms_queue (recipient_phone, message, message_type, status, agent_id, sent_at, message_id, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
@@ -1045,15 +1049,15 @@ const sendTargetedSMS = async (req, res) => {
             tenant.phone_number,
             finalMessage,
             messageType,
-            msgResult.sms?.success ? "sent" : "failed",
+            anySent ? "sent" : "failed",
             userId,
-            msgResult.sms?.success ? new Date() : null,
+            anySent ? new Date() : null,
             msgResult.sms?.messageId || null,
           ],
         );
 
-        // Track SMS result
-        if (msgResult.sms?.success) {
+        // Track overall delivery result (WhatsApp-first with SMS fallback)
+        if (anySent) {
           results.sent++;
         } else {
           results.failed++;
@@ -1065,7 +1069,7 @@ const sendTargetedSMS = async (req, res) => {
           });
         }
 
-        // Track WhatsApp result
+        // Track WhatsApp result details
         if (msgResult.whatsapp?.success) {
           results.whatsapp_sent++;
         } else if (!msgResult.whatsapp?.skipped) {
@@ -1106,7 +1110,7 @@ const sendTargetedSMS = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Messages sent to ${results.sent} of ${results.total} tenants via SMS. ${results.whatsapp_sent} also received WhatsApp.`,
+      message: `Messages delivered to ${results.sent} of ${results.total} tenants. WhatsApp: ${results.whatsapp_sent} sent, ${results.whatsapp_failed} failed.`,
       data: {
         ...results,
         template_id_used: useTemplateId || null,

@@ -29,6 +29,7 @@ const AgentSMSManagement = () => {
     useState(false);
   const [billingTemplates, setBillingTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [notificationTemplates, setNotificationTemplates] = useState([]);
 
   // State for Failed SMS Tab
   const [failedSMS, setFailedSMS] = useState([]);
@@ -58,10 +59,21 @@ const AgentSMSManagement = () => {
   const [deliveryDetails, setDeliveryDetails] = useState(null);
   const [checkingDelivery, setCheckingDelivery] = useState(false);
 
+  // State for Send Notifications Tab
+  const [sendPropertyId, setSendPropertyId] = useState("");
+  const [sendTenants, setSendTenants] = useState([]);
+  const [loadingSendTenants, setLoadingSendTenants] = useState(false);
+  const [selectedSendTenantId, setSelectedSendTenantId] = useState("");
+  const [testMessage, setTestMessage] = useState("");
+  const [testTemplateId, setTestTemplateId] = useState("");
+  const [sendingTest, setSendingTest] = useState(false);
+  const [testSendResult, setTestSendResult] = useState(null);
+
   // Load agent's assigned properties
   useEffect(() => {
     fetchAgentProperties();
     fetchBillingTemplates();
+    fetchNotificationTemplates();
     // Set default month to current month
     const today = new Date();
     const year = today.getFullYear();
@@ -119,6 +131,110 @@ const AgentSMSManagement = () => {
     } catch (error) {
       console.error("Error fetching billing templates:", error);
       setBillingTemplates([]);
+    }
+  };
+
+  const fetchNotificationTemplates = async () => {
+    try {
+      const response =
+        await API.settings.getTemplateOptionsForEvent(
+          "agent_manual_general_trigger",
+        );
+      if (response.data?.success) {
+        setNotificationTemplates(response.data.data?.templates || []);
+      } else {
+        setNotificationTemplates([]);
+      }
+    } catch (error) {
+      console.error("Error fetching notification templates:", error);
+      setNotificationTemplates([]);
+    }
+  };
+
+  const fetchSendTenantsByProperty = async (selectedProperty) => {
+    if (!selectedProperty) {
+      setSendTenants([]);
+      setSelectedSendTenantId("");
+      return;
+    }
+
+    setLoadingSendTenants(true);
+    try {
+      const response = await API.notifications.getTenantsByProperty(
+        selectedProperty,
+      );
+      const tenants = response?.data?.data?.tenants || [];
+      setSendTenants(Array.isArray(tenants) ? tenants : []);
+      setSelectedSendTenantId("");
+    } catch (error) {
+      console.error("Error fetching property tenants for test send:", error);
+      setSendTenants([]);
+      setSelectedSendTenantId("");
+      alert(
+        error?.response?.data?.message ||
+          "Failed to load tenants for selected property.",
+      );
+    } finally {
+      setLoadingSendTenants(false);
+    }
+  };
+
+  const handleSendTestNotification = async () => {
+    if (!sendPropertyId) {
+      alert("Please select a property.");
+      return;
+    }
+    if (!selectedSendTenantId) {
+      alert("Please select a tenant.");
+      return;
+    }
+    if (!testTemplateId && !testMessage.trim()) {
+      alert("Please enter a message or select a template.");
+      return;
+    }
+    if (!testTemplateId && testMessage.trim().length > 160) {
+      alert("Message should be 160 characters or fewer when no template is selected.");
+      return;
+    }
+
+    setSendingTest(true);
+    setTestSendResult(null);
+
+    try {
+      const payload = {
+        tenantIds: [selectedSendTenantId],
+        message: testMessage.trim(),
+        messageType: "announcement",
+        template_id: testTemplateId || undefined,
+        template_variables: {
+          message: testMessage.trim(),
+        },
+      };
+
+      const response = await API.notifications.sendTargetedSMS(payload);
+      if (response.data?.success) {
+        setTestSendResult({
+          type: "success",
+          message: response.data.message || "Test notification sent.",
+          data: response.data.data || null,
+        });
+        setTestMessage("");
+      } else {
+        setTestSendResult({
+          type: "error",
+          message: response.data?.message || "Failed to send test notification.",
+        });
+      }
+    } catch (error) {
+      console.error("Send test notification error:", error);
+      setTestSendResult({
+        type: "error",
+        message:
+          error?.response?.data?.message ||
+          "Failed to send test notification.",
+      });
+    } finally {
+      setSendingTest(false);
     }
   };
 
@@ -419,6 +535,17 @@ const AgentSMSManagement = () => {
           <nav className="flex -mb-px">
             <button
               className={`py-4 px-6 text-sm font-medium border-b-2 ${
+                activeTab === "send"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+              onClick={() => setActiveTab("send")}
+            >
+              <Send className="inline-block w-4 h-4 mr-2" />
+              Send Notifications
+            </button>
+            <button
+              className={`py-4 px-6 text-sm font-medium border-b-2 ${
                 activeTab === "trigger"
                   ? "border-blue-500 text-blue-600"
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
@@ -455,6 +582,175 @@ const AgentSMSManagement = () => {
 
         {/* Tab Content */}
         <div className="p-6">
+          {/* Tab 0: Send Test Notification */}
+          {activeTab === "send" && (
+            <div className="space-y-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+                <div className="flex">
+                  <AlertCircle className="w-5 h-5 text-blue-500 mt-0.5 mr-3" />
+                  <div>
+                    <h4 className="text-sm font-medium text-blue-800">
+                      Send Test Notification
+                    </h4>
+                    <p className="mt-1 text-sm text-blue-700">
+                      Sends WhatsApp first, then falls back to SMS only if WhatsApp fails or is unavailable.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Property *
+                  </label>
+                  <select
+                    value={sendPropertyId}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setSendPropertyId(value);
+                      fetchSendTenantsByProperty(value);
+                    }}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
+                  >
+                    <option value="">Select property...</option>
+                    {properties.map((property) => (
+                      <option key={property.id} value={property.id}>
+                        {property.name} ({property.property_code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Tenant *
+                  </label>
+                  <select
+                    value={selectedSendTenantId}
+                    onChange={(e) => setSelectedSendTenantId(e.target.value)}
+                    disabled={!sendPropertyId || loadingSendTenants}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100"
+                  >
+                    <option value="">
+                      {loadingSendTenants
+                        ? "Loading tenants..."
+                        : sendPropertyId
+                          ? "Select tenant..."
+                          : "Choose property first"}
+                    </option>
+                    {sendTenants.map((tenant) => (
+                      <option key={tenant.id} value={tenant.id}>
+                        {tenant.first_name} {tenant.last_name} ({tenant.unit_code || "No unit"}) - {tenant.phone_number || "No phone"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <TemplatePicker
+                    label="Notification Template (Optional)"
+                    value={testTemplateId}
+                    onChange={setTestTemplateId}
+                    templates={notificationTemplates}
+                    emptyLabel="No template (use custom message)"
+                    helpText="If template is selected, it can render richer WhatsApp/SMS content."
+                    selectClassName="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Message {testTemplateId ? "(Optional with template)" : "*"}
+                  </label>
+                  <textarea
+                    value={testMessage}
+                    onChange={(e) => setTestMessage(e.target.value)}
+                    rows={4}
+                    placeholder="Type your notification message..."
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    {testMessage.length}/160 characters (plain message mode)
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleSendTestNotification}
+                  disabled={
+                    sendingTest ||
+                    !sendPropertyId ||
+                    !selectedSendTenantId ||
+                    (!testTemplateId && !testMessage.trim())
+                  }
+                  className="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                >
+                  {sendingTest ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4 mr-2" />
+                      Send Test Notification
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setSendPropertyId("");
+                    setSendTenants([]);
+                    setSelectedSendTenantId("");
+                    setTestTemplateId("");
+                    setTestMessage("");
+                    setTestSendResult(null);
+                  }}
+                  className="px-6 py-3 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Reset
+                </button>
+              </div>
+
+              {testSendResult && (
+                <div
+                  className={`rounded-md p-4 ${testSendResult.type === "success" ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}
+                >
+                  <div className="flex">
+                    {testSendResult.type === "success" ? (
+                      <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 mr-3" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-500 mt-0.5 mr-3" />
+                    )}
+                    <div>
+                      <h4
+                        className={`text-sm font-medium ${testSendResult.type === "success" ? "text-green-800" : "text-red-800"}`}
+                      >
+                        {testSendResult.type === "success" ? "Success" : "Error"}
+                      </h4>
+                      <p
+                        className={`mt-1 text-sm ${testSendResult.type === "success" ? "text-green-700" : "text-red-700"}`}
+                      >
+                        {testSendResult.message}
+                      </p>
+                      {testSendResult.data && (
+                        <div className="mt-3 text-sm text-gray-700">
+                          <p><strong>Total:</strong> {testSendResult.data.total ?? 0}</p>
+                          <p><strong>Successful:</strong> {testSendResult.data.sent ?? 0}</p>
+                          <p><strong>Failed:</strong> {testSendResult.data.failed ?? 0}</p>
+                          <p><strong>WhatsApp Sent:</strong> {testSendResult.data.whatsapp_sent ?? 0}</p>
+                          <p><strong>WhatsApp Failed:</strong> {testSendResult.data.whatsapp_failed ?? 0}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Tab 1: Trigger Billing SMS */}
           {activeTab === "trigger" && (
             <div className="space-y-6">
