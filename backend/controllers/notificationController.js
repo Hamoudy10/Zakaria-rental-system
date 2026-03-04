@@ -25,12 +25,20 @@ const checkRateLimit = (userId, endpoint) => {
 const getConfiguredPaybillNumber = async () => {
   try {
     const result = await pool.query(
-      `SELECT setting_value
+      `SELECT setting_key, setting_value
        FROM admin_settings
-       WHERE setting_key = 'paybill_number'
-       LIMIT 1`,
+       WHERE setting_key IN ('paybill_number', 'mpesa_paybill_number')`,
     );
-    return result.rows[0]?.setting_value || "";
+    const rows = result.rows || [];
+    const primary = rows.find((r) => r.setting_key === "paybill_number");
+    const secondary = rows.find(
+      (r) => r.setting_key === "mpesa_paybill_number",
+    );
+    const value =
+      primary?.setting_value ||
+      secondary?.setting_value ||
+      "";
+    return String(value).trim();
   } catch (error) {
     console.error("Failed to read paybill setting:", error.message);
     return "";

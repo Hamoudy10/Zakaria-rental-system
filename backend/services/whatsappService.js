@@ -96,11 +96,21 @@ class WhatsAppService {
   async getPaybillNumber() {
     try {
       const result = await pool.query(
-        `SELECT setting_value FROM admin_settings WHERE setting_key = 'paybill_number'`,
+        `SELECT setting_key, setting_value
+         FROM admin_settings
+         WHERE setting_key IN ('paybill_number', 'mpesa_paybill_number')`,
       );
-      return (
-        result.rows[0]?.setting_value || process.env.MPESA_SHORT_CODE || "N/A"
+      const rows = result.rows || [];
+      const primary = rows.find((r) => r.setting_key === "paybill_number");
+      const secondary = rows.find(
+        (r) => r.setting_key === "mpesa_paybill_number",
       );
+      const value =
+        primary?.setting_value ||
+        secondary?.setting_value ||
+        process.env.MPESA_SHORT_CODE ||
+        "N/A";
+      return String(value).trim() || "N/A";
     } catch (error) {
       return process.env.MPESA_SHORT_CODE || "N/A";
     }

@@ -405,7 +405,11 @@ const NotificationManagement = () => {
   const fetchSystemPaybill = useCallback(async () => {
     try {
       const response = await API.settings.getSettingByKey("paybill_number");
-      const value = response?.data?.setting?.value;
+      let value = response?.data?.setting?.value;
+      if (!value) {
+        const alt = await API.settings.getSettingByKey("mpesa_paybill_number");
+        value = alt?.data?.setting?.value;
+      }
       setSystemPaybill(value ? String(value).trim() : "");
     } catch (err) {
       console.error("Error fetching system paybill:", err);
