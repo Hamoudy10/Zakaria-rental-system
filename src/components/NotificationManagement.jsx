@@ -289,6 +289,7 @@ const NotificationManagement = () => {
   const [messageType, setMessageType] = useState("announcement");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [eventTemplates, setEventTemplates] = useState([]);
+  const [systemPaybill, setSystemPaybill] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -401,6 +402,17 @@ const NotificationManagement = () => {
     }
   }, []);
 
+  const fetchSystemPaybill = useCallback(async () => {
+    try {
+      const response = await API.settings.getSettingByKey("paybill_number");
+      const value = response?.data?.setting?.value;
+      setSystemPaybill(value ? String(value).trim() : "");
+    } catch (err) {
+      console.error("Error fetching system paybill:", err);
+      setSystemPaybill("");
+    }
+  }, []);
+
   // ============================================================
   // DELIVERY TRACKING FUNCTION
   // ============================================================
@@ -502,7 +514,8 @@ const NotificationManagement = () => {
 
   useEffect(() => {
     fetchEventTemplates();
-  }, [fetchEventTemplates]);
+    fetchSystemPaybill();
+  }, [fetchEventTemplates, fetchSystemPaybill]);
 
   // ============================================================
   // SEND FUNCTIONS
@@ -516,6 +529,13 @@ const NotificationManagement = () => {
 
     setSending(true);
     setResult(null);
+    const selectedPropertyDetails =
+      properties.find((p) => p.id === selectedProperty) || null;
+    const resolvedPaybill =
+      selectedPropertyDetails?.paybill_number ||
+      selectedPropertyDetails?.paybill ||
+      systemPaybill ||
+      "";
 
     try {
       const response = await notificationAPI.sendBulkSMS({
@@ -525,8 +545,8 @@ const NotificationManagement = () => {
         template_id: selectedTemplateId || undefined,
         template_variables: {
           message: message.trim(),
-          propertyName:
-            properties.find((p) => p.id === selectedProperty)?.name || "",
+          propertyName: selectedPropertyDetails?.name || "",
+          paybill: resolvedPaybill,
         },
       });
 
@@ -561,6 +581,13 @@ const NotificationManagement = () => {
 
     setSending(true);
     setResult(null);
+    const selectedPropertyDetails =
+      properties.find((p) => p.id === selectedProperty) || null;
+    const resolvedPaybill =
+      selectedPropertyDetails?.paybill_number ||
+      selectedPropertyDetails?.paybill ||
+      systemPaybill ||
+      "";
 
     try {
       const response = await notificationAPI.sendTargetedSMS({
@@ -570,6 +597,8 @@ const NotificationManagement = () => {
         template_id: selectedTemplateId || undefined,
         template_variables: {
           message: message.trim(),
+          propertyName: selectedPropertyDetails?.name || "",
+          paybill: resolvedPaybill,
         },
       });
 

@@ -229,6 +229,7 @@ const PaymentManagement = () => {
   const [smsTemplateId, setSmsTemplateId] = useState("");
   const [smsTemplates, setSmsTemplates] = useState([]);
   const [smsTemplatesLoading, setSmsTemplatesLoading] = useState(false);
+  const [systemPaybill, setSystemPaybill] = useState("");
   const [smsLoading, setSmsLoading] = useState(false);
   const [smsResult, setSmsResult] = useState(null);
 
@@ -758,11 +759,35 @@ const PaymentManagement = () => {
     fetchReminderTemplates();
   }, [fetchReminderTemplates]);
 
+  useEffect(() => {
+    const fetchSystemPaybill = async () => {
+      try {
+        const response = await API.settings.getSettingByKey("paybill_number");
+        const value = response?.data?.setting?.value;
+        setSystemPaybill(value ? String(value).trim() : "");
+      } catch (error) {
+        console.error("Failed to fetch system paybill:", error);
+        setSystemPaybill("");
+      }
+    };
+
+    fetchSystemPaybill();
+  }, []);
+
   const handleSendReminders = async () => {
     setSmsLoading(true);
     setSmsResult(null);
 
     try {
+      const selectedPropertyDetails = properties.find(
+        (p) => p.id === filters.propertyId,
+      );
+      const resolvedPaybill =
+        selectedPropertyDetails?.paybill_number ||
+        selectedPropertyDetails?.paybill ||
+        systemPaybill ||
+        "";
+
       const response = await notificationAPI.sendTargetedSMS({
         tenantIds: selectedTenants,
         message: smsMessage,
@@ -771,6 +796,8 @@ const PaymentManagement = () => {
         template_variables: {
           month: filters.month,
           message: smsMessage,
+          paybill: resolvedPaybill,
+          propertyName: selectedPropertyDetails?.name || "",
         },
       });
 
