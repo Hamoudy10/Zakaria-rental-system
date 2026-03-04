@@ -66,6 +66,14 @@ const buildResolvedTemplateVariables = (base = {}, incoming = {}) => {
     ...base,
     ...incoming,
   };
+  const pickNonEmpty = (...values) => {
+    for (const value of values) {
+      if (value === undefined || value === null) continue;
+      if (String(value).trim() === "") continue;
+      return value;
+    }
+    return "";
+  };
 
   const totalRaw =
     merged.total ?? merged.totalDue ?? merged.outstanding ?? merged.balance ?? 0;
@@ -98,12 +106,12 @@ const buildResolvedTemplateVariables = (base = {}, incoming = {}) => {
     due_date: dueDate,
     unitCode,
     unit_code: merged.unit_code || unitCode,
-    account: merged.account || merged.accountNumber || unitCode,
-    accountNumber: merged.accountNumber || merged.account || unitCode,
-    propertyName: merged.propertyName || merged.property_name || "",
-    property_name: merged.property_name || merged.propertyName || "",
-    tenantName: merged.tenantName || merged.tenant_name || "Tenant",
-    tenant_name: merged.tenant_name || merged.tenantName || "Tenant",
+    account: pickNonEmpty(merged.account, merged.accountNumber, unitCode),
+    accountNumber: pickNonEmpty(merged.accountNumber, merged.account, unitCode),
+    propertyName: pickNonEmpty(merged.propertyName, merged.property_name),
+    property_name: pickNonEmpty(merged.property_name, merged.propertyName),
+    tenantName: pickNonEmpty(merged.tenantName, merged.tenant_name, "Tenant"),
+    tenant_name: pickNonEmpty(merged.tenant_name, merged.tenantName, "Tenant"),
     items,
     allocation: merged.allocation || items,
     status:
@@ -111,7 +119,7 @@ const buildResolvedTemplateVariables = (base = {}, incoming = {}) => {
     message: merged.message || "",
     title: merged.title || "Notification",
     months: merged.months || "1",
-    paybill: merged.paybill || "",
+    paybill: pickNonEmpty(incoming.paybill, base.paybill),
   };
 };
 
@@ -1602,7 +1610,17 @@ const getMessagingHistory = async (req, res) => {
         SELECT 
           wq.id::text as id,
           wq.recipient_phone,
-          wq.fallback_message as message,
+          COALESCE(
+            NULLIF(wq.fallback_message, ''),
+            CONCAT(
+              'Template: ',
+              COALESCE(wq.template_name, 'unknown'),
+              CASE
+                WHEN COALESCE(wq.template_params::text, '') <> '' THEN CONCAT(' | Params: ', wq.template_params::text)
+                ELSE ''
+              END
+            )
+          ) as message,
           wq.message_type,
           wq.status,
           NULL::text as message_id,
@@ -1613,16 +1631,33 @@ const getMessagingHistory = async (req, res) => {
           wq.created_at,
           wq.error_message,
           wq.agent_id,
-          NULL::text as first_name,
-          NULL::text as last_name,
-          NULL::text as unit_code,
-          NULL::text as property_name,
+          tinfo.first_name,
+          tinfo.last_name,
+          tinfo.unit_code,
+          tinfo.property_name,
           'whatsapp' as channel,
           wq.template_name,
           'queue' as source,
           CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
         FROM whatsapp_queue wq
         LEFT JOIN users u ON wq.agent_id = u.id
+        LEFT JOIN LATERAL (
+          SELECT
+            t.first_name,
+            t.last_name,
+            pu.unit_code,
+            p.name AS property_name
+          FROM tenants t
+          JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+          JOIN property_units pu ON pu.id = ta.unit_id
+          JOIN properties p ON p.id = pu.property_id
+          WHERE (
+            REPLACE(t.phone_number, '+', '') = REPLACE(wq.recipient_phone, '+', '')
+            OR REPLACE(t.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(wq.recipient_phone, '+', ''), 9))
+            OR REPLACE(wq.recipient_phone, '+', '') = CONCAT('254', RIGHT(REPLACE(t.phone_number, '+', ''), 9))
+          )
+          LIMIT 1
+        ) tinfo ON true
         ${waWhereClause}
       `);
 
@@ -1649,7 +1684,14 @@ const getMessagingHistory = async (req, res) => {
         SELECT
           CONCAT('wan_', ROW_NUMBER() OVER ()) as id,
           wn.phone_number as recipient_phone,
-          wn.template_name as message,
+          CONCAT(
+            'Template: ',
+            COALESCE(wn.template_name, 'unknown'),
+            CASE
+              WHEN COALESCE(wn.template_params::text, '') <> '' THEN CONCAT(' | Params: ', wn.template_params::text)
+              ELSE ''
+            END
+          ) as message,
           wn.message_type,
           wn.status,
           NULL::text as message_id,
@@ -1660,15 +1702,32 @@ const getMessagingHistory = async (req, res) => {
           wn.sent_at as created_at,
           wn.error_message,
           NULL::uuid as agent_id,
-          NULL::text as first_name,
-          NULL::text as last_name,
-          NULL::text as unit_code,
-          NULL::text as property_name,
+          tinfo.first_name,
+          tinfo.last_name,
+          tinfo.unit_code,
+          tinfo.property_name,
           'whatsapp' as channel,
           wn.template_name,
           'notification' as source,
           'System (Auto)' as sent_by_name
         FROM whatsapp_notifications wn
+        LEFT JOIN LATERAL (
+          SELECT
+            t.first_name,
+            t.last_name,
+            pu.unit_code,
+            p.name AS property_name
+          FROM tenants t
+          JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+          JOIN property_units pu ON pu.id = ta.unit_id
+          JOIN properties p ON p.id = pu.property_id
+          WHERE (
+            REPLACE(t.phone_number, '+', '') = REPLACE(wn.phone_number, '+', '')
+            OR REPLACE(t.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(wn.phone_number, '+', ''), 9))
+            OR REPLACE(wn.phone_number, '+', '') = CONCAT('254', RIGHT(REPLACE(t.phone_number, '+', ''), 9))
+          )
+          LIMIT 1
+        ) tinfo ON true
         ${waNotifWhereClause}
       `);
 
