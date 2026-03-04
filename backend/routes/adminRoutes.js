@@ -152,6 +152,7 @@ router.post('/message-templates', protect, adminOnly, messageTemplateController.
 router.get('/message-templates/:id', protect, adminOnly, messageTemplateController.getTemplateById);
 router.put('/message-templates/:id', protect, adminOnly, messageTemplateController.updateTemplate);
 router.delete('/message-templates/:id', protect, adminOnly, messageTemplateController.archiveTemplate);
+router.delete('/message-templates/:id/permanent', protect, adminOnly, messageTemplateController.deleteTemplatePermanent);
 router.post('/message-templates/:id/restore', protect, adminOnly, messageTemplateController.restoreTemplate);
 router.post('/message-templates/:id/preview', protect, adminOnly, messageTemplateController.previewTemplate);
 
@@ -160,5 +161,6 @@ router.put('/message-template-bindings/:eventKey', protect, adminOnly, messageTe
 
 // Agent/admin lookup endpoint for dashboard trigger template selection
 router.get('/message-template-options', protect, requireAgent, messageTemplateController.getTemplatesForEvent);
+router.get('/message-template-options-all', protect, requireAgent, messageTemplateController.getTemplatesForAllActiveEvents);
 
 module.exports = router;

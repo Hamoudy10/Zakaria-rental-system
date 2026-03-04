@@ -68,6 +68,8 @@ const AgentSMSManagement = () => {
   const [testTemplateId, setTestTemplateId] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
   const [testSendResult, setTestSendResult] = useState(null);
+  const [loadingNotificationTemplates, setLoadingNotificationTemplates] =
+    useState(false);
 
   // Load agent's assigned properties
   useEffect(() => {
@@ -135,21 +137,90 @@ const AgentSMSManagement = () => {
   };
 
   const fetchNotificationTemplates = async () => {
+    setLoadingNotificationTemplates(true);
     try {
-      const response =
-        await API.settings.getTemplateOptionsForEvent(
-          "agent_manual_general_trigger",
-        );
-      if (response.data?.success) {
-        setNotificationTemplates(response.data.data?.templates || []);
-      } else {
-        setNotificationTemplates([]);
-      }
+      const response = await API.settings.getTemplateOptionsForAllEvents({
+        channel_capability: "whatsapp",
+      });
+      const templates = response?.data?.data?.templates || [];
+      const uniqueById = new Map();
+      templates.forEach((template) => {
+        if (!template?.id) return;
+        if (!uniqueById.has(template.id)) {
+          uniqueById.set(template.id, template);
+        }
+      });
+
+      setNotificationTemplates(
+        Array.from(uniqueById.values()).sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || "")),
+        ),
+      );
     } catch (error) {
       console.error("Error fetching notification templates:", error);
       setNotificationTemplates([]);
+    } finally {
+      setLoadingNotificationTemplates(false);
     }
   };
+
+  const renderTemplateForTenant = (template, tenant) => {
+    if (!template || !tenant) return "";
+    const base =
+      template.whatsapp_fallback_body ||
+      template.sms_body ||
+      "";
+    if (!base) return "";
+
+    const now = new Date();
+    const monthLong = now.toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+    const monthShort = now
+      .toLocaleDateString("en-US", { month: "short", year: "numeric" })
+      .toUpperCase();
+
+    const property = properties.find((p) => p.id === sendPropertyId);
+    const tenantName =
+      `${tenant.first_name || ""} ${tenant.last_name || ""}`.trim() || "Tenant";
+
+    const replacements = {
+      tenantName,
+      tenant_name: tenantName,
+      firstName: tenant.first_name || "",
+      first_name: tenant.first_name || "",
+      lastName: tenant.last_name || "",
+      last_name: tenant.last_name || "",
+      unitCode: tenant.unit_code || "",
+      unit_code: tenant.unit_code || "",
+      month: monthLong,
+      month_short: monthShort,
+      propertyName: property?.name || "",
+      property_name: property?.name || "",
+      paybill: property?.paybill_number || property?.paybill || "",
+      account: tenant.unit_code || "",
+      message: testMessage?.trim() || "",
+    };
+
+    return base.replace(/\{([^}]+)\}/g, (_, key) => {
+      const normalizedKey = String(key || "").trim();
+      return replacements[normalizedKey] ?? `{${normalizedKey}}`;
+    });
+  };
+
+  useEffect(() => {
+    if (!testTemplateId || !selectedSendTenantId) return;
+    const tenant = sendTenants.find(
+      (t) => (t.id || t.tenant_id) === selectedSendTenantId,
+    );
+    const template = notificationTemplates.find((t) => t.id === testTemplateId);
+    if (!tenant || !template) return;
+    const rendered = renderTemplateForTenant(template, tenant);
+    if (rendered) {
+      setTestMessage(rendered);
+    }
+  }, [testTemplateId, selectedSendTenantId, sendTenants, notificationTemplates, sendPropertyId]);
 
   const fetchSendTenantsByProperty = async (selectedProperty) => {
     if (!selectedProperty) {
@@ -163,8 +234,13 @@ const AgentSMSManagement = () => {
       const response = await API.notifications.getTenantsByProperty(
         selectedProperty,
       );
-      const tenants = response?.data?.data?.tenants || [];
-      setSendTenants(Array.isArray(tenants) ? tenants : []);
+      const rawData = response?.data?.data;
+      const tenants = Array.isArray(rawData)
+        ? rawData
+        : Array.isArray(rawData?.tenants)
+          ? rawData.tenants
+          : [];
+      setSendTenants(tenants);
       setSelectedSendTenantId("");
     } catch (error) {
       console.error("Error fetching property tenants for test send:", error);
@@ -201,6 +277,12 @@ const AgentSMSManagement = () => {
     setTestSendResult(null);
 
     try {
+      const selectedTenant = sendTenants.find(
+        (tenant) => (tenant.id || tenant.tenant_id) === selectedSendTenantId,
+      );
+      const tenantName = selectedTenant
+        ? `${selectedTenant.first_name || ""} ${selectedTenant.last_name || ""}`.trim()
+        : "";
       const payload = {
         tenantIds: [selectedSendTenantId],
         message: testMessage.trim(),
@@ -208,6 +290,12 @@ const AgentSMSManagement = () => {
         template_id: testTemplateId || undefined,
         template_variables: {
           message: testMessage.trim(),
+          tenantName,
+          unitCode: selectedTenant?.unit_code || "",
+          month: new Date().toLocaleDateString("en-US", {
+            month: "long",
+            year: "numeric",
+          }),
         },
       };
 
@@ -640,7 +728,10 @@ const AgentSMSManagement = () => {
                           : "Choose property first"}
                     </option>
                     {sendTenants.map((tenant) => (
-                      <option key={tenant.id} value={tenant.id}>
+                      <option
+                        key={tenant.id || tenant.tenant_id}
+                        value={tenant.id || tenant.tenant_id}
+                      >
                         {tenant.first_name} {tenant.last_name} ({tenant.unit_code || "No unit"}) - {tenant.phone_number || "No phone"}
                       </option>
                     ))}
@@ -653,8 +744,9 @@ const AgentSMSManagement = () => {
                     value={testTemplateId}
                     onChange={setTestTemplateId}
                     templates={notificationTemplates}
+                    loading={loadingNotificationTemplates}
                     emptyLabel="No template (use custom message)"
-                    helpText="If template is selected, it can render richer WhatsApp/SMS content."
+                    helpText="All active WhatsApp-capable templates are listed. Select tenant first to auto-populate template variables."
                     selectClassName="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
                   />
                 </div>

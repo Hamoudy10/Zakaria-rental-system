@@ -472,6 +472,8 @@ export const settingsAPI = {
   createMessageTemplate: (data) => api.post('/admin/message-templates', data),
   updateMessageTemplate: (id, data) => api.put(`/admin/message-templates/${id}`, data),
   archiveMessageTemplate: (id) => api.delete(`/admin/message-templates/${id}`),
+  deleteMessageTemplatePermanent: (id) =>
+    api.delete(`/admin/message-templates/${id}/permanent`),
   restoreMessageTemplate: (id) => api.post(`/admin/message-templates/${id}/restore`),
   previewMessageTemplate: (id, data) => api.post(`/admin/message-templates/${id}/preview`, data),
   getTemplateBindings: () => api.get('/admin/message-template-bindings'),
@@ -479,6 +481,8 @@ export const settingsAPI = {
     api.put(`/admin/message-template-bindings/${eventKey}`, data),
   getTemplateOptionsForEvent: (eventKey) =>
     api.get('/admin/message-template-options', { params: { event_key: eventKey } }),
+  getTemplateOptionsForAllEvents: (params = {}) =>
+    api.get('/admin/message-template-options-all', { params }),
 };
 // Add this NEW billingAPI section (add it after settingsAPI):
 export const billingAPI = {
