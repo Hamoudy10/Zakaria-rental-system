@@ -1,4 +1,4 @@
-// backend/controllers/notificationController.js
+﻿// backend/controllers/notificationController.js
 const pool = require('../config/database');
 const NotificationService = require('../services/notificationService');
 const SMSService = require('../services/smsService');
@@ -20,6 +20,31 @@ const checkRateLimit = (userId, endpoint) => {
   
   userRequestTimestamps.set(key, now);
   return true;
+};
+
+const getConfiguredPaybillNumber = async () => {
+  try {
+    const result = await pool.query(
+      `SELECT setting_value
+       FROM admin_settings
+       WHERE setting_key = 'paybill_number'
+       LIMIT 1`,
+    );
+    return result.rows[0]?.setting_value || "";
+  } catch (error) {
+    console.error("Failed to read paybill setting:", error.message);
+    return "";
+  }
+};
+
+const buildWhatsAppTemplateParams = (template, resolvedVariables = {}) => {
+  if (!template?.whatsapp_template_name) return null;
+  const keys = Array.isArray(template?.variables) ? template.variables : [];
+  if (!keys.length) return null;
+  return keys.map((key) => {
+    const value = resolvedVariables[key];
+    return value === undefined || value === null ? "" : String(value);
+  });
 };
 
 // Get user notifications with pagination and filters
@@ -48,7 +73,7 @@ const getNotifications = async (req, res) => {
     // Support both page and offset for flexibility
     const offsetNum = offset !== undefined ? parseInt(offset) : (parseInt(page) - 1) * limitNum;
 
-    console.log(`🔍 Fetching notifications for user: ${userId}`, { limit: limitNum, offset: offsetNum, type, is_read });
+    console.log(`ðŸ” Fetching notifications for user: ${userId}`, { limit: limitNum, offset: offsetNum, type, is_read });
 
     let query = `SELECT * FROM notifications WHERE user_id = $1`;
     let countQuery = `SELECT COUNT(*) FROM notifications WHERE user_id = $1`;
@@ -96,7 +121,7 @@ const getNotifications = async (req, res) => {
     const currentPage = Math.floor(offsetNum / limitNum) + 1;
     const totalPages = Math.ceil(totalCount / limitNum);
 
-    console.log(`✅ Found ${notificationsResult.rows.length} notifications for user ${userId}`);
+    console.log(`âœ… Found ${notificationsResult.rows.length} notifications for user ${userId}`);
 
     res.json({
       success: true,
@@ -114,7 +139,7 @@ const getNotifications = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get notifications error:', error);
+    console.error('âŒ Get notifications error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching notifications',
@@ -135,7 +160,7 @@ const createNotification = async (req, res) => {
       related_entity_id 
     } = req.body;
 
-    console.log('📨 Creating notification:', { userId, title, type });
+    console.log('ðŸ“¨ Creating notification:', { userId, title, type });
 
     if (!title || !message || !type) {
       return res.status(400).json({
@@ -177,7 +202,7 @@ const createNotification = async (req, res) => {
       notification = results[0];
     }
 
-    console.log('✅ Notification created successfully');
+    console.log('âœ… Notification created successfully');
 
     res.status(201).json({
       success: true,
@@ -186,7 +211,7 @@ const createNotification = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Create notification error:', error);
+    console.error('âŒ Create notification error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error creating notification',
@@ -201,7 +226,7 @@ const markAsRead = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    console.log(`📋 Marking notification as read: ${id} for user: ${userId}`);
+    console.log(`ðŸ“‹ Marking notification as read: ${id} for user: ${userId}`);
 
     const notification = await NotificationService.markAsRead(id, userId);
 
@@ -212,7 +237,7 @@ const markAsRead = async (req, res) => {
       });
     }
 
-    console.log('✅ Notification marked as read');
+    console.log('âœ… Notification marked as read');
 
     res.json({
       success: true,
@@ -221,7 +246,7 @@ const markAsRead = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Mark as read error:', error);
+    console.error('âŒ Mark as read error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error updating notification',
@@ -242,11 +267,11 @@ const markAllAsRead = async (req, res) => {
       });
     }
 
-    console.log(`📋 Marking all notifications as read for user: ${userId}`);
+    console.log(`ðŸ“‹ Marking all notifications as read for user: ${userId}`);
 
     const updatedNotifications = await NotificationService.markAllAsRead(userId);
 
-    console.log(`✅ Marked ${updatedNotifications.length} notifications as read`);
+    console.log(`âœ… Marked ${updatedNotifications.length} notifications as read`);
 
     res.json({
       success: true,
@@ -258,7 +283,7 @@ const markAllAsRead = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Mark all as read error:', error);
+    console.error('âŒ Mark all as read error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error updating notifications',
@@ -290,7 +315,7 @@ const getUnreadCount = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get unread count error:', error);
+    console.error('âŒ Get unread count error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching unread count',
@@ -353,7 +378,7 @@ const getNotificationStats = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get notification stats error:', error);
+    console.error('âŒ Get notification stats error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching notification statistics',
@@ -368,7 +393,7 @@ const deleteNotification = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    console.log(`🗑️ Deleting notification: ${id} for user: ${userId}`);
+    console.log(`ðŸ—‘ï¸ Deleting notification: ${id} for user: ${userId}`);
 
     const verifyQuery = await pool.query(
       'SELECT id FROM notifications WHERE id = $1 AND user_id = $2',
@@ -387,7 +412,7 @@ const deleteNotification = async (req, res) => {
       [id]
     );
 
-    console.log('✅ Notification deleted successfully');
+    console.log('âœ… Notification deleted successfully');
 
     res.json({
       success: true,
@@ -396,7 +421,7 @@ const deleteNotification = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Delete notification error:', error);
+    console.error('âŒ Delete notification error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error deleting notification',
@@ -410,7 +435,7 @@ const clearReadNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    console.log(`🧹 Clearing all read notifications for user: ${userId}`);
+    console.log(`ðŸ§¹ Clearing all read notifications for user: ${userId}`);
 
     const countQuery = await pool.query(
       'SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = true',
@@ -424,7 +449,7 @@ const clearReadNotifications = async (req, res) => {
       [userId]
     );
 
-    console.log(`✅ Cleared ${deleteQuery.rows.length} read notifications`);
+    console.log(`âœ… Cleared ${deleteQuery.rows.length} read notifications`);
 
     res.json({
       success: true,
@@ -436,7 +461,7 @@ const clearReadNotifications = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Clear read notifications error:', error);
+    console.error('âŒ Clear read notifications error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error clearing read notifications',
@@ -453,7 +478,7 @@ const getNotificationsByType = async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
-    console.log(`📨 Getting ${type} notifications for user: ${userId}`);
+    console.log(`ðŸ“¨ Getting ${type} notifications for user: ${userId}`);
 
     const query = `
       SELECT * FROM notifications 
@@ -491,7 +516,7 @@ const getNotificationsByType = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get notifications by type error:', error);
+    console.error('âŒ Get notifications by type error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching notifications by type',
@@ -511,7 +536,7 @@ const createBroadcastNotification = async (req, res) => {
       user_ids  // NEW: Support for specific user IDs
     } = req.body;
 
-    console.log('📢 Creating broadcast notification:', { title, type, target_roles, user_ids });
+    console.log('ðŸ“¢ Creating broadcast notification:', { title, type, target_roles, user_ids });
 
     // Validation
     if (!title || !title.trim()) {
@@ -540,7 +565,7 @@ const createBroadcastNotification = async (req, res) => {
     // Determine recipients based on provided parameters
     if (user_ids && Array.isArray(user_ids) && user_ids.length > 0) {
       // Send to specific users
-      console.log(`📋 Sending to ${user_ids.length} specific users`);
+      console.log(`ðŸ“‹ Sending to ${user_ids.length} specific users`);
       
       const usersResult = await pool.query(
         'SELECT id FROM users WHERE id = ANY($1::uuid[]) AND is_active = true',
@@ -556,7 +581,7 @@ const createBroadcastNotification = async (req, res) => {
       }
     } else if (target_roles && Array.isArray(target_roles) && target_roles.length > 0) {
       // Send to users by roles
-      console.log(`📋 Sending to roles: ${target_roles.join(', ')}`);
+      console.log(`ðŸ“‹ Sending to roles: ${target_roles.join(', ')}`);
       
       const usersResult = await pool.query(
         'SELECT id FROM users WHERE role = ANY($1) AND is_active = true',
@@ -578,7 +603,7 @@ const createBroadcastNotification = async (req, res) => {
       });
     }
 
-    console.log(`📤 Found ${users.length} recipients`);
+    console.log(`ðŸ“¤ Found ${users.length} recipients`);
 
     // Create notifications for all recipients
     const notificationsData = users.map(user => ({
@@ -591,7 +616,7 @@ const createBroadcastNotification = async (req, res) => {
 
     const createdNotifications = await NotificationService.createBulkNotifications(notificationsData);
 
-    console.log(`✅ Broadcast notification sent to ${createdNotifications.length} users`);
+    console.log(`âœ… Broadcast notification sent to ${createdNotifications.length} users`);
 
     res.status(201).json({
       success: true,
@@ -604,7 +629,7 @@ const createBroadcastNotification = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Create broadcast notification error:', error);
+    console.error('âŒ Create broadcast notification error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error creating broadcast notification',
@@ -625,7 +650,7 @@ const sendBulkSMS = async (req, res) => {
     } = req.body;
     const userId = req.user.id;
 
-    console.log("📱 Sending bulk SMS + WhatsApp:", {
+    console.log("ðŸ“± Sending bulk SMS + WhatsApp:", {
       propertyId,
       messageType,
       userId,
@@ -678,6 +703,7 @@ const sendBulkSMS = async (req, res) => {
     }
 
     const property = accessQuery.rows[0];
+    const configuredPaybill = await getConfiguredPaybillNumber();
 
     // Get all active tenants in the property
     const tenantsQuery = await pool.query(
@@ -698,7 +724,7 @@ const sendBulkSMS = async (req, res) => {
       });
     }
 
-    console.log(`📤 Sending to ${tenants.length} tenants in ${property.name}`);
+    console.log(`ðŸ“¤ Sending to ${tenants.length} tenants in ${property.name}`);
 
     const results = {
       total: tenants.length,
@@ -707,22 +733,45 @@ const sendBulkSMS = async (req, res) => {
       errors: [],
       whatsapp_sent: 0,
       whatsapp_failed: 0,
+      whatsapp_errors: [],
     };
 
     for (const tenant of tenants) {
+      let finalMessage = message;
       try {
-        let finalMessage = message;
+        const resolvedTemplateVariables = {
+          tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
+          unitCode: tenant.unit_code,
+          propertyName: property.name,
+          message: message || "",
+          month:
+            template_variables?.month ||
+            new Date().toLocaleDateString("en-US", {
+              month: "long",
+              year: "numeric",
+            }),
+          account:
+            template_variables?.account ||
+            template_variables?.accountNumber ||
+            tenant.unit_code ||
+            "",
+          dueDate:
+            template_variables?.dueDate ||
+            template_variables?.due_date ||
+            "",
+          paybill: template_variables?.paybill || configuredPaybill || "",
+          total:
+            template_variables?.total ??
+            template_variables?.totalDue ??
+            template_variables?.outstanding ??
+            "",
+          ...template_variables,
+        };
         const rendered = await MessageTemplateService.buildRenderedMessage({
           eventKey: "agent_manual_general_trigger",
           channel: "sms",
           templateIdOverride: useTemplateId,
-          variables: {
-            tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
-            unitCode: tenant.unit_code,
-            propertyName: property.name,
-            message: message || "",
-            ...template_variables,
-          },
+          variables: resolvedTemplateVariables,
         });
         if (rendered?.rendered) {
           finalMessage = rendered.rendered;
@@ -731,11 +780,21 @@ const sendBulkSMS = async (req, res) => {
           throw new Error("Resolved template message is empty");
         }
 
+        const whatsappTemplateName = rendered?.template?.whatsapp_template_name || null;
+        const whatsappTemplateParams = buildWhatsAppTemplateParams(
+          rendered?.template,
+          resolvedTemplateVariables,
+        );
+
         // Send via both SMS + WhatsApp in parallel
         const msgResult = await MessagingService.sendRawMessage(
           tenant.phone_number,
           finalMessage,
           messageType,
+          {
+            whatsappTemplateName,
+            whatsappTemplateParams,
+          },
         );
 
         const anySent = !!(msgResult.sms?.success || msgResult.whatsapp?.success);
@@ -773,6 +832,17 @@ const sendBulkSMS = async (req, res) => {
           results.whatsapp_sent++;
         } else if (!msgResult.whatsapp?.skipped) {
           results.whatsapp_failed++;
+          results.whatsapp_errors.push({
+            tenant: `${tenant.first_name} ${tenant.last_name}`.trim(),
+            unit: tenant.unit_code,
+            phone: tenant.phone_number,
+            template:
+              whatsappTemplateName ||
+              rendered?.template?.whatsapp_template_name ||
+              null,
+            error: msgResult.whatsapp?.error || "WhatsApp send failed",
+            code: msgResult.whatsapp?.code || null,
+          });
         }
       } catch (sendError) {
         results.failed++;
@@ -804,7 +874,7 @@ const sendBulkSMS = async (req, res) => {
     }
 
     console.log(
-      `✅ Bulk messaging complete: SMS=${results.sent} sent/${results.failed} failed, WhatsApp=${results.whatsapp_sent} sent/${results.whatsapp_failed} failed`,
+      `âœ… Bulk messaging complete: SMS=${results.sent} sent/${results.failed} failed, WhatsApp=${results.whatsapp_sent} sent/${results.whatsapp_failed} failed`,
     );
 
     res.json({
@@ -816,7 +886,7 @@ const sendBulkSMS = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ Send bulk messaging error:", error);
+    console.error("âŒ Send bulk messaging error:", error);
     res.status(500).json({
       success: false,
       message: "Server error sending bulk messages",
@@ -890,7 +960,7 @@ const getPropertyTenants = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ Get property tenants error:", error);
+    console.error("âŒ Get property tenants error:", error);
     res.status(500).json({
       success: false,
       message: "Server error fetching tenants",
@@ -914,7 +984,7 @@ const sendTargetedSMS = async (req, res) => {
     } = req.body;
     const userId = req.user.id;
 
-    console.log("📱 Sending targeted SMS + WhatsApp:", {
+    console.log("ðŸ“± Sending targeted SMS + WhatsApp:", {
       tenantCount: tenantIds?.length,
       messageType,
       userId,
@@ -999,7 +1069,9 @@ const sendTargetedSMS = async (req, res) => {
       });
     }
 
-    console.log(`📤 Sending to ${tenantsWithPhones.length} selected tenants`);
+    console.log(`ðŸ“¤ Sending to ${tenantsWithPhones.length} selected tenants`);
+
+    const configuredPaybill = await getConfiguredPaybillNumber();
 
     const results = {
       total: tenantsWithPhones.length,
@@ -1009,21 +1081,44 @@ const sendTargetedSMS = async (req, res) => {
       errors: [],
       whatsapp_sent: 0,
       whatsapp_failed: 0,
+      whatsapp_errors: [],
     };
 
     for (const tenant of tenantsWithPhones) {
+      let finalMessage = message;
       try {
-        let finalMessage = message;
+        const resolvedTemplateVariables = {
+          tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
+          unitCode: tenant.unit_code,
+          message: message || "",
+          month:
+            template_variables?.month ||
+            new Date().toLocaleDateString("en-US", {
+              month: "long",
+              year: "numeric",
+            }),
+          account:
+            template_variables?.account ||
+            template_variables?.accountNumber ||
+            tenant.unit_code ||
+            "",
+          dueDate:
+            template_variables?.dueDate ||
+            template_variables?.due_date ||
+            "",
+          paybill: template_variables?.paybill || configuredPaybill || "",
+          total:
+            template_variables?.total ??
+            template_variables?.totalDue ??
+            template_variables?.outstanding ??
+            "",
+          ...template_variables,
+        };
         const rendered = await MessageTemplateService.buildRenderedMessage({
           eventKey: "agent_manual_general_trigger",
           channel: "sms",
           templateIdOverride: useTemplateId,
-          variables: {
-            tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
-            unitCode: tenant.unit_code,
-            message: message || "",
-            ...template_variables,
-          },
+          variables: resolvedTemplateVariables,
         });
         if (rendered?.rendered) {
           finalMessage = rendered.rendered;
@@ -1032,11 +1127,21 @@ const sendTargetedSMS = async (req, res) => {
           throw new Error("Resolved template message is empty");
         }
 
+        const whatsappTemplateName = rendered?.template?.whatsapp_template_name || null;
+        const whatsappTemplateParams = buildWhatsAppTemplateParams(
+          rendered?.template,
+          resolvedTemplateVariables,
+        );
+
         // Send via both SMS + WhatsApp in parallel
         const msgResult = await MessagingService.sendRawMessage(
           tenant.phone_number,
           finalMessage,
           messageType,
+          {
+            whatsappTemplateName,
+            whatsappTemplateParams,
+          },
         );
 
         const anySent = !!(msgResult.sms?.success || msgResult.whatsapp?.success);
@@ -1074,6 +1179,17 @@ const sendTargetedSMS = async (req, res) => {
           results.whatsapp_sent++;
         } else if (!msgResult.whatsapp?.skipped) {
           results.whatsapp_failed++;
+          results.whatsapp_errors.push({
+            tenant: `${tenant.first_name} ${tenant.last_name}`.trim(),
+            unit: tenant.unit_code,
+            phone: tenant.phone_number,
+            template:
+              whatsappTemplateName ||
+              rendered?.template?.whatsapp_template_name ||
+              null,
+            error: msgResult.whatsapp?.error || "WhatsApp send failed",
+            code: msgResult.whatsapp?.code || null,
+          });
         }
       } catch (sendError) {
         results.failed++;
@@ -1105,7 +1221,7 @@ const sendTargetedSMS = async (req, res) => {
     }
 
     console.log(
-      `✅ Targeted messaging complete: SMS=${results.sent} sent/${results.failed} failed, WhatsApp=${results.whatsapp_sent} sent/${results.whatsapp_failed} failed`,
+      `âœ… Targeted messaging complete: SMS=${results.sent} sent/${results.failed} failed, WhatsApp=${results.whatsapp_sent} sent/${results.whatsapp_failed} failed`,
     );
 
     res.json({
@@ -1117,7 +1233,7 @@ const sendTargetedSMS = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ Send targeted messaging error:", error);
+    console.error("âŒ Send targeted messaging error:", error);
     res.status(500).json({
       success: false,
       message: "Server error sending targeted messages",
@@ -1566,7 +1682,7 @@ const getMessagingHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ Get messaging history error:", error);
+    console.error("âŒ Get messaging history error:", error);
     res.status(500).json({
       success: false,
       message: "Server error fetching messaging history",
@@ -1590,7 +1706,7 @@ const healthCheck = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('❌ Health check error:', error);
+    console.error('âŒ Health check error:', error);
     res.status(500).json({
       success: false,
       message: 'Notification service is unhealthy',
@@ -1613,7 +1729,7 @@ const checkDeliveryStatus = async (req, res) => {
       });
     }
 
-    console.log(`🔍 Checking delivery status for message: ${messageId}`);
+    console.log(`ðŸ” Checking delivery status for message: ${messageId}`);
 
     // Call Celcom delivery report API
     const dlrResult = await SMSService.checkDeliveryReport(messageId);
@@ -1698,7 +1814,7 @@ const checkDeliveryStatus = async (req, res) => {
       }
     }
 
-    console.log(`📬 Delivery status for ${messageId}: ${status}`);
+    console.log(`ðŸ“¬ Delivery status for ${messageId}: ${status}`);
 
     res.json({
       success: true,
@@ -1712,7 +1828,7 @@ const checkDeliveryStatus = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Check delivery status error:', error);
+    console.error('âŒ Check delivery status error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error checking delivery status',
@@ -1931,7 +2047,7 @@ const getSMSStats = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get SMS stats error:', error);
+    console.error('âŒ Get SMS stats error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching SMS statistics',
@@ -1995,7 +2111,7 @@ const getTenantsByProperty = async (req, res) => {
       [propertyId]
     );
 
-    console.log(`📋 Found ${tenantsQuery.rows.length} tenants in property ${propertyId}`);
+    console.log(`ðŸ“‹ Found ${tenantsQuery.rows.length} tenants in property ${propertyId}`);
 
     res.json({
       success: true,
@@ -2003,7 +2119,7 @@ const getTenantsByProperty = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get tenants by property error:', error);
+    console.error('âŒ Get tenants by property error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching tenants',

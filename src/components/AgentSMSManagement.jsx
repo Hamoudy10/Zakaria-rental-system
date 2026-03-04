@@ -834,6 +834,18 @@ const AgentSMSManagement = () => {
                           <p><strong>Failed:</strong> {testSendResult.data.failed ?? 0}</p>
                           <p><strong>WhatsApp Sent:</strong> {testSendResult.data.whatsapp_sent ?? 0}</p>
                           <p><strong>WhatsApp Failed:</strong> {testSendResult.data.whatsapp_failed ?? 0}</p>
+                          {!!testSendResult.data.whatsapp_errors?.length && (
+                            <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2">
+                              <p className="font-semibold text-amber-800">WhatsApp failure reason</p>
+                              {testSendResult.data.whatsapp_errors.slice(0, 1).map((err, idx) => (
+                                <p key={idx} className="text-amber-900">
+                                  {err.error}
+                                  {err.code ? ` (code: ${err.code})` : ""}
+                                  {err.template ? ` | template: ${err.template}` : ""}
+                                </p>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
