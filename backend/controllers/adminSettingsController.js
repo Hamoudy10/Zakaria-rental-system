@@ -127,7 +127,9 @@ const getCompanyInfo = async (req, res) => {
       'company_email', 
       'company_phone',
       'company_address',
-      'company_logo'
+      'company_logo',
+      'paybill_number',
+      'mpesa_paybill_number'
     ];
 
     const placeholders = companyKeys.map((_, i) => `$${i + 1}`).join(',');
@@ -144,7 +146,11 @@ const getCompanyInfo = async (req, res) => {
       const row = result.rows.find(r => r.setting_key === key);
       // Remove 'company_' prefix for cleaner response
       const cleanKey = key.replace('company_', '');
-      companyInfo[cleanKey] = row ? row.setting_value : getDefaultCompanyValue(key);
+      if (key === 'paybill_number' || key === 'mpesa_paybill_number') {
+        companyInfo[cleanKey] = row ? row.setting_value : '';
+      } else {
+        companyInfo[cleanKey] = row ? row.setting_value : getDefaultCompanyValue(key);
+      }
     });
 
     res.json({
