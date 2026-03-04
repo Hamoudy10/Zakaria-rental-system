@@ -44,12 +44,23 @@ import {
 // HELPER FUNCTIONS
 // ============================================================
 
+const toNumericAmount = (value) => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  const cleaned = String(value)
+    .replace(/,/g, "")
+    .replace(/[^\d.-]/g, "");
+  const parsed = parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const formatCurrency = (amount) =>
   new Intl.NumberFormat("en-KE", {
     style: "currency",
     currency: "KES",
     minimumFractionDigits: 0,
-  }).format(amount || 0);
+  }).format(toNumericAmount(amount));
 
 const formatDate = (dateString) =>
   dateString ? new Date(dateString).toLocaleDateString("en-GB") : "N/A";
@@ -904,7 +915,7 @@ const PaymentManagement = () => {
   // ============================================================
 
   const totalInView = useMemo(
-    () => payments?.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0) || 0,
+    () => payments?.reduce((sum, p) => sum + toNumericAmount(p.amount), 0) || 0,
     [payments],
   );
 
@@ -1371,7 +1382,7 @@ const AllPaymentsTable = ({
       style: "currency",
       currency: "KES",
       minimumFractionDigits: 0,
-    }).format(amount || 0);
+    }).format(toNumericAmount(amount));
 
   const formatDate = (dateString) =>
     dateString ? new Date(dateString).toLocaleDateString("en-GB") : "N/A";
@@ -1577,7 +1588,7 @@ const TenantStatusTable = ({
       style: "currency",
       currency: "KES",
       minimumFractionDigits: 0,
-    }).format(amount || 0);
+    }).format(toNumericAmount(amount));
 
   const formatPhone = (phone) => phone?.replace(/^254/, "0") || "";
 
@@ -1814,7 +1825,7 @@ const TenantHistoryModal = ({
       style: "currency",
       currency: "KES",
       minimumFractionDigits: 0,
-    }).format(amount || 0);
+    }).format(toNumericAmount(amount));
 
   const formatDate = (dateString) =>
     dateString ? new Date(dateString).toLocaleDateString("en-GB") : "N/A";
