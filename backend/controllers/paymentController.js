@@ -1446,10 +1446,18 @@ const getAllPayments = async (req, res) => {
       baseQuery += ` WHERE ${whereClauses.join(" AND ")}`;
     }
 
-    // Count query
+    // Count + total amount over the full filtered result set (before pagination)
     const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) as filtered_payments`;
-    const countResult = await pool.query(countQuery, queryParams);
+    const totalAmountQuery = `
+      SELECT COALESCE(SUM(COALESCE(amount, 0)), 0) AS total_amount
+      FROM (${baseQuery}) as filtered_payments
+    `;
+    const [countResult, totalAmountResult] = await Promise.all([
+      pool.query(countQuery, queryParams),
+      pool.query(totalAmountQuery, queryParams),
+    ]);
     const totalCount = parseInt(countResult.rows[0].count, 10);
+    const totalAmount = parseFloat(totalAmountResult.rows[0]?.total_amount || 0);
 
     // Add sorting and pagination
     baseQuery += ` ORDER BY ${safeSortColumn} ${safeSortOrder}`;
@@ -1466,6 +1474,7 @@ const getAllPayments = async (req, res) => {
           currentPage: parseInt(page, 10),
           totalPages: Math.max(1, Math.ceil(totalCount / parseInt(limit, 10))),
           totalCount,
+          totalAmount: Number.isFinite(totalAmount) ? totalAmount : 0,
         },
       },
     });

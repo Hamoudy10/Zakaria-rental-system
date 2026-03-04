@@ -914,10 +914,11 @@ const PaymentManagement = () => {
   // COMPUTED VALUES
   // ============================================================
 
-  const totalInView = useMemo(
-    () => payments?.reduce((sum, p) => sum + toNumericAmount(p.amount), 0) || 0,
-    [payments],
-  );
+  const totalInView = useMemo(() => {
+    const pagedTotal = toNumericAmount(pagination?.totalAmount);
+    if (pagedTotal > 0) return pagedTotal;
+    return payments?.reduce((sum, p) => sum + toNumericAmount(p.amount), 0) || 0;
+  }, [payments, pagination?.totalAmount]);
 
   const monthOptions = useMemo(() => getMonthOptions(), []);
 
