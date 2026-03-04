@@ -37,13 +37,108 @@ const getConfiguredPaybillNumber = async () => {
   }
 };
 
+const toNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const getOrdinalDay = (day) => {
+  const n = toNumber(day);
+  if (!n) return "";
+  const j = n % 10;
+  const k = n % 100;
+  if (j === 1 && k !== 11) return `${n}st`;
+  if (j === 2 && k !== 12) return `${n}nd`;
+  if (j === 3 && k !== 13) return `${n}rd`;
+  return `${n}th`;
+};
+
+const buildResolvedTemplateVariables = (base = {}, incoming = {}) => {
+  const merged = {
+    ...base,
+    ...incoming,
+  };
+
+  const totalRaw =
+    merged.total ?? merged.totalDue ?? merged.outstanding ?? merged.balance ?? 0;
+  const total = toNumber(totalRaw);
+  const month =
+    merged.month ||
+    new Date().toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+  const dueDayRaw = merged.dueDay || merged.due_day || "";
+  const dueDay =
+    dueDayRaw ||
+    (merged.rent_due_day
+      ? `${getOrdinalDay(merged.rent_due_day)} of every month`
+      : "");
+  const dueDate = merged.dueDate || merged.due_date || "";
+  const unitCode = merged.unitCode || merged.unit_code || "";
+  const items = merged.items || merged.allocation || `- Rent: KES ${total}`;
+
+  return {
+    ...merged,
+    month,
+    total,
+    totalDue: merged.totalDue ?? total,
+    outstanding: merged.outstanding ?? total,
+    dueDay,
+    due_day: dueDay,
+    dueDate,
+    due_date: dueDate,
+    unitCode,
+    unit_code: merged.unit_code || unitCode,
+    account: merged.account || merged.accountNumber || unitCode,
+    accountNumber: merged.accountNumber || merged.account || unitCode,
+    propertyName: merged.propertyName || merged.property_name || "",
+    property_name: merged.property_name || merged.propertyName || "",
+    tenantName: merged.tenantName || merged.tenant_name || "Tenant",
+    tenant_name: merged.tenant_name || merged.tenantName || "Tenant",
+    items,
+    allocation: merged.allocation || items,
+    status:
+      merged.status || (total > 0 ? `Balance: KES ${total}` : "Fully Paid"),
+    message: merged.message || "",
+    title: merged.title || "Notification",
+    months: merged.months || "1",
+    paybill: merged.paybill || "",
+  };
+};
+
 const buildWhatsAppTemplateParams = (template, resolvedVariables = {}) => {
   if (!template?.whatsapp_template_name) return null;
   const keys = Array.isArray(template?.variables) ? template.variables : [];
   if (!keys.length) return null;
+  const fallbackByKey = {
+    tenantName: "Tenant",
+    propertyName: "Property",
+    unitCode: "N/A",
+    rent: "0",
+    dueDay: "1st of every month",
+    paybill: "N/A",
+    account: resolvedVariables.unitCode || "N/A",
+    month: new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+    total: "0",
+    totalDue: "0",
+    outstanding: "0",
+    dueDate: "N/A",
+    due_day: "N/A",
+    message: "System notification",
+    title: "Notification",
+    allocation: "-",
+    items: "-",
+    status: "Pending",
+    months: "1",
+    accountNumber: resolvedVariables.account || resolvedVariables.unitCode || "N/A",
+  };
   return keys.map((key) => {
     const value = resolvedVariables[key];
-    return value === undefined || value === null ? "" : String(value);
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return String(fallbackByKey[key] ?? "N/A");
+    }
+    return String(value);
   });
 };
 
@@ -739,34 +834,13 @@ const sendBulkSMS = async (req, res) => {
     for (const tenant of tenants) {
       let finalMessage = message;
       try {
-        const resolvedTemplateVariables = {
+        const resolvedTemplateVariables = buildResolvedTemplateVariables({
           tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
           unitCode: tenant.unit_code,
           propertyName: property.name,
           message: message || "",
-          month:
-            template_variables?.month ||
-            new Date().toLocaleDateString("en-US", {
-              month: "long",
-              year: "numeric",
-            }),
-          account:
-            template_variables?.account ||
-            template_variables?.accountNumber ||
-            tenant.unit_code ||
-            "",
-          dueDate:
-            template_variables?.dueDate ||
-            template_variables?.due_date ||
-            "",
-          paybill: template_variables?.paybill || configuredPaybill || "",
-          total:
-            template_variables?.total ??
-            template_variables?.totalDue ??
-            template_variables?.outstanding ??
-            "",
-          ...template_variables,
-        };
+          paybill: configuredPaybill || "",
+        }, template_variables);
         const rendered = await MessageTemplateService.buildRenderedMessage({
           eventKey: "agent_manual_general_trigger",
           channel: "sms",
@@ -1027,20 +1101,24 @@ const sendTargetedSMS = async (req, res) => {
 
     if (req.user.role === "admin") {
       tenantsQuery = await pool.query(
-        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, pu.unit_code
+        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, pu.unit_code,
+                p.name as property_name, ta.monthly_rent, ta.rent_due_day
          FROM tenants t
          JOIN tenant_allocations ta ON t.id = ta.tenant_id
          JOIN property_units pu ON ta.unit_id = pu.id
+         JOIN properties p ON pu.property_id = p.id
          WHERE t.id = ANY($1::uuid[]) AND ta.is_active = true`,
         [tenantIds],
       );
     } else {
       // Agent: verify they have access via property assignments
       tenantsQuery = await pool.query(
-        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, pu.unit_code
+        `SELECT DISTINCT t.id, t.first_name, t.last_name, t.phone_number, pu.unit_code,
+                p.name as property_name, ta.monthly_rent, ta.rent_due_day
          FROM tenants t
          JOIN tenant_allocations ta ON t.id = ta.tenant_id
          JOIN property_units pu ON ta.unit_id = pu.id
+         JOIN properties p ON pu.property_id = p.id
          JOIN agent_property_assignments apa ON pu.property_id = apa.property_id
          WHERE t.id = ANY($1::uuid[]) 
            AND ta.is_active = true 
@@ -1087,33 +1165,18 @@ const sendTargetedSMS = async (req, res) => {
     for (const tenant of tenantsWithPhones) {
       let finalMessage = message;
       try {
-        const resolvedTemplateVariables = {
+        const resolvedTemplateVariables = buildResolvedTemplateVariables({
           tenantName: `${tenant.first_name} ${tenant.last_name}`.trim(),
           unitCode: tenant.unit_code,
+          propertyName: tenant.property_name || "",
+          rent: tenant.monthly_rent ?? "",
+          rent_due_day: tenant.rent_due_day ?? "",
+          dueDay: tenant.rent_due_day
+            ? `${getOrdinalDay(tenant.rent_due_day)} of every month`
+            : "",
           message: message || "",
-          month:
-            template_variables?.month ||
-            new Date().toLocaleDateString("en-US", {
-              month: "long",
-              year: "numeric",
-            }),
-          account:
-            template_variables?.account ||
-            template_variables?.accountNumber ||
-            tenant.unit_code ||
-            "",
-          dueDate:
-            template_variables?.dueDate ||
-            template_variables?.due_date ||
-            "",
-          paybill: template_variables?.paybill || configuredPaybill || "",
-          total:
-            template_variables?.total ??
-            template_variables?.totalDue ??
-            template_variables?.outstanding ??
-            "",
-          ...template_variables,
-        };
+          paybill: configuredPaybill || "",
+        }, template_variables);
         const rendered = await MessageTemplateService.buildRenderedMessage({
           eventKey: "agent_manual_general_trigger",
           channel: "sms",
@@ -2102,7 +2165,8 @@ const getTenantsByProperty = async (req, res) => {
          pu.unit_code,
          pu.unit_number,
          ta.is_active as allocation_active,
-         ta.monthly_rent
+         ta.monthly_rent,
+         ta.rent_due_day
        FROM tenants t
        JOIN tenant_allocations ta ON t.id = ta.tenant_id
        JOIN property_units pu ON ta.unit_id = pu.id

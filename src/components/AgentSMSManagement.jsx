@@ -1,5 +1,5 @@
 // src/components/AgentSMSManagement.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { API } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -12,6 +12,36 @@ import {
   Eye,
 } from "lucide-react";
 import TemplatePicker from "./common/TemplatePicker";
+
+const toNumeric = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const formatKES = (value) =>
+  toNumeric(value).toLocaleString("en-KE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+
+const getOrdinal = (day) => {
+  const n = Number(day);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const j = n % 10;
+  const k = n % 100;
+  if (j === 1 && k !== 11) return `${n}st`;
+  if (j === 2 && k !== 12) return `${n}nd`;
+  if (j === 3 && k !== 13) return `${n}rd`;
+  return `${n}th`;
+};
+
+const renderTemplateString = (body = "", variables = {}) =>
+  String(body || "").replace(/\{([^}]+)\}/g, (_, key) => {
+    const normalized = String(key || "").trim();
+    return Object.prototype.hasOwnProperty.call(variables, normalized)
+      ? String(variables[normalized] ?? "")
+      : `{${normalized}}`;
+  });
 
 const AgentSMSManagement = () => {
   const { user } = useAuth();
@@ -69,10 +99,31 @@ const AgentSMSManagement = () => {
   const [testTemplateId, setTestTemplateId] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
   const [testSendResult, setTestSendResult] = useState(null);
+  const [resolvedTemplateVariables, setResolvedTemplateVariables] = useState({});
   const [loadingNotificationTemplates, setLoadingNotificationTemplates] =
     useState(false);
   const [loadingSendBalances, setLoadingSendBalances] = useState(false);
   const [sendTenantBalances, setSendTenantBalances] = useState({});
+
+  const selectedNotificationTemplate = useMemo(
+    () => notificationTemplates.find((t) => t.id === testTemplateId) || null,
+    [notificationTemplates, testTemplateId],
+  );
+
+  const missingRequiredTemplateVariables = useMemo(() => {
+    if (!selectedNotificationTemplate) return [];
+    const requiredKeys = Array.isArray(selectedNotificationTemplate.variables)
+      ? selectedNotificationTemplate.variables
+      : [];
+    return requiredKeys.filter((rawKey) => {
+      const key = String(rawKey || "").trim();
+      if (!key) return false;
+      const value = resolvedTemplateVariables?.[key];
+      if (value === undefined || value === null) return true;
+      const normalized = String(value).trim().toLowerCase();
+      return normalized === "" || normalized === "n/a";
+    });
+  }, [selectedNotificationTemplate, resolvedTemplateVariables]);
 
   // Load agent's assigned properties
   useEffect(() => {
@@ -167,14 +218,7 @@ const AgentSMSManagement = () => {
     }
   };
 
-  const renderTemplateForTenant = (template, tenant) => {
-    if (!template || !tenant) return "";
-    const base =
-      template.whatsapp_fallback_body ||
-      template.sms_body ||
-      "";
-    if (!base) return "";
-
+  const buildVariableContext = (tenant) => {
     const now = new Date();
     const monthLong = now.toLocaleDateString("en-US", {
       month: "long",
@@ -185,10 +229,19 @@ const AgentSMSManagement = () => {
       .toUpperCase();
 
     const property = properties.find((p) => p.id === sendPropertyId);
+    const dueValue = toNumeric(sendTenantBalances[selectedSendTenantId] ?? testAmount);
+    const dueDayNumber = toNumeric(tenant?.rent_due_day);
+    const dueDay = dueDayNumber > 0 ? `${getOrdinal(dueDayNumber)} of every month` : "";
+    const dueDate = dueDayNumber > 0 ? `${getOrdinal(dueDayNumber)} ${monthLong}` : "";
     const tenantName =
       `${tenant.first_name || ""} ${tenant.last_name || ""}`.trim() || "Tenant";
+    const itemsLine = `- Rent: KES ${formatKES(dueValue)}`;
+    const statusLine =
+      dueValue > 0
+        ? `Balance: KES ${formatKES(dueValue)}`
+        : "Fully Paid";
 
-    const replacements = {
+    return {
       tenantName,
       tenant_name: tenantName,
       firstName: tenant.first_name || "",
@@ -203,26 +256,81 @@ const AgentSMSManagement = () => {
       property_name: property?.name || "",
       paybill: property?.paybill_number || property?.paybill || "",
       account: tenant.unit_code || "",
+      accountNumber: tenant.unit_code || "",
       message: testMessage?.trim() || "",
-      total: testAmount?.trim() || "",
+      title: "Service Notice",
+      total: `${dueValue}`,
+      totalDue: `${dueValue}`,
+      outstanding: `${dueValue}`,
+      rent: `${toNumeric(tenant?.monthly_rent)}`,
+      dueDay,
+      due_day: dueDay,
+      dueDate,
+      due_date: dueDate,
+      status: statusLine,
+      allocation: itemsLine,
+      items: itemsLine,
+      months: "1",
     };
+  };
 
-    return base.replace(/\{([^}]+)\}/g, (_, key) => {
-      const normalizedKey = String(key || "").trim();
-      return replacements[normalizedKey] ?? `{${normalizedKey}}`;
+  const resolveVariablesForTemplate = (template, tenant) => {
+    const context = buildVariableContext(tenant);
+    const requiredKeys = Array.isArray(template?.variables) ? template.variables : [];
+    if (!requiredKeys.length) return context;
+
+    const resolved = { ...context };
+    requiredKeys.forEach((rawKey) => {
+      const key = String(rawKey || "").trim();
+      if (!key) return;
+      const existing = resolved[key];
+      if (existing !== undefined && existing !== null && String(existing).trim() !== "") {
+        return;
+      }
+      resolved[key] = "N/A";
     });
+
+    return resolved;
+  };
+
+  const renderTemplateForTenant = (template, tenant) => {
+    if (!template || !tenant) return { message: "", variables: {} };
+    const base = template.whatsapp_fallback_body || template.sms_body || "";
+    if (!base) return { message: "", variables: {} };
+
+    const resolved = resolveVariablesForTemplate(template, tenant);
+    const rendered = renderTemplateString(base, resolved);
+
+    return { message: rendered, variables: resolved };
   };
 
   useEffect(() => {
-    if (!testTemplateId || !selectedSendTenantId) return;
+    if (!selectedSendTenantId) {
+      setResolvedTemplateVariables({});
+      return;
+    }
     const tenant = sendTenants.find(
       (t) => (t.id || t.tenant_id) === selectedSendTenantId,
     );
+    if (!tenant) {
+      setResolvedTemplateVariables({});
+      return;
+    }
+
+    if (!testTemplateId) {
+      setResolvedTemplateVariables(buildVariableContext(tenant));
+      return;
+    }
+
     const template = notificationTemplates.find((t) => t.id === testTemplateId);
-    if (!tenant || !template) return;
+    if (!template) {
+      setResolvedTemplateVariables({});
+      return;
+    }
     const rendered = renderTemplateForTenant(template, tenant);
-    if (rendered) {
-      setTestMessage(rendered);
+    setResolvedTemplateVariables(rendered.variables || {});
+    if (rendered.message) {
+      setTestMessage(rendered.message);
     }
   }, [
     testTemplateId,
@@ -231,6 +339,7 @@ const AgentSMSManagement = () => {
     notificationTemplates,
     sendPropertyId,
     testAmount,
+    sendTenantBalances,
   ]);
 
   const fetchSendTenantsByProperty = async (selectedProperty) => {
@@ -320,6 +429,12 @@ const AgentSMSManagement = () => {
       alert("Message should be 160 characters or fewer when no template is selected.");
       return;
     }
+    if (testTemplateId && missingRequiredTemplateVariables.length > 0) {
+      alert(
+        `Cannot send. Missing required template values: ${missingRequiredTemplateVariables.join(", ")}`,
+      );
+      return;
+    }
 
     setSendingTest(true);
     setTestSendResult(null);
@@ -331,23 +446,41 @@ const AgentSMSManagement = () => {
       const tenantName = selectedTenant
         ? `${selectedTenant.first_name || ""} ${selectedTenant.last_name || ""}`.trim()
         : "";
+      const selectedProperty = properties.find((p) => p.id === sendPropertyId);
+      const dueDayValue =
+        selectedTenant?.rent_due_day
+          ? `${getOrdinal(selectedTenant.rent_due_day)} of every month`
+          : "";
+      const resolvedValues = {
+        ...resolvedTemplateVariables,
+        message: testMessage.trim(),
+        tenantName,
+        unitCode: selectedTenant?.unit_code || "",
+        propertyName: selectedProperty?.name || "",
+        rent: selectedTenant?.monthly_rent ?? "",
+        dueDay: dueDayValue,
+        month:
+          resolvedTemplateVariables?.month ||
+          new Date().toLocaleDateString("en-US", {
+            month: "long",
+            year: "numeric",
+          }),
+        total: testAmount.trim(),
+        totalDue: testAmount.trim(),
+        outstanding: testAmount.trim(),
+        account: selectedTenant?.unit_code || "",
+        accountNumber: selectedTenant?.unit_code || "",
+        paybill:
+          selectedProperty?.paybill_number ||
+          selectedProperty?.paybill ||
+          "",
+      };
       const payload = {
         tenantIds: [selectedSendTenantId],
         message: testMessage.trim(),
         messageType: "announcement",
         template_id: testTemplateId || undefined,
-        template_variables: {
-          message: testMessage.trim(),
-          tenantName,
-          unitCode: selectedTenant?.unit_code || "",
-          month: new Date().toLocaleDateString("en-US", {
-            month: "long",
-            year: "numeric",
-          }),
-          total: testAmount.trim(),
-          outstanding: testAmount.trim(),
-          account: selectedTenant?.unit_code || "",
-        },
+        template_variables: resolvedValues,
       };
 
       const response = await API.notifications.sendTargetedSMS(payload);
@@ -842,6 +975,32 @@ const AgentSMSManagement = () => {
                     {testMessage.length}/160 characters (plain message mode)
                   </p>
                 </div>
+
+                {testTemplateId && selectedSendTenantId && (
+                  <div className="md:col-span-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-semibold uppercase text-gray-600 mb-2">
+                      Auto-populated Variables
+                    </p>
+                    {missingRequiredTemplateVariables.length > 0 && (
+                      <div className="mb-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
+                        Missing required values: {missingRequiredTemplateVariables.join(", ")}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-700">
+                      {Object.entries(resolvedTemplateVariables || {}).map(([k, v]) => (
+                        <div
+                          key={k}
+                          className="flex items-center justify-between rounded border border-gray-200 bg-white px-2 py-1"
+                        >
+                          <span className="font-mono text-gray-500">{k}</span>
+                          <span className="ml-3 text-right font-medium break-all">
+                            {String(v ?? "")}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-3">
@@ -851,7 +1010,8 @@ const AgentSMSManagement = () => {
                     sendingTest ||
                     !sendPropertyId ||
                     !selectedSendTenantId ||
-                    (!testTemplateId && !testMessage.trim())
+                    (!testTemplateId && !testMessage.trim()) ||
+                    (testTemplateId && missingRequiredTemplateVariables.length > 0)
                   }
                   className="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                 >
