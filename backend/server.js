@@ -199,6 +199,15 @@ try {
 }
 
 try {
+  // WhatsApp webhook routes (NO AUTH) for Meta status callbacks
+  const whatsappWebhookRoutes = require('./routes/whatsappWebhook');
+  app.use('/api/whatsapp', whatsappWebhookRoutes);
+  console.log('✅ Loaded WhatsApp webhook routes');
+} catch (err) {
+  console.error('❌ Failed to load WhatsApp webhook routes:', err.message);
+}
+
+try {
   // Complaints routes
   const complaintRoutes = require('./routes/complaints');
   app.use('/api/complaints', complaintRoutes);
