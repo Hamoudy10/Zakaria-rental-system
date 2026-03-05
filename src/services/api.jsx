@@ -221,6 +221,8 @@ export const paymentAPI = {
   // Callback is POST /payments/mpesa/callback — called by Safaricom, no frontend API needed
   checkPaymentStatus: (checkoutRequestId) =>
     api.get(`/payments/mpesa/status/${checkoutRequestId}`),
+  getMpesaCallbackInboxAudit: (params = {}) =>
+    api.get("/payments/mpesa/callback-inbox-audit", { params }),
   testMpesaConfig: () => api.get("/payments/mpesa/test-config"),
 
   // ==================== REMINDERS ====================

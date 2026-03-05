@@ -1,7 +1,7 @@
 // src/pages/AdminDashboard.jsx
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import api from '../services/api';
-import { expenseAPI } from '../services/api';
+import { expenseAPI, paymentAPI } from '../services/api';
 import {
   Building2,
   Users,
@@ -59,6 +59,7 @@ const AdminDashboard = () => {
   const [topProperties, setTopProperties] = useState([]);
   const [expenseStats, setExpenseStats] = useState(null);
   const [netProfitData, setNetProfitData] = useState(null);
+  const [mpesaAudit, setMpesaAudit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -86,9 +87,10 @@ const AdminDashboard = () => {
 
       // Fetch expense stats separately (optional - won't fail main dashboard)
       try {
-        const [expenseStatsRes, netProfitRes] = await Promise.all([
+        const [expenseStatsRes, netProfitRes, mpesaAuditRes] = await Promise.all([
           expenseAPI.getStats(),
-          expenseAPI.getNetProfitReport()
+          expenseAPI.getNetProfitReport(),
+          paymentAPI.getMpesaCallbackInboxAudit({ days: 7, limit: 20 }),
         ]);
         
         if (expenseStatsRes.data.success) {
@@ -97,8 +99,11 @@ const AdminDashboard = () => {
         if (netProfitRes.data.success) {
           setNetProfitData(netProfitRes.data.data);
         }
+        if (mpesaAuditRes.data.success) {
+          setMpesaAudit(mpesaAuditRes.data.data);
+        }
       } catch (expenseErr) {
-        console.log('Expense stats not available:', expenseErr.message);
+        console.log('Optional dashboard stats not available:', expenseErr.message);
       }
 
       setLastUpdated(new Date());
@@ -163,6 +168,7 @@ const AdminDashboard = () => {
             topProperties={topProperties}
             expenseStats={expenseStats}
             netProfitData={netProfitData}
+            mpesaAudit={mpesaAudit}
             loading={loading}
             error={error}
             onRefresh={fetchDashboardData}
@@ -221,6 +227,7 @@ const DashboardOverview = ({
   topProperties,
   expenseStats,
   netProfitData,
+  mpesaAudit,
   loading,
   error,
   onRefresh,
@@ -290,6 +297,13 @@ const DashboardOverview = ({
   const allTimeProfitMargin = allTimeRevenue > 0
     ? ((allTimeNetProfit / allTimeRevenue) * 100).toFixed(1)
     : 0;
+  const callbackSummary = mpesaAudit?.summary || {};
+  const callbackRows = Array.isArray(mpesaAudit?.rows) ? mpesaAudit.rows : [];
+  const callbackIssues = callbackRows.filter((row) =>
+    ['failed', 'pending', 'pending_unmatched', 'invalid'].includes(
+      String(row.process_status || '').toLowerCase(),
+    ),
+  );
 
   return (
     <div className="space-y-6">
@@ -314,6 +328,75 @@ const DashboardOverview = ({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base sm:text-lg font-semibold text-amber-900 flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5" />
+            M-Pesa Callback Health (Last 7 Days)
+          </h2>
+          <button
+            onClick={() => setActiveTab('payments')}
+            className="text-sm text-amber-800 hover:text-amber-900 font-medium"
+          >
+            Open Payment Management
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+          <div className="rounded-lg bg-white border border-amber-100 p-3">
+            <p className="text-xs text-gray-600">Processed</p>
+            <p className="text-xl font-bold text-green-700">{formatNumber(callbackSummary.processed_callbacks || 0)}</p>
+          </div>
+          <div className="rounded-lg bg-white border border-amber-100 p-3">
+            <p className="text-xs text-gray-600">Failed</p>
+            <p className="text-xl font-bold text-red-700">{formatNumber(callbackSummary.failed_callbacks || 0)}</p>
+          </div>
+          <div className="rounded-lg bg-white border border-amber-100 p-3">
+            <p className="text-xs text-gray-600">Open / Pending</p>
+            <p className="text-xl font-bold text-amber-700">{formatNumber(callbackSummary.open_callbacks || 0)}</p>
+          </div>
+          <div className="rounded-lg bg-white border border-amber-100 p-3">
+            <p className="text-xs text-gray-600">Not Posted</p>
+            <p className="text-xl font-bold text-rose-700">{formatNumber(callbackSummary.not_posted_to_rent_payments || 0)}</p>
+          </div>
+        </div>
+
+        {callbackIssues.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-600 border-b border-amber-200">
+                  <th className="py-2 pr-3">Receipt</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Error</th>
+                  <th className="py-2 pr-3">Received</th>
+                </tr>
+              </thead>
+              <tbody>
+                {callbackIssues.slice(0, 6).map((row) => (
+                  <tr key={row.trans_id} className="border-b border-amber-100">
+                    <td className="py-2 pr-3 font-mono text-xs">{row.trans_id}</td>
+                    <td className="py-2 pr-3">
+                      <span className="px-2 py-0.5 rounded-full text-xs bg-white border border-amber-300 text-amber-800">
+                        {row.process_status}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-gray-700">{row.process_error || '-'}</td>
+                    <td className="py-2 pr-3 text-gray-600">
+                      {row.received_at ? new Date(row.received_at).toLocaleString() : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-sm text-green-800 bg-white border border-green-200 rounded-lg p-3">
+            No callback issues detected in the selected window.
+          </div>
+        )}
+      </div>
+
       {/* NET PROFIT BANNER - New prominent section */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
       <div className={`rounded-xl p-4 sm:p-6 ${netProfit >= 0 ? 'bg-gradient-to-r from-green-600 to-emerald-600' : 'bg-gradient-to-r from-red-600 to-rose-600'} text-white`}>
