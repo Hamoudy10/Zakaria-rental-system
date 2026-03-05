@@ -247,6 +247,133 @@ const getPaymentFailureGuidance = (rawError = "", context = {}) => {
   };
 };
 
+const buildCallbackInboxTransId = (payload = {}) => {
+  const raw = payload?.TransID ? String(payload.TransID).trim() : "";
+  if (raw) return raw.slice(0, 64);
+  return `missing_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const persistMpesaCallbackInbox = async (payload = {}) => {
+  const transId = buildCallbackInboxTransId(payload);
+  const parsedAmount = Number.parseFloat(payload?.TransAmount);
+  const transAmount = Number.isFinite(parsedAmount) ? parsedAmount : null;
+
+  await pool.query(
+    `INSERT INTO mpesa_callback_inbox (
+      trans_id, bill_ref_number, msisdn, trans_amount, trans_time_raw,
+      payer_first_name, payer_middle_name, payer_last_name,
+      raw_payload, process_status, received_at, last_received_at, updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5,
+      $6, $7, $8,
+      $9::jsonb, 'pending', NOW(), NOW(), NOW()
+    )
+    ON CONFLICT (trans_id)
+    DO UPDATE SET
+      raw_payload = EXCLUDED.raw_payload,
+      bill_ref_number = EXCLUDED.bill_ref_number,
+      msisdn = EXCLUDED.msisdn,
+      trans_amount = EXCLUDED.trans_amount,
+      trans_time_raw = EXCLUDED.trans_time_raw,
+      payer_first_name = EXCLUDED.payer_first_name,
+      payer_middle_name = EXCLUDED.payer_middle_name,
+      payer_last_name = EXCLUDED.payer_last_name,
+      process_status = CASE
+        WHEN mpesa_callback_inbox.process_status = 'processed'
+          THEN mpesa_callback_inbox.process_status
+        ELSE 'pending'
+      END,
+      retry_count = COALESCE(mpesa_callback_inbox.retry_count, 0) + 1,
+      last_received_at = NOW(),
+      updated_at = NOW()`,
+    [
+      transId,
+      payload?.BillRefNumber ? String(payload.BillRefNumber).slice(0, 64) : null,
+      payload?.MSISDN ? String(payload.MSISDN).slice(0, 32) : null,
+      transAmount,
+      payload?.TransTime ? String(payload.TransTime).slice(0, 32) : null,
+      payload?.FirstName ? String(payload.FirstName).slice(0, 100) : null,
+      payload?.MiddleName ? String(payload.MiddleName).slice(0, 100) : null,
+      payload?.LastName ? String(payload.LastName).slice(0, 100) : null,
+      JSON.stringify(payload || {}),
+    ],
+  );
+
+  return transId;
+};
+
+const markMpesaCallbackInbox = async ({
+  transId,
+  status,
+  error = null,
+  paymentId = null,
+}) => {
+  if (!transId) return;
+  try {
+    await pool.query(
+      `UPDATE mpesa_callback_inbox
+       SET process_status = $2,
+           process_error = $3,
+           matched_payment_id = COALESCE($4, matched_payment_id),
+           processed_at = CASE WHEN $2 = 'processed' THEN NOW() ELSE processed_at END,
+           updated_at = NOW()
+       WHERE trans_id = $1`,
+      [transId, status, error, paymentId],
+    );
+  } catch (err) {
+    console.error("Failed to update callback inbox status:", err.message);
+  }
+};
+
+const persistRecoveryPendingPayment = async (payload = {}, errorMessage = "") => {
+  const transId = payload?.TransID ? String(payload.TransID).trim() : null;
+  if (!transId) return;
+
+  const duplicateCheck = await pool.query(
+    "SELECT id FROM rent_payments WHERE mpesa_receipt_number = $1 LIMIT 1",
+    [transId],
+  );
+  if (duplicateCheck.rows.length > 0) return;
+
+  const amount = Number.parseFloat(payload?.TransAmount);
+  if (!Number.isFinite(amount) || amount <= 0) return;
+
+  const phone =
+    normalizeKenyanPhone(payload?.MSISDN) ||
+    normalizeKenyanPhone(payload?.BillRefNumber) ||
+    "invalid_msisdn";
+
+  let transTime = new Date();
+  const rawTransTime = payload?.TransTime ? String(payload.TransTime) : "";
+  if (rawTransTime.length >= 14) {
+    const parsed = new Date(
+      `${rawTransTime.substring(0, 4)}-${rawTransTime.substring(4, 6)}-${rawTransTime.substring(6, 8)}T` +
+        `${rawTransTime.substring(8, 10)}:${rawTransTime.substring(10, 12)}:${rawTransTime.substring(12, 14)}`,
+    );
+    if (!Number.isNaN(parsed.getTime())) {
+      transTime = parsed;
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO rent_payments (
+      mpesa_transaction_id, mpesa_receipt_number, phone_number,
+      amount, payment_date, payment_month, status, payment_method, notes, created_at
+    ) VALUES (
+      $1, $1, $2,
+      $3, $4, $5, 'pending', 'mpesa', $6, NOW()
+    )`,
+    [
+      transId,
+      phone,
+      amount,
+      transTime,
+      formatPaymentMonth(transTime),
+      `RECOVERY: Callback processing failed after receipt was received. Reason=${errorMessage || "unknown error"}. Ref=${payload?.BillRefNumber || "none"}.`,
+    ],
+  );
+};
+
 // ==================== CORE BUSINESS LOGIC ====================
 
 /**
@@ -837,7 +964,22 @@ const handleMpesaValidation = async (req, res) => {
  * }
  */
 const handleMpesaCallback = async (req, res) => {
-  // ALWAYS respond to Safaricom immediately (they timeout after ~5 seconds)
+  const callbackPayload =
+    req.body && typeof req.body === "object" ? req.body : {};
+  let inboxTransId = null;
+
+  // Persist callback first to avoid losing transactions on mid-processing failures.
+  try {
+    inboxTransId = await persistMpesaCallbackInbox(callbackPayload);
+  } catch (inboxError) {
+    console.error("Failed to persist callback inbox entry:", inboxError.message);
+    return res.status(500).json({
+      ResultCode: 1,
+      ResultDesc: "Temporary callback persistence failure. Please retry.",
+    });
+  }
+
+  // Acknowledge only after durable inbox write succeeds.
   res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -845,11 +987,11 @@ const handleMpesaCallback = async (req, res) => {
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
   console.log("REAL SAFARICOM CALLBACK - FULL PAYLOAD:");
-  console.log(JSON.stringify(req.body, null, 2));
+  console.log(JSON.stringify(callbackPayload, null, 2));
   console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
   console.log("FIELD LENGTHS FROM SAFARICOM:");
-  Object.entries(req.body).forEach(([key, value]) => {
+  Object.entries(callbackPayload).forEach(([key, value]) => {
     const strValue = String(value || "");
     console.log(`  ${key}: ${strValue.length} chars = "${strValue}"`);
   });
@@ -860,7 +1002,7 @@ const handleMpesaCallback = async (req, res) => {
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
     console.log("M-PESA C2B CONFIRMATION RECEIVED");
     console.log("Timestamp:", new Date().toISOString());
-    console.log("Body:", JSON.stringify(req.body, null, 2));
+    console.log("Body:", JSON.stringify(callbackPayload, null, 2));
     console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
     // C2B Paybill payload is FLAT JSON
@@ -875,19 +1017,29 @@ const handleMpesaCallback = async (req, res) => {
       TransTime,
       BusinessShortCode,
       OrgAccountBalance,
-    } = req.body;
+    } = callbackPayload;
 
     // Validate required fields
     if (!TransID || !TransAmount || !MSISDN) {
       console.error(
         "Invalid C2B callback: missing TransID, TransAmount, or MSISDN",
       );
+      await markMpesaCallbackInbox({
+        transId: inboxTransId,
+        status: "invalid",
+        error: "Missing TransID, TransAmount, or MSISDN",
+      });
       return;
     }
 
     const amount = parseFloat(TransAmount);
     if (!amount || amount <= 0) {
       console.log("Invalid payment amount, skipping:", TransAmount);
+      await markMpesaCallbackInbox({
+        transId: inboxTransId,
+        status: "invalid",
+        error: `Invalid amount: ${TransAmount}`,
+      });
       return;
     }
 
@@ -898,6 +1050,11 @@ const handleMpesaCallback = async (req, res) => {
     );
     if (duplicateCheck.rows.length > 0) {
       console.log("Duplicate C2B callback ignored:", TransID);
+      await markMpesaCallbackInbox({
+        transId: inboxTransId,
+        status: "duplicate",
+        paymentId: duplicateCheck.rows[0].id,
+      });
       return;
     }
 
@@ -1108,6 +1265,10 @@ const handleMpesaCallback = async (req, res) => {
       );
 
       await client.query("COMMIT");
+      await markMpesaCallbackInbox({
+        transId: inboxTransId,
+        status: "pending_unmatched",
+      });
 
       // Notify payer if we have a valid phone (helps prevent "money lost" confusion)
       if (safePhone !== "invalid_msisdn") {
@@ -1167,12 +1328,12 @@ const handleMpesaCallback = async (req, res) => {
       client,
     );
 
-        const paymentPhone = phone || normalizeKenyanPhone(tenant.phone_number);
-    if (!paymentPhone) {
-      throw new Error(
-        `No valid phone for matched callback ${TransID} (tenant ${tenant.id})`,
-      );
-    }
+    const paymentPhone =
+      phone ||
+      normalizeKenyanPhone(tenant.phone_number) ||
+      billRefPhone ||
+      "invalid_msisdn";
+    const usedPlaceholderPhone = paymentPhone === "invalid_msisdn";
 
     // Insert the payment record
     const paymentResult = await client.query(
@@ -1182,12 +1343,14 @@ const handleMpesaCallback = async (req, res) => {
         amount, payment_date, payment_month, status,
         payment_method, is_advance_payment,
         allocated_to_rent, allocated_to_water, allocated_to_arrears,
+        notes,
         created_at
       ) VALUES (
         $1, $2, $3,
         $4, $4, $5,
         $6, $7, $8, 'completed',
         'mpesa', $9, $10, $11, $12,
+        $13,
         NOW()
       ) RETURNING *`,
       [
@@ -1203,6 +1366,9 @@ const handleMpesaCallback = async (req, res) => {
         trackingResult.allocatedToRent || 0,
         trackingResult.allocatedToWater || 0,
         trackingResult.allocatedToArrears || 0,
+        usedPlaceholderPhone
+          ? "AUTO-POSTED WITH PLACEHOLDER PHONE: no valid MSISDN/tenant phone; verify tenant contact."
+          : null,
       ],
     );
 
@@ -1225,6 +1391,11 @@ const handleMpesaCallback = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    await markMpesaCallbackInbox({
+      transId: inboxTransId,
+      status: "processed",
+      paymentId: paymentRecord.id,
+    });
 
     console.log("âœ… PAYMENT PROCESSED:", {
       transId: TransID,
@@ -1306,8 +1477,27 @@ const handleMpesaCallback = async (req, res) => {
       );
     }
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.warn("Callback rollback warning:", rollbackError.message);
+    }
     console.error("C2B CALLBACK PROCESSING ERROR:", error);
+    await markMpesaCallbackInbox({
+      transId: inboxTransId,
+      status: "failed",
+      error: error.message,
+    });
+
+    try {
+      await persistRecoveryPendingPayment(callbackPayload, error.message);
+    } catch (recoveryError) {
+      console.error(
+        "Failed to persist recovery pending payment:",
+        recoveryError.message,
+      );
+    }
+
     const guidance = getPaymentFailureGuidance(error.message, {
       requestId: error?.response?.data?.requestId,
     });
