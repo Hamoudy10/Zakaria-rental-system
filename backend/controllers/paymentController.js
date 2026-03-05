@@ -794,12 +794,12 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
       month,
     );
 
-    // Send admin notifications via SMS + WhatsApp to all active admins.
+    // Send admin notifications via SMS only to all active admins.
     // Keep sending even when one recipient fails.
     const adminPhones = await getActiveAdminPhones();
     for (const adminPhone of adminPhones) {
       try {
-        await MessagingService.sendAdminAlert(
+        await SMSService.sendAdminAlert(
           adminPhone,
           tenantName,
           payment.amount,
@@ -1434,12 +1434,12 @@ const handleMpesaCallback = async (req, res) => {
         currentMonth,
       );
 
-      // SMS + WhatsApp to all active admins.
+      // SMS only to all active admins.
       // Keep iterating if one admin delivery fails.
       const adminPhones = await getActiveAdminPhones();
       for (const adminPhone of adminPhones) {
         try {
-          await MessagingService.sendAdminAlert(
+          await SMSService.sendAdminAlert(
             adminPhone,
             tenantName,
             amount,
@@ -2874,6 +2874,93 @@ const checkPaymentStatus = async (req, res) => {
 };
 
 /**
+ * Audit M-Pesa callback inbox versus posted rent payments.
+ * Helps detect callbacks received but not allocated/posted.
+ */
+const getMpesaCallbackInboxAudit = async (req, res) => {
+  try {
+    const daysRaw = Number.parseInt(req.query.days, 10);
+    const limitRaw = Number.parseInt(req.query.limit, 10);
+    const days = Number.isFinite(daysRaw)
+      ? Math.min(Math.max(daysRaw, 1), 90)
+      : 7;
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(limitRaw, 1), 500)
+      : 200;
+    const statusFilter = req.query.status ? String(req.query.status).trim() : null;
+
+    const statusParams = [];
+    let statusClause = "";
+    if (statusFilter) {
+      statusParams.push(statusFilter);
+      statusClause = ` AND i.process_status = $${statusParams.length + 2}`;
+    }
+
+    const summaryResult = await pool.query(
+      `SELECT
+         COUNT(*)::int AS total_callbacks,
+         COUNT(*) FILTER (WHERE i.process_status = 'processed')::int AS processed_callbacks,
+         COUNT(*) FILTER (WHERE i.process_status = 'failed')::int AS failed_callbacks,
+         COUNT(*) FILTER (
+           WHERE i.process_status IN ('pending', 'pending_unmatched', 'invalid')
+         )::int AS open_callbacks,
+         COUNT(*) FILTER (WHERE rp.id IS NULL)::int AS not_posted_to_rent_payments
+       FROM mpesa_callback_inbox i
+       LEFT JOIN rent_payments rp
+         ON rp.mpesa_receipt_number = i.trans_id
+       WHERE i.received_at >= NOW() - ($1::int * INTERVAL '1 day')
+         ${statusClause}`,
+      [days, ...statusParams],
+    );
+
+    const rowsResult = await pool.query(
+      `SELECT
+         i.trans_id,
+         i.received_at,
+         i.last_received_at,
+         i.process_status,
+         i.process_error,
+         i.retry_count,
+         i.bill_ref_number,
+         i.msisdn,
+         i.trans_amount,
+         i.matched_payment_id,
+         rp.id AS rent_payment_id,
+         rp.status AS rent_payment_status,
+         rp.payment_method AS rent_payment_method,
+         rp.tenant_id,
+         rp.unit_id
+       FROM mpesa_callback_inbox i
+       LEFT JOIN rent_payments rp
+         ON rp.mpesa_receipt_number = i.trans_id
+       WHERE i.received_at >= NOW() - ($1::int * INTERVAL '1 day')
+         ${statusClause}
+       ORDER BY i.received_at DESC
+       LIMIT $2`,
+      [days, limit, ...statusParams],
+    );
+
+    res.json({
+      success: true,
+      data: {
+        window_days: days,
+        limit,
+        status_filter: statusFilter,
+        summary: summaryResult.rows[0],
+        rows: rowsResult.rows,
+      },
+    });
+  } catch (error) {
+    console.error("Error auditing M-Pesa callback inbox:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to audit M-Pesa callback inbox",
+      ...(!isProduction() && { error: error.message }),
+    });
+  }
+};
+
+/**
  * Get tenant allocations
  */
 const getTenantAllocations = async (req, res) => {
@@ -4078,6 +4165,7 @@ module.exports = {
   registerC2BUrls,
   testMpesaConfig,
   checkPaymentStatus,
+  getMpesaCallbackInboxAudit,
 
   // Paybill payment processing (admin/agent manual entry)
   processPaybillPayment,

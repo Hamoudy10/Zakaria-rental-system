@@ -260,6 +260,14 @@ router.get(
   paymentController.checkPaymentStatus,
 );
 
+// Audit callback inbox vs posted payments (admin only)
+router.get(
+  "/mpesa/callback-inbox-audit",
+  protect,
+  adminOnly,
+  paymentController.getMpesaCallbackInboxAudit,
+);
+
 // Debug environment variables (admin only in production)
 router.get("/debug-env", protect, adminOnly, (req, res) => {
   res.json({
