@@ -268,6 +268,14 @@ router.get(
   paymentController.getMpesaCallbackInboxAudit,
 );
 
+// Retry callback inbox rows that were not posted (admin only)
+router.post(
+  "/mpesa/retry-inbox",
+  protect,
+  adminOnly,
+  paymentController.retryMpesaCallbackInbox,
+);
+
 // Debug environment variables (admin only in production)
 router.get("/debug-env", protect, adminOnly, (req, res) => {
   res.json({

@@ -966,44 +966,49 @@ const handleMpesaValidation = async (req, res) => {
 const handleMpesaCallback = async (req, res) => {
   const callbackPayload =
     req.body && typeof req.body === "object" ? req.body : {};
-  let inboxTransId = null;
+  const verboseCallbackLogging =
+    !isProduction() || String(process.env.MPESA_VERBOSE_CALLBACK_LOGS || "").toLowerCase() === "true";
 
-  // Persist callback first to avoid losing transactions on mid-processing failures.
+  // ACK FIRST to avoid upstream gateway timeout on cold starts/slow DB.
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
+  let inboxTransId = buildCallbackInboxTransId(callbackPayload);
+
+  // Best-effort durable inbox persistence after immediate ACK.
   try {
     inboxTransId = await persistMpesaCallbackInbox(callbackPayload);
   } catch (inboxError) {
-    console.error("Failed to persist callback inbox entry:", inboxError.message);
-    return res.status(500).json({
-      ResultCode: 1,
-      ResultDesc: "Temporary callback persistence failure. Please retry.",
-    });
+    console.error(
+      "Failed to persist callback inbox entry after ACK:",
+      inboxError.message,
+    );
   }
-
-  // Acknowledge only after durable inbox write succeeds.
-  res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // DEBUG: Log ALL fields and their lengths from real Safaricom callback
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
-  console.log("REAL SAFARICOM CALLBACK - FULL PAYLOAD:");
-  console.log(JSON.stringify(callbackPayload, null, 2));
-  console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
+  if (verboseCallbackLogging) {
+    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
+    console.log("REAL SAFARICOM CALLBACK - FULL PAYLOAD:");
+    console.log(JSON.stringify(callbackPayload, null, 2));
+    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
-  console.log("FIELD LENGTHS FROM SAFARICOM:");
-  Object.entries(callbackPayload).forEach(([key, value]) => {
-    const strValue = String(value || "");
-    console.log(`  ${key}: ${strValue.length} chars = "${strValue}"`);
-  });
-  console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
+    console.log("FIELD LENGTHS FROM SAFARICOM:");
+    Object.entries(callbackPayload).forEach(([key, value]) => {
+      const strValue = String(value || "");
+      console.log(`  ${key}: ${strValue.length} chars = "${strValue}"`);
+    });
+    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
+  }
 
   const client = await pool.connect();
   try {
-    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
-    console.log("M-PESA C2B CONFIRMATION RECEIVED");
-    console.log("Timestamp:", new Date().toISOString());
-    console.log("Body:", JSON.stringify(callbackPayload, null, 2));
-    console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
+    if (verboseCallbackLogging) {
+      console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
+      console.log("M-PESA C2B CONFIRMATION RECEIVED");
+      console.log("Timestamp:", new Date().toISOString());
+      console.log("Body:", JSON.stringify(callbackPayload, null, 2));
+      console.log("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
+    }
 
     // C2B Paybill payload is FLAT JSON
     const {
@@ -2961,6 +2966,102 @@ const getMpesaCallbackInboxAudit = async (req, res) => {
 };
 
 /**
+ * Retry worker: reprocess callback inbox rows that have no posted rent payment yet.
+ * Admin-only endpoint, intended for manual ops recovery.
+ */
+const retryMpesaCallbackInbox = async (req, res) => {
+  try {
+    const limitRaw = Number.parseInt(req.body?.limit, 10);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(limitRaw, 1), 200)
+      : 50;
+    const statuses = ["pending", "failed", "invalid", "pending_unmatched"];
+
+    const queueResult = await pool.query(
+      `SELECT
+         i.id,
+         i.trans_id,
+         i.process_status,
+         i.raw_payload,
+         i.received_at
+       FROM mpesa_callback_inbox i
+       LEFT JOIN rent_payments rp
+         ON rp.mpesa_receipt_number = i.trans_id
+       WHERE rp.id IS NULL
+         AND i.process_status = ANY($1::text[])
+       ORDER BY i.received_at ASC
+       LIMIT $2`,
+      [statuses, limit],
+    );
+
+    const rows = queueResult.rows || [];
+    const results = {
+      scanned: rows.length,
+      retried: 0,
+      errors: 0,
+      succeeded: 0,
+      failed: 0,
+      items: [],
+    };
+
+    for (const row of rows) {
+      const transId = row.trans_id;
+      const payload =
+        row.raw_payload && typeof row.raw_payload === "object"
+          ? row.raw_payload
+          : {};
+      if (!payload.TransID) payload.TransID = transId;
+
+      results.retried += 1;
+      try {
+        // Reuse the same callback processing pipeline with a synthetic response.
+        await handleMpesaCallback(
+          { body: payload },
+          { status: () => ({ json: () => null }) },
+        );
+
+        const latest = await pool.query(
+          `SELECT process_status
+           FROM mpesa_callback_inbox
+           WHERE trans_id = $1
+           ORDER BY updated_at DESC NULLS LAST, received_at DESC
+           LIMIT 1`,
+          [transId],
+        );
+        const postStatus = latest.rows[0]?.process_status || "unknown";
+        if (postStatus === "processed" || postStatus === "duplicate") {
+          results.succeeded += 1;
+        } else {
+          results.failed += 1;
+        }
+        results.items.push({ trans_id: transId, status: postStatus });
+      } catch (error) {
+        results.errors += 1;
+        results.failed += 1;
+        results.items.push({
+          trans_id: transId,
+          status: "worker_error",
+          error: error.message,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Retry worker processed ${results.retried} callback(s)`,
+      data: results,
+    });
+  } catch (error) {
+    console.error("Error in retryMpesaCallbackInbox:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to run M-Pesa callback retry worker",
+      ...(!isProduction() && { error: error.message }),
+    });
+  }
+};
+
+/**
  * Get tenant allocations
  */
 const getTenantAllocations = async (req, res) => {
@@ -4166,6 +4267,7 @@ module.exports = {
   testMpesaConfig,
   checkPaymentStatus,
   getMpesaCallbackInboxAudit,
+  retryMpesaCallbackInbox,
 
   // Paybill payment processing (admin/agent manual entry)
   processPaybillPayment,

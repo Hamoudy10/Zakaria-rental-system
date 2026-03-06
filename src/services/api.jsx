@@ -223,6 +223,8 @@ export const paymentAPI = {
     api.get(`/payments/mpesa/status/${checkoutRequestId}`),
   getMpesaCallbackInboxAudit: (params = {}) =>
     api.get("/payments/mpesa/callback-inbox-audit", { params }),
+  retryMpesaCallbackInbox: (data = {}) =>
+    api.post("/payments/mpesa/retry-inbox", data),
   testMpesaConfig: () => api.get("/payments/mpesa/test-config"),
 
   // ==================== REMINDERS ====================
