@@ -5,6 +5,7 @@ require('dotenv').config();
 const http = require('http');
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
+const pool = require('./config/database');
 const { initializeDefaultSettings } = require('./controllers/adminSettingsController');
 const { initializeMessageTemplateSystem } = require('./controllers/messageTemplateController');
 const adminRoutes = require('./routes/adminRoutes');
@@ -124,6 +125,38 @@ app.get('/api/health', (req, res) => res.json({
   timestamp: new Date().toISOString(),
   uptime: process.uptime()
 }));
+
+// Deep health check for uptime monitoring (includes DB + last callback visibility)
+app.get('/api/health/deep', async (req, res) => {
+  try {
+    const dbResult = await pool.query('SELECT NOW() AS db_now');
+    const inboxResult = await pool.query(
+      `SELECT MAX(received_at) AS last_callback_at FROM mpesa_callback_inbox`
+    );
+
+    const lastCallbackAt = inboxResult.rows?.[0]?.last_callback_at || null;
+    const secondsSinceLastCallback = lastCallbackAt
+      ? Math.floor((Date.now() - new Date(lastCallbackAt).getTime()) / 1000)
+      : null;
+
+    return res.json({
+      success: true,
+      message: 'Server and database healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      db_time: dbResult.rows?.[0]?.db_now || null,
+      last_callback_at: lastCallbackAt,
+      seconds_since_last_callback: secondsSinceLastCallback
+    });
+  } catch (error) {
+    return res.status(503).json({
+      success: false,
+      message: 'Deep health check failed',
+      timestamp: new Date().toISOString(),
+      error: error.message
+    });
+  }
+});
 
 // Helper function for optional routes
 const loadRoute = (path, file, name, placeholderData = []) => {
