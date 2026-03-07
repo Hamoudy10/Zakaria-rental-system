@@ -96,12 +96,52 @@ const ChatService = {
     }
   },
 
+  undoDeleteMessage: async (messageId) => {
+    try {
+      const res = await api.post(`/chat/messages/${messageId}/undo-delete`);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to undo delete message:', error);
+      throw error;
+    }
+  },
+
+  redoDeleteMessage: async (messageId) => {
+    try {
+      const res = await api.post(`/chat/messages/${messageId}/redo-delete`);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to redo delete message:', error);
+      throw error;
+    }
+  },
+
   clearConversation: async (conversationId) => {
     try {
       const res = await api.post(`/chat/conversations/${conversationId}/clear`);
       return res.data?.data;
     } catch (error) {
       console.error('❌ ChatService: Failed to clear conversation:', error);
+      throw error;
+    }
+  },
+
+  undoClearConversation: async (conversationId) => {
+    try {
+      const res = await api.post(`/chat/conversations/${conversationId}/undo-clear`);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to undo clear conversation:', error);
+      throw error;
+    }
+  },
+
+  redoClearConversation: async (conversationId) => {
+    try {
+      const res = await api.post(`/chat/conversations/${conversationId}/redo-clear`);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to redo clear conversation:', error);
       throw error;
     }
   },

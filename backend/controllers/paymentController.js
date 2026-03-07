@@ -106,7 +106,6 @@ const getActiveAdminPhones = async () => {
     `SELECT id, email, phone_number
      FROM users
      WHERE role = 'admin'
-       AND is_active = true
        AND phone_number IS NOT NULL`,
   );
 
@@ -1230,7 +1229,7 @@ const handleMpesaCallback = async (req, res) => {
 
         try {
           const adminUsers = await pool.query(
-            "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
+            "SELECT id FROM users WHERE role = 'admin'",
           );
           for (const admin of adminUsers.rows) {
             await NotificationService.createNotification({
@@ -1296,7 +1295,7 @@ const handleMpesaCallback = async (req, res) => {
       // Notify admins about unmatched payment
       try {
         const adminUsers = await pool.query(
-          "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
+          "SELECT id FROM users WHERE role = 'admin'",
         );
         for (const admin of adminUsers.rows) {
           await NotificationService.createNotification({
@@ -1510,7 +1509,7 @@ const handleMpesaCallback = async (req, res) => {
     // Notify admins of system error
     try {
       const adminUsers = await pool.query(
-        "SELECT id FROM users WHERE role IN ('admin', 'agent') AND is_active = true",
+        "SELECT id FROM users WHERE role IN ('admin', 'agent')",
       );
       for (const admin of adminUsers.rows) {
         await NotificationService.createNotification({
@@ -1952,7 +1951,7 @@ const processPaybillPayment = async (req, res) => {
     // Post-commit: In-app notifications to admins and agents
     try {
       const adminUsersQuery = await pool.query(
-        "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
+        "SELECT id FROM users WHERE role = 'admin'",
       );
       const agentAssignmentQuery = await pool.query(
         "SELECT agent_id FROM agent_property_assignments WHERE property_id = $1 AND is_active = true",
@@ -4311,5 +4310,4 @@ module.exports = {
   recordCarryForward,
   sendPaymentNotifications,
 };
-
 

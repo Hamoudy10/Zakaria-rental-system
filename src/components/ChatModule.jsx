@@ -223,6 +223,14 @@ const ChatHeader = ({
   onBack,
   onClose,
   onClearConversation,
+  onUndoDelete,
+  onRedoDelete,
+  onUndoClear,
+  onRedoClear,
+  canUndoDelete,
+  canRedoDelete,
+  canUndoClear,
+  canRedoClear,
   currentUserId,
   isOnline,
   lastSeen,
@@ -347,6 +355,50 @@ const ChatHeader = ({
           </svg>
         </button>
         <button
+          onClick={onUndoDelete}
+          disabled={!canUndoDelete}
+          className="w-10 h-10 rounded-full hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+          title="Undo delete message"
+          aria-label="Undo delete message"
+        >
+          <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h11a7 7 0 110 14h-1M3 10l4-4m-4 4l4 4" />
+          </svg>
+        </button>
+        <button
+          onClick={onRedoDelete}
+          disabled={!canRedoDelete}
+          className="w-10 h-10 rounded-full hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+          title="Redo delete message"
+          aria-label="Redo delete message"
+        >
+          <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10H10a7 7 0 100 14h1m10-14l-4-4m4 4l-4 4" />
+          </svg>
+        </button>
+        <button
+          onClick={onUndoClear}
+          disabled={!canUndoClear}
+          className="w-10 h-10 rounded-full hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+          title="Undo clear chat"
+          aria-label="Undo clear chat"
+        >
+          <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3M3 12a9 9 0 109-9" />
+          </svg>
+        </button>
+        <button
+          onClick={onRedoClear}
+          disabled={!canRedoClear}
+          className="w-10 h-10 rounded-full hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+          title="Redo clear chat"
+          aria-label="Redo clear chat"
+        >
+          <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M9 7V4h6v3m-7 4v6m4-6v6m4-6v6M6 7l1 13h10l1-13" />
+          </svg>
+        </button>
+        <button
           onClick={onClearConversation}
           className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center"
           title="Clear chat"
@@ -403,6 +455,10 @@ const ChatModule = () => {
     sendMessage,
     deleteMessage,
     clearConversation,
+    undoDeleteMessage,
+    redoDeleteMessage,
+    undoClearConversation,
+    redoClearConversation,
     setActiveConversation,
     getUnreadCount,
     getTotalUnreadCount,
@@ -418,6 +474,10 @@ const ChatModule = () => {
 
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [lastDeletedMessageId, setLastDeletedMessageId] = useState(null);
+  const [lastClearedConversationId, setLastClearedConversationId] = useState(null);
+  const [redoDeleteMessageId, setRedoDeleteMessageId] = useState(null);
+  const [redoClearConversationId, setRedoClearConversationId] = useState(null);
   const messagesContainerRef = useRef(null);
   const prevActiveConvIdRef = useRef(null);
   const isLoadingRef = useRef(false);
@@ -541,6 +601,8 @@ const ChatModule = () => {
       if (!ok) return;
       try {
         await deleteMessage(activeConversation.id, message.id);
+        setLastDeletedMessageId(message.id);
+        setRedoDeleteMessageId(null);
       } catch (error) {
         console.error("Failed to delete message:", error);
         alert("Failed to delete message. Please try again.");
@@ -557,11 +619,61 @@ const ChatModule = () => {
     if (!ok) return;
     try {
       await clearConversation(activeConversation.id);
+      setLastClearedConversationId(activeConversation.id);
+      setRedoClearConversationId(null);
     } catch (error) {
       console.error("Failed to clear conversation:", error);
       alert("Failed to clear chat. Please try again.");
     }
   }, [activeConversation, clearConversation]);
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!activeConversation?.id || !lastDeletedMessageId) return;
+    try {
+      await undoDeleteMessage(activeConversation.id, lastDeletedMessageId);
+      setRedoDeleteMessageId(lastDeletedMessageId);
+      setLastDeletedMessageId(null);
+    } catch (error) {
+      console.error("Failed to undo delete:", error);
+      alert("Failed to undo delete.");
+    }
+  }, [activeConversation, lastDeletedMessageId, undoDeleteMessage]);
+
+  const handleRedoDelete = useCallback(async () => {
+    if (!activeConversation?.id || !redoDeleteMessageId) return;
+    try {
+      await redoDeleteMessage(activeConversation.id, redoDeleteMessageId);
+      setLastDeletedMessageId(redoDeleteMessageId);
+      setRedoDeleteMessageId(null);
+    } catch (error) {
+      console.error("Failed to redo delete:", error);
+      alert("Failed to redo delete.");
+    }
+  }, [activeConversation, redoDeleteMessageId, redoDeleteMessage]);
+
+  const handleUndoClear = useCallback(async () => {
+    if (!activeConversation?.id || !lastClearedConversationId) return;
+    try {
+      await undoClearConversation(activeConversation.id);
+      setRedoClearConversationId(activeConversation.id);
+      setLastClearedConversationId(null);
+    } catch (error) {
+      console.error("Failed to undo clear chat:", error);
+      alert("Failed to undo clear chat.");
+    }
+  }, [activeConversation, lastClearedConversationId, undoClearConversation]);
+
+  const handleRedoClear = useCallback(async () => {
+    if (!activeConversation?.id || !redoClearConversationId) return;
+    try {
+      await redoClearConversation(activeConversation.id);
+      setLastClearedConversationId(activeConversation.id);
+      setRedoClearConversationId(null);
+    } catch (error) {
+      console.error("Failed to redo clear chat:", error);
+      alert("Failed to redo clear chat.");
+    }
+  }, [activeConversation, redoClearConversationId, redoClearConversation]);
 
   // Open new conversation modal
   const openNewConversationModal = useCallback(async () => {
@@ -749,6 +861,14 @@ const ChatModule = () => {
               onBack={handleCloseChat}
               onClose={handleCloseChat}
               onClearConversation={handleClearConversation}
+              onUndoDelete={handleUndoDelete}
+              onRedoDelete={handleRedoDelete}
+              onUndoClear={handleUndoClear}
+              onRedoClear={handleRedoClear}
+              canUndoDelete={!!lastDeletedMessageId}
+              canRedoDelete={!!redoDeleteMessageId}
+              canUndoClear={!!lastClearedConversationId}
+              canRedoClear={!!redoClearConversationId}
               currentUserId={user?.id}
               isOnline={getOtherParticipantOnlineStatus(activeConversation)}
               typingUsers={typingUsers}

@@ -779,6 +779,34 @@ export const ChatProvider = ({ children }) => {
     await loadConversations(true);
   }, [clearConversationMessages, loadConversations]);
 
+  const undoDeleteMessage = useCallback(async (conversationId, messageId) => {
+    await ChatService.undoDeleteMessage(messageId);
+    await loadMessages(conversationId);
+    await loadConversations(true);
+  }, [loadMessages, loadConversations]);
+
+  const redoDeleteMessage = useCallback(async (conversationId, messageId) => {
+    await ChatService.redoDeleteMessage(messageId);
+    dispatch({ type: 'DELETE_MESSAGE', payload: { conversationId, messageId } });
+    const current = messagesByConvRef.current[conversationId] || [];
+    messagesByConvRef.current[conversationId] = current.filter((m) => m.id !== messageId);
+    await loadConversations(true);
+  }, [loadConversations]);
+
+  const undoClearConversation = useCallback(async (conversationId) => {
+    await ChatService.undoClearConversation(conversationId);
+    await loadMessages(conversationId);
+    await loadConversations(true);
+  }, [loadMessages, loadConversations]);
+
+  const redoClearConversation = useCallback(async (conversationId) => {
+    await ChatService.redoClearConversation(conversationId);
+    clearConversationMessages(conversationId);
+    unreadCountsRef.current[conversationId] = 0;
+    dispatch({ type: 'SET_UNREAD_COUNTS', payload: { ...unreadCountsRef.current } });
+    await loadConversations(true);
+  }, [clearConversationMessages, loadConversations]);
+
   // Helpers
   const getUnreadCount = (id) => state.unreadCounts[id] || 0;
   const getTotalUnreadCount = () =>
@@ -818,6 +846,10 @@ export const ChatProvider = ({ children }) => {
       sendMessage,
       deleteMessage,
       clearConversation,
+      undoDeleteMessage,
+      redoDeleteMessage,
+      undoClearConversation,
+      redoClearConversation,
       setActiveConversation,
       clearConversationMessages,
       getUnreadCount,
