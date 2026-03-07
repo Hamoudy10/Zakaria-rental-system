@@ -20,6 +20,15 @@ router.get('/missing-tenants', requireAgent, waterBillController.checkMissingWat
 // Get water balance for a specific tenant
 router.get('/balance/:tenantId', requireAgent, waterBillController.getTenantWaterBalance);
 
+// Water delivery expenses ledger
+router.post('/expenses', requireAgent, waterBillController.createWaterExpense);
+router.get('/expenses', requireAgent, waterBillController.listWaterExpenses);
+router.put('/expenses/:id', requireAgent, waterBillController.updateWaterExpense);
+router.delete('/expenses/:id', requireAgent, waterBillController.deleteWaterExpense);
+
+// Water-only profitability report (billed vs collected vs delivery expense)
+router.get('/profitability', requireAgent, waterBillController.getWaterProfitability);
+
 // Standard CRUD operations
 router.post('/', requireAgent, waterBillController.createWaterBill);
 router.get('/', requireAgent, waterBillController.listWaterBills);

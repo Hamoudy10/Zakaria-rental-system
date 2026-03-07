@@ -30,6 +30,11 @@ router.get('/dashboard-stats', requireRole(['agent', 'admin']), agentPropertyCon
 // ========================================
 // IMPORTANT: Specific routes BEFORE generic /:id route
 router.get('/water-bills/balance/:tenantId', requireRole(['agent', 'admin']), waterBillController.getTenantWaterBalance);
+router.get('/water-bills/profitability', requireRole(['agent', 'admin']), waterBillController.getWaterProfitability);
+router.post('/water-bills/expenses', requireRole(['agent', 'admin']), waterBillController.createWaterExpense);
+router.get('/water-bills/expenses', requireRole(['agent', 'admin']), waterBillController.listWaterExpenses);
+router.put('/water-bills/expenses/:id', requireRole(['agent', 'admin']), waterBillController.updateWaterExpense);
+router.delete('/water-bills/expenses/:id', requireRole(['agent', 'admin']), waterBillController.deleteWaterExpense);
 
 router.post('/water-bills', requireRole(['agent', 'admin']), waterBillController.createWaterBill);
 router.get('/water-bills', requireRole(['agent', 'admin']), waterBillController.listWaterBills);
