@@ -76,6 +76,28 @@ const agentService = {
   // NEW: water balance for a tenant
   getWaterBalance: async (tenantId) => {
     return await api.get(`/agent-properties/water-bills/balance/${tenantId}`);
+  },
+
+  // Water delivery expenses
+  createWaterExpense: async (expenseData) => {
+    return await api.post('/agent-properties/water-bills/expenses', expenseData);
+  },
+
+  listWaterExpenses: async (params = {}) => {
+    return await api.get('/agent-properties/water-bills/expenses', { params });
+  },
+
+  updateWaterExpense: async (id, updates) => {
+    return await api.put(`/agent-properties/water-bills/expenses/${id}`, updates);
+  },
+
+  deleteWaterExpense: async (id) => {
+    return await api.delete(`/agent-properties/water-bills/expenses/${id}`);
+  },
+
+  // Water-only profitability (water collected vs water expenses)
+  getWaterProfitability: async (params = {}) => {
+    return await api.get('/agent-properties/water-bills/profitability', { params });
   }
 };
 

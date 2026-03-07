@@ -9,6 +9,10 @@ const getCurrentMonth = () => {
   return `${yyyy}-${mm}`;
 };
 
+const getTodayDate = () => {
+  return new Date().toISOString().slice(0, 10);
+};
+
 const AgentWaterBills = () => {
   const [properties, setProperties] = useState([]);
   const [allTenants, setAllTenants] = useState([]);
@@ -29,8 +33,11 @@ const AgentWaterBills = () => {
   });
 
   const [loading, setLoading] = useState(false);
+  const [expenseLoading, setExpenseLoading] = useState(false);
+  const [profitLoading, setProfitLoading] = useState(false);
   const [message, setMessage] = useState(null);
   const [editingBillId, setEditingBillId] = useState(null);
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
 
   const [form, setForm] = useState({
     propertyId: '',
@@ -48,7 +55,47 @@ const AgentWaterBills = () => {
     advance: 0
   });
 
+  const [expenseForm, setExpenseForm] = useState({
+    propertyId: '',
+    billMonth: getCurrentMonth(),
+    expenseDate: getTodayDate(),
+    vendorName: '',
+    supplierOrganization: '',
+    amount: '',
+    paymentMethod: 'cash',
+    paymentReference: '',
+    litersDelivered: '',
+    notes: ''
+  });
+
+  const [expenseFilters, setExpenseFilters] = useState({
+    propertyId: '',
+    billMonth: getCurrentMonth(),
+    page: 1,
+    limit: 20,
+  });
+
+  const [recentExpenses, setRecentExpenses] = useState([]);
+  const [expensePagination, setExpensePagination] = useState({
+    total: 0,
+    limit: 20,
+    offset: 0,
+    hasMore: false,
+  });
+
+  const [profitability, setProfitability] = useState({
+    totals: {
+      water_billed: 0,
+      water_collected: 0,
+      water_expense: 0,
+      water_profit_or_loss: 0,
+    },
+    monthly: [],
+  });
+
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const updateExpense = (key, value) =>
+    setExpenseForm(prev => ({ ...prev, [key]: value }));
 
   const fetchWaterBills = async () => {
     try {
@@ -77,6 +124,68 @@ const AgentWaterBills = () => {
       console.error('listWaterBills error', err);
       setMessage({ type: 'error', text: 'Failed to fetch water bills' });
       setRecentBills([]);
+    }
+  };
+
+  const fetchWaterExpenses = async () => {
+    try {
+      const params = {
+        limit: expenseFilters.limit,
+        offset: (expenseFilters.page - 1) * expenseFilters.limit,
+      };
+      if (expenseFilters.propertyId) params.propertyId = expenseFilters.propertyId;
+      if (expenseFilters.billMonth) params.billMonth = expenseFilters.billMonth;
+
+      const response = await agentService.listWaterExpenses(params);
+      const rows = Array.isArray(response?.data?.data) ? response.data.data : [];
+      const pagination = response?.data?.pagination || {
+        total: rows.length,
+        limit: expenseFilters.limit,
+        offset: 0,
+        hasMore: false,
+      };
+
+      setRecentExpenses(rows);
+      setExpensePagination(pagination);
+    } catch (err) {
+      console.error('listWaterExpenses error', err);
+      setMessage({ type: 'error', text: 'Failed to fetch water expenses' });
+      setRecentExpenses([]);
+    }
+  };
+
+  const fetchWaterProfitability = async () => {
+    try {
+      setProfitLoading(true);
+      const params = {
+        fromMonth: expenseFilters.billMonth || getCurrentMonth(),
+        toMonth: expenseFilters.billMonth || getCurrentMonth(),
+      };
+      if (expenseFilters.propertyId) params.propertyId = expenseFilters.propertyId;
+      const response = await agentService.getWaterProfitability(params);
+      const data = response?.data?.data || {};
+      setProfitability({
+        totals: data.totals || {
+          water_billed: 0,
+          water_collected: 0,
+          water_expense: 0,
+          water_profit_or_loss: 0,
+        },
+        monthly: Array.isArray(data.monthly) ? data.monthly : [],
+      });
+    } catch (err) {
+      console.error('getWaterProfitability error', err);
+      setProfitability({
+        totals: {
+          water_billed: 0,
+          water_collected: 0,
+          water_expense: 0,
+          water_profit_or_loss: 0,
+        },
+        monthly: [],
+      });
+    } finally {
+      setProfitLoading(false);
     }
   };
 
@@ -109,6 +218,11 @@ const AgentWaterBills = () => {
   useEffect(() => {
     fetchWaterBills();
   }, [billFilters.page, billFilters.limit, billFilters.fromDate, billFilters.toDate]);
+
+  useEffect(() => {
+    fetchWaterExpenses();
+    fetchWaterProfitability();
+  }, [expenseFilters.page, expenseFilters.limit, expenseFilters.propertyId, expenseFilters.billMonth]);
 
   // Filter tenants when property changes
   const handlePropertyChange = (e) => {
@@ -307,6 +421,156 @@ const AgentWaterBills = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const submitExpense = async (e) => {
+    e?.preventDefault();
+    setMessage(null);
+
+    if (
+      !expenseForm.propertyId ||
+      !expenseForm.billMonth ||
+      !expenseForm.expenseDate ||
+      !expenseForm.vendorName ||
+      !expenseForm.amount
+    ) {
+      setMessage({
+        type: 'error',
+        text: 'Please provide property, supplier, amount, expense date, and bill month',
+      });
+      return;
+    }
+
+    if (expenseForm.paymentMethod === 'mpesa' && !expenseForm.paymentReference) {
+      setMessage({
+        type: 'error',
+        text: 'M-Pesa payment requires receipt/reference',
+      });
+      return;
+    }
+
+    try {
+      setExpenseLoading(true);
+      const payload = {
+        propertyId: expenseForm.propertyId,
+        billMonth: expenseForm.billMonth,
+        expenseDate: expenseForm.expenseDate,
+        vendorName: expenseForm.vendorName,
+        supplierOrganization: expenseForm.supplierOrganization || null,
+        amount: parseFloat(expenseForm.amount),
+        paymentMethod: expenseForm.paymentMethod,
+        paymentReference: expenseForm.paymentReference || null,
+        litersDelivered: expenseForm.litersDelivered
+          ? parseFloat(expenseForm.litersDelivered)
+          : null,
+        notes: expenseForm.notes || null,
+      };
+
+      const res = editingExpenseId
+        ? await agentService.updateWaterExpense(editingExpenseId, payload)
+        : await agentService.createWaterExpense(payload);
+
+      if (res?.data?.success) {
+        setMessage({
+          type: 'success',
+          text: editingExpenseId
+            ? 'Water expense updated successfully'
+            : 'Water expense recorded successfully',
+        });
+        setEditingExpenseId(null);
+        setExpenseForm({
+          propertyId: expenseForm.propertyId,
+          billMonth: expenseForm.billMonth,
+          expenseDate: getTodayDate(),
+          vendorName: '',
+          supplierOrganization: '',
+          amount: '',
+          paymentMethod: 'cash',
+          paymentReference: '',
+          litersDelivered: '',
+          notes: ''
+        });
+        await fetchWaterExpenses();
+        await fetchWaterProfitability();
+      } else {
+        setMessage({
+          type: 'error',
+          text: res?.data?.message || 'Failed to save water expense',
+        });
+      }
+    } catch (err) {
+      console.error('submit water expense error', err);
+      setMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Failed to save water expense',
+      });
+    } finally {
+      setExpenseLoading(false);
+    }
+  };
+
+  const beginEditExpense = (expense) => {
+    setEditingExpenseId(expense.id);
+    setExpenseForm({
+      propertyId: expense.property_id || '',
+      billMonth: expense.bill_month ? String(expense.bill_month).slice(0, 7) : getCurrentMonth(),
+      expenseDate: expense.expense_date ? String(expense.expense_date).slice(0, 10) : getTodayDate(),
+      vendorName: expense.vendor_name || '',
+      supplierOrganization: expense.supplier_organization || '',
+      amount: expense.amount != null ? String(expense.amount) : '',
+      paymentMethod: expense.payment_method || 'cash',
+      paymentReference: expense.payment_reference || expense.mpesa_reference || '',
+      litersDelivered:
+        expense.liters_delivered != null ? String(expense.liters_delivered) : '',
+      notes: expense.notes || '',
+    });
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  };
+
+  const cancelExpenseEdit = () => {
+    setEditingExpenseId(null);
+    setExpenseForm({
+      propertyId: expenseFilters.propertyId || '',
+      billMonth: expenseFilters.billMonth || getCurrentMonth(),
+      expenseDate: getTodayDate(),
+      vendorName: '',
+      supplierOrganization: '',
+      amount: '',
+      paymentMethod: 'cash',
+      paymentReference: '',
+      litersDelivered: '',
+      notes: '',
+    });
+  };
+
+  const handleDeleteExpense = async (expense) => {
+    const ok = window.confirm(
+      `Delete water expense ${expense.vendor_name} (${formatMonth(expense.bill_month)})?`,
+    );
+    if (!ok) return;
+
+    try {
+      setExpenseLoading(true);
+      const res = await agentService.deleteWaterExpense(expense.id);
+      if (res?.data?.success) {
+        setMessage({ type: 'success', text: 'Water expense deleted successfully' });
+        await fetchWaterExpenses();
+        await fetchWaterProfitability();
+        if (editingExpenseId === expense.id) {
+          cancelExpenseEdit();
+        }
+      } else {
+        setMessage({ type: 'error', text: res?.data?.message || 'Failed to delete expense' });
+      }
+    } catch (err) {
+      console.error('delete water expense error', err);
+      setMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Failed to delete expense',
+      });
+    } finally {
+      setExpenseLoading(false);
     }
   };
 
@@ -692,6 +956,328 @@ const AgentWaterBills = () => {
         )}
       </div>
 
+      {/* Water Profitability + Expenses */}
+      <div className="mt-8">
+        <div className="p-4 bg-white rounded-t-md shadow-sm border-b flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Water Delivery Expenses & Profitability</h3>
+            <p className="text-sm text-gray-500">Agents record supplier costs and track water-only profit/loss</p>
+          </div>
+          <div className="text-xs text-gray-500">
+            {profitLoading ? 'Refreshing...' : 'Live from current filters'}
+          </div>
+        </div>
+
+        <div className="bg-white border-b p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="rounded border p-3 bg-blue-50">
+            <p className="text-xs text-blue-700">Water Billed</p>
+            <p className="text-lg font-semibold text-blue-900">
+              KSh {Number(profitability.totals.water_billed || 0).toLocaleString()}
+            </p>
+          </div>
+          <div className="rounded border p-3 bg-emerald-50">
+            <p className="text-xs text-emerald-700">Water Collected</p>
+            <p className="text-lg font-semibold text-emerald-900">
+              KSh {Number(profitability.totals.water_collected || 0).toLocaleString()}
+            </p>
+          </div>
+          <div className="rounded border p-3 bg-amber-50">
+            <p className="text-xs text-amber-700">Water Expense</p>
+            <p className="text-lg font-semibold text-amber-900">
+              KSh {Number(profitability.totals.water_expense || 0).toLocaleString()}
+            </p>
+          </div>
+          <div className={`rounded border p-3 ${Number(profitability.totals.water_profit_or_loss || 0) >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+            <p className={`text-xs ${Number(profitability.totals.water_profit_or_loss || 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+              Profit / Loss
+            </p>
+            <p className={`text-lg font-semibold ${Number(profitability.totals.water_profit_or_loss || 0) >= 0 ? 'text-green-900' : 'text-red-900'}`}>
+              KSh {Number(profitability.totals.water_profit_or_loss || 0).toLocaleString()}
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white border-b p-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Property Filter</label>
+              <select
+                value={expenseFilters.propertyId}
+                onChange={(e) =>
+                  setExpenseFilters(prev => ({ ...prev, propertyId: e.target.value, page: 1 }))
+                }
+                className="w-full px-3 py-2 text-sm border rounded"
+              >
+                <option value="">All properties</option>
+                {properties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Month Filter</label>
+              <input
+                type="month"
+                value={expenseFilters.billMonth}
+                onChange={(e) =>
+                  setExpenseFilters(prev => ({ ...prev, billMonth: e.target.value, page: 1 }))
+                }
+                className="w-full px-3 py-2 text-sm border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Per Page</label>
+              <select
+                value={expenseFilters.limit}
+                onChange={(e) =>
+                  setExpenseFilters(prev => ({
+                    ...prev,
+                    limit: parseInt(e.target.value, 10),
+                    page: 1,
+                  }))
+                }
+                className="w-full px-3 py-2 text-sm border rounded"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() =>
+                  setExpenseFilters({
+                    propertyId: '',
+                    billMonth: getCurrentMonth(),
+                    page: 1,
+                    limit: 20,
+                  })
+                }
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50"
+              >
+                Reset Filters
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={submitExpense} className="bg-white border-b p-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Property *</label>
+              <select
+                value={expenseForm.propertyId}
+                onChange={(e) => updateExpense('propertyId', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                required
+              >
+                <option value="">Select property</option>
+                {properties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Supplier Name *</label>
+              <input
+                value={expenseForm.vendorName}
+                onChange={(e) => updateExpense('vendorName', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                placeholder="Person or supplier contact"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Supplier Organization</label>
+              <input
+                value={expenseForm.supplierOrganization}
+                onChange={(e) => updateExpense('supplierOrganization', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                placeholder="Company name (optional)"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Amount (KSh) *</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={expenseForm.amount}
+                onChange={(e) => updateExpense('amount', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Expense Date *</label>
+              <input
+                type="date"
+                value={expenseForm.expenseDate}
+                onChange={(e) => updateExpense('expenseDate', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Bill Month *</label>
+              <input
+                type="month"
+                value={expenseForm.billMonth}
+                onChange={(e) => updateExpense('billMonth', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Payment Method *</label>
+              <select
+                value={expenseForm.paymentMethod}
+                onChange={(e) => updateExpense('paymentMethod', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+              >
+                <option value="cash">Cash</option>
+                <option value="mpesa">M-Pesa</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                {expenseForm.paymentMethod === 'mpesa' ? 'M-Pesa Receipt *' : 'Reference'}
+              </label>
+              <input
+                value={expenseForm.paymentReference}
+                onChange={(e) => updateExpense('paymentReference', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                placeholder={expenseForm.paymentMethod === 'mpesa' ? 'e.g. UC73J98I8G' : 'Cashbook/receipt number'}
+                required={expenseForm.paymentMethod === 'mpesa'}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Liters Delivered</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={expenseForm.litersDelivered}
+                onChange={(e) => updateExpense('litersDelivered', e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+              />
+            </div>
+            <div className="md:col-span-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+              <textarea
+                value={expenseForm.notes}
+                onChange={(e) => updateExpense('notes', e.target.value)}
+                rows={2}
+                className="w-full px-3 py-2 text-sm border rounded"
+                placeholder="Optional details"
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-end gap-2">
+            {editingExpenseId && (
+              <button
+                type="button"
+                onClick={cancelExpenseEdit}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded text-sm hover:bg-gray-50"
+              >
+                Cancel Edit
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={expenseLoading}
+              className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-60"
+            >
+              {expenseLoading ? 'Saving...' : editingExpenseId ? 'Update Expense' : 'Save Expense'}
+            </button>
+          </div>
+        </form>
+
+        <div className="bg-white rounded-b-md shadow-sm p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-semibold">Water Delivery Expenses</h4>
+            <span className="text-xs text-gray-500">
+              Showing {recentExpenses.length} of {expensePagination.total}
+            </span>
+          </div>
+
+          {recentExpenses.length === 0 ? (
+            <p className="text-sm text-gray-500">No water expenses recorded for selected filters.</p>
+          ) : (
+            <div className="space-y-2">
+              {recentExpenses.map(expense => (
+                <div key={expense.id} className="border rounded p-3 flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      {expense.vendor_name}
+                      {expense.supplier_organization ? ` (${expense.supplier_organization})` : ''}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {expense.property_name || 'Property'} • {formatMonth(expense.bill_month)} • {expense.expense_date ? new Date(expense.expense_date).toLocaleDateString('en-GB') : ''}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Payment: {(expense.payment_method || 'cash').toUpperCase()}
+                      {expense.payment_reference ? ` • Ref: ${expense.payment_reference}` : ''}
+                    </p>
+                    {expense.notes ? (
+                      <p className="text-xs text-gray-500 mt-1">Note: {expense.notes}</p>
+                    ) : null}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-gray-900">
+                      KSh {Number(expense.amount || 0).toLocaleString()}
+                    </p>
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => beginEditExpense(expense)}
+                        className="px-2 py-1 text-xs bg-amber-100 text-amber-700 rounded hover:bg-amber-200"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteExpense(expense)}
+                        className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {expensePagination.total > expenseFilters.limit && (
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setExpenseFilters(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))
+                }
+                disabled={expenseFilters.page <= 1}
+                className="px-3 py-1 text-sm border rounded disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setExpenseFilters(prev => ({ ...prev, page: prev.page + 1 }))
+                }
+                disabled={!expensePagination.hasMore}
+                className="px-3 py-1 text-sm border rounded disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Information Box */}
       <div className="mt-6 bg-blue-50 border border-blue-200 rounded-md p-4">
         <div className="flex items-start">
@@ -702,9 +1288,10 @@ const AgentWaterBills = () => {
             <h4 className="text-sm font-medium text-blue-800">Workflow Information</h4>
             <ul className="mt-2 text-sm text-blue-700 space-y-1">
               <li>• <strong>Step 1:</strong> Create water bills for tenants using this form</li>
-              <li>• <strong>Step 2:</strong> Go to <strong>SMS Management</strong> tab to send billing notifications</li>
+              <li>• <strong>Step 2:</strong> Record water delivery expenses with payment method and reference</li>
+              <li>• <strong>Step 3:</strong> Go to <strong>SMS Management</strong> tab to send billing notifications</li>
               <li>• The system will include water bill amounts in SMS for tenants with bills</li>
-              <li>• Tenants without water bills will have water amount set to KSh 0</li>
+              <li>• Water profit/loss is computed from water collected minus water delivery expenses</li>
             </ul>
             <div className="mt-3 p-2 bg-white rounded border border-blue-300">
               <p className="text-xs text-blue-600">
