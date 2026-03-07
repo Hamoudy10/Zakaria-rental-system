@@ -161,6 +161,18 @@ const chatReducer = (state, action) => {
           [action.payload]: []
         }
       };
+
+    case 'DELETE_MESSAGE': {
+      const { conversationId, messageId } = action.payload;
+      const convMessages = state.messages[conversationId] || [];
+      return {
+        ...state,
+        messages: {
+          ...state.messages,
+          [conversationId]: convMessages.filter((m) => m.id !== messageId)
+        }
+      };
+    }
     
     default:
       return state;
@@ -661,6 +673,21 @@ export const ChatProvider = ({ children }) => {
       }
     });
 
+    socket.on('message_deleted', ({ messageId, conversationId }) => {
+      dispatch({ type: 'DELETE_MESSAGE', payload: { messageId, conversationId } });
+      const current = messagesByConvRef.current[conversationId] || [];
+      messagesByConvRef.current[conversationId] = current.filter((m) => m.id !== messageId);
+      loadConversations(true).catch((err) => console.error('Failed to refresh conversations:', err));
+    });
+
+    socket.on('conversation_cleared', ({ conversationId }) => {
+      dispatch({ type: 'CLEAR_MESSAGES', payload: conversationId });
+      messagesByConvRef.current[conversationId] = [];
+      unreadCountsRef.current[conversationId] = 0;
+      dispatch({ type: 'SET_UNREAD_COUNTS', payload: { ...unreadCountsRef.current } });
+      loadConversations(true).catch((err) => console.error('Failed to refresh conversations:', err));
+    });
+
     // Online status
     socket.on('user_online_status', ({ userId, isOnline }) => {
       console.log('👤 User status change:', userId, isOnline ? 'online' : 'offline');
@@ -702,7 +729,7 @@ export const ChatProvider = ({ children }) => {
     return () => {
       socket.removeAllListeners();
     };
-  }, [user, showNotification]);
+  }, [user, showNotification, loadConversations]);
 
   // Socket lifecycle
   useEffect(() => {
@@ -735,6 +762,22 @@ export const ChatProvider = ({ children }) => {
     dispatch({ type: 'CLEAR_MESSAGES', payload: conversationId });
     delete messagesByConvRef.current[conversationId];
   }, []);
+
+  const deleteMessage = useCallback(async (conversationId, messageId) => {
+    await ChatService.deleteMessage(messageId);
+    dispatch({ type: 'DELETE_MESSAGE', payload: { conversationId, messageId } });
+    const current = messagesByConvRef.current[conversationId] || [];
+    messagesByConvRef.current[conversationId] = current.filter((m) => m.id !== messageId);
+    await loadConversations(true);
+  }, [loadConversations]);
+
+  const clearConversation = useCallback(async (conversationId) => {
+    await ChatService.clearConversation(conversationId);
+    clearConversationMessages(conversationId);
+    unreadCountsRef.current[conversationId] = 0;
+    dispatch({ type: 'SET_UNREAD_COUNTS', payload: { ...unreadCountsRef.current } });
+    await loadConversations(true);
+  }, [clearConversationMessages, loadConversations]);
 
   // Helpers
   const getUnreadCount = (id) => state.unreadCounts[id] || 0;
@@ -773,6 +816,8 @@ export const ChatProvider = ({ children }) => {
       createConversation,
       loadMessages,
       sendMessage,
+      deleteMessage,
+      clearConversation,
       setActiveConversation,
       clearConversationMessages,
       getUnreadCount,
