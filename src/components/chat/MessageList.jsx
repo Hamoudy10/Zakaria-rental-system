@@ -57,7 +57,7 @@ const DateDivider = ({ date }) => {
   );
 };
 
-const MessageList = ({ messages, typingUsers = [], conversationId }) => {
+const MessageList = ({ messages, typingUsers = [], conversationId, onDeleteMessage }) => {
   const bottomRef = useRef(null);
   const containerRef = useRef(null);
   const prevMessagesLengthRef = useRef(0);
@@ -137,6 +137,7 @@ const MessageList = ({ messages, typingUsers = [], conversationId }) => {
                 key={item.key} 
                 message={item.message} 
                 showAvatar={item.showAvatar}
+                onDelete={onDeleteMessage}
               />
             );
           })}

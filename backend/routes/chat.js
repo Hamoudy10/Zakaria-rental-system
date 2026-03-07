@@ -67,6 +67,12 @@ router.post('/messages/mark-read', chatController.markAsRead);
 // Mark messages as delivered
 router.post('/messages/mark-delivered', chatController.markAsDelivered);
 
+// Delete a single sent message (sender only)
+router.delete('/messages/:messageId', chatController.deleteMessage);
+
+// Clear whole conversation for current user
+router.post('/conversations/:conversationId/clear', chatController.clearConversation);
+
 // ===================== SEARCH =====================
 
 // Search messages

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
-const MessageItem = ({ message, showAvatar = true }) => {
+const MessageItem = ({ message, showAvatar = true, onDelete }) => {
   const { user } = useAuth();
   const isOwnMessage = message.sender_id === user?.id;
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -93,6 +93,20 @@ const MessageItem = ({ message, showAvatar = true }) => {
 
       {/* Message Bubble */}
       <div className={`relative max-w-[75%] ${isOwnMessage ? 'order-1' : 'order-2'}`}>
+        {isOwnMessage && onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(message)}
+            className="absolute -left-9 top-2 hidden group-hover:flex w-7 h-7 items-center justify-center rounded-full bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-200 transition-colors"
+            title="Delete message"
+            aria-label="Delete message"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0h8m-1-2a1 1 0 00-1-1h-4a1 1 0 00-1 1v2h6V5z" />
+            </svg>
+          </button>
+        )}
+
         {/* WhatsApp-style bubble tail */}
         <div 
           className={`absolute top-0 w-3 h-3 ${

@@ -86,6 +86,26 @@ const ChatService = {
     }
   },
 
+  deleteMessage: async (messageId) => {
+    try {
+      const res = await api.delete(`/chat/messages/${messageId}`);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to delete message:', error);
+      throw error;
+    }
+  },
+
+  clearConversation: async (conversationId) => {
+    try {
+      const res = await api.post(`/chat/conversations/${conversationId}/clear`);
+      return res.data?.data;
+    } catch (error) {
+      console.error('❌ ChatService: Failed to clear conversation:', error);
+      throw error;
+    }
+  },
+
   // ---------- READ RECEIPTS ----------
   markAsRead: async (messageIds) => {
     try {

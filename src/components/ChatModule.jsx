@@ -222,6 +222,7 @@ const ChatHeader = ({
   conversation,
   onBack,
   onClose,
+  onClearConversation,
   currentUserId,
   isOnline,
   lastSeen,
@@ -346,6 +347,26 @@ const ChatHeader = ({
           </svg>
         </button>
         <button
+          onClick={onClearConversation}
+          className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center"
+          title="Clear chat"
+          aria-label="Clear chat"
+        >
+          <svg
+            className="w-5 h-5 text-slate-600"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 7h16M9 7V4h6v3m-7 4v6m4-6v6m4-6v6M6 7l1 13h10l1-13"
+            />
+          </svg>
+        </button>
+        <button
           onClick={onClose}
           className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center"
           title="Close chat"
@@ -380,6 +401,8 @@ const ChatModule = () => {
     getMessagesForConversation,
     loadMessages,
     sendMessage,
+    deleteMessage,
+    clearConversation,
     setActiveConversation,
     getUnreadCount,
     getTotalUnreadCount,
@@ -510,6 +533,35 @@ const ChatModule = () => {
     },
     [activeConversation, sendMessage],
   );
+
+  const handleDeleteMessage = useCallback(
+    async (message) => {
+      if (!activeConversation?.id || !message?.id) return;
+      const ok = window.confirm("Delete this message?");
+      if (!ok) return;
+      try {
+        await deleteMessage(activeConversation.id, message.id);
+      } catch (error) {
+        console.error("Failed to delete message:", error);
+        alert("Failed to delete message. Please try again.");
+      }
+    },
+    [activeConversation, deleteMessage],
+  );
+
+  const handleClearConversation = useCallback(async () => {
+    if (!activeConversation?.id) return;
+    const ok = window.confirm(
+      "Clear this chat? This will remove all messages from your view only.",
+    );
+    if (!ok) return;
+    try {
+      await clearConversation(activeConversation.id);
+    } catch (error) {
+      console.error("Failed to clear conversation:", error);
+      alert("Failed to clear chat. Please try again.");
+    }
+  }, [activeConversation, clearConversation]);
 
   // Open new conversation modal
   const openNewConversationModal = useCallback(async () => {
@@ -696,6 +748,7 @@ const ChatModule = () => {
               conversation={activeConversation}
               onBack={handleCloseChat}
               onClose={handleCloseChat}
+              onClearConversation={handleClearConversation}
               currentUserId={user?.id}
               isOnline={getOtherParticipantOnlineStatus(activeConversation)}
               typingUsers={typingUsers}
@@ -715,6 +768,7 @@ const ChatModule = () => {
                   messages={activeMessages}
                   typingUsers={typingUsers}
                   conversationId={activeConversation.id}
+                  onDeleteMessage={handleDeleteMessage}
                 />
               </Suspense>
             </div>

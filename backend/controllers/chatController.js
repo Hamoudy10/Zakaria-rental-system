@@ -250,6 +250,7 @@ const getRecentChats = async (req, res) => {
           FROM chat_messages cm
           WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
+            AND cm.created_at > COALESCE(my_participation.cleared_at, '-infinity'::timestamp)
           ORDER BY cm.created_at DESC
           LIMIT 1
         ) AS last_message,
@@ -258,6 +259,7 @@ const getRecentChats = async (req, res) => {
           FROM chat_messages cm
           WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
+            AND cm.created_at > COALESCE(my_participation.cleared_at, '-infinity'::timestamp)
           ORDER BY cm.created_at DESC
           LIMIT 1
         ) AS last_message_at,
@@ -266,6 +268,7 @@ const getRecentChats = async (req, res) => {
           FROM chat_messages cm
           WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
+            AND cm.created_at > COALESCE(my_participation.cleared_at, '-infinity'::timestamp)
             AND cm.sender_id != $1
             AND NOT EXISTS (
               SELECT 1
@@ -340,6 +343,7 @@ const getUserConversations = async (req, res) => {
           FROM chat_messages cm
           WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
+            AND cm.created_at > COALESCE(cp_self.cleared_at, '-infinity'::timestamp)
           ORDER BY cm.created_at DESC
           LIMIT 1
         ) AS last_message,
@@ -348,6 +352,7 @@ const getUserConversations = async (req, res) => {
           FROM chat_messages cm
           WHERE cm.conversation_id = c.id
             AND cm.is_deleted = false
+            AND cm.created_at > COALESCE(cp_self.cleared_at, '-infinity'::timestamp)
           ORDER BY cm.created_at DESC
           LIMIT 1
         ) AS last_message_at,
@@ -401,7 +406,7 @@ const getConversationMessages = async (req, res) => {
 
     // Verify user is participant
     const participantCheck = await db.query(
-      `SELECT 1 FROM chat_participants WHERE conversation_id = $1 AND user_id = $2 AND is_active = true`,
+      `SELECT cleared_at FROM chat_participants WHERE conversation_id = $1 AND user_id = $2 AND is_active = true`,
       [conversationId, userId]
     );
 
@@ -412,6 +417,8 @@ const getConversationMessages = async (req, res) => {
 
     // Get ALL messages - NO LIMIT
     // Order by created_at ASC so oldest messages come first (for proper chat display)
+    const clearedAt = participantCheck.rows[0]?.cleared_at || null;
+
     const result = await db.query(
       `
       SELECT
@@ -435,9 +442,10 @@ const getConversationMessages = async (req, res) => {
       JOIN users u ON u.id = cm.sender_id
       WHERE cm.conversation_id = $1
         AND cm.is_deleted = false
+        AND cm.created_at > COALESCE($2::timestamp, '-infinity'::timestamp)
       ORDER BY cm.created_at ASC
       `,
-      [conversationId]
+      [conversationId, clearedAt]
     );
 
     console.log('📋 Found', result.rows.length, 'messages for conversation', conversationId);
@@ -618,6 +626,116 @@ const markAsDelivered = async (req, res) => {
 };
 
 /**
+ * DELETE /chat/messages/:messageId
+ * Delete one message (sender only)
+ */
+const deleteMessage = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { messageId } = req.params;
+
+    const messageCheck = await db.query(
+      `
+      SELECT id, sender_id, conversation_id
+      FROM chat_messages
+      WHERE id = $1 AND is_deleted = false
+      `,
+      [messageId]
+    );
+
+    if (messageCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    const message = messageCheck.rows[0];
+
+    if (message.sender_id !== userId) {
+      return res.status(403).json({ success: false, message: 'You can only delete your own messages' });
+    }
+
+    const participantCheck = await db.query(
+      `SELECT 1 FROM chat_participants WHERE conversation_id = $1 AND user_id = $2 AND is_active = true`,
+      [message.conversation_id, userId]
+    );
+
+    if (participantCheck.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Not a participant' });
+    }
+
+    await db.query(
+      `
+      UPDATE chat_messages
+      SET is_deleted = true
+      WHERE id = $1
+      `,
+      [messageId]
+    );
+
+    if (ioInstance) {
+      ioInstance.to(`conversation_${message.conversation_id}`).emit('message_deleted', {
+        conversationId: message.conversation_id,
+        messageId,
+        deletedBy: userId
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Message deleted',
+      data: {
+        messageId,
+        conversationId: message.conversation_id
+      }
+    });
+  } catch (error) {
+    console.error('❌ deleteMessage error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to delete message' });
+  }
+};
+
+/**
+ * POST /chat/conversations/:conversationId/clear
+ * Clear all conversation messages for current user only
+ */
+const clearConversation = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { conversationId } = req.params;
+
+    const participantUpdate = await db.query(
+      `
+      UPDATE chat_participants
+      SET cleared_at = NOW()
+      WHERE conversation_id = $1
+        AND user_id = $2
+        AND is_active = true
+      RETURNING conversation_id
+      `,
+      [conversationId, userId]
+    );
+
+    if (participantUpdate.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Not a participant' });
+    }
+
+    if (ioInstance) {
+      ioInstance.to(`user_${userId}`).emit('conversation_cleared', {
+        conversationId
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Conversation cleared',
+      data: { conversationId }
+    });
+  } catch (error) {
+    console.error('❌ clearConversation error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to clear conversation' });
+  }
+};
+
+/**
  * POST /chat/status/online
  */
 const updateOnlineStatus = async (req, res) => {
@@ -679,6 +797,7 @@ const getUnreadChats = async (req, res) => {
         AND cp.is_active = true
         AND cm.sender_id != $1
         AND cm.is_deleted = false
+        AND cm.created_at > COALESCE(cp.cleared_at, '-infinity'::timestamp)
         AND NOT EXISTS (
           SELECT 1
           FROM chat_message_reads r
@@ -724,6 +843,7 @@ const searchMessages = async (req, res) => {
       WHERE cp.user_id = $1
         AND cp.is_active = true
         AND cm.is_deleted = false
+        AND cm.created_at > COALESCE(cp.cleared_at, '-infinity'::timestamp)
         AND cm.message_text ILIKE '%' || $2 || '%'
     `;
 
@@ -780,6 +900,8 @@ module.exports = {
   sendMessage,
   markAsRead,
   markAsDelivered,
+  deleteMessage,
+  clearConversation,
   updateOnlineStatus,
   getOnlineUsers,
   getUnreadChats,
