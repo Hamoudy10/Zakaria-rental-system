@@ -6,6 +6,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const pool = require('./config/database');
+const activityLogMiddleware = require('./middleware/activityLogMiddleware');
 const { initializeDefaultSettings } = require('./controllers/adminSettingsController');
 const { initializeMessageTemplateSystem } = require('./controllers/messageTemplateController');
 const adminRoutes = require('./routes/adminRoutes');
@@ -29,6 +30,7 @@ app.use(
 // Body parsers MUST come BEFORE routes
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(activityLogMiddleware);
 // ==================== FILE UPLOAD CONFIGURATION ====================
 const path = require('path');
 const fs = require('fs');

@@ -1,5 +1,6 @@
 // backend/controllers/chatController.js
 const db = require('../config/database');
+const { logActivity } = require('../services/activityLogService');
 let ioInstance = null;
 
 // Set io instance from service
@@ -665,11 +666,24 @@ const deleteMessage = async (req, res) => {
     await db.query(
       `
       UPDATE chat_messages
-      SET is_deleted = true
+      SET is_deleted = true,
+          deleted_at = NOW(),
+          deleted_by = $2
       WHERE id = $1
       `,
-      [messageId]
+      [messageId, userId]
     );
+
+    await logActivity({
+      actorUserId: userId,
+      module: 'chat',
+      action: 'delete_message',
+      entityType: 'chat_message',
+      entityId: messageId,
+      metadata: {
+        conversationId: message.conversation_id
+      }
+    });
 
     if (ioInstance) {
       ioInstance.to(`conversation_${message.conversation_id}`).emit('message_deleted', {
@@ -724,6 +738,15 @@ const clearConversation = async (req, res) => {
       });
     }
 
+    await logActivity({
+      actorUserId: userId,
+      module: 'chat',
+      action: 'clear_conversation',
+      entityType: 'chat_conversation',
+      entityId: conversationId,
+      metadata: {}
+    });
+
     return res.json({
       success: true,
       message: 'Conversation cleared',
@@ -732,6 +755,260 @@ const clearConversation = async (req, res) => {
   } catch (error) {
     console.error('❌ clearConversation error:', error);
     return res.status(500).json({ success: false, message: 'Failed to clear conversation' });
+  }
+};
+
+/**
+ * POST /chat/messages/:messageId/undo-delete
+ */
+const undoDeleteMessage = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { messageId } = req.params;
+
+    const messageCheck = await db.query(
+      `
+      SELECT id, conversation_id, deleted_by, is_deleted
+      FROM chat_messages
+      WHERE id = $1
+      `,
+      [messageId]
+    );
+
+    if (messageCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    const message = messageCheck.rows[0];
+    if (!message.is_deleted) {
+      return res.status(400).json({ success: false, message: 'Message is not deleted' });
+    }
+
+    if (message.deleted_by !== userId) {
+      return res.status(403).json({ success: false, message: 'Only deleting user can undo' });
+    }
+
+    await db.query(
+      `
+      UPDATE chat_messages
+      SET is_deleted = false,
+          deleted_at = NULL,
+          deleted_by = NULL
+      WHERE id = $1
+      `,
+      [messageId]
+    );
+
+    const reloaded = await db.query(
+      `
+      SELECT
+        cm.id,
+        cm.message_text,
+        cm.sender_id,
+        cm.created_at,
+        cm.message_type,
+        cm.file_url AS image_url,
+        COALESCE(cm.status, 'sent') as status,
+        u.first_name,
+        u.last_name,
+        u.profile_image
+      FROM chat_messages cm
+      JOIN users u ON u.id = cm.sender_id
+      WHERE cm.id = $1
+      `,
+      [messageId]
+    );
+
+    if (ioInstance && reloaded.rows.length > 0) {
+      ioInstance.to(`conversation_${message.conversation_id}`).emit('new_message', {
+        message: reloaded.rows[0],
+        conversationId: message.conversation_id
+      });
+    }
+
+    await logActivity({
+      actorUserId: userId,
+      module: 'chat',
+      action: 'undo_delete_message',
+      entityType: 'chat_message',
+      entityId: messageId,
+      metadata: {
+        conversationId: message.conversation_id
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: 'Message restored',
+      data: { messageId, conversationId: message.conversation_id }
+    });
+  } catch (error) {
+    console.error('❌ undoDeleteMessage error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to undo message deletion' });
+  }
+};
+
+/**
+ * POST /chat/messages/:messageId/redo-delete
+ */
+const redoDeleteMessage = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { messageId } = req.params;
+
+    const messageCheck = await db.query(
+      `
+      SELECT id, sender_id, conversation_id, is_deleted
+      FROM chat_messages
+      WHERE id = $1
+      `,
+      [messageId]
+    );
+
+    if (messageCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    const message = messageCheck.rows[0];
+    if (message.sender_id !== userId) {
+      return res.status(403).json({ success: false, message: 'You can only delete your own messages' });
+    }
+    if (message.is_deleted) {
+      return res.status(400).json({ success: false, message: 'Message already deleted' });
+    }
+
+    await db.query(
+      `
+      UPDATE chat_messages
+      SET is_deleted = true,
+          deleted_at = NOW(),
+          deleted_by = $2
+      WHERE id = $1
+      `,
+      [messageId, userId]
+    );
+
+    if (ioInstance) {
+      ioInstance.to(`conversation_${message.conversation_id}`).emit('message_deleted', {
+        conversationId: message.conversation_id,
+        messageId,
+        deletedBy: userId
+      });
+    }
+
+    await logActivity({
+      actorUserId: userId,
+      module: 'chat',
+      action: 'redo_delete_message',
+      entityType: 'chat_message',
+      entityId: messageId,
+      metadata: {
+        conversationId: message.conversation_id
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: 'Message deleted again',
+      data: { messageId, conversationId: message.conversation_id }
+    });
+  } catch (error) {
+    console.error('❌ redoDeleteMessage error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to redo message deletion' });
+  }
+};
+
+/**
+ * POST /chat/conversations/:conversationId/undo-clear
+ */
+const undoClearConversation = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { conversationId } = req.params;
+
+    const updated = await db.query(
+      `
+      UPDATE chat_participants
+      SET cleared_at = NULL
+      WHERE conversation_id = $1
+        AND user_id = $2
+        AND is_active = true
+      RETURNING conversation_id
+      `,
+      [conversationId, userId]
+    );
+
+    if (updated.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Not a participant' });
+    }
+
+    await logActivity({
+      actorUserId: userId,
+      module: 'chat',
+      action: 'undo_clear_conversation',
+      entityType: 'chat_conversation',
+      entityId: conversationId,
+      metadata: {}
+    });
+
+    return res.json({
+      success: true,
+      message: 'Conversation clear undone',
+      data: { conversationId }
+    });
+  } catch (error) {
+    console.error('❌ undoClearConversation error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to undo clear conversation' });
+  }
+};
+
+/**
+ * POST /chat/conversations/:conversationId/redo-clear
+ */
+const redoClearConversation = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { conversationId } = req.params;
+
+    const updated = await db.query(
+      `
+      UPDATE chat_participants
+      SET cleared_at = NOW()
+      WHERE conversation_id = $1
+        AND user_id = $2
+        AND is_active = true
+      RETURNING conversation_id
+      `,
+      [conversationId, userId]
+    );
+
+    if (updated.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Not a participant' });
+    }
+
+    if (ioInstance) {
+      ioInstance.to(`user_${userId}`).emit('conversation_cleared', {
+        conversationId
+      });
+    }
+
+    await logActivity({
+      actorUserId: userId,
+      module: 'chat',
+      action: 'redo_clear_conversation',
+      entityType: 'chat_conversation',
+      entityId: conversationId,
+      metadata: {}
+    });
+
+    return res.json({
+      success: true,
+      message: 'Conversation cleared again',
+      data: { conversationId }
+    });
+  } catch (error) {
+    console.error('❌ redoClearConversation error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to redo clear conversation' });
   }
 };
 
@@ -902,6 +1179,10 @@ module.exports = {
   markAsDelivered,
   deleteMessage,
   clearConversation,
+  undoDeleteMessage,
+  redoDeleteMessage,
+  undoClearConversation,
+  redoClearConversation,
   updateOnlineStatus,
   getOnlineUsers,
   getUnreadChats,

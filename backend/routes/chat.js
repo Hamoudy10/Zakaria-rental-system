@@ -69,9 +69,13 @@ router.post('/messages/mark-delivered', chatController.markAsDelivered);
 
 // Delete a single sent message (sender only)
 router.delete('/messages/:messageId', chatController.deleteMessage);
+router.post('/messages/:messageId/undo-delete', chatController.undoDeleteMessage);
+router.post('/messages/:messageId/redo-delete', chatController.redoDeleteMessage);
 
 // Clear whole conversation for current user
 router.post('/conversations/:conversationId/clear', chatController.clearConversation);
+router.post('/conversations/:conversationId/undo-clear', chatController.undoClearConversation);
+router.post('/conversations/:conversationId/redo-clear', chatController.redoClearConversation);
 
 // ===================== SEARCH =====================
 
