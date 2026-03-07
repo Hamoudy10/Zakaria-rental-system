@@ -50,6 +50,21 @@ const AgentReports = () => {
     channelCounts: { sms: 0, whatsapp: 0 },
     statusCounts: { sent: 0, pending: 0, failed: 0, skipped: 0 },
   });
+  const [waterExpenseData, setWaterExpenseData] = useState([]);
+  const [waterFinancialSummary, setWaterFinancialSummary] = useState({
+    totals: {
+      water_billed: 0,
+      water_collected: 0,
+      water_expense: 0,
+      water_profit_or_loss: 0,
+    },
+    monthly: [],
+    filters: {
+      fromMonth: "",
+      toMonth: "",
+      propertyId: "",
+    },
+  });
 
   const [companyInfo, setCompanyInfo] = useState({
     name: "Zakaria Housing Agency Limited",
@@ -296,6 +311,32 @@ const AgentReports = () => {
     return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
   };
 
+  const toMonthString = (value) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    const yyyy = parsed.getFullYear();
+    const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+    return `${yyyy}-${mm}`;
+  };
+
+  const getWaterMonthRange = () => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const startMonth = toMonthString(filters.startDate);
+    const endMonth = toMonthString(filters.endDate);
+
+    if (startMonth && endMonth) {
+      return startMonth <= endMonth
+        ? { fromMonth: startMonth, toMonth: endMonth }
+        : { fromMonth: endMonth, toMonth: startMonth };
+    }
+
+    if (startMonth) return { fromMonth: startMonth, toMonth: startMonth };
+    if (endMonth) return { fromMonth: endMonth, toMonth: endMonth };
+
+    return { fromMonth: currentMonth, toMonth: currentMonth };
+  };
+
   const getRecordDate = (item, reportType) => {
     const candidatesByType = {
       payments: [
@@ -306,6 +347,12 @@ const AgentReports = () => {
       ],
       complaints: [item.raised_at, item.created_at, item.updated_at],
       water: [
+        item.created_at,
+        item.updated_at,
+        item.bill_month ? `${String(item.bill_month).slice(0, 7)}-01` : null,
+      ],
+      water_expense: [
+        item.expense_date,
         item.created_at,
         item.updated_at,
         item.bill_month ? `${String(item.bill_month).slice(0, 7)}-01` : null,
@@ -398,6 +445,10 @@ const AgentReports = () => {
           item.name,
           item.address,
           item.month,
+          item.vendor_name,
+          item.supplier_organization,
+          item.payment_reference,
+          item.payment_method,
         ]
           .filter(Boolean)
           .join(" ")
@@ -486,6 +537,37 @@ const AgentReports = () => {
       const resp = await safeAPICall(() =>
         api.get("/agent-properties/water-bills", {
           params: { ...waterParams, limit: batchSize, offset },
+        }),
+      );
+      const rows = extractDataArray(resp, "water");
+      const pageRows = Array.isArray(rows) ? rows : [];
+      allRows.push(...pageRows);
+      hasMore = pageRows.length === batchSize;
+      offset += batchSize;
+    }
+
+    return allRows;
+  };
+
+  const fetchAllWaterExpenses = async (baseParams = {}, batchSize = 500) => {
+    const params = { ...baseParams };
+    if (params.startDate) {
+      params.fromDate = params.startDate;
+      delete params.startDate;
+    }
+    if (params.endDate) {
+      params.toDate = params.endDate;
+      delete params.endDate;
+    }
+
+    let offset = 0;
+    let hasMore = true;
+    const allRows = [];
+
+    while (hasMore) {
+      const resp = await safeAPICall(() =>
+        api.get("/agent-properties/water-bills/expenses", {
+          params: { ...params, limit: batchSize, offset },
         }),
       );
       const rows = extractDataArray(resp, "water");
@@ -635,14 +717,68 @@ const AgentReports = () => {
 
         case "water":
           try {
+            const { fromMonth, toMonth } = getWaterMonthRange();
+            const [waterBills, waterExpenses, waterProfitabilityRes] = await Promise.all([
+              fetchAllWaterBills(params),
+              fetchAllWaterExpenses(params),
+              safeAPICall(() =>
+                api.get("/agent-properties/water-bills/profitability", {
+                  params: {
+                    fromMonth,
+                    toMonth,
+                    ...(params.propertyId ? { propertyId: params.propertyId } : {}),
+                  },
+                }),
+              ),
+            ]);
+
+            const expenseRows = applyStrictFilters(waterExpenses, "water_expense");
+            setWaterExpenseData(expenseRows);
+
+            const profitabilityData = waterProfitabilityRes?.data?.success
+              ? waterProfitabilityRes.data.data || {}
+              : {};
+
+            setWaterFinancialSummary({
+              totals: profitabilityData.totals || {
+                water_billed: 0,
+                water_collected: 0,
+                water_expense: 0,
+                water_profit_or_loss: 0,
+              },
+              monthly: Array.isArray(profitabilityData.monthly)
+                ? profitabilityData.monthly
+                : [],
+              filters: {
+                fromMonth,
+                toMonth,
+                propertyId: params.propertyId || "",
+              },
+            });
+
             response = {
               data: {
                 success: true,
-                data: { waterBills: await fetchAllWaterBills(params) },
+                data: { waterBills },
               },
             };
           } catch (err) {
             console.error("Water bills API error:", err);
+            setWaterExpenseData([]);
+            setWaterFinancialSummary({
+              totals: {
+                water_billed: 0,
+                water_collected: 0,
+                water_expense: 0,
+                water_profit_or_loss: 0,
+              },
+              monthly: [],
+              filters: {
+                fromMonth: "",
+                toMonth: "",
+                propertyId: "",
+              },
+            });
             response = {
               data: {
                 success: false,
@@ -699,6 +835,23 @@ const AgentReports = () => {
 
   // Fetch data when report type changes
   useEffect(() => {
+    if (activeReport !== "water") {
+      setWaterExpenseData([]);
+      setWaterFinancialSummary({
+        totals: {
+          water_billed: 0,
+          water_collected: 0,
+          water_expense: 0,
+          water_profit_or_loss: 0,
+        },
+        monthly: [],
+        filters: {
+          fromMonth: "",
+          toMonth: "",
+          propertyId: "",
+        },
+      });
+    }
     fetchReportData();
   }, [activeReport]);
 
@@ -1478,91 +1631,226 @@ const AgentReports = () => {
         );
 
       case "water":
+        const waterTotals = waterFinancialSummary?.totals || {};
+        const waterNet = Number(waterTotals.water_profit_or_loss || 0);
+        const waterIsProfit = waterNet >= 0;
+
         return (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Tenant
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Property
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Unit
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Phone
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Amount
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Bill Month
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Notes
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Created
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {data.map((item, index) => (
-                  <tr key={item.id || index}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.tenant_name ||
-                        `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
-                        "N/A"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.property_name || "N/A"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.unit_code || "N/A"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.phone_number || "N/A"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      KSh {(parseFloat(item.amount) || 0).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.bill_month
-                        ? new Date(item.bill_month).toLocaleDateString("en-GB", {
-                            month: "short",
-                            year: "numeric",
-                          })
-                        : "N/A"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          item.status === "paid"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-yellow-100 text-yellow-800"
-                        }`}
-                      >
-                        {item.status || "Billed"}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
-                      {item.notes || "N/A"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.created_at
-                        ? new Date(item.created_at).toLocaleString()
-                        : "N/A"}
-                    </td>
+          <div className="space-y-6">
+            <div className={`rounded-lg border p-4 ${waterIsProfit ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200"}`}>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className={`text-base font-semibold ${waterIsProfit ? "text-emerald-900" : "text-rose-900"}`}>
+                  Water Financial Summary
+                </h3>
+                <span className="text-xs text-gray-600">
+                  {waterFinancialSummary?.filters?.fromMonth || "N/A"} to {waterFinancialSummary?.filters?.toMonth || "N/A"}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="rounded border bg-white p-3">
+                  <p className="text-xs text-gray-600">Water Billed</p>
+                  <p className="text-lg font-bold text-gray-900">
+                    KSh {(parseFloat(waterTotals.water_billed) || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded border bg-white p-3">
+                  <p className="text-xs text-gray-600">Water Collected</p>
+                  <p className="text-lg font-bold text-emerald-700">
+                    KSh {(parseFloat(waterTotals.water_collected) || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded border bg-white p-3">
+                  <p className="text-xs text-gray-600">Water Expense</p>
+                  <p className="text-lg font-bold text-amber-700">
+                    KSh {(parseFloat(waterTotals.water_expense) || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded border bg-white p-3">
+                  <p className="text-xs text-gray-600">Water Net</p>
+                  <p className={`text-lg font-bold ${waterIsProfit ? "text-green-700" : "text-red-700"}`}>
+                    KSh {waterNet.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {Array.isArray(waterFinancialSummary?.monthly) && waterFinancialSummary.monthly.length > 0 && (
+              <div className="overflow-x-auto">
+                <h4 className="text-sm font-semibold text-gray-800 mb-2">Monthly Water Profitability</h4>
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Month</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Billed</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Collected</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expense</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Net</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {waterFinancialSummary.monthly.map((row, idx) => {
+                      const net = parseFloat(row.water_profit_or_loss) || 0;
+                      return (
+                        <tr key={`${row.month || "month"}-${idx}`}>
+                          <td className="px-4 py-2 text-sm text-gray-900">
+                            {row.month
+                              ? new Date(row.month).toLocaleDateString("en-GB", { month: "short", year: "numeric" })
+                              : "N/A"}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-900">KSh {(parseFloat(row.water_billed) || 0).toLocaleString()}</td>
+                          <td className="px-4 py-2 text-sm text-emerald-700">KSh {(parseFloat(row.water_collected) || 0).toLocaleString()}</td>
+                          <td className="px-4 py-2 text-sm text-amber-700">KSh {(parseFloat(row.water_expense) || 0).toLocaleString()}</td>
+                          <td className={`px-4 py-2 text-sm font-semibold ${net >= 0 ? "text-green-700" : "text-red-700"}`}>
+                            KSh {net.toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <h4 className="text-sm font-semibold text-gray-800 mb-2">
+                Water Delivery Expenses ({waterExpenseData.length})
+              </h4>
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Property</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bill Month</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expense Date</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {waterExpenseData.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-4 text-sm text-gray-500 text-center">
+                        No water delivery expenses found for current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    waterExpenseData.map((item, idx) => (
+                      <tr key={item.id || idx}>
+                        <td className="px-4 py-2 text-sm text-gray-900">
+                          {item.vendor_name || "N/A"}
+                          {item.supplier_organization ? ` (${item.supplier_organization})` : ""}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-900">{item.property_name || "N/A"}</td>
+                        <td className="px-4 py-2 text-sm text-gray-900">KSh {(parseFloat(item.amount) || 0).toLocaleString()}</td>
+                        <td className="px-4 py-2 text-sm text-gray-900">
+                          {(item.payment_method || "cash").toUpperCase()}
+                          {item.payment_reference ? ` • ${item.payment_reference}` : ""}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-900">
+                          {item.bill_month
+                            ? new Date(item.bill_month).toLocaleDateString("en-GB", { month: "short", year: "numeric" })
+                            : "N/A"}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-900">
+                          {item.expense_date ? new Date(item.expense_date).toLocaleDateString("en-GB") : "N/A"}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-700 max-w-xs">{item.notes || "N/A"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="overflow-x-auto">
+              <h4 className="text-sm font-semibold text-gray-800 mb-2">
+                Water Bills ({data.length})
+              </h4>
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Tenant
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Property
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Unit
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Phone
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Amount
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Bill Month
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Notes
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Created
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {data.map((item, index) => (
+                    <tr key={item.id || index}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {item.tenant_name ||
+                          `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+                          "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {item.property_name || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {item.unit_code || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {item.phone_number || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        KSh {(parseFloat(item.amount) || 0).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {item.bill_month
+                          ? new Date(item.bill_month).toLocaleDateString("en-GB", {
+                              month: "short",
+                              year: "numeric",
+                            })
+                          : "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span
+                          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            item.status === "paid"
+                              ? "bg-green-100 text-green-800"
+                              : "bg-yellow-100 text-yellow-800"
+                          }`}
+                        >
+                          {item.status || "Billed"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-700 max-w-xs">
+                        {item.notes || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {item.created_at
+                          ? new Date(item.created_at).toLocaleString()
+                          : "N/A"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
 
