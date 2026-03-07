@@ -611,6 +611,609 @@ const deleteWaterBill = async (req, res) => {
   }
 };
 
+const normalizeMonthDate = (monthInput) => {
+  if (!monthInput) return null;
+  const raw = String(monthInput).trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) return `${raw}-01`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) {
+      const month = d.toISOString().slice(0, 7);
+      return `${month}-01`;
+    }
+  }
+  return null;
+};
+
+const createWaterExpense = async (req, res) => {
+  try {
+    const actorId = req.user.id;
+    if (req.user.role !== "agent") {
+      return res.status(403).json({
+        success: false,
+        message: "Only agents can record water delivery expenses",
+      });
+    }
+
+    const {
+      propertyId,
+      vendorName,
+      supplierOrganization = null,
+      amount,
+      expenseDate,
+      billMonth,
+      paymentMethod = "cash",
+      paymentReference = null,
+      mpesaReference = null,
+      litersDelivered = null,
+      notes = null,
+    } = req.body || {};
+
+    if (!propertyId || !vendorName || amount === undefined || !billMonth) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: propertyId, vendorName, amount, billMonth",
+      });
+    }
+
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Amount must be a positive number",
+      });
+    }
+
+    const normalizedPaymentMethod = String(paymentMethod || "cash")
+      .trim()
+      .toLowerCase();
+    if (!["cash", "mpesa"].includes(normalizedPaymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "paymentMethod must be either 'cash' or 'mpesa'",
+      });
+    }
+
+    const normalizedBillMonth = normalizeMonthDate(billMonth);
+    if (!normalizedBillMonth) {
+      return res.status(400).json({
+        success: false,
+        message: "billMonth must be YYYY-MM or YYYY-MM-DD",
+      });
+    }
+
+    let normalizedExpenseDate = null;
+    if (expenseDate) {
+      const parsedDate = new Date(expenseDate);
+      if (Number.isNaN(parsedDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "expenseDate must be a valid date",
+        });
+      }
+      normalizedExpenseDate = parsedDate.toISOString().slice(0, 10);
+    }
+
+    const ok = await agentManagesProperty(actorId, propertyId);
+    if (!ok) {
+      return res.status(403).json({
+        success: false,
+        message: "Agent not assigned to this property",
+      });
+    }
+
+    const finalPaymentReference =
+      paymentReference !== null && paymentReference !== undefined
+        ? String(paymentReference).trim() || null
+        : mpesaReference
+          ? String(mpesaReference).trim()
+          : null;
+
+    const finalMpesaReference =
+      normalizedPaymentMethod === "mpesa" ? finalPaymentReference : null;
+
+    const result = await db.query(
+      `INSERT INTO water_delivery_expenses (
+         property_id, recorded_by, vendor_name, amount, expense_date,
+         bill_month, payment_method, payment_reference, mpesa_reference,
+         supplier_organization, liters_delivered, notes
+       ) VALUES (
+         $1, $2, $3, $4, COALESCE($5::date, CURRENT_DATE),
+         $6::date, $7, $8, $9, $10, $11, $12
+       )
+       RETURNING *`,
+      [
+        propertyId,
+        actorId,
+        String(vendorName).trim(),
+        parsedAmount,
+        normalizedExpenseDate,
+        normalizedBillMonth,
+        normalizedPaymentMethod,
+        finalPaymentReference,
+        finalMpesaReference,
+        supplierOrganization ? String(supplierOrganization).trim() : null,
+        litersDelivered !== null && litersDelivered !== undefined
+          ? Number(litersDelivered)
+          : null,
+        notes ? String(notes).trim() : null,
+      ],
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Water delivery expense recorded",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("createWaterExpense error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to record water delivery expense",
+      error: error.message,
+    });
+  }
+};
+
+const listWaterExpenses = async (req, res) => {
+  try {
+    const actorId = req.user.id;
+    const {
+      propertyId,
+      billMonth,
+      fromDate,
+      toDate,
+      limit = 50,
+      offset = 0,
+      all = false,
+    } = req.query;
+
+    const fetchAll =
+      all === true || String(all).toLowerCase() === "true" || String(all) === "1";
+    const params = [];
+    let where = "WHERE wde.is_active = true";
+
+    if (req.user.role !== "admin") {
+      params.push(actorId);
+      where += ` AND wde.property_id IN (
+        SELECT property_id
+        FROM agent_property_assignments
+        WHERE agent_id = $${params.length} AND is_active = true
+      )`;
+    }
+
+    if (propertyId) {
+      params.push(propertyId);
+      where += ` AND wde.property_id = $${params.length}`;
+    }
+
+    if (billMonth) {
+      const normalizedBillMonth = normalizeMonthDate(billMonth);
+      if (!normalizedBillMonth) {
+        return res.status(400).json({
+          success: false,
+          message: "billMonth must be YYYY-MM or YYYY-MM-DD",
+        });
+      }
+      params.push(normalizedBillMonth);
+      where += ` AND wde.bill_month = $${params.length}::date`;
+    }
+
+    if (fromDate) {
+      params.push(fromDate);
+      where += ` AND wde.expense_date >= $${params.length}::date`;
+    }
+
+    if (toDate) {
+      params.push(toDate);
+      where += ` AND wde.expense_date <= $${params.length}::date`;
+    }
+
+    const baseQuery = `
+      SELECT
+        wde.*,
+        p.name AS property_name,
+        p.property_code,
+        u.first_name || ' ' || u.last_name AS recorded_by_name
+      FROM water_delivery_expenses wde
+      LEFT JOIN properties p ON p.id = wde.property_id
+      LEFT JOIN users u ON u.id = wde.recorded_by
+      ${where}
+      ORDER BY wde.expense_date DESC, wde.created_at DESC
+    `;
+
+    let rows = [];
+    let pagination = null;
+
+    if (fetchAll) {
+      const result = await db.query(baseQuery, params);
+      rows = result.rows;
+    } else {
+      const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+      const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
+
+      const countResult = await db.query(
+        `SELECT COUNT(*)::int AS total
+         FROM water_delivery_expenses wde
+         ${where}`,
+        params,
+      );
+      const total = countResult.rows[0]?.total || 0;
+
+      const pagedParams = [...params, safeLimit, safeOffset];
+      const result = await db.query(
+        `${baseQuery}
+         LIMIT $${pagedParams.length - 1}
+         OFFSET $${pagedParams.length}`,
+        pagedParams,
+      );
+      rows = result.rows;
+      pagination = {
+        total,
+        limit: safeLimit,
+        offset: safeOffset,
+        hasMore: safeOffset + rows.length < total,
+      };
+    }
+
+    return res.json({
+      success: true,
+      data: rows,
+      ...(pagination ? { pagination } : {}),
+    });
+  } catch (error) {
+    console.error("listWaterExpenses error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch water delivery expenses",
+      error: error.message,
+    });
+  }
+};
+
+const updateWaterExpense = async (req, res) => {
+  try {
+    const actorId = req.user.id;
+    if (req.user.role !== "agent") {
+      return res.status(403).json({
+        success: false,
+        message: "Only agents can edit water delivery expenses",
+      });
+    }
+
+    const { id } = req.params;
+    const {
+      vendorName,
+      supplierOrganization,
+      amount,
+      expenseDate,
+      billMonth,
+      paymentMethod,
+      paymentReference,
+      mpesaReference,
+      litersDelivered,
+      notes,
+    } = req.body || {};
+
+    const existing = await db.query(
+      `SELECT id, property_id
+       FROM water_delivery_expenses
+       WHERE id = $1 AND is_active = true`,
+      [id],
+    );
+
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Expense not found" });
+    }
+
+    const ok = await agentManagesProperty(actorId, existing.rows[0].property_id);
+    if (!ok) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    const fields = [];
+    const params = [];
+
+    if (vendorName !== undefined) {
+      params.push(String(vendorName).trim());
+      fields.push(`vendor_name = $${params.length}`);
+    }
+    if (amount !== undefined) {
+      const parsedAmount = Number(amount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json({ success: false, message: "Invalid amount" });
+      }
+      params.push(parsedAmount);
+      fields.push(`amount = $${params.length}`);
+    }
+    if (expenseDate !== undefined) {
+      if (expenseDate === null || expenseDate === "") {
+        fields.push(`expense_date = CURRENT_DATE`);
+      } else {
+        const parsed = new Date(expenseDate);
+        if (Number.isNaN(parsed.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "expenseDate must be a valid date",
+          });
+        }
+        params.push(parsed.toISOString().slice(0, 10));
+        fields.push(`expense_date = $${params.length}::date`);
+      }
+    }
+    if (billMonth !== undefined) {
+      const normalizedBillMonth = normalizeMonthDate(billMonth);
+      if (!normalizedBillMonth) {
+        return res.status(400).json({
+          success: false,
+          message: "billMonth must be YYYY-MM or YYYY-MM-DD",
+        });
+      }
+      params.push(normalizedBillMonth);
+      fields.push(`bill_month = $${params.length}::date`);
+    }
+    if (paymentMethod !== undefined) {
+      const normalizedPaymentMethod = String(paymentMethod || "")
+        .trim()
+        .toLowerCase();
+      if (!["cash", "mpesa"].includes(normalizedPaymentMethod)) {
+        return res.status(400).json({
+          success: false,
+          message: "paymentMethod must be either 'cash' or 'mpesa'",
+        });
+      }
+      params.push(normalizedPaymentMethod);
+      fields.push(`payment_method = $${params.length}`);
+    }
+    if (paymentReference !== undefined) {
+      const ref = paymentReference ? String(paymentReference).trim() : null;
+      params.push(ref);
+      fields.push(`payment_reference = $${params.length}`);
+      params.push(ref);
+      fields.push(`mpesa_reference = $${params.length}`);
+    }
+    if (mpesaReference !== undefined) {
+      params.push(mpesaReference ? String(mpesaReference).trim() : null);
+      fields.push(`mpesa_reference = $${params.length}`);
+    }
+    if (supplierOrganization !== undefined) {
+      params.push(
+        supplierOrganization ? String(supplierOrganization).trim() : null,
+      );
+      fields.push(`supplier_organization = $${params.length}`);
+    }
+    if (litersDelivered !== undefined) {
+      params.push(
+        litersDelivered === null || litersDelivered === ""
+          ? null
+          : Number(litersDelivered),
+      );
+      fields.push(`liters_delivered = $${params.length}`);
+    }
+    if (notes !== undefined) {
+      params.push(notes ? String(notes).trim() : null);
+      fields.push(`notes = $${params.length}`);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No fields provided to update",
+      });
+    }
+
+    params.push(id);
+    const result = await db.query(
+      `UPDATE water_delivery_expenses
+       SET ${fields.join(", ")},
+           updated_at = NOW()
+       WHERE id = $${params.length}
+       RETURNING *`,
+      params,
+    );
+
+    return res.json({
+      success: true,
+      message: "Water delivery expense updated",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("updateWaterExpense error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update water delivery expense",
+      error: error.message,
+    });
+  }
+};
+
+const deleteWaterExpense = async (req, res) => {
+  try {
+    const actorId = req.user.id;
+    if (req.user.role !== "agent") {
+      return res.status(403).json({
+        success: false,
+        message: "Only agents can delete water delivery expenses",
+      });
+    }
+
+    const { id } = req.params;
+
+    const existing = await db.query(
+      `SELECT id, property_id
+       FROM water_delivery_expenses
+       WHERE id = $1 AND is_active = true`,
+      [id],
+    );
+
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Expense not found" });
+    }
+
+    const ok = await agentManagesProperty(actorId, existing.rows[0].property_id);
+    if (!ok) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    await db.query(
+      `UPDATE water_delivery_expenses
+       SET is_active = false, updated_at = NOW()
+       WHERE id = $1`,
+      [id],
+    );
+
+    return res.json({
+      success: true,
+      message: "Water delivery expense deleted",
+    });
+  } catch (error) {
+    console.error("deleteWaterExpense error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete water delivery expense",
+      error: error.message,
+    });
+  }
+};
+
+const getWaterProfitability = async (req, res) => {
+  try {
+    const actorId = req.user.id;
+    const { propertyId, fromMonth, toMonth } = req.query;
+
+    const startMonth = normalizeMonthDate(fromMonth || new Date().toISOString().slice(0, 7));
+    const endMonth = normalizeMonthDate(toMonth || new Date().toISOString().slice(0, 7));
+
+    if (!startMonth || !endMonth) {
+      return res.status(400).json({
+        success: false,
+        message: "fromMonth/toMonth must be YYYY-MM or YYYY-MM-DD",
+      });
+    }
+
+    const params = [startMonth, endMonth];
+    let propertyFilterForBills = "";
+    let propertyFilterForPaid = "";
+    let propertyFilterForExpense = "";
+
+    if (propertyId) {
+      params.push(propertyId);
+      propertyFilterForBills += ` AND wb.property_id = $${params.length}`;
+      propertyFilterForPaid += ` AND rp.property_id = $${params.length}`;
+      propertyFilterForExpense += ` AND wde.property_id = $${params.length}`;
+    }
+
+    if (req.user.role !== "admin") {
+      params.push(actorId);
+      const agentParam = `$${params.length}`;
+      propertyFilterForBills += ` AND wb.property_id IN (
+        SELECT property_id FROM agent_property_assignments
+        WHERE agent_id = ${agentParam} AND is_active = true
+      )`;
+      propertyFilterForPaid += ` AND rp.property_id IN (
+        SELECT property_id FROM agent_property_assignments
+        WHERE agent_id = ${agentParam} AND is_active = true
+      )`;
+      propertyFilterForExpense += ` AND wde.property_id IN (
+        SELECT property_id FROM agent_property_assignments
+        WHERE agent_id = ${agentParam} AND is_active = true
+      )`;
+    }
+
+    const reportQuery = `
+      WITH months AS (
+        SELECT generate_series(
+          DATE_TRUNC('month', $1::date),
+          DATE_TRUNC('month', $2::date),
+          INTERVAL '1 month'
+        )::date AS month
+      ),
+      billed AS (
+        SELECT
+          DATE_TRUNC('month', wb.bill_month)::date AS month,
+          COALESCE(SUM(wb.amount), 0)::numeric AS water_billed
+        FROM water_bills wb
+        WHERE wb.bill_month >= DATE_TRUNC('month', $1::date)
+          AND wb.bill_month <= DATE_TRUNC('month', $2::date)
+          ${propertyFilterForBills}
+        GROUP BY DATE_TRUNC('month', wb.bill_month)::date
+      ),
+      paid AS (
+        SELECT
+          DATE_TRUNC('month', rp.payment_month)::date AS month,
+          COALESCE(SUM(rp.allocated_to_water), 0)::numeric AS water_collected
+        FROM rent_payments rp
+        WHERE rp.status = 'completed'
+          AND rp.payment_month >= DATE_TRUNC('month', $1::date)
+          AND rp.payment_month <= DATE_TRUNC('month', $2::date)
+          ${propertyFilterForPaid}
+        GROUP BY DATE_TRUNC('month', rp.payment_month)::date
+      ),
+      expenses AS (
+        SELECT
+          DATE_TRUNC('month', wde.bill_month)::date AS month,
+          COALESCE(SUM(wde.amount), 0)::numeric AS water_expense
+        FROM water_delivery_expenses wde
+        WHERE wde.is_active = true
+          AND wde.bill_month >= DATE_TRUNC('month', $1::date)
+          AND wde.bill_month <= DATE_TRUNC('month', $2::date)
+          ${propertyFilterForExpense}
+        GROUP BY DATE_TRUNC('month', wde.bill_month)::date
+      )
+      SELECT
+        m.month,
+        COALESCE(b.water_billed, 0) AS water_billed,
+        COALESCE(p.water_collected, 0) AS water_collected,
+        COALESCE(e.water_expense, 0) AS water_expense,
+        (COALESCE(p.water_collected, 0) - COALESCE(e.water_expense, 0)) AS water_profit_or_loss
+      FROM months m
+      LEFT JOIN billed b ON b.month = m.month
+      LEFT JOIN paid p ON p.month = m.month
+      LEFT JOIN expenses e ON e.month = m.month
+      ORDER BY m.month ASC
+    `;
+
+    const result = await db.query(reportQuery, params);
+    const rows = result.rows || [];
+
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.water_billed += Number(row.water_billed) || 0;
+        acc.water_collected += Number(row.water_collected) || 0;
+        acc.water_expense += Number(row.water_expense) || 0;
+        acc.water_profit_or_loss += Number(row.water_profit_or_loss) || 0;
+        return acc;
+      },
+      {
+        water_billed: 0,
+        water_collected: 0,
+        water_expense: 0,
+        water_profit_or_loss: 0,
+      },
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        filters: {
+          propertyId: propertyId || null,
+          fromMonth: startMonth.slice(0, 7),
+          toMonth: endMonth.slice(0, 7),
+        },
+        totals,
+        monthly: rows,
+      },
+    });
+  } catch (error) {
+    console.error("getWaterProfitability error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to compute water profitability",
+      error: error.message,
+    });
+  }
+};
+
 // backend/controllers/waterBillController.js
 const getTenantWaterBalance = async (req, res) => {
   try {
@@ -700,6 +1303,11 @@ module.exports = {
   getWaterBill,
   updateWaterBill,
   deleteWaterBill,
+  createWaterExpense,
+  listWaterExpenses,
+  updateWaterExpense,
+  deleteWaterExpense,
+  getWaterProfitability,
   checkMissingWaterBills,
   getTenantWaterBalance
 };
