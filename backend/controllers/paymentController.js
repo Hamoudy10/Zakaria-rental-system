@@ -892,14 +892,13 @@ const handleMpesaValidation = async (req, res) => {
 
     const cleanRef = BillRefNumber.trim().toUpperCase();
 
-    // Try matching BillRef as active unit code
+    // Strict matching: BillRef must match an active unit code.
     const unitCheck = await pool.query(
       `SELECT pu.id, pu.unit_code, ta.tenant_id
        FROM property_units pu
        LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
-       LEFT JOIN unit_code_aliases uca ON uca.unit_id = pu.id AND uca.is_active = true
        WHERE pu.is_active = true
-         AND (UPPER(pu.unit_code) = $1 OR UPPER(uca.alias_code) = $1)`,
+         AND UPPER(pu.unit_code) = $1`,
       [cleanRef],
     );
 
@@ -1063,7 +1062,6 @@ const handleMpesaCallback = async (req, res) => {
     }
 
     const phone = normalizeKenyanPhone(MSISDN);
-    const billRefPhone = normalizeKenyanPhone(BillRefNumber);
     if (!phone) {
       console.warn("Invalid callback MSISDN format received:", MSISDN);
     }
@@ -1096,7 +1094,7 @@ const handleMpesaCallback = async (req, res) => {
     let property = null;
     let unmatchedReason = null;
 
-    // Strategy 1: Match BillRefNumber as unit_code
+    // Strict strategy: match BillRefNumber only as exact unit_code.
     if (BillRefNumber && BillRefNumber.trim()) {
       const cleanRef = BillRefNumber.trim().toUpperCase();
       const unitResult = await client.query(
@@ -1108,12 +1106,11 @@ const handleMpesaCallback = async (req, res) => {
           t.phone_number as tenant_phone,
           p.name as property_name
         FROM property_units pu
-        LEFT JOIN unit_code_aliases uca ON uca.unit_id = pu.id AND uca.is_active = true
         JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
         JOIN tenants t ON ta.tenant_id = t.id
         JOIN properties p ON pu.property_id = p.id
         WHERE pu.is_active = true
-          AND (UPPER(pu.unit_code) = $1 OR UPPER(uca.alias_code) = $1)`,
+          AND UPPER(pu.unit_code) = $1`,
         [cleanRef],
       );
 
@@ -1133,93 +1130,11 @@ const handleMpesaCallback = async (req, res) => {
       }
     }
 
-    // Strategy 2: Match BillRefNumber as phone number
-    if (!tenant && BillRefNumber && BillRefNumber.trim()) {
-      const phoneRef = billRefPhone;
-      // Only try if it looks like a phone number
-      if (phoneRef) {
-        const phoneResult = await client.query(
-          `SELECT 
-            t.id as tenant_id, t.first_name, t.last_name, t.phone_number,
-            ta.id as allocation_id, ta.monthly_rent, ta.arrears_balance,
-            pu.id as unit_id, pu.unit_code, pu.property_id,
-            p.name as property_name
-          FROM tenants t
-          JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-          JOIN property_units pu ON ta.unit_id = pu.id
-          JOIN properties p ON pu.property_id = p.id
-          WHERE t.phone_number = $1`,
-          [phoneRef],
-        );
-
-        if (phoneResult.rows.length === 1) {
-          const row = phoneResult.rows[0];
-          tenant = {
-            id: row.tenant_id,
-            first_name: row.first_name,
-            last_name: row.last_name,
-            phone_number: row.phone_number,
-          };
-          unit = { id: row.unit_id, unit_code: row.unit_code };
-          property = { id: row.property_id, name: row.property_name };
-          console.log(
-            `âœ… Matched by BillRefNumber as phone: ${phoneRef} â†’ ${tenant.first_name} ${tenant.last_name}`,
-          );
-        } else if (phoneResult.rows.length > 1) {
-          unmatchedReason =
-            "Ambiguous BillRef phone: multiple active units for this tenant phone";
-          console.warn(
-            `Ambiguous BillRef phone match for ${phoneRef}: ${phoneResult.rows.length} active allocations`,
-          );
-        }
-      }
-    }
-
-    // Strategy 3: Match MSISDN (paying phone number) to tenant
-    if (!tenant) {
-      if (phone) {
-        const msisdnResult = await client.query(
-          `SELECT 
-            t.id as tenant_id, t.first_name, t.last_name, t.phone_number,
-            ta.id as allocation_id, ta.monthly_rent, ta.arrears_balance,
-            pu.id as unit_id, pu.unit_code, pu.property_id,
-            p.name as property_name
-          FROM tenants t
-          JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-          JOIN property_units pu ON ta.unit_id = pu.id
-          JOIN properties p ON pu.property_id = p.id
-          WHERE t.phone_number = $1`,
-          [phone],
-        );
-
-        if (msisdnResult.rows.length === 1) {
-          const row = msisdnResult.rows[0];
-          tenant = {
-            id: row.tenant_id,
-            first_name: row.first_name,
-            last_name: row.last_name,
-            phone_number: row.phone_number,
-          };
-          unit = { id: row.unit_id, unit_code: row.unit_code };
-          property = { id: row.property_id, name: row.property_name };
-          console.log(
-            `âœ… Matched by MSISDN: ${phone} â†’ ${tenant.first_name} ${tenant.last_name}`,
-          );
-        } else if (msisdnResult.rows.length > 1) {
-          unmatchedReason =
-            "Ambiguous MSISDN: payer phone belongs to tenant with multiple active units";
-          console.warn(
-            `Ambiguous MSISDN match for ${phone}: ${msisdnResult.rows.length} active allocations`,
-          );
-        }
-      }
-    }
-
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // UNMATCHED PAYMENT â€” Record for manual allocation
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     if (!tenant) {
-      const phoneForInsert = phone || billRefPhone;
+      const phoneForInsert = phone;
       const safePhone = phoneForInsert || "invalid_msisdn";
       const unmatchedPaymentMonth = formatPaymentMonth(transTime);
       if (!phoneForInsert) {
@@ -1335,7 +1250,6 @@ const handleMpesaCallback = async (req, res) => {
     const paymentPhone =
       phone ||
       normalizeKenyanPhone(tenant.phone_number) ||
-      billRefPhone ||
       "invalid_msisdn";
     const usedPlaceholderPhone = paymentPhone === "invalid_msisdn";
 
@@ -4310,4 +4224,3 @@ module.exports = {
   recordCarryForward,
   sendPaymentNotifications,
 };
-
