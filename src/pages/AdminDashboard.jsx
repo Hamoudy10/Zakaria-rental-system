@@ -60,6 +60,7 @@ const AdminDashboard = () => {
   const [expenseStats, setExpenseStats] = useState(null);
   const [netProfitData, setNetProfitData] = useState(null);
   const [mpesaAudit, setMpesaAudit] = useState(null);
+  const [waterProfitability, setWaterProfitability] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -87,10 +88,17 @@ const AdminDashboard = () => {
 
       // Fetch expense stats separately (optional - won't fail main dashboard)
       try {
-        const [expenseStatsRes, netProfitRes, mpesaAuditRes] = await Promise.all([
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const [expenseStatsRes, netProfitRes, mpesaAuditRes, waterProfitRes] = await Promise.all([
           expenseAPI.getStats(),
           expenseAPI.getNetProfitReport(),
           paymentAPI.getMpesaCallbackInboxAudit({ days: 7, limit: 20 }),
+          api.get('/water-bills/profitability', {
+            params: {
+              fromMonth: currentMonth,
+              toMonth: currentMonth,
+            },
+          }),
         ]);
         
         if (expenseStatsRes.data.success) {
@@ -101,6 +109,9 @@ const AdminDashboard = () => {
         }
         if (mpesaAuditRes.data.success) {
           setMpesaAudit(mpesaAuditRes.data.data);
+        }
+        if (waterProfitRes?.data?.success) {
+          setWaterProfitability(waterProfitRes.data.data);
         }
       } catch (expenseErr) {
         console.log('Optional dashboard stats not available:', expenseErr.message);
@@ -169,6 +180,7 @@ const AdminDashboard = () => {
             expenseStats={expenseStats}
             netProfitData={netProfitData}
             mpesaAudit={mpesaAudit}
+            waterProfitability={waterProfitability}
             loading={loading}
             error={error}
             onRefresh={fetchDashboardData}
@@ -228,6 +240,7 @@ const DashboardOverview = ({
   expenseStats,
   netProfitData,
   mpesaAudit,
+  waterProfitability,
   loading,
   error,
   onRefresh,
@@ -304,6 +317,14 @@ const DashboardOverview = ({
       String(row.process_status || '').toLowerCase(),
     ),
   );
+  const waterTotals = waterProfitability?.totals || {
+    water_billed: 0,
+    water_collected: 0,
+    water_expense: 0,
+    water_profit_or_loss: 0,
+  };
+  const waterProfitOrLoss = Number(waterTotals.water_profit_or_loss || 0);
+  const waterIsProfit = waterProfitOrLoss >= 0;
 
   return (
     <div className="space-y-6">
@@ -432,6 +453,45 @@ const DashboardOverview = ({
               <p className="text-xl font-bold">{expenseStats?.totals?.pending?.count || 0}</p>
               <p className="text-xs opacity-70">expenses</p>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Water-only profit/loss snapshot */}
+      <div className={`rounded-xl border p-4 sm:p-5 ${waterIsProfit ? 'border-cyan-200 bg-cyan-50' : 'border-rose-200 bg-rose-50'}`}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Droplets className={`h-5 w-5 ${waterIsProfit ? 'text-cyan-700' : 'text-rose-700'}`} />
+            <h2 className={`text-base sm:text-lg font-semibold ${waterIsProfit ? 'text-cyan-900' : 'text-rose-900'}`}>
+              Water Profit/Loss (This Month)
+            </h2>
+          </div>
+          <button
+            onClick={() => setActiveTab('reports')}
+            className={`text-sm font-medium ${waterIsProfit ? 'text-cyan-800 hover:text-cyan-900' : 'text-rose-800 hover:text-rose-900'}`}
+          >
+            Detailed Report
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-lg bg-white border p-3">
+            <p className="text-xs text-gray-600">Water Billed</p>
+            <p className="text-lg font-bold text-gray-900">{formatCurrency(waterTotals.water_billed)}</p>
+          </div>
+          <div className="rounded-lg bg-white border p-3">
+            <p className="text-xs text-gray-600">Water Collected</p>
+            <p className="text-lg font-bold text-emerald-700">{formatCurrency(waterTotals.water_collected)}</p>
+          </div>
+          <div className="rounded-lg bg-white border p-3">
+            <p className="text-xs text-gray-600">Water Expense</p>
+            <p className="text-lg font-bold text-amber-700">{formatCurrency(waterTotals.water_expense)}</p>
+          </div>
+          <div className="rounded-lg bg-white border p-3">
+            <p className="text-xs text-gray-600">Water Net</p>
+            <p className={`text-lg font-bold ${waterIsProfit ? 'text-green-700' : 'text-red-700'}`}>
+              {formatCurrency(waterProfitOrLoss)}
+            </p>
           </div>
         </div>
       </div>
