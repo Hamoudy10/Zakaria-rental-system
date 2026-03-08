@@ -873,7 +873,49 @@ const AgentReports = () => {
 
   const handleExport = async (format) => {
     // Export exactly what is currently loaded/rendered for this report view.
-    const exportData = Array.isArray(data) ? data : [];
+    let exportData = Array.isArray(data) ? data : [];
+
+    if (activeReport === "water") {
+      const monthlyRows = (waterFinancialSummary?.monthly || []).map((row) => ({
+        report_row_type: "water_summary",
+        month: row.month,
+        water_billed: row.water_billed,
+        water_collected: row.water_collected,
+        water_expense: row.water_expense,
+        water_profit_or_loss: row.water_profit_or_loss,
+      }));
+
+      const expenseRows = (waterExpenseData || []).map((row) => ({
+        report_row_type: "water_expense",
+        expense_date: row.expense_date,
+        bill_month: row.bill_month,
+        property_name: row.property_name,
+        vendor_name: row.vendor_name,
+        supplier_organization: row.supplier_organization,
+        amount: row.amount,
+        payment_method: row.payment_method,
+        payment_reference: row.payment_reference || row.mpesa_reference,
+        notes: row.notes,
+      }));
+
+      const billRows = (Array.isArray(data) ? data : []).map((row) => ({
+        report_row_type: "water_bill",
+        bill_month: row.bill_month,
+        property_name: row.property_name,
+        unit_code: row.unit_code,
+        tenant_name:
+          row.tenant_name ||
+          `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
+          "N/A",
+        phone_number: row.phone_number,
+        amount: row.amount,
+        status: row.status || "billed",
+        notes: row.notes,
+        created_at: row.created_at,
+      }));
+
+      exportData = [...monthlyRows, ...expenseRows, ...billRows];
+    }
 
     if (exportData.length === 0) {
       alert(

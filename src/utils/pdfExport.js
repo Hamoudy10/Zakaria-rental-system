@@ -944,38 +944,116 @@ const prepareTableData = (reportType, data) => {
       break;
 
     case "water":
-      headers = [
-        "#",
-        "Tenant",
-        "Phone",
-        "Property",
-        "Unit",
-        "Amount (KSh)",
-        "Bill Month",
-        "Status",
-        "Notes",
-        "Created",
-      ];
-      rows = data.map((item, index) => [
-        index + 1,
-        item.tenant_name ||
-          `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
-          "N/A",
-        formatPhone(item.phone_number),
-        item.property_name || "N/A",
-        item.unit_code || "N/A",
-        formatCurrency(item.amount),
-        formatMonth(item.bill_month),
-        item.status || "Billed",
-        item.notes || "N/A",
-        formatDate(item.created_at),
-      ]);
-      columnStyles = {
-        0: { halign: "center", cellWidth: 10 },
-        5: { halign: "right" },
-        6: { halign: "center" },
-        7: { halign: "center" },
-      };
+      if (Array.isArray(data) && data.some((item) => item?.report_row_type)) {
+        headers = [
+          "#",
+          "Type",
+          "Period/Date",
+          "Property",
+          "Party",
+          "Unit",
+          "Billed (KSh)",
+          "Collected (KSh)",
+          "Expense (KSh)",
+          "Net (KSh)",
+          "Status/Method",
+          "Reference/Notes",
+        ];
+        rows = data.map((item, index) => {
+          if (item.report_row_type === "water_summary") {
+            return [
+              index + 1,
+              "Monthly Summary",
+              formatMonth(item.month),
+              "All/Filtered",
+              "-",
+              "-",
+              formatCurrency(item.water_billed),
+              formatCurrency(item.water_collected),
+              formatCurrency(item.water_expense),
+              formatCurrency(item.water_profit_or_loss),
+              "-",
+              "-",
+            ];
+          }
+
+          if (item.report_row_type === "water_expense") {
+            return [
+              index + 1,
+              "Water Expense",
+              `${formatDate(item.expense_date)} (Bill: ${formatMonth(item.bill_month)})`,
+              item.property_name || "N/A",
+              item.supplier_organization
+                ? `${item.vendor_name || "N/A"} (${item.supplier_organization})`
+                : item.vendor_name || "N/A",
+              "-",
+              "-",
+              "-",
+              formatCurrency(item.amount),
+              "-",
+              (item.payment_method || "cash").toUpperCase(),
+              `${item.payment_reference || "-"} ${item.notes ? `| ${item.notes}` : ""}`.trim(),
+            ];
+          }
+
+          return [
+            index + 1,
+            "Water Bill",
+            formatMonth(item.bill_month),
+            item.property_name || "N/A",
+            item.tenant_name ||
+              `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+              "N/A",
+            item.unit_code || "N/A",
+            formatCurrency(item.amount),
+            "-",
+            "-",
+            "-",
+            item.status || "Billed",
+            item.notes || "N/A",
+          ];
+        });
+        columnStyles = {
+          0: { halign: "center", cellWidth: 10 },
+          6: { halign: "right" },
+          7: { halign: "right" },
+          8: { halign: "right" },
+          9: { halign: "right" },
+        };
+      } else {
+        headers = [
+          "#",
+          "Tenant",
+          "Phone",
+          "Property",
+          "Unit",
+          "Amount (KSh)",
+          "Bill Month",
+          "Status",
+          "Notes",
+          "Created",
+        ];
+        rows = data.map((item, index) => [
+          index + 1,
+          item.tenant_name ||
+            `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+            "N/A",
+          formatPhone(item.phone_number),
+          item.property_name || "N/A",
+          item.unit_code || "N/A",
+          formatCurrency(item.amount),
+          formatMonth(item.bill_month),
+          item.status || "Billed",
+          item.notes || "N/A",
+          formatDate(item.created_at),
+        ]);
+        columnStyles = {
+          0: { halign: "center", cellWidth: 10 },
+          5: { halign: "right" },
+          6: { halign: "center" },
+          7: { halign: "center" },
+        };
+      }
       break;
 
     case "sms":
@@ -1175,6 +1253,49 @@ const calculateTotals = (reportType, data) => {
         "Total Advance": `KSh ${totalAdvance.toLocaleString()}`,
         "Paid Tenants": `${data.length}`,
         "With Advance": `${tenantsWithAdvance} tenant(s)`,
+      };
+    }
+
+    case "water": {
+      if (Array.isArray(data) && data.some((item) => item?.report_row_type)) {
+        const summaryRows = data.filter((item) => item.report_row_type === "water_summary");
+        const expenseRows = data.filter((item) => item.report_row_type === "water_expense");
+        const billRows = data.filter((item) => item.report_row_type === "water_bill");
+
+        const billed = summaryRows.reduce(
+          (sum, row) => sum + (parseFloat(row.water_billed) || 0),
+          0,
+        );
+        const collected = summaryRows.reduce(
+          (sum, row) => sum + (parseFloat(row.water_collected) || 0),
+          0,
+        );
+        const expense = summaryRows.reduce(
+          (sum, row) => sum + (parseFloat(row.water_expense) || 0),
+          0,
+        );
+        const net = summaryRows.reduce(
+          (sum, row) => sum + (parseFloat(row.water_profit_or_loss) || 0),
+          0,
+        );
+
+        return {
+          "Water Billed": `KSh ${billed.toLocaleString()}`,
+          "Water Collected": `KSh ${collected.toLocaleString()}`,
+          "Water Expense": `KSh ${expense.toLocaleString()}`,
+          "Water Net": `KSh ${net.toLocaleString()}`,
+          "Water Bills Rows": `${billRows.length}`,
+          "Water Expense Rows": `${expenseRows.length}`,
+        };
+      }
+
+      const totalWaterBills = data.reduce(
+        (sum, item) => sum + (parseFloat(item.amount) || 0),
+        0,
+      );
+      return {
+        "Water Bills Total": `KSh ${totalWaterBills.toLocaleString()}`,
+        "Water Bills Rows": `${data.length}`,
       };
     }
 
