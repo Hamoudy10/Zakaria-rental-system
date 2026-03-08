@@ -101,6 +101,131 @@ const normalizeKenyanPhone = (input) => {
   return normalized;
 };
 
+const canonicalizeUnitReference = (input) => {
+  if (input === undefined || input === null) return "";
+  return String(input).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+};
+
+const resolveMpesaUnitReference = async (
+  db,
+  rawRef,
+  { requireActiveAllocation = false } = {},
+) => {
+  const cleanRef = rawRef ? String(rawRef).trim().toUpperCase() : "";
+  const canonicalRef = canonicalizeUnitReference(cleanRef);
+
+  if (!cleanRef || !canonicalRef) {
+    return {
+      cleanRef,
+      canonicalRef,
+      match: null,
+      reason: "missing_reference",
+    };
+  }
+
+  const candidateCte = `
+    WITH candidate_units AS (
+      SELECT pu.id AS unit_id, 1 AS match_rank, 'unit_code_exact' AS matched_by
+      FROM property_units pu
+      WHERE pu.is_active = true
+        AND UPPER(pu.unit_code) = $1
+
+      UNION ALL
+
+      SELECT uca.unit_id, 2 AS match_rank, 'alias_exact' AS matched_by
+      FROM unit_code_aliases uca
+      JOIN property_units pu ON pu.id = uca.unit_id
+      WHERE pu.is_active = true
+        AND uca.is_active = true
+        AND UPPER(uca.alias_code) = $1
+
+      UNION ALL
+
+      SELECT pu.id AS unit_id, 3 AS match_rank, 'unit_code_canonical' AS matched_by
+      FROM property_units pu
+      WHERE pu.is_active = true
+        AND REGEXP_REPLACE(UPPER(pu.unit_code), '[^A-Z0-9]', '', 'g') = $2
+
+      UNION ALL
+
+      SELECT uca.unit_id, 4 AS match_rank, 'alias_canonical' AS matched_by
+      FROM unit_code_aliases uca
+      JOIN property_units pu ON pu.id = uca.unit_id
+      WHERE pu.is_active = true
+        AND uca.is_active = true
+        AND REGEXP_REPLACE(UPPER(uca.alias_code), '[^A-Z0-9]', '', 'g') = $2
+    ),
+    resolved_units AS (
+      SELECT DISTINCT ON (unit_id)
+        unit_id,
+        match_rank,
+        matched_by
+      FROM candidate_units
+      ORDER BY unit_id, match_rank
+    )`;
+
+  const query = requireActiveAllocation
+    ? `${candidateCte}
+       SELECT
+         ta.tenant_id,
+         ta.id AS allocation_id,
+         ta.monthly_rent,
+         ta.arrears_balance,
+         pu.id AS unit_id,
+         pu.unit_code,
+         pu.property_id,
+         t.first_name AS tenant_first_name,
+         t.last_name AS tenant_last_name,
+         t.phone_number AS tenant_phone,
+         p.name AS property_name,
+         ru.matched_by,
+         ru.match_rank
+       FROM resolved_units ru
+       JOIN property_units pu ON pu.id = ru.unit_id
+       JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
+       JOIN tenants t ON ta.tenant_id = t.id
+       JOIN properties p ON pu.property_id = p.id
+       ORDER BY ru.match_rank, pu.unit_code`
+    : `${candidateCte}
+       SELECT
+         pu.id AS unit_id,
+         pu.unit_code,
+         pu.property_id,
+         ru.matched_by,
+         ru.match_rank
+       FROM resolved_units ru
+       JOIN property_units pu ON pu.id = ru.unit_id
+       ORDER BY ru.match_rank, pu.unit_code`;
+
+  const result = await db.query(query, [cleanRef, canonicalRef]);
+
+  if (result.rows.length === 0) {
+    return {
+      cleanRef,
+      canonicalRef,
+      match: null,
+      reason: requireActiveAllocation ? "no_active_allocation_match" : "no_unit_match",
+    };
+  }
+
+  if (result.rows.length > 1) {
+    return {
+      cleanRef,
+      canonicalRef,
+      match: null,
+      reason: "ambiguous_reference",
+      candidates: result.rows,
+    };
+  }
+
+  return {
+    cleanRef,
+    canonicalRef,
+    match: result.rows[0],
+    reason: null,
+  };
+};
+
 const getActiveAdminPhones = async () => {
   const adminUsers = await pool.query(
     `SELECT id, email, phone_number
@@ -890,24 +1015,15 @@ const handleMpesaValidation = async (req, res) => {
       });
     }
 
-    const cleanRef = BillRefNumber.trim().toUpperCase();
+    const resolution = await resolveMpesaUnitReference(pool, BillRefNumber, {
+      requireActiveAllocation: false,
+    });
 
-    // Strict matching: BillRef must match an active unit code.
-    const unitCheck = await pool.query(
-      `SELECT pu.id, pu.unit_code, ta.tenant_id
-       FROM property_units pu
-       LEFT JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
-       WHERE pu.is_active = true
-         AND UPPER(pu.unit_code) = $1`,
-      [cleanRef],
-    );
-
-    const isRecognizedAccount = unitCheck.rows.length > 0;
-
-    if (!isRecognizedAccount) {
+    if (!resolution.match) {
       console.log(
         "VALIDATION REJECTED: Unrecognized account reference:",
-        cleanRef,
+        resolution.cleanRef || BillRefNumber,
+        resolution.reason ? `(reason: ${resolution.reason})` : "",
       );
       return res.json({
         ResultCode: "C2B00011",
@@ -1096,26 +1212,14 @@ const handleMpesaCallback = async (req, res) => {
 
     // Strict strategy: match BillRefNumber only as exact unit_code.
     if (BillRefNumber && BillRefNumber.trim()) {
-      const cleanRef = BillRefNumber.trim().toUpperCase();
-      const unitResult = await client.query(
-        `SELECT 
-          ta.tenant_id, ta.id as allocation_id, ta.monthly_rent, 
-          ta.arrears_balance,
-          pu.id as unit_id, pu.unit_code, pu.property_id,
-          t.first_name as tenant_first_name, t.last_name as tenant_last_name,
-          t.phone_number as tenant_phone,
-          p.name as property_name
-        FROM property_units pu
-        JOIN tenant_allocations ta ON pu.id = ta.unit_id AND ta.is_active = true
-        JOIN tenants t ON ta.tenant_id = t.id
-        JOIN properties p ON pu.property_id = p.id
-        WHERE pu.is_active = true
-          AND UPPER(pu.unit_code) = $1`,
-        [cleanRef],
-      );
+      const resolution = await resolveMpesaUnitReference(client, BillRefNumber, {
+        requireActiveAllocation: true,
+      });
 
-      if (unitResult.rows.length > 0) {
-        const row = unitResult.rows[0];
+      unmatchedReason = resolution.reason;
+
+      if (resolution.match) {
+        const row = resolution.match;
         tenant = {
           id: row.tenant_id,
           first_name: row.tenant_first_name,
@@ -1125,7 +1229,7 @@ const handleMpesaCallback = async (req, res) => {
         unit = { id: row.unit_id, unit_code: row.unit_code };
         property = { id: row.property_id, name: row.property_name };
         console.log(
-          `âœ… Matched by unit_code: ${cleanRef} â†’ ${tenant.first_name} ${tenant.last_name}`,
+          `âœ… Matched by ${row.matched_by}: ${resolution.cleanRef} â†’ ${tenant.first_name} ${tenant.last_name}`,
         );
       }
     }

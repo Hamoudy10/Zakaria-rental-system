@@ -5,7 +5,8 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "test": "jest --config jest.config.cjs",
-    "test:watch": "jest --watch --config jest.config.cjs"
+    "test:watch": "jest --watch --config jest.config.cjs",
+    "mpesa:check-inbox": "node scripts/checkMpesaCallbackInbox.js"
   },
   "dependencies": {
     "axios": "^1.12.2",
