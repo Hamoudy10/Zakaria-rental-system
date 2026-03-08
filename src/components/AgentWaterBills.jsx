@@ -92,6 +92,13 @@ const AgentWaterBills = () => {
     },
     monthly: [],
   });
+  const [showAllWaterBills, setShowAllWaterBills] = useState(true);
+  const [showWaterFinance, setShowWaterFinance] = useState(true);
+  const [showProfitabilityDetails, setShowProfitabilityDetails] = useState(true);
+  const [showExpenseList, setShowExpenseList] = useState(true);
+  const [billSearch, setBillSearch] = useState('');
+  const [expenseSearch, setExpenseSearch] = useState('');
+  const [profitabilitySearch, setProfitabilitySearch] = useState('');
 
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
   const updateExpense = (key, value) =>
@@ -581,6 +588,71 @@ const AgentWaterBills = () => {
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
   };
 
+  const filteredBills = useMemo(() => {
+    const term = billSearch.trim().toLowerCase();
+    if (!term) return recentBills;
+    return recentBills.filter(bill => {
+      const haystack = [
+        bill.first_name,
+        bill.last_name,
+        bill.unit_code,
+        bill.property_name,
+        bill.bill_month,
+        bill.amount,
+        bill.notes,
+        bill.agent_first,
+        bill.agent_last,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [recentBills, billSearch]);
+
+  const filteredExpenses = useMemo(() => {
+    const term = expenseSearch.trim().toLowerCase();
+    if (!term) return recentExpenses;
+    return recentExpenses.filter(expense => {
+      const haystack = [
+        expense.vendor_name,
+        expense.supplier_organization,
+        expense.property_name,
+        expense.bill_month,
+        expense.expense_date,
+        expense.payment_method,
+        expense.payment_reference,
+        expense.mpesa_reference,
+        expense.notes,
+        expense.amount,
+        expense.liters_delivered,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [recentExpenses, expenseSearch]);
+
+  const filteredProfitabilityRows = useMemo(() => {
+    const term = profitabilitySearch.trim().toLowerCase();
+    const rows = Array.isArray(profitability.monthly) ? profitability.monthly : [];
+    if (!term) return rows;
+    return rows.filter(row => {
+      const haystack = [
+        row.month,
+        row.water_billed,
+        row.water_collected,
+        row.water_expense,
+        row.water_profit_or_loss,
+      ]
+        .filter(value => value !== null && value !== undefined)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [profitability.monthly, profitabilitySearch]);
+
   return (
     <div className="max-w-4xl mx-auto">
       {/* Header */}
@@ -780,11 +852,22 @@ const AgentWaterBills = () => {
       <div className="mt-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <h4 className="text-sm font-semibold">All Water Bills</h4>
-          <span className="text-xs text-gray-500">
-            Showing {recentBills.length} of {billPagination.total} bill(s)
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500">
+              Showing {filteredBills.length} of {billPagination.total} bill(s)
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAllWaterBills(prev => !prev)}
+              className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+            >
+              {showAllWaterBills ? 'Hide Water Bills' : 'Show Water Bills'}
+            </button>
+          </div>
         </div>
 
+        {showAllWaterBills && (
+        <>
         <div className="bg-white rounded shadow-sm p-3 mb-4 border">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
@@ -845,21 +928,37 @@ const AgentWaterBills = () => {
               </button>
             </div>
           </div>
+          <div className="mt-3">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Search Bills</label>
+            <input
+              type="text"
+              value={billSearch}
+              onChange={(e) => setBillSearch(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Search by tenant, unit, property, amount, note, month..."
+            />
+          </div>
         </div>
         
-        {recentBills.length === 0 ? (
+        {filteredBills.length === 0 ? (
           <div className="bg-white rounded shadow-sm p-8 text-center">
             <div className="text-gray-400 mb-2">
               <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <p className="text-gray-500 text-sm">No water bills recorded yet</p>
-            <p className="text-gray-400 text-xs mt-1">Create your first water bill using the form above</p>
+            <p className="text-gray-500 text-sm">
+              {recentBills.length === 0 ? 'No water bills recorded yet' : 'No bills matched your search'}
+            </p>
+            <p className="text-gray-400 text-xs mt-1">
+              {recentBills.length === 0
+                ? 'Create your first water bill using the form above'
+                : 'Adjust the search text or filters to see results'}
+            </p>
           </div>
         ) : (
-          <div className="bg-white rounded shadow-sm divide-y">
-            {recentBills.map(bill => (
+          <div className="bg-white rounded shadow-sm divide-y max-h-[26rem] overflow-y-auto">
+            {filteredBills.map(bill => (
               <div key={bill.id} className="p-4 flex items-center justify-between hover:bg-gray-50">
                 <div className="flex-1">
                   <div className="font-medium text-sm text-gray-900">
@@ -954,6 +1053,8 @@ const AgentWaterBills = () => {
             </div>
           </div>
         )}
+        </>
+        )}
       </div>
 
       {/* Water Profitability + Expenses */}
@@ -963,11 +1064,22 @@ const AgentWaterBills = () => {
             <h3 className="text-lg font-semibold">Water Delivery Expenses & Profitability</h3>
             <p className="text-sm text-gray-500">Agents record supplier costs and track water-only profit/loss</p>
           </div>
-          <div className="text-xs text-gray-500">
-            {profitLoading ? 'Refreshing...' : 'Live from current filters'}
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-gray-500">
+              {profitLoading ? 'Refreshing...' : 'Live from current filters'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowWaterFinance(prev => !prev)}
+              className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+            >
+              {showWaterFinance ? 'Hide Section' : 'Show Section'}
+            </button>
           </div>
         </div>
 
+        {showWaterFinance && (
+        <>
         <div className="bg-white border-b p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="rounded border p-3 bg-blue-50">
             <p className="text-xs text-blue-700">Water Billed</p>
@@ -1060,6 +1172,93 @@ const AgentWaterBills = () => {
               </button>
             </div>
           </div>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Search Profitability Rows
+              </label>
+              <input
+                type="text"
+                value={profitabilitySearch}
+                onChange={(e) => setProfitabilitySearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                placeholder="Search by month or amounts..."
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Search Expense Rows
+              </label>
+              <input
+                type="text"
+                value={expenseSearch}
+                onChange={(e) => setExpenseSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded"
+                placeholder="Search supplier, property, payment ref, method..."
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white border-b p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-semibold">Monthly Water Profitability</h4>
+            <button
+              type="button"
+              onClick={() => setShowProfitabilityDetails(prev => !prev)}
+              className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+            >
+              {showProfitabilityDetails ? 'Hide Profitability' : 'Show Profitability'}
+            </button>
+          </div>
+          {showProfitabilityDetails && (
+            filteredProfitabilityRows.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                {Array.isArray(profitability.monthly) && profitability.monthly.length > 0
+                  ? 'No profitability rows matched your search.'
+                  : 'No profitability data for selected filters.'}
+              </p>
+            ) : (
+              <div className="max-h-64 overflow-auto border rounded">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Month</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Billed</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Collected</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Expense</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-600">Profit/Loss</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredProfitabilityRows.map((row, index) => (
+                      <tr key={`${row.month || 'month'}-${index}`} className="border-t">
+                        <td className="px-3 py-2 text-gray-700">{formatMonth(row.month)}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">
+                          {Number(row.water_billed || 0).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-700">
+                          {Number(row.water_collected || 0).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-700">
+                          {Number(row.water_expense || 0).toLocaleString()}
+                        </td>
+                        <td
+                          className={`px-3 py-2 text-right font-medium ${
+                            Number(row.water_profit_or_loss || 0) >= 0
+                              ? 'text-green-700'
+                              : 'text-red-700'
+                          }`}
+                        >
+                          {Number(row.water_profit_or_loss || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
         </div>
 
         <form onSubmit={submitExpense} className="bg-white border-b p-4">
@@ -1198,16 +1397,25 @@ const AgentWaterBills = () => {
         <div className="bg-white rounded-b-md shadow-sm p-4">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-semibold">Water Delivery Expenses</h4>
-            <span className="text-xs text-gray-500">
-              Showing {recentExpenses.length} of {expensePagination.total}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-500">
+                Showing {filteredExpenses.length} of {expensePagination.total}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowExpenseList(prev => !prev)}
+                className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+              >
+                {showExpenseList ? 'Hide Expenses' : 'Show Expenses'}
+              </button>
+            </div>
           </div>
 
-          {recentExpenses.length === 0 ? (
+          {showExpenseList && (filteredExpenses.length === 0 ? (
             <p className="text-sm text-gray-500">No water expenses recorded for selected filters.</p>
           ) : (
-            <div className="space-y-2">
-              {recentExpenses.map(expense => (
+            <div className="space-y-2 max-h-[26rem] overflow-y-auto pr-1">
+              {filteredExpenses.map(expense => (
                 <div key={expense.id} className="border rounded p-3 flex items-start justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-900">
@@ -1249,7 +1457,7 @@ const AgentWaterBills = () => {
                 </div>
               ))}
             </div>
-          )}
+          ))}
 
           {expensePagination.total > expenseFilters.limit && (
             <div className="mt-3 flex items-center justify-end gap-2">
@@ -1276,6 +1484,8 @@ const AgentWaterBills = () => {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
 
       {/* Information Box */}
