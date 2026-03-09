@@ -43,6 +43,24 @@ const renderTemplateString = (body = "", variables = {}) =>
       : `{${normalized}}`;
   });
 
+const getTenantUnitCodes = (tenant) => {
+  const allocations = Array.isArray(tenant?.active_allocations)
+    ? tenant.active_allocations
+    : [];
+
+  if (allocations.length > 0) {
+    return allocations.map((allocation) => allocation?.unit_code).filter(Boolean);
+  }
+
+  return tenant?.unit_code ? [tenant.unit_code] : [];
+};
+
+const getTenantUnitSummary = (tenant) =>
+  getTenantUnitCodes(tenant).join(", ") || "";
+
+const getTenantSelectionValue = (tenant) =>
+  tenant?.unit_id ? `${tenant.id || tenant.tenant_id}::${tenant.unit_id}` : `${tenant.id || tenant.tenant_id || ""}`;
+
 const AgentSMSManagement = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("trigger");
@@ -254,7 +272,8 @@ const AgentSMSManagement = () => {
       .toUpperCase();
 
     const property = properties.find((p) => p.id === sendPropertyId);
-    const dueValue = toNumeric(sendTenantBalances[selectedSendTenantId] ?? testAmount);
+    const selectedTenantKey = tenant?.id || tenant?.tenant_id || selectedSendTenantId;
+    const dueValue = toNumeric(sendTenantBalances[selectedTenantKey] ?? testAmount);
     const dueDayNumber = toNumeric(tenant?.rent_due_day);
     const dueDay = dueDayNumber > 0 ? `${getOrdinal(dueDayNumber)} of every month` : "";
     const dueDate = dueDayNumber > 0 ? `${getOrdinal(dueDayNumber)} ${monthLong}` : "";
@@ -273,8 +292,8 @@ const AgentSMSManagement = () => {
       first_name: tenant.first_name || "",
       lastName: tenant.last_name || "",
       last_name: tenant.last_name || "",
-      unitCode: tenant.unit_code || "",
-      unit_code: tenant.unit_code || "",
+      unitCode: getTenantUnitSummary(tenant),
+      unit_code: getTenantUnitSummary(tenant),
       month: monthLong,
       month_short: monthShort,
       propertyName: property?.name || "",
@@ -284,8 +303,8 @@ const AgentSMSManagement = () => {
         property?.paybill ||
         systemPaybill ||
         "",
-      account: tenant.unit_code || "",
-      accountNumber: tenant.unit_code || "",
+      account: getTenantUnitSummary(tenant),
+      accountNumber: getTenantUnitSummary(tenant),
       message: testMessage?.trim() || "",
       title: "Service Notice",
       total: `${dueValue}`,
@@ -339,7 +358,7 @@ const AgentSMSManagement = () => {
       return;
     }
     const tenant = sendTenants.find(
-      (t) => (t.id || t.tenant_id) === selectedSendTenantId,
+      (t) => getTenantSelectionValue(t) === selectedSendTenantId,
     );
     if (!tenant) {
       setResolvedTemplateVariables({});
@@ -437,7 +456,11 @@ const AgentSMSManagement = () => {
 
   useEffect(() => {
     if (!selectedSendTenantId) return;
-    const due = Number(sendTenantBalances[selectedSendTenantId]);
+    const selectedTenant = sendTenants.find(
+      (tenant) => getTenantSelectionValue(tenant) === selectedSendTenantId,
+    );
+    const balanceKey = selectedTenant?.id || selectedTenant?.tenant_id || selectedSendTenantId;
+    const due = Number(sendTenantBalances[balanceKey]);
     if (!Number.isFinite(due)) return;
     setTestAmount(due > 0 ? String(due) : "0");
   }, [selectedSendTenantId, sendTenantBalances]);
@@ -471,7 +494,7 @@ const AgentSMSManagement = () => {
 
     try {
       const selectedTenant = sendTenants.find(
-        (tenant) => (tenant.id || tenant.tenant_id) === selectedSendTenantId,
+        (tenant) => getTenantSelectionValue(tenant) === selectedSendTenantId,
       );
       const tenantName = selectedTenant
         ? `${selectedTenant.first_name || ""} ${selectedTenant.last_name || ""}`.trim()
@@ -485,7 +508,7 @@ const AgentSMSManagement = () => {
         ...resolvedTemplateVariables,
         message: testMessage.trim(),
         tenantName,
-        unitCode: selectedTenant?.unit_code || "",
+        unitCode: getTenantUnitSummary(selectedTenant),
         propertyName: selectedProperty?.name || "",
         rent: selectedTenant?.monthly_rent ?? "",
         dueDay: dueDayValue,
@@ -498,8 +521,8 @@ const AgentSMSManagement = () => {
         total: testAmount.trim(),
         totalDue: testAmount.trim(),
         outstanding: testAmount.trim(),
-        account: selectedTenant?.unit_code || "",
-        accountNumber: selectedTenant?.unit_code || "",
+        account: getTenantUnitSummary(selectedTenant),
+        accountNumber: getTenantUnitSummary(selectedTenant),
         paybill:
           selectedProperty?.paybill_number ||
           selectedProperty?.paybill ||
@@ -507,7 +530,7 @@ const AgentSMSManagement = () => {
           "",
       };
       const payload = {
-        tenantIds: [selectedSendTenantId],
+        tenantIds: [selectedTenant?.id || selectedTenant?.tenant_id || selectedSendTenantId],
         message: testMessage.trim(),
         messageType: "announcement",
         template_id: testTemplateId || undefined,
@@ -944,10 +967,10 @@ const AgentSMSManagement = () => {
                     </option>
                     {sendTenants.map((tenant) => (
                       <option
-                        key={tenant.id || tenant.tenant_id}
-                        value={tenant.id || tenant.tenant_id}
+                        key={`${tenant.id || tenant.tenant_id}-${tenant.unit_id || tenant.unit_code || "tenant"}`}
+                        value={getTenantSelectionValue(tenant)}
                       >
-                        {tenant.first_name} {tenant.last_name} ({tenant.unit_code || "No unit"}) - {tenant.phone_number || "No phone"}
+                        {tenant.first_name} {tenant.last_name} ({getTenantUnitSummary(tenant) || "No unit"}) - {tenant.phone_number || "No phone"}
                       </option>
                     ))}
                   </select>

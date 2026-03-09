@@ -37,6 +37,21 @@ import {
   Zap,
 } from "lucide-react";
 
+const getTenantUnitCodes = (tenant) => {
+  const allocations = Array.isArray(tenant?.active_allocations)
+    ? tenant.active_allocations
+    : [];
+
+  if (allocations.length > 0) {
+    return allocations.map((allocation) => allocation?.unit_code).filter(Boolean);
+  }
+
+  return tenant?.unit_code ? [tenant.unit_code] : [];
+};
+
+const getTenantUnitSummary = (tenant) =>
+  getTenantUnitCodes(tenant).join(", ") || "N/A";
+
 // ============================================================
 // HELPER COMPONENTS
 // ============================================================
@@ -211,7 +226,7 @@ const TenantCheckbox = ({ tenant, selected, onToggle }) => (
           {tenant.first_name} {tenant.last_name}
         </span>
         <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs font-medium">
-          {tenant.unit_code}
+          {getTenantUnitSummary(tenant)}
         </span>
       </div>
       <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
@@ -666,7 +681,10 @@ const NotificationManagement = () => {
       tenant.first_name?.toLowerCase().includes(search) ||
       tenant.last_name?.toLowerCase().includes(search) ||
       tenant.phone_number?.includes(search) ||
-      tenant.unit_code?.toLowerCase().includes(search)
+      tenant.unit_code?.toLowerCase().includes(search) ||
+      getTenantUnitCodes(tenant).some((unitCode) =>
+        unitCode.toLowerCase().includes(search)
+      )
     );
   });
 

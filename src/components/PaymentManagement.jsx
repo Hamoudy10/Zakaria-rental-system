@@ -113,6 +113,23 @@ const getMonthOptions = () => {
 
 const formatPhone = (phone) => formatContactPhoneForDisplay(phone) || "";
 
+const getTenantAllocationOptionValue = (tenant) =>
+  tenant?.tenant_id && tenant?.unit_id
+    ? `${tenant.tenant_id}::${tenant.unit_id}`
+    : tenant?.tenant_id || "";
+
+const getTenantUnitCodes = (tenant) => {
+  const allocations = Array.isArray(tenant?.active_allocations)
+    ? tenant.active_allocations
+    : [];
+
+  if (allocations.length > 0) {
+    return allocations.map((allocation) => allocation?.unit_code).filter(Boolean);
+  }
+
+  return tenant?.unit_code ? [tenant.unit_code] : [];
+};
+
 const formatExactDueDate = ({ dueDate, rentDueDay, month }) => {
   const parsedDueDate = dueDate ? new Date(dueDate) : null;
   if (parsedDueDate && !Number.isNaN(parsedDueDate.getTime())) {
@@ -2257,10 +2274,14 @@ const ManualPaymentModal = ({
                 Select Tenant
               </label>
               <select
-                value={data.tenant_id}
+                value={
+                  data.tenant_id && data.unit_id
+                    ? `${data.tenant_id}::${data.unit_id}`
+                    : data.tenant_id
+                }
                 onChange={(e) => {
                   const tenant = tenants.find(
-                    (t) => t.tenant_id === e.target.value,
+                    (t) => getTenantAllocationOptionValue(t) === e.target.value,
                   );
                   if (tenant) {
                     setData({
@@ -2287,7 +2308,10 @@ const ManualPaymentModal = ({
               >
                 <option value="">Choose a tenant...</option>
                 {tenants.map((t) => (
-                  <option key={t.tenant_id} value={t.tenant_id}>
+                  <option
+                    key={`${t.tenant_id}-${t.unit_id || t.unit_code || "tenant"}`}
+                    value={getTenantAllocationOptionValue(t)}
+                  >
                     {t.tenant_name} - {t.unit_code}
                   </option>
                 ))}
@@ -2323,6 +2347,11 @@ const ManualPaymentModal = ({
               <span className="font-medium">Selected:</span>{" "}
               {selectedTenantRow?.tenant_name || "Tenant"}
               {selectedTenantRow?.unit_code ? ` (${selectedTenantRow.unit_code})` : ""}
+              {getTenantUnitCodes(selectedTenantRow).length > 1 && (
+                <div className="text-xs text-blue-700 mt-1">
+                  Tenant also has units: {getTenantUnitCodes(selectedTenantRow).join(", ")}
+                </div>
+              )}
             </div>
           )}
 

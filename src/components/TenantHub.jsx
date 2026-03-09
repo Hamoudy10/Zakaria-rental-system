@@ -63,6 +63,18 @@ const DEFAULT_COMPANY = {
 
 const LEASE_WARNING_DAYS = 30;
 
+const getActiveAllocationsList = (tenant) =>
+  Array.isArray(tenant?.active_allocations) ? tenant.active_allocations : [];
+
+const getTenantUnitCodes = (tenant) => {
+  const allocations = getActiveAllocationsList(tenant);
+  if (allocations.length > 0) {
+    return allocations.map((allocation) => allocation?.unit_code).filter(Boolean);
+  }
+
+  return tenant?.unit_code ? [tenant.unit_code] : [];
+};
+
 // Company info cache
 let cachedCompanyInfo = null;
 let cacheTimestamp = null;
@@ -422,7 +434,15 @@ const TenantDetailModal = ({ tenant, isOpen, onClose, formatPhone, formatDate, f
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 uppercase tracking-wide">Unit</p>
-                      <p className="text-sm font-medium text-gray-900 mt-1">{tenant.unit_code || 'N/A'}</p>
+                      <div className="text-sm font-medium text-gray-900 mt-1">
+                        {getTenantUnitCodes(tenant).length > 0 ? (
+                          getTenantUnitCodes(tenant).map((unitCode) => (
+                            <p key={unitCode}>{unitCode}</p>
+                          ))
+                        ) : (
+                          <p>N/A</p>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 uppercase tracking-wide">Monthly Rent</p>
@@ -929,7 +949,7 @@ const TenantCard = ({
               <Building2 className="w-4 h-4 text-green-500" />
               <span className="font-medium text-gray-900">{tenant.property_name}</span>
               <span className="text-gray-400">•</span>
-              <span className="text-gray-600">{tenant.unit_code}</span>
+              <span className="text-gray-600">{getTenantUnitCodes(tenant).join(', ') || 'N/A'}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-500">Rent:</span>
@@ -1273,12 +1293,17 @@ const TenantHub = () => {
   // Merge tenants with allocation data
   const tenantsWithStatus = useMemo(() => {
     return safeTenants.map(tenant => {
-      const activeAllocation = safeAllocations.find(
+      const activeAllocations = safeAllocations.filter(
         alloc => alloc.tenant_id === tenant.id && alloc.is_active
       );
+      const activeAllocation = activeAllocations[0];
       
       return {
         ...tenant,
+        active_allocations:
+          getActiveAllocationsList(tenant).length > 0
+            ? getActiveAllocationsList(tenant)
+            : activeAllocations,
         allocation: activeAllocation || null,
         isAllocated: !!activeAllocation,
         allocation_id: activeAllocation?.id || null
@@ -1313,7 +1338,10 @@ const TenantHub = () => {
         t.national_id?.toLowerCase().includes(query) ||
         t.phone_number?.includes(query) ||
         t.email?.toLowerCase().includes(query) ||
-        t.unit_code?.toLowerCase().includes(query)
+        t.unit_code?.toLowerCase().includes(query) ||
+        getTenantUnitCodes(t).some((unitCode) =>
+          String(unitCode || "").toLowerCase().includes(query)
+        )
       );
     }
 
@@ -1605,7 +1633,7 @@ const TenantHub = () => {
           if (tenant.unit_id) {
             info.push(
               `Property: ${tenant.property_name || 'N/A'}`,
-              `Unit: ${tenant.unit_code || 'N/A'}`,
+              `Unit(s): ${getTenantUnitCodes(tenant).join(', ') || 'N/A'}`,
               `Rent: ${formatCurrency(tenant.monthly_rent)}`
             );
           }
@@ -1657,7 +1685,7 @@ const TenantHub = () => {
           formatPhone(t.phone_number),
           t.email || 'N/A',
           t.property_name || 'N/A',
-          t.unit_code || 'N/A',
+          getTenantUnitCodes(t).join(', ') || 'N/A',
           t.unit_id ? 'Allocated' : 'Unallocated',
           formatCurrency(t.monthly_rent),
           formatDate(t.lease_end_date)
@@ -1748,7 +1776,7 @@ const TenantHub = () => {
           formatPhone(t.phone_number),
           t.email || 'N/A',
           t.property_name || 'N/A',
-          t.unit_code || 'N/A',
+          getTenantUnitCodes(t).join(', ') || 'N/A',
           t.unit_id ? 'Allocated' : 'Unallocated',
           t.monthly_rent ? parseFloat(t.monthly_rent) : 'N/A',
           t.lease_end_date ? new Date(t.lease_end_date) : 'N/A'

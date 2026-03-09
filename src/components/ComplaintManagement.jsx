@@ -22,6 +22,9 @@ const COMPLAINT_CATEGORIES = [
   { id: 'other', label: 'Other', icon: '📝' }
 ];
 
+const getTenantSelectionValue = (tenant) =>
+  tenant?.unit_id ? `${tenant.tenant_id}::${tenant.unit_id}` : `${tenant?.tenant_id || ""}`;
+
 const ComplaintManagement = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -239,10 +242,13 @@ const ComplaintManagement = () => {
 
   useEffect(() => {
     if (createForm.tenant_id) {
-      const selectedTenant = tenants.find(t => t.tenant_id === createForm.tenant_id);
+      const selectedTenant = tenants.find(
+        (t) => getTenantSelectionValue(t) === createForm.tenant_id
+      );
       if (selectedTenant) {
         setCreateForm(prev => ({
           ...prev,
+          tenant_id: selectedTenant.tenant_id,
           unit_id: selectedTenant.unit_id,
           unit_code: selectedTenant.unit_code
         }));
@@ -969,9 +975,9 @@ const ComplaintManagement = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Tenant <span className="text-red-500">*</span></label>
-                  <select value={createForm.tenant_id} onChange={(e) => setCreateForm(prev => ({ ...prev, tenant_id: e.target.value }))} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required disabled={!createForm.property_id || loadingTenants}>
+                  <select value={createForm.tenant_id && createForm.unit_id ? `${createForm.tenant_id}::${createForm.unit_id}` : createForm.tenant_id} onChange={(e) => setCreateForm(prev => ({ ...prev, tenant_id: e.target.value }))} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required disabled={!createForm.property_id || loadingTenants}>
                     <option value="">{loadingTenants ? 'Loading tenants...' : 'Select a tenant'}</option>
-                    {tenants.map(tenant => (<option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name} ({tenant.unit_code})</option>))}
+                    {tenants.map(tenant => (<option key={`${tenant.tenant_id}-${tenant.unit_id || tenant.unit_code || 'tenant'}`} value={getTenantSelectionValue(tenant)}>{tenant.tenant_name} ({tenant.unit_code})</option>))}
                   </select>
                   {createForm.property_id && !loadingTenants && tenants.length === 0 && (<p className="text-sm text-amber-600 mt-1">No tenants found in this property</p>)}
                 </div>
