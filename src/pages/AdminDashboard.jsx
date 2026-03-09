@@ -57,6 +57,8 @@ const TabLoadingSpinner = () => (
 const AdminDashboard = () => {
   const { notifications = [], refreshNotifications } = useNotification();
   const { user } = useAuth();
+  const canViewMpesaOverview =
+    String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com';
   const [activeTab, setActiveTab] = useState('overview');
   const [comprehensiveStats, setComprehensiveStats] = useState(null);
   const [recentActivities, setRecentActivities] = useState([]);
@@ -172,9 +174,6 @@ const AdminDashboard = () => {
         .slice(0, 5),
     [notifications],
   );
-  const canViewMpesaOverview =
-    String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com';
-
   const renderContent = () => {
     switch (activeTab) {
       case 'users':
