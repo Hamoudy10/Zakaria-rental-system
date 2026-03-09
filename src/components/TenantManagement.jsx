@@ -1,6 +1,6 @@
 // src/components/TenantManagement.jsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { API } from "../services/api";
+import { API, allocationAPI } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useProperty } from "../context/PropertyContext";
 import jsPDF from "jspdf";
@@ -63,6 +63,17 @@ const TenantManagement = () => {
   // View modal state
   const [showViewModal, setShowViewModal] = useState(false);
   const [selectedTenantData, setSelectedTenantData] = useState(null);
+  const [showAllocationEditModal, setShowAllocationEditModal] = useState(false);
+  const [allocationEditLoading, setAllocationEditLoading] = useState(false);
+  const [allocationEditError, setAllocationEditError] = useState("");
+  const [allocationFormData, setAllocationFormData] = useState({
+    allocation_id: "",
+    unit_code: "",
+    property_name: "",
+    lease_end_date: "",
+    monthly_rent: "",
+    security_deposit: "",
+  });
   // Form state
   const [formData, setFormData] = useState({
     national_id: "",
@@ -176,6 +187,71 @@ const TenantManagement = () => {
   const handleCloseViewModal = () => {
     setShowViewModal(false);
     setSelectedTenantData(null);
+  };
+  const handleOpenAllocationEdit = (allocation) => {
+    setAllocationEditError("");
+    setAllocationFormData({
+      allocation_id: allocation?.allocation_id || "",
+      unit_code: allocation?.unit_code || "",
+      property_name: allocation?.property_name || "",
+      lease_end_date: allocation?.lease_end_date
+        ? allocation.lease_end_date.toString().split("T")[0]
+        : "",
+      monthly_rent: allocation?.monthly_rent?.toString?.() || "",
+      security_deposit: allocation?.security_deposit?.toString?.() || "",
+    });
+    setShowAllocationEditModal(true);
+  };
+  const handleCloseAllocationEdit = () => {
+    setShowAllocationEditModal(false);
+    setAllocationEditError("");
+    setAllocationFormData({
+      allocation_id: "",
+      unit_code: "",
+      property_name: "",
+      lease_end_date: "",
+      monthly_rent: "",
+      security_deposit: "",
+    });
+  };
+  const handleAllocationFormChange = (e) => {
+    const { name, value } = e.target;
+    setAllocationFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+  const handleSubmitAllocationEdit = async (e) => {
+    e.preventDefault();
+    setAllocationEditLoading(true);
+    setAllocationEditError("");
+
+    try {
+      await allocationAPI.updateAllocation(allocationFormData.allocation_id, {
+        lease_end_date: allocationFormData.lease_end_date || null,
+        monthly_rent:
+          allocationFormData.monthly_rent === ""
+            ? null
+            : Number(allocationFormData.monthly_rent),
+        security_deposit:
+          allocationFormData.security_deposit === ""
+            ? null
+            : Number(allocationFormData.security_deposit),
+      });
+
+      await Promise.all([
+        fetchTenants(pagination.currentPage, searchTerm.trim()),
+        selectedTenantData?.id ? fetchTenantDetails(selectedTenantData.id) : Promise.resolve(),
+      ]);
+
+      handleCloseAllocationEdit();
+    } catch (err) {
+      setAllocationEditError(
+        err.response?.data?.message || "Failed to update allocation.",
+      );
+    } finally {
+      setAllocationEditLoading(false);
+    }
   };
   // Fetch available units
   const fetchAvailableUnits = useCallback(
@@ -1437,66 +1513,85 @@ const TenantManagement = () => {
                 getActiveAllocations(selectedTenantData).length > 0) && (
                 <div className="mb-8">
                   <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
-                    <span className="mr-2">🏠</span> Unit & Lease Information
+                    <span className="mr-2">Unit</span> Unit & Lease Information
                   </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg">
-                    <div>
-                      <label className="text-sm text-gray-600">Property</label>
-                      <p className="font-medium text-gray-900">
-                        {selectedTenantData.property_name || "N/A"}
-                      </p>
+                  {getActiveAllocations(selectedTenantData).length > 0 ? (
+                    <div className="space-y-4">
+                      {getActiveAllocations(selectedTenantData).map((allocation) => (
+                        <div
+                          key={allocation.allocation_id || allocation.unit_id}
+                          className="rounded-lg border bg-gray-50 p-4"
+                        >
+                          <div className="mb-3 flex items-start justify-between gap-4">
+                            <div>
+                              <div className="text-base font-semibold text-gray-900">
+                                {allocation.property_name || "N/A"} - {allocation.unit_code || "N/A"}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                Allocation ID: {allocation.allocation_id || "N/A"}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAllocationEdit(allocation)}
+                              className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                            >
+                              Edit Allocation
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                            <div>
+                              <label className="text-sm text-gray-600">Lease Start</label>
+                              <p className="font-medium text-gray-900">
+                                {formatDate(allocation.lease_start_date)}
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-sm text-gray-600">Lease End</label>
+                              <p className="font-medium text-gray-900">
+                                {allocation.lease_end_date
+                                  ? formatDate(allocation.lease_end_date)
+                                  : "Month-to-Month"}
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-sm text-gray-600">Monthly Rent</label>
+                              <p className="font-medium text-gray-900">
+                                {formatCurrency(allocation.monthly_rent)}
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-sm text-gray-600">Security Deposit</label>
+                              <p className="font-medium text-gray-900">
+                                {formatCurrency(allocation.security_deposit || 0)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div>
-                      <label className="text-sm text-gray-600">Unit Code(s)</label>
-                      <div className="font-medium text-gray-900">
-                        {getActiveAllocations(selectedTenantData).length > 0 ? (
-                          getActiveAllocations(selectedTenantData).map((allocation) => (
-                            <p key={allocation.allocation_id || allocation.unit_id}>
-                              {allocation.unit_code}
-                            </p>
-                          ))
-                        ) : (
-                          <p>{selectedTenantData.unit_code}</p>
-                        )}
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg">
+                      <div>
+                        <label className="text-sm text-gray-600">Property</label>
+                        <p className="font-medium text-gray-900">
+                          {selectedTenantData.property_name || "N/A"}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="text-sm text-gray-600">Unit Code</label>
+                        <p className="font-medium text-gray-900">
+                          {selectedTenantData.unit_code}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="text-sm text-gray-600">Monthly Rent</label>
+                        <p className="font-medium text-gray-900">
+                          {formatCurrency(selectedTenantData.monthly_rent)}
+                        </p>
                       </div>
                     </div>
-                    <div>
-                      <label className="text-sm text-gray-600">
-                        Monthly Rent
-                      </label>
-                      <p className="font-medium text-gray-900">
-                        {formatCurrency(selectedTenantData.monthly_rent)}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm text-gray-600">
-                        Security Deposit
-                      </label>
-                      <p className="font-medium text-gray-900">
-                        {formatCurrency(
-                          selectedTenantData.security_deposit || 0,
-                        )}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm text-gray-600">
-                        Lease Start Date
-                      </label>
-                      <p className="font-medium text-gray-900">
-                        {formatDate(selectedTenantData.lease_start_date)}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm text-gray-600">
-                        Lease End Date
-                      </label>
-                      <p className="font-medium text-gray-900">
-                        {selectedTenantData.lease_end_date
-                          ? formatDate(selectedTenantData.lease_end_date)
-                          : "Month-to-Month"}
-                      </p>
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
               {/* Payment History */}
@@ -1889,6 +1984,124 @@ const TenantManagement = () => {
               </div>
             </div>
           )}
+        </div>
+      )}
+      {showAllocationEditModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b">
+              <div>
+                <h3 className="text-xl font-semibold text-gray-900">
+                  Edit Allocation
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Update lease and rent details for this specific unit.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseAllocationEdit}
+                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+                disabled={allocationEditLoading}
+              >
+                X
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitAllocationEdit} className="p-6 space-y-6">
+              {allocationEditError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {allocationEditError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Property
+                  </label>
+                  <input
+                    type="text"
+                    value={allocationFormData.property_name}
+                    readOnly
+                    className="w-full px-4 py-3 border rounded-lg bg-gray-50 text-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Unit Code
+                  </label>
+                  <input
+                    type="text"
+                    value={allocationFormData.unit_code}
+                    readOnly
+                    className="w-full px-4 py-3 border rounded-lg bg-gray-50 text-gray-700"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Lease End Date
+                  </label>
+                  <input
+                    type="date"
+                    name="lease_end_date"
+                    value={allocationFormData.lease_end_date}
+                    onChange={handleAllocationFormChange}
+                    className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Monthly Rent
+                  </label>
+                  <input
+                    type="number"
+                    name="monthly_rent"
+                    min="0"
+                    step="0.01"
+                    value={allocationFormData.monthly_rent}
+                    onChange={handleAllocationFormChange}
+                    className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Security Deposit
+                  </label>
+                  <input
+                    type="number"
+                    name="security_deposit"
+                    min="0"
+                    step="0.01"
+                    value={allocationFormData.security_deposit}
+                    onChange={handleAllocationFormChange}
+                    className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleCloseAllocationEdit}
+                  className="px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  disabled={allocationEditLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  disabled={allocationEditLoading}
+                >
+                  {allocationEditLoading ? "Saving..." : "Save Allocation"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
