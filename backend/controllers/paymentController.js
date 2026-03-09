@@ -249,6 +249,53 @@ const getActiveAdminPhones = async () => {
   return [...uniquePhones];
 };
 
+const getActiveAdminIds = async () => {
+  const adminUsers = await pool.query(
+    `SELECT id
+     FROM users
+     WHERE role = 'admin'
+       AND is_active = true`,
+  );
+
+  return adminUsers.rows.map((row) => row.id);
+};
+
+const describeUnmatchedReason = (reason) => {
+  switch (reason) {
+    case "missing_reference":
+      return "missing_account_reference";
+    case "no_active_allocation_match":
+      return "reference_not_allocated_to_active_tenant";
+    case "ambiguous_reference":
+      return "reference_matches_multiple_units";
+    case "no_unit_match":
+      return "reference_not_found";
+    default:
+      return reason || "unrecognized_reference";
+  }
+};
+
+const notifyAdminsOfPendingMpesa = async ({
+  title,
+  message,
+  relatedEntityType = "rent_payment",
+}) => {
+  const adminIds = await getActiveAdminIds();
+  if (!adminIds.length) return;
+
+  await Promise.all(
+    adminIds.map((userId) =>
+      NotificationService.createNotification({
+        userId,
+        title,
+        message,
+        type: "payment_pending",
+        relatedEntityType,
+      }),
+    ),
+  );
+};
+
 const isProduction = () => process.env.NODE_ENV === "production";
 
 const formatCoveredMonths = (carryForwardPayments = []) => {
@@ -799,14 +846,18 @@ const sendPaymentNotifications = async (
   trackingResult,
   isCarryForward = false,
   carryForwardPayments = [],
+  options = {},
 ) => {
   try {
     const paymentId = payment.id || payment.payment_id;
     const amount = payment.amount;
+    const { payerPhoneDiffers = false } = options;
 
     const detailsQuery = `
       SELECT 
-        t.first_name, t.last_name, t.phone_number,
+        rp.phone_number as payment_phone,
+        rp.mpesa_receipt_number,
+        t.first_name, t.last_name, t.phone_number as tenant_phone,
         p.name as property_name, pu.unit_number, pu.unit_code,
         pu.property_id
       FROM rent_payments rp
@@ -825,6 +876,8 @@ const sendPaymentNotifications = async (
     const details = detailsResult.rows[0];
     const tenantName = `${details.first_name} ${details.last_name}`;
     const unitInfo = `Unit ${details.unit_number} (${details.unit_code})`;
+    const normalizedPaymentPhone = normalizeKenyanPhone(details.payment_phone);
+    const normalizedTenantPhone = normalizeKenyanPhone(details.tenant_phone);
 
     const paidAmount = Number(amount) || 0;
     const carryForwardAmount = Number(trackingResult.carryForwardAmount) || 0;
@@ -870,6 +923,29 @@ const sendPaymentNotifications = async (
         relatedEntityType: "rent_payment",
         relatedEntityId: paymentId,
       });
+    }
+
+    if (
+      payerPhoneDiffers &&
+      normalizedPaymentPhone &&
+      normalizedTenantPhone &&
+      normalizedPaymentPhone !== normalizedTenantPhone
+    ) {
+      const thirdPartyMessage =
+        `Receipt ${details.mpesa_receipt_number || paymentId} was posted successfully for ${tenantName} ` +
+        `at ${details.property_name} - ${unitInfo}, but the callback phone ${normalizedPaymentPhone} ` +
+        `differs from the tenant phone ${normalizedTenantPhone}. This can be valid for a third-party payer; review only if unexpected.`;
+
+      for (const admin of adminUsers.rows) {
+        await NotificationService.createNotification({
+          userId: admin.id,
+          title: "Third-Party Rent Payment Posted",
+          message: thirdPartyMessage,
+          type: "system_alert",
+          relatedEntityType: "rent_payment",
+          relatedEntityId: paymentId,
+        });
+      }
     }
 
     // Notify assigned agent
@@ -1006,7 +1082,9 @@ const handleMpesaValidation = async (req, res) => {
       });
     }
 
-    // 2. Strictly validate account reference (reject unknown refs)
+    // 2. Strictly validate account reference against one active allocation.
+    // This rejects unknown, vacant, or ambiguous unit codes before debit,
+    // while still allowing a third party to pay on behalf of the tenant.
     if (!BillRefNumber || !String(BillRefNumber).trim()) {
       console.log("VALIDATION REJECTED: Missing BillRefNumber");
       return res.json({
@@ -1016,12 +1094,12 @@ const handleMpesaValidation = async (req, res) => {
     }
 
     const resolution = await resolveMpesaUnitReference(pool, BillRefNumber, {
-      requireActiveAllocation: false,
+      requireActiveAllocation: true,
     });
 
     if (!resolution.match) {
       console.log(
-        "VALIDATION REJECTED: Unrecognized account reference:",
+        "VALIDATION REJECTED: invalid active account reference:",
         resolution.cleanRef || BillRefNumber,
         resolution.reason ? `(reason: ${resolution.reason})` : "",
       );
@@ -1037,6 +1115,9 @@ const handleMpesaValidation = async (req, res) => {
       amount: TransAmount,
       ref: BillRefNumber,
       phone: MSISDN,
+      matchedBy: resolution.match.matched_by,
+      unitCode: resolution.match.unit_code,
+      tenantId: resolution.match.tenant_id,
       name: `${FirstName || ""} ${MiddleName || ""} ${LastName || ""}`.trim(),
     });
 
@@ -1241,24 +1322,22 @@ const handleMpesaCallback = async (req, res) => {
       const phoneForInsert = phone;
       const safePhone = phoneForInsert || "invalid_msisdn";
       const unmatchedPaymentMonth = formatPaymentMonth(transTime);
+      const reasonCode = describeUnmatchedReason(unmatchedReason);
+      const adminAction =
+        "Action required: open Payment Management, search the receipt, confirm the debit on the M-Pesa statement, and reconcile the payment to the correct tenant/unit.";
       if (!phoneForInsert) {
         console.error(
           `Unmatched callback ${TransID}: no valid phone from MSISDN/BillRef. Recording as pending with placeholder phone.`,
         );
 
         try {
-          const adminUsers = await pool.query(
-            "SELECT id FROM users WHERE role = 'admin'",
-          );
-          for (const admin of adminUsers.rows) {
-            await NotificationService.createNotification({
-              userId: admin.id,
-              title: "⚠️ Unmatched M-Pesa Callback (Invalid Phone)",
-              message: `Callback received but no valid phone could be parsed (Receipt: ${TransID}, Ref: ${BillRefNumber || "none"}, Raw MSISDN: ${MSISDN || "none"}). Action: verify tenant phone format (2547XXXXXXXX/2541XXXXXXXX), then reconcile manually by receipt if tenant was debited.`,
-              type: "payment_pending",
-              relatedEntityType: "rent_payment",
-            });
-          }
+          await notifyAdminsOfPendingMpesa({
+            title: "Action Required: M-Pesa Callback Missing Valid Phone",
+            message:
+              `Receipt ${TransID} was received, but the callback did not include a valid MSISDN. ` +
+              `Ref: ${BillRefNumber || "none"}. Raw MSISDN: ${MSISDN || "none"}. ` +
+              `Payer: ${payerName}. ${adminAction} Verify tenant phone format separately.`,
+          });
         } catch (notifError) {
           console.error(
             "Failed to notify admins of invalid-phone callback:",
@@ -1313,18 +1392,13 @@ const handleMpesaCallback = async (req, res) => {
 
       // Notify admins about unmatched payment
       try {
-        const adminUsers = await pool.query(
-          "SELECT id FROM users WHERE role = 'admin'",
-        );
-        for (const admin of adminUsers.rows) {
-          await NotificationService.createNotification({
-            userId: admin.id,
-            title: "âš ï¸ Unmatched M-Pesa Payment",
-            message: `KSh ${amount.toLocaleString()} from ${safePhone} (Payer: ${payerName}, Ref: ${BillRefNumber || "none"}, Receipt: ${TransID}). Reason: ${unmatchedReason || "unrecognized unit reference"}. Action: in Payment Management search this receipt, verify debit on M-Pesa statement, then post via Manual Payment to the correct tenant/unit.`,
-            type: "payment_pending",
-            relatedEntityType: "rent_payment",
-          });
-        }
+        await notifyAdminsOfPendingMpesa({
+          title: "Action Required: Unmatched M-Pesa Payment",
+          message:
+            `Receipt ${TransID} for KSh ${amount.toLocaleString()} is pending manual review. ` +
+            `Payer: ${payerName}. Phone: ${safePhone}. Ref: ${BillRefNumber || "none"}. ` +
+            `Reason: ${reasonCode}. ${adminAction}`,
+        });
       } catch (notifError) {
         console.error(
           "Failed to notify admins of unmatched payment:",
@@ -1356,6 +1430,22 @@ const handleMpesaCallback = async (req, res) => {
       normalizeKenyanPhone(tenant.phone_number) ||
       "invalid_msisdn";
     const usedPlaceholderPhone = paymentPhone === "invalid_msisdn";
+    const normalizedTenantPhone = normalizeKenyanPhone(tenant.phone_number);
+    const payerPhoneDiffers =
+      Boolean(phone) &&
+      Boolean(normalizedTenantPhone) &&
+      phone !== normalizedTenantPhone;
+    const paymentAuditNotes = [];
+
+    if (usedPlaceholderPhone) {
+      paymentAuditNotes.push(
+        "AUTO-POSTED WITH PLACEHOLDER PHONE: no valid MSISDN/tenant phone; verify tenant contact.",
+      );
+    } else if (payerPhoneDiffers) {
+      paymentAuditNotes.push(
+        `THIRD-PARTY PAYER: callback phone ${phone} differs from tenant phone ${normalizedTenantPhone}.`,
+      );
+    }
 
     // Insert the payment record
     const paymentResult = await client.query(
@@ -1388,9 +1478,7 @@ const handleMpesaCallback = async (req, res) => {
         trackingResult.allocatedToRent || 0,
         trackingResult.allocatedToWater || 0,
         trackingResult.allocatedToArrears || 0,
-        usedPlaceholderPhone
-          ? "AUTO-POSTED WITH PLACEHOLDER PHONE: no valid MSISDN/tenant phone; verify tenant contact."
-          : null,
+        paymentAuditNotes.length > 0 ? paymentAuditNotes.join(" | ") : null,
       ],
     );
 
@@ -1440,6 +1528,7 @@ const handleMpesaCallback = async (req, res) => {
         trackingResult,
         false,
         carryForwardPayments,
+        { payerPhoneDiffers },
       );
 
       // SMS + WhatsApp to tenant

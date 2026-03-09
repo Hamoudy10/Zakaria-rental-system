@@ -1,7 +1,8 @@
 // src/pages/AdminDashboard.jsx
-import React, { useState, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect, Suspense, lazy, useMemo } from 'react';
 import api from '../services/api';
 import { expenseAPI, paymentAPI } from '../services/api';
+import { useNotification } from '../context/NotificationContext';
 import {
   Building2,
   Users,
@@ -53,6 +54,7 @@ const TabLoadingSpinner = () => (
 );
 
 const AdminDashboard = () => {
+  const { notifications = [], refreshNotifications } = useNotification();
   const [activeTab, setActiveTab] = useState('overview');
   const [comprehensiveStats, setComprehensiveStats] = useState(null);
   const [recentActivities, setRecentActivities] = useState([]);
@@ -144,6 +146,25 @@ const AdminDashboard = () => {
     { id: 'settings', name: 'System Settings', shortName: 'Settings' },
   ];
 
+  const actionAlerts = useMemo(
+    () =>
+      notifications
+        .filter((notification) => {
+          const type = String(notification.type || '').toLowerCase();
+          return (
+            ['payment_pending', 'payment_failed', 'system_alert'].includes(type) &&
+            !notification.is_read
+          );
+        })
+        .sort(
+          (a, b) =>
+            new Date(b.created_at || 0).getTime() -
+            new Date(a.created_at || 0).getTime(),
+        )
+        .slice(0, 5),
+    [notifications],
+  );
+
   const renderContent = () => {
     switch (activeTab) {
       case 'users':
@@ -184,8 +205,10 @@ const AdminDashboard = () => {
             loading={loading}
             error={error}
             onRefresh={fetchDashboardData}
+            onRefreshAlerts={refreshNotifications}
             lastUpdated={lastUpdated}
             setActiveTab={setActiveTab}
+            actionAlerts={actionAlerts}
           />
         );
     }
@@ -244,8 +267,10 @@ const DashboardOverview = ({
   loading,
   error,
   onRefresh,
+  onRefreshAlerts,
   lastUpdated,
-  setActiveTab
+  setActiveTab,
+  actionAlerts = []
 }) => {
   // Format currency
   const formatCurrency = (amount) => {
@@ -326,6 +351,38 @@ const DashboardOverview = ({
   const waterProfitOrLoss = Number(waterTotals.water_profit_or_loss || 0);
   const waterIsProfit = waterProfitOrLoss >= 0;
 
+  const formatAlertTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return '';
+
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString('en-KE', {
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  const getAlertTone = (type) => {
+    switch (String(type || '').toLowerCase()) {
+      case 'payment_failed':
+        return 'border-red-200 bg-red-50 text-red-900';
+      case 'payment_pending':
+        return 'border-amber-200 bg-amber-50 text-amber-900';
+      case 'system_alert':
+        return 'border-orange-200 bg-orange-50 text-orange-900';
+      default:
+        return 'border-gray-200 bg-gray-50 text-gray-900';
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header with Refresh */}
@@ -349,6 +406,58 @@ const DashboardOverview = ({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
+      <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-semibold text-orange-900 sm:text-lg">
+              <AlertTriangle className="h-5 w-5" />
+              Action Alerts
+            </h2>
+            <p className="text-sm text-orange-800">
+              Unread payment and system alerts that may need review.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onRefreshAlerts}
+              className="text-sm font-medium text-orange-800 hover:text-orange-900"
+            >
+              Refresh alerts
+            </button>
+            <button
+              onClick={() => setActiveTab('payments')}
+              className="text-sm font-medium text-orange-800 hover:text-orange-900"
+            >
+              Open Payment Management
+            </button>
+          </div>
+        </div>
+
+        {actionAlerts.length > 0 ? (
+          <div className="space-y-3">
+            {actionAlerts.map((alert) => (
+              <button
+                key={alert.id}
+                onClick={() => setActiveTab('payments')}
+                className={`block w-full rounded-lg border p-3 text-left transition hover:shadow-sm ${getAlertTone(alert.type)}`}
+              >
+                <div className="mb-1 flex items-start justify-between gap-3">
+                  <p className="font-semibold">{alert.title}</p>
+                  <span className="whitespace-nowrap text-xs opacity-75">
+                    {formatAlertTime(alert.created_at)}
+                  </span>
+                </div>
+                <p className="line-clamp-2 text-sm opacity-90">{alert.message}</p>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-green-200 bg-white p-3 text-sm text-green-800">
+            No unread action alerts right now.
+          </div>
+        )}
+      </div>
+
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base sm:text-lg font-semibold text-amber-900 flex items-center gap-2">
