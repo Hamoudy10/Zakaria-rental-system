@@ -101,6 +101,10 @@ const TenantManagement = () => {
   // Fetch tenants list
   const fetchTenants = useCallback(
     async (page = 1, search = "") => {
+      if (!user?.role) {
+        return;
+      }
+
       const requestKey = `${page}:${String(search || "").trim()}:${pagination.limit}:${user?.role || ""}`;
 
       if (tenantListInFlight.has(requestKey)) {
@@ -330,6 +334,10 @@ const TenantManagement = () => {
   }, [user?.role, propertiesLoading, assignedProperties, fetchAvailableUnits]);
   // Live search (debounced) as the user types
   useEffect(() => {
+    if (!user?.role) {
+      return;
+    }
+
     if (!initialSearchRunRef.current) {
       initialSearchRunRef.current = true;
       fetchTenants(1, "");
@@ -341,7 +349,7 @@ const TenantManagement = () => {
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [searchTerm, fetchTenants]);
+  }, [searchTerm, fetchTenants, user?.role]);
 
   // Form handlers
   const handleInputChange = (e) => {
