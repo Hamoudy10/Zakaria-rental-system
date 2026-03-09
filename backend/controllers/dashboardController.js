@@ -241,9 +241,16 @@ const getComprehensiveStats = async (req, res) => {
             WHEN status = 'completed'
             THEN amount ELSE 0 END), 0) as revenue_all_time,
           COALESCE(SUM(CASE 
-            WHEN status = 'pending' 
+            WHEN status = 'pending'
+            AND tenant_id IS NOT NULL
+            AND unit_id IS NOT NULL
             THEN amount ELSE 0 END), 0) as pending_amount,
-          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
+          COUNT(CASE
+            WHEN status = 'pending'
+             AND tenant_id IS NOT NULL
+             AND unit_id IS NOT NULL
+            THEN 1
+          END) as pending_count,
           COALESCE(SUM(CASE 
             WHEN status = 'completed' 
             THEN COALESCE(allocated_to_rent, 0) ELSE 0 END), 0) as total_rent_collected,
@@ -473,7 +480,12 @@ const getComprehensiveStats = async (req, res) => {
           COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed' THEN amount ELSE 0 END), 0) as amount_this_week,
           COUNT(CASE WHEN payment_month >= DATE_TRUNC('month', CURRENT_DATE) AND status = 'completed' THEN 1 END) as payments_this_month,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_payments,
-          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments
+          COUNT(CASE
+            WHEN status = 'pending'
+             AND tenant_id IS NOT NULL
+             AND unit_id IS NOT NULL
+            THEN 1
+          END) as pending_payments
         FROM rent_payments
       `);
       paymentStats = paymentStatsResult.rows[0] || paymentStats;

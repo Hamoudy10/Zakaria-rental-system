@@ -3,6 +3,7 @@ import React, { useState, useEffect, Suspense, lazy, useMemo } from 'react';
 import api from '../services/api';
 import { expenseAPI, paymentAPI } from '../services/api';
 import { useNotification } from '../context/NotificationContext';
+import { useAuth } from '../context/AuthContext';
 import {
   Building2,
   Users,
@@ -55,6 +56,7 @@ const TabLoadingSpinner = () => (
 
 const AdminDashboard = () => {
   const { notifications = [], refreshNotifications } = useNotification();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   const [comprehensiveStats, setComprehensiveStats] = useState(null);
   const [recentActivities, setRecentActivities] = useState([]);
@@ -91,17 +93,21 @@ const AdminDashboard = () => {
       // Fetch expense stats separately (optional - won't fail main dashboard)
       try {
         const currentMonth = new Date().toISOString().slice(0, 7);
-        const [expenseStatsRes, netProfitRes, mpesaAuditRes, waterProfitRes] = await Promise.all([
+        const requests = [
           expenseAPI.getStats(),
           expenseAPI.getNetProfitReport(),
-          paymentAPI.getMpesaCallbackInboxAudit({ days: 7, limit: 20 }),
+          canViewMpesaOverview
+            ? paymentAPI.getMpesaCallbackInboxAudit({ days: 7, limit: 20 })
+            : Promise.resolve({ data: { success: true, data: null } }),
           api.get('/water-bills/profitability', {
             params: {
               fromMonth: currentMonth,
               toMonth: currentMonth,
             },
           }),
-        ]);
+        ];
+        const [expenseStatsRes, netProfitRes, mpesaAuditRes, waterProfitRes] =
+          await Promise.all(requests);
         
         if (expenseStatsRes.data.success) {
           setExpenseStats(expenseStatsRes.data.data);
@@ -109,8 +115,10 @@ const AdminDashboard = () => {
         if (netProfitRes.data.success) {
           setNetProfitData(netProfitRes.data.data);
         }
-        if (mpesaAuditRes.data.success) {
+        if (canViewMpesaOverview && mpesaAuditRes.data.success) {
           setMpesaAudit(mpesaAuditRes.data.data);
+        } else if (!canViewMpesaOverview) {
+          setMpesaAudit(null);
         }
         if (waterProfitRes?.data?.success) {
           setWaterProfitability(waterProfitRes.data.data);
@@ -130,7 +138,7 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+  }, [canViewMpesaOverview]);
 
   const tabs = [
     { id: 'overview', name: 'Overview', shortName: 'Overview' },
@@ -164,6 +172,8 @@ const AdminDashboard = () => {
         .slice(0, 5),
     [notifications],
   );
+  const canViewMpesaOverview =
+    String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com';
 
   const renderContent = () => {
     switch (activeTab) {
@@ -201,6 +211,7 @@ const AdminDashboard = () => {
             expenseStats={expenseStats}
             netProfitData={netProfitData}
             mpesaAudit={mpesaAudit}
+            canViewMpesaOverview={canViewMpesaOverview}
             waterProfitability={waterProfitability}
             loading={loading}
             error={error}
@@ -263,6 +274,7 @@ const DashboardOverview = ({
   expenseStats,
   netProfitData,
   mpesaAudit,
+  canViewMpesaOverview,
   waterProfitability,
   loading,
   error,
@@ -458,6 +470,7 @@ const DashboardOverview = ({
         )}
       </div>
 
+      {canViewMpesaOverview && (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base sm:text-lg font-semibold text-amber-900 flex items-center gap-2">
@@ -526,6 +539,7 @@ const DashboardOverview = ({
           </div>
         )}
       </div>
+      )}
 
       {/* NET PROFIT BANNER - New prominent section */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
