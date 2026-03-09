@@ -42,6 +42,20 @@ let cachedCompanyInfo = null
 let cacheTimestamp = null
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
+const getTenantUnitCodes = (tenant) => {
+  const allocations = Array.isArray(tenant?.active_allocations)
+    ? tenant.active_allocations
+    : []
+
+  if (allocations.length > 0) {
+    return allocations.map((allocation) => allocation?.unit_code).filter(Boolean)
+  }
+
+  return tenant?.unit_code ? [tenant.unit_code] : []
+}
+
+const getTenantUnitSummary = (tenant) => getTenantUnitCodes(tenant).join(', ') || 'N/A'
+
 const AdminTenantBrowser = () => {
   // Data state
   const [tenants, setTenants] = useState([])
@@ -297,7 +311,8 @@ const AdminTenantBrowser = () => {
         tenant.national_id?.toLowerCase().includes(query) ||
         tenant.phone_number?.includes(query) ||
         tenant.email?.toLowerCase().includes(query) ||
-        tenant.unit_code?.toLowerCase().includes(query)
+        tenant.unit_code?.toLowerCase().includes(query) ||
+        getTenantUnitCodes(tenant).some(unitCode => unitCode.toLowerCase().includes(query))
       )
     }
 
@@ -567,7 +582,7 @@ const AdminTenantBrowser = () => {
           if (tenant.unit_id) {
             const allocationInfo = [
               `Property: ${tenant.property_name || 'N/A'}`,
-              `Unit: ${tenant.unit_code || 'N/A'}`,
+              `Unit(s): ${getTenantUnitSummary(tenant)}`,
               `Monthly Rent: ${formatCurrency(tenant.monthly_rent)}`,
               `Deposit: ${formatCurrency(tenant.security_deposit)}`,
               `Arrears: ${formatCurrency(tenant.arrears_balance)}`,
@@ -647,7 +662,7 @@ const AdminTenantBrowser = () => {
           formatPhone(tenant.phone_number),
           tenant.email || 'N/A',
           tenant.property_name || 'N/A',
-          tenant.unit_code || 'N/A',
+          getTenantUnitSummary(tenant),
           tenant.unit_id ? 'Allocated' : 'Unallocated',
           formatCurrency(tenant.monthly_rent),
           formatDate(tenant.created_at)
@@ -884,7 +899,7 @@ const AdminTenantBrowser = () => {
           formatPhone(tenant.phone_number),
           tenant.email || 'N/A',
           tenant.property_name || 'N/A',
-          tenant.unit_code || 'N/A',
+          getTenantUnitSummary(tenant),
           tenant.unit_id ? 'Allocated' : 'Unallocated',
           tenant.monthly_rent ? parseFloat(tenant.monthly_rent) : 'N/A',
           tenant.security_deposit ? parseFloat(tenant.security_deposit) : 'N/A',
@@ -1235,7 +1250,7 @@ const AdminTenantBrowser = () => {
                         {tenant.unit_id ? (
                           <div>
                             <div className="text-sm font-medium text-gray-900">{tenant.property_name}</div>
-                            <div className="text-sm text-gray-500">Unit: {tenant.unit_code}</div>
+                            <div className="text-sm text-gray-500">Unit(s): {getTenantUnitSummary(tenant)}</div>
                           </div>
                         ) : (
                           <span className="text-sm text-gray-400 italic">Not assigned</span>
@@ -1302,7 +1317,7 @@ const AdminTenantBrowser = () => {
                               {tenant.unit_id ? (
                                 <div className="space-y-2 text-sm">
                                   <p><span className="text-gray-500">Property:</span> {tenant.property_name}</p>
-                                  <p><span className="text-gray-500">Unit:</span> {tenant.unit_code}</p>
+                                  <p><span className="text-gray-500">Unit(s):</span> {getTenantUnitSummary(tenant)}</p>
                                   <p><span className="text-gray-500">Rent:</span> {formatCurrency(tenant.monthly_rent)}</p>
                                   <p><span className="text-gray-500">Deposit:</span> {formatCurrency(tenant.security_deposit)}</p>
                                   <p><span className="text-gray-500">Arrears:</span> {formatCurrency(tenant.arrears_balance)}</p>

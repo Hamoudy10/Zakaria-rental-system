@@ -9,6 +9,22 @@ import {
   formatContactPhoneForDisplay,
   normalizeContactPhone,
 } from "../utils/phoneUtils";
+
+const getActiveAllocations = (tenant) =>
+  Array.isArray(tenant?.active_allocations) ? tenant.active_allocations : [];
+
+const getTenantUnitSummary = (tenant) => {
+  const allocations = getActiveAllocations(tenant);
+  if (allocations.length > 0) {
+    return allocations
+      .map((allocation) => allocation?.unit_code)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return tenant?.unit_code || "N/A";
+};
+
 const TenantManagement = () => {
   const { user } = useAuth();
   const { properties: assignedProperties, loading: propertiesLoading } =
@@ -626,7 +642,7 @@ const TenantManagement = () => {
       doc.setFontSize(10);
       doc.text(`Property: ${tenant.property_name || "N/A"}`, 14, y);
       y += 6;
-      doc.text(`Unit Code: ${tenant.unit_code || "N/A"}`, 14, y);
+      doc.text(`Unit Code(s): ${getTenantUnitSummary(tenant)}`, 14, y);
       y += 6;
       doc.text(
         `Monthly Rent: ${formatCurrency(tenant.monthly_rent || 0)}`,
@@ -1363,7 +1379,8 @@ const TenantManagement = () => {
                 </div>
               )}
               {/* Unit & Lease */}
-              {selectedTenantData.unit_code && (
+              {(selectedTenantData.unit_code ||
+                getActiveAllocations(selectedTenantData).length > 0) && (
                 <div className="mb-8">
                   <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                     <span className="mr-2">🏠</span> Unit & Lease Information
@@ -1376,10 +1393,18 @@ const TenantManagement = () => {
                       </p>
                     </div>
                     <div>
-                      <label className="text-sm text-gray-600">Unit Code</label>
-                      <p className="font-medium text-gray-900">
-                        {selectedTenantData.unit_code}
-                      </p>
+                      <label className="text-sm text-gray-600">Unit Code(s)</label>
+                      <div className="font-medium text-gray-900">
+                        {getActiveAllocations(selectedTenantData).length > 0 ? (
+                          getActiveAllocations(selectedTenantData).map((allocation) => (
+                            <p key={allocation.allocation_id || allocation.unit_id}>
+                              {allocation.unit_code}
+                            </p>
+                          ))
+                        ) : (
+                          <p>{selectedTenantData.unit_code}</p>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">
@@ -1704,14 +1729,21 @@ const TenantManagement = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        {tenant?.unit_code ? (
+                        {tenant?.unit_code || getActiveAllocations(tenant).length > 0 ? (
                           <div>
                             <div className="text-sm font-medium text-gray-900">
                               {tenant?.property_name || "N/A"}
                             </div>
                             <div className="text-sm text-gray-500">
-                              {tenant?.unit_code}
+                              {getTenantUnitSummary(tenant)}
                             </div>
+                            {getActiveAllocations(tenant).length > 1 && (
+                              <div className="text-xs text-blue-600">
+                                {tenant?.active_allocations_count ||
+                                  getActiveAllocations(tenant).length}{" "}
+                                active units
+                              </div>
+                            )}
                             {tenant?.lease_start_date && (
                               <div className="text-xs text-gray-400">
                                 From: {formatDate(tenant.lease_start_date)}

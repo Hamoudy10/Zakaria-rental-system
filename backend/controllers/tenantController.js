@@ -70,6 +70,35 @@ const calculateLeaseExpectedMetrics = ({
   };
 };
 
+const ACTIVE_ALLOCATIONS_JSON = `
+  COALESCE(
+    (
+      SELECT json_agg(
+        json_build_object(
+          'allocation_id', ta_all.id,
+          'unit_id', ta_all.unit_id,
+          'unit_code', pu_all.unit_code,
+          'unit_number', pu_all.unit_number,
+          'property_name', p_all.name,
+          'property_code', p_all.property_code,
+          'lease_start_date', ta_all.lease_start_date,
+          'lease_end_date', ta_all.lease_end_date,
+          'monthly_rent', ta_all.monthly_rent,
+          'security_deposit', ta_all.security_deposit,
+          'arrears_balance', ta_all.arrears_balance
+        )
+        ORDER BY ta_all.allocation_date DESC NULLS LAST, ta_all.id DESC
+      )
+      FROM tenant_allocations ta_all
+      LEFT JOIN property_units pu_all ON ta_all.unit_id = pu_all.id
+      LEFT JOIN properties p_all ON pu_all.property_id = p_all.id
+      WHERE ta_all.tenant_id = t.id
+        AND ta_all.is_active = true
+    ),
+    '[]'::json
+  ) as active_allocations
+`;
+
 const extractCloudinaryPublicIdAndType = (fileUrl) => {
   if (!fileUrl || typeof fileUrl !== "string") {
     return {
@@ -220,6 +249,7 @@ const getTenants = async (req, res) => {
         ca.property_name,
         ca.property_code,
         COALESCE(ca.active_allocations_count, 0) AS active_allocations_count,
+        ${ACTIVE_ALLOCATIONS_JSON},
         u.first_name as created_by_name,
         COALESCE(
           (
@@ -391,6 +421,7 @@ const getTenant = async (req, res) => {
         ca.expected_amount,
         ca.current_month_expected,
         COALESCE(ca.active_allocations_count, 0) AS active_allocations_count,
+        ${ACTIVE_ALLOCATIONS_JSON},
         u.first_name as created_by_name,
         COALESCE(
           (
