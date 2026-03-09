@@ -1576,7 +1576,7 @@ const getAllPayments = async (req, res) => {
     // Sort column mapping for JOINed tables
     const sortColumnMap = {
       payment_date: "rp.payment_date",
-      amount: "rp.amount",
+      amount: "amount",
       first_name: "t.first_name",
       property_name: "p.name",
       status: "rp.status",
@@ -1586,12 +1586,21 @@ const getAllPayments = async (req, res) => {
 
     let baseQuery = `
       SELECT 
-        rp.id, rp.amount, rp.payment_month, rp.payment_date, rp.status, rp.payment_method, rp.notes,
+        rp.id,
+        COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
+        rp.amount as allocated_amount,
+        COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
+        rp.payment_month, rp.payment_date, rp.status, rp.payment_method, rp.notes,
         rp.mpesa_receipt_number, rp.mpesa_transaction_id, rp.phone_number,
         t.id as tenant_id, t.first_name, t.last_name,
         p.id as property_id, p.name as property_name,
         pu.unit_code
       FROM rent_payments rp
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(child.amount), 0) as carry_forward_amount
+        FROM rent_payments child
+        WHERE child.original_payment_id = rp.id
+      ) cf ON true
       LEFT JOIN tenants t ON rp.tenant_id = t.id
       LEFT JOIN property_units pu ON rp.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
@@ -1735,8 +1744,19 @@ const getTenantPaymentHistory = async (req, res) => {
     };
 
     const paymentsQuery = await pool.query(
-      `SELECT rp.*, p.name as property_name, pu.unit_code 
+      `SELECT
+         rp.*,
+         COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
+         rp.amount as allocated_amount,
+         COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
+         p.name as property_name,
+         pu.unit_code
        FROM rent_payments rp
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(child.amount), 0) as carry_forward_amount
+         FROM rent_payments child
+         WHERE child.original_payment_id = rp.id
+       ) cf ON true
        JOIN property_units pu ON rp.unit_id = pu.id
        JOIN properties p ON pu.property_id = p.id
        WHERE rp.tenant_id = $1 
@@ -2700,9 +2720,18 @@ const getPaymentHistory = async (req, res) => {
 
     let paymentsQuery = `
       SELECT 
-        rp.*, p.name as property_name, pu.unit_number, pu.unit_code,
+        rp.*,
+        COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
+        rp.amount as allocated_amount,
+        COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
+        p.name as property_name, pu.unit_number, pu.unit_code,
         rp.is_advance_payment, rp.original_payment_id
       FROM rent_payments rp
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(child.amount), 0) as carry_forward_amount
+        FROM rent_payments child
+        WHERE child.original_payment_id = rp.id
+      ) cf ON true
       LEFT JOIN property_units pu ON rp.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       WHERE rp.tenant_id = $1
@@ -4017,8 +4046,20 @@ const getPaymentsByTenant = async (req, res) => {
     const { tenantId } = req.params;
 
     const result = await pool.query(
-      `SELECT rp.*, p.name as property_name, pu.unit_number, pu.unit_code
+      `SELECT
+         rp.*,
+         COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
+         rp.amount as allocated_amount,
+         COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
+         p.name as property_name,
+         pu.unit_number,
+         pu.unit_code
        FROM rent_payments rp
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(child.amount), 0) as carry_forward_amount
+         FROM rent_payments child
+         WHERE child.original_payment_id = rp.id
+       ) cf ON true
        LEFT JOIN property_units pu ON rp.unit_id = pu.id
        LEFT JOIN properties p ON pu.property_id = p.id
        WHERE rp.tenant_id = $1
