@@ -1703,6 +1703,16 @@ const getAllPayments = async (req, res) => {
     // shown as separate payment entries in the main payment management list.
     whereClauses.push(`COALESCE(rp.original_payment_id, rp.id) = rp.id`);
 
+    // Unmatched callback staging rows should stay in callback health/audit flows
+    // until they are manually reconciled to a tenant/unit.
+    whereClauses.push(`
+      NOT (
+        rp.tenant_id IS NULL
+        AND rp.unit_id IS NULL
+        AND rp.property_id IS NULL
+      )
+    `);
+
     // Agent isolation
     if (userRole === "agent") {
       whereClauses.push(`
