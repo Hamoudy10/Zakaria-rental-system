@@ -10,8 +10,22 @@ import {
   normalizeContactPhone,
 } from "../utils/phoneUtils";
 
-const getActiveAllocations = (tenant) =>
-  Array.isArray(tenant?.active_allocations) ? tenant.active_allocations : [];
+const getActiveAllocations = (tenant) => {
+  if (Array.isArray(tenant?.active_allocations)) {
+    return tenant.active_allocations;
+  }
+
+  if (typeof tenant?.active_allocations === "string") {
+    try {
+      const parsed = JSON.parse(tenant.active_allocations);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+};
 
 const getTenantUnitSummary = (tenant) => {
   const allocations = getActiveAllocations(tenant);
