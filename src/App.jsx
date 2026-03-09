@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useState, Suspense, lazy } from 'react'
+import React, { useEffect, useState, Suspense, lazy } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { PropertyProvider } from './context/PropertyContext'
@@ -101,6 +101,53 @@ const SimpleUserAvatar = ({ user, size = 'md', className = '' }) => {
       )}
     </div>
   );
+};
+
+const CompanyFavicon = () => {
+  useEffect(() => {
+    let isActive = true;
+
+    const setFavicon = (href) => {
+      if (!href || !isActive) return;
+
+      let link = document.querySelector("link[rel='icon']");
+      if (!link) {
+        link = document.createElement("link");
+        link.setAttribute("rel", "icon");
+        document.head.appendChild(link);
+      }
+
+      link.setAttribute("href", href);
+    };
+
+    const loadFavicon = async () => {
+      try {
+        const apiOrigin =
+          import.meta.env.VITE_API_URL ||
+          import.meta.env.VITE_API_BASE_URL ||
+          "https://zakaria-rental-system.onrender.com";
+
+        const response = await fetch(
+          `${String(apiOrigin).replace(/\/$/, "")}/api/admin/public/company-info`,
+        );
+        const data = await response.json();
+
+        if (data?.success && data?.data?.logo) {
+          setFavicon(data.data.logo);
+        }
+      } catch (error) {
+        console.warn("Could not load company favicon:", error);
+      }
+    };
+
+    loadFavicon();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  return null;
 };
 
 // Layout component with responsive design
@@ -660,6 +707,7 @@ function AppContent() {
 function App() {
    return (
    <Router>
+    <CompanyFavicon />
     <AuthProvider>
       <UserProvider>
         <PropertyProvider>
