@@ -5,6 +5,32 @@ const pool = require('../config/database');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const { uploadPropertyImages, uploadUnitImages, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
 
+const toSafeUnitCodePart = (value) =>
+  String(value === null || value === undefined ? '' : value)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+const normalizePropertyScopedUnitCode = (propertyCode, value, fallback = 'UNIT') => {
+  const prefix = toSafeUnitCodePart(propertyCode);
+  let normalized = toSafeUnitCodePart(value || fallback);
+
+  if (!normalized) {
+    normalized = toSafeUnitCodePart(fallback);
+  }
+
+  const doublePrefix = `${prefix}${prefix}`;
+  while (prefix && normalized.startsWith(doublePrefix)) {
+    normalized = normalized.slice(prefix.length);
+  }
+
+  if (prefix && !normalized.startsWith(prefix)) {
+    normalized = `${prefix}${normalized}`;
+  }
+
+  return normalized;
+};
+
 // ==================== GET ALL PROPERTIES ====================
 router.get('/', protect, async (req, res) => {
   try {
@@ -1078,23 +1104,10 @@ router.post('/:id/units', protect, adminOnly, async (req, res) => {
       });
     }
     
-    const prefix = `${property.property_code}-`;
-    const toStringSafe = (value) => (value === null || value === undefined ? '' : String(value).trim());
-    const normalizeUnitCode = (value) => {
-      const raw = toStringSafe(value);
-      if (!raw) return raw;
-      let normalized = raw;
-      const doublePrefix = `${prefix}${prefix}`;
-      while (normalized.startsWith(doublePrefix)) {
-        normalized = normalized.slice(prefix.length);
-      }
-      if (!normalized.startsWith(prefix)) {
-        normalized = `${prefix}${normalized}`;
-      }
-      return normalized;
-    };
-
-    const finalUnitCode = normalizeUnitCode(unit_code || unit_number || 'UNIT');
+    const finalUnitCode = normalizePropertyScopedUnitCode(
+      property.property_code,
+      unit_code || unit_number || 'UNIT'
+    );
     
     const existingUnit = await client.query(
       'SELECT id FROM property_units WHERE unit_code = $1',
@@ -1265,31 +1278,17 @@ router.put('/:id/units/:unitId', protect, adminOnly, async (req, res) => {
       });
     }
     
-    const propertyCode = propertyCheck.rows[0].property_code;
-    const prefix = `${propertyCode}`;
-    const prefixWithHyphen = `${propertyCode}-`;
-
-    const toStringSafe = (value) => (value === null || value === undefined ? '' : String(value).trim());
-
-    const normalizeUnitCode = (value) => {
-      const raw = toStringSafe(value);
-      if (!raw) return raw;
-      let normalized = raw;
-      // Remove the join hyphen if present: PROP001-101 -> PROP001101
-      while (normalized.startsWith(prefixWithHyphen)) {
-        normalized = `${prefix}${normalized.slice(prefixWithHyphen.length)}`;
-      }
-      if (!normalized.startsWith(prefix)) {
-        normalized = `${prefix}${normalized.replace(/^-+/, '')}`;
-      }
-      return normalized;
-    };
-
     // Keep unit_code in sync with edited unit_number when frontend does not send unit_code.
     if (updates.unit_code === undefined && updates.unit_number !== undefined) {
-      updates.unit_code = normalizeUnitCode(updates.unit_number);
+      updates.unit_code = normalizePropertyScopedUnitCode(
+        propertyCheck.rows[0].property_code,
+        updates.unit_number
+      );
     } else if (updates.unit_code !== undefined) {
-      updates.unit_code = normalizeUnitCode(updates.unit_code);
+      updates.unit_code = normalizePropertyScopedUnitCode(
+        propertyCheck.rows[0].property_code,
+        updates.unit_code
+      );
     }
 
     if (updates.unit_type) {

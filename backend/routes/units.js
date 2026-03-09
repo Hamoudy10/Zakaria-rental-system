@@ -5,6 +5,32 @@ const pool = require('../config/database');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 const { uploadUnitImages, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
 
+const toSafeUnitCodePart = (value) =>
+  String(value === null || value === undefined ? '' : value)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+const normalizePropertyScopedUnitCode = (propertyCode, value, fallback = 'UNIT') => {
+  const prefix = toSafeUnitCodePart(propertyCode);
+  let normalized = toSafeUnitCodePart(value || fallback);
+
+  if (!normalized) {
+    normalized = toSafeUnitCodePart(fallback);
+  }
+
+  const doublePrefix = `${prefix}${prefix}`;
+  while (prefix && normalized.startsWith(doublePrefix)) {
+    normalized = normalized.slice(prefix.length);
+  }
+
+  if (prefix && !normalized.startsWith(prefix)) {
+    normalized = `${prefix}${normalized}`;
+  }
+
+  return normalized;
+};
+
 // ==================== UNIT CRUD ROUTES ====================
 
 // GET units by property
@@ -64,7 +90,7 @@ router.post('/properties/:propertyId/units', protect, adminOnly, async (req, res
     
     // Check if property exists
     const propertyCheck = await client.query(
-      'SELECT id, name FROM properties WHERE id = $1',
+      'SELECT id, name, property_code FROM properties WHERE id = $1',
       [propertyId]
     );
     
@@ -75,10 +101,15 @@ router.post('/properties/:propertyId/units', protect, adminOnly, async (req, res
       });
     }
     
+    const finalUnitCode = normalizePropertyScopedUnitCode(
+      propertyCheck.rows[0].property_code,
+      unit_code || unit_number || 'UNIT'
+    );
+
     // Check if unit code already exists in this property
     const existingUnit = await client.query(
       'SELECT id FROM property_units WHERE property_id = $1 AND unit_code = $2',
-      [propertyId, unit_code]
+      [propertyId, finalUnitCode]
     );
     
     if (existingUnit.rows.length > 0) {
@@ -97,7 +128,7 @@ router.post('/properties/:propertyId/units', protect, adminOnly, async (req, res
       RETURNING *`,
       [
         propertyId,
-        unit_code,
+        finalUnitCode,
         unit_number,
         unit_type,
         rent_amount,
@@ -157,7 +188,10 @@ router.put('/properties/:propertyId/units/:unitId', protect, adminOnly, async (r
     
     // Check if unit exists and belongs to property
     const unitCheck = await pool.query(
-      'SELECT id, is_occupied FROM property_units WHERE id = $1 AND property_id = $2',
+      `SELECT pu.id, pu.is_occupied, p.property_code
+       FROM property_units pu
+       INNER JOIN properties p ON pu.property_id = p.id
+       WHERE pu.id = $1 AND pu.property_id = $2`,
       [unitId, propertyId]
     );
     
@@ -168,18 +202,22 @@ router.put('/properties/:propertyId/units/:unitId', protect, adminOnly, async (r
       });
     }
     
+    const normalizedUnitCode = unit_code
+      ? normalizePropertyScopedUnitCode(unitCheck.rows[0].property_code, unit_code)
+      : undefined;
+
     // Check if unit code is being changed and if it already exists
-    if (unit_code) {
+    if (normalizedUnitCode) {
       const existingCode = await pool.query(
         'SELECT id FROM property_units WHERE property_id = $1 AND unit_code = $2 AND id != $3',
-        [propertyId, unit_code, unitId]
+        [propertyId, normalizedUnitCode, unitId]
       );
       
       if (existingCode.rows.length > 0) {
         return res.status(400).json({
-          success: false,
-          message: 'Unit code already exists in this property'
-        });
+        success: false,
+        message: 'Unit code already exists in this property'
+      });
       }
     }
     
@@ -196,7 +234,7 @@ router.put('/properties/:propertyId/units/:unitId', protect, adminOnly, async (r
        WHERE id = $8 AND property_id = $9
        RETURNING *`,
       [
-        unit_code, 
+        normalizedUnitCode,
         unit_number, 
         unit_type, 
         rent_amount, 
