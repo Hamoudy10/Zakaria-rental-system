@@ -39,6 +39,8 @@ const getTenantUnitSummary = (tenant) => {
   return tenant?.unit_code || "N/A";
 };
 
+const tenantListInFlight = new Map();
+
 const TenantManagement = () => {
   const { user } = useAuth();
   const { properties: assignedProperties, loading: propertiesLoading } =
@@ -83,26 +85,53 @@ const TenantManagement = () => {
   const [uploading, setUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [formErrors, setFormErrors] = useState({});
+  const isMultiAllocationEdit =
+    !!editingTenant && getActiveAllocations(editingTenant).length > 1;
   // Fetch tenants list
   const fetchTenants = useCallback(
     async (page = 1, search = "") => {
+      const requestKey = `${page}:${String(search || "").trim()}:${pagination.limit}:${user?.role || ""}`;
+
+      if (tenantListInFlight.has(requestKey)) {
+        const responseData = await tenantListInFlight.get(requestKey);
+        if (responseData?.success) {
+          const tenantsData =
+            responseData.data?.tenants || responseData.data || [];
+          const paginationData = responseData.data?.pagination || {
+            currentPage: 1,
+            totalPages: 1,
+            totalCount: 0,
+            limit: 10,
+          };
+
+          setTenants(Array.isArray(tenantsData) ? tenantsData : []);
+          setPagination(paginationData);
+        }
+        return;
+      }
+
       try {
         setLoading(true);
         setError(null);
-        console.log("🔍 Fetching tenants...", { page, search });
+        console.log("Fetching tenants...", { page, search });
 
-        const response = await API.tenants.getTenants({
-          page,
-          limit: pagination.limit,
-          search,
-        });
+        const requestPromise = API.tenants
+          .getTenants({
+            page,
+            limit: pagination.limit,
+            search,
+          })
+          .then((response) => response.data);
+        tenantListInFlight.set(requestKey, requestPromise);
 
-        console.log("📦 Tenants Response:", response.data);
+        const responseData = await requestPromise;
 
-        if (response.data.success) {
+        console.log("Tenants Response:", responseData);
+
+        if (responseData.success) {
           const tenantsData =
-            response.data.data?.tenants || response.data.data || [];
-          const paginationData = response.data.data?.pagination || {
+            responseData.data?.tenants || responseData.data || [];
+          const paginationData = responseData.data?.pagination || {
             currentPage: 1,
             totalPages: 1,
             totalCount: 0,
@@ -116,13 +145,14 @@ const TenantManagement = () => {
         const errorMsg =
           err.response?.data?.message || err.message || "Unknown error";
         setError("Failed to load tenants: " + errorMsg);
-        console.error("❌ Error fetching tenants:", err);
+        console.error("Error fetching tenants:", err);
         setTenants([]);
       } finally {
+        tenantListInFlight.delete(requestKey);
         setLoading(false);
       }
     },
-    [pagination.limit],
+    [pagination.limit, user?.role],
   );
   // Fetch full tenant details for view modal
   const fetchTenantDetails = async (tenantId) => {
@@ -1029,6 +1059,11 @@ const TenantManagement = () => {
                   <h4 className="font-medium text-gray-900 mb-3">
                     Unit Allocation *
                   </h4>
+                  {isMultiAllocationEdit && (
+                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                      This tenant has multiple active units. Edit lease, rent, or unit-specific allocation details in the allocation workflow for the specific unit.
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1039,6 +1074,7 @@ const TenantManagement = () => {
                         value={formData.unit_id}
                         onChange={handleUnitChange}
                         required
+                        disabled={isMultiAllocationEdit}
                         className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                           formErrors.unit_id
                             ? "border-red-500"
@@ -1089,6 +1125,7 @@ const TenantManagement = () => {
                             value={formData.lease_start_date}
                             onChange={handleInputChange}
                             required
+                            disabled={isMultiAllocationEdit}
                             className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                               formErrors.lease_start_date
                                 ? "border-red-500"
@@ -1110,6 +1147,7 @@ const TenantManagement = () => {
                             name="lease_end_date"
                             value={formData.lease_end_date}
                             onChange={handleInputChange}
+                            disabled={isMultiAllocationEdit}
                             className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             min={formData.lease_start_date}
                           />
@@ -1127,6 +1165,7 @@ const TenantManagement = () => {
                             value={formData.monthly_rent}
                             onChange={handleInputChange}
                             required
+                            disabled={isMultiAllocationEdit}
                             className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                               formErrors.monthly_rent
                                 ? "border-red-500"
@@ -1151,6 +1190,7 @@ const TenantManagement = () => {
                             name="security_deposit"
                             value={formData.security_deposit}
                             onChange={handleInputChange}
+                            disabled={isMultiAllocationEdit}
                             className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="Amount in KES"
                             min="0"
