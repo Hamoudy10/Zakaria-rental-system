@@ -1601,6 +1601,10 @@ const getAllPayments = async (req, res) => {
     const queryParams = [];
     let paramIndex = 1;
 
+    // Carry-forward rows are internal allocation records and should not be
+    // shown as separate payment entries in the main payment management list.
+    whereClauses.push(`COALESCE(rp.original_payment_id, rp.id) = rp.id`);
+
     // Agent isolation
     if (userRole === "agent") {
       whereClauses.push(`
@@ -1736,6 +1740,7 @@ const getTenantPaymentHistory = async (req, res) => {
        JOIN property_units pu ON rp.unit_id = pu.id
        JOIN properties p ON pu.property_id = p.id
        WHERE rp.tenant_id = $1 
+       AND COALESCE(rp.original_payment_id, rp.id) = rp.id
        ORDER BY rp.payment_date DESC`,
       [tenantId],
     );
@@ -2701,6 +2706,7 @@ const getPaymentHistory = async (req, res) => {
       LEFT JOIN property_units pu ON rp.unit_id = pu.id
       LEFT JOIN properties p ON pu.property_id = p.id
       WHERE rp.tenant_id = $1
+      AND COALESCE(rp.original_payment_id, rp.id) = rp.id
       AND rp.payment_month >= NOW() - make_interval(months => $2)
     `;
 
@@ -4016,6 +4022,7 @@ const getPaymentsByTenant = async (req, res) => {
        LEFT JOIN property_units pu ON rp.unit_id = pu.id
        LEFT JOIN properties p ON pu.property_id = p.id
        WHERE rp.tenant_id = $1
+       AND COALESCE(rp.original_payment_id, rp.id) = rp.id
        ORDER BY rp.payment_month DESC, rp.payment_date DESC`,
       [tenantId],
     );

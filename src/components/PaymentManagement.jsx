@@ -8,7 +8,6 @@ import { API, notificationAPI, paymentAPI } from "../services/api";
 import { exportToPDF } from "../utils/pdfExport";
 import { exportToExcel } from "../utils/excelExport";
 import { formatContactPhoneForDisplay } from "../utils/phoneUtils";
-import TemplatePicker from "./common/TemplatePicker";
 import {
   Calendar,
   DollarSign,
@@ -71,6 +70,30 @@ const formatDateLocal = (date) => {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+};
+
+const formatMonthLabel = (monthValue) => {
+  if (!monthValue) return "this month";
+  const [year, month] = String(monthValue).split("-");
+  const date = new Date(Number(year), Number(month) - 1, 1);
+  if (Number.isNaN(date.getTime())) return monthValue;
+  return date.toLocaleDateString("en-KE", { month: "long", year: "numeric" });
+};
+
+const buildReminderMessage = ({
+  tenantName,
+  propertyName,
+  unitCode,
+  totalDue,
+  month,
+  paybill,
+}) => {
+  const targetMonth = formatMonthLabel(month);
+  const balanceText = formatCurrency(totalDue);
+  const locationText = [propertyName, unitCode].filter(Boolean).join(" ");
+  const paybillLine = paybill ? ` Paybill: ${paybill}.` : "";
+
+  return `Hello ${tenantName}, ${locationText} has an outstanding balance of ${balanceText} for ${targetMonth}.${paybillLine} Thank you.`;
 };
 
 const getMonthOptions = () => {
@@ -226,10 +249,8 @@ const PaymentManagement = () => {
 
   // SMS Reminder Modal
   const [showSMSModal, setShowSMSModal] = useState(false);
-  const [smsMessage, setSmsMessage] = useState("");
-  const [smsTemplateId, setSmsTemplateId] = useState("");
-  const [smsTemplates, setSmsTemplates] = useState([]);
-  const [smsTemplatesLoading, setSmsTemplatesLoading] = useState(false);
+  const [reminderDrafts, setReminderDrafts] = useState([]);
+  const [activeReminderTenantId, setActiveReminderTenantId] = useState(null);
   const [systemPaybill, setSystemPaybill] = useState("");
   const [smsLoading, setSmsLoading] = useState(false);
   const [smsResult, setSmsResult] = useState(null);
@@ -429,6 +450,22 @@ const PaymentManagement = () => {
   const paidCount = useMemo(
     () => tenantStatus.filter((t) => t.total_due <= 0).length,
     [tenantStatus],
+  );
+
+  const selectedReminderTenants = useMemo(
+    () =>
+      filteredTenants.filter((tenant) =>
+        selectedTenants.includes(tenant.tenant_id),
+      ),
+    [filteredTenants, selectedTenants],
+  );
+
+  const activeReminderDraft = useMemo(
+    () =>
+      reminderDrafts.find((draft) => draft.tenant_id === activeReminderTenantId) ||
+      reminderDrafts[0] ||
+      null,
+    [reminderDrafts, activeReminderTenantId],
   );
 
   // ============================================================
@@ -632,18 +669,119 @@ const PaymentManagement = () => {
   // SMS REMINDER HANDLER
   // ============================================================
 
+  const resolveReminderPaybill = useCallback(() => {
+    const selectedPropertyDetails = properties.find(
+      (p) => p.id === filters.propertyId,
+    );
+
+    return (
+      selectedPropertyDetails?.paybill_number ||
+      selectedPropertyDetails?.paybill ||
+      systemPaybill ||
+      ""
+    );
+  }, [filters.propertyId, properties, systemPaybill]);
+
+  const createReminderDrafts = useCallback(() => {
+    const paybill = resolveReminderPaybill();
+
+    return selectedReminderTenants.map((tenant) => ({
+      tenant_id: tenant.tenant_id,
+      tenant_name: tenant.tenant_name,
+      property_name: tenant.property_name,
+      unit_code: tenant.unit_code,
+      phone_number: tenant.phone_number,
+      total_due: tenant.total_due,
+      message: buildReminderMessage({
+        tenantName: tenant.tenant_name,
+        propertyName: tenant.property_name,
+        unitCode: tenant.unit_code,
+        totalDue: tenant.total_due,
+        month: filters.month,
+        paybill,
+      }),
+      status: "pending",
+      error: "",
+    }));
+  }, [filters.month, resolveReminderPaybill, selectedReminderTenants]);
+
   const handleOpenSMSModal = () => {
     if (selectedTenants.length === 0) {
       alert("Please select at least one tenant to send reminders.");
       return;
     }
 
-    // Generate default message
-    const defaultMessage = `Dear Tenant, this is a reminder that your rent for ${filters.month} is due. Please make payment at your earliest convenience. Thank you.`;
-    setSmsMessage(defaultMessage);
-    setSmsTemplateId("");
+    const drafts = createReminderDrafts();
+    if (drafts.length === 0) {
+      alert("No unpaid tenants were found in the current selection.");
+      return;
+    }
+
+    setReminderDrafts(drafts);
+    setActiveReminderTenantId(drafts[0]?.tenant_id || null);
     setSmsResult(null);
     setShowSMSModal(true);
+  };
+
+  const updateReminderDraft = useCallback((tenantId, updater) => {
+    setReminderDrafts((prev) =>
+      prev.map((draft) =>
+        draft.tenant_id === tenantId
+          ? {
+              ...draft,
+              ...(typeof updater === "function" ? updater(draft) : updater),
+            }
+          : draft,
+      ),
+    );
+  }, []);
+
+  const sendReminderDraft = useCallback(
+    async (draft) => {
+      const response = await notificationAPI.sendTargetedSMS({
+        tenantIds: [draft.tenant_id],
+        message: draft.message,
+        messageType: "balance_reminder",
+        template_variables: {
+          month: filters.month,
+          message: draft.message,
+          paybill: resolveReminderPaybill(),
+          propertyName: draft.property_name || "",
+        },
+      });
+
+      if (!response.data?.success) {
+        throw new Error(response.data?.message || "Failed to send reminder");
+      }
+
+      return response.data;
+    },
+    [filters.month, resolveReminderPaybill],
+  );
+
+  const handleSendSingleReminder = async (tenantId) => {
+    const draft = reminderDrafts.find((item) => item.tenant_id === tenantId);
+    if (!draft || !draft.message.trim()) return;
+
+    updateReminderDraft(tenantId, { status: "sending", error: "" });
+    setSmsLoading(true);
+
+    try {
+      const responseData = await sendReminderDraft(draft);
+      updateReminderDraft(tenantId, { status: "sent", error: "" });
+      setSmsResult({
+        success: true,
+        message: `Reminder sent to ${draft.tenant_name}.`,
+        data: responseData.data,
+      });
+    } catch (error) {
+      updateReminderDraft(tenantId, {
+        status: "failed",
+        error: error.response?.data?.message || error.message || "Failed to send reminder",
+      });
+    } finally {
+      setSmsLoading(false);
+    }
   };
 
   const handleDeleteManualPayment = async (payment) => {
@@ -737,29 +875,6 @@ const PaymentManagement = () => {
     }
   };
 
-  const fetchReminderTemplates = useCallback(async () => {
-    setSmsTemplatesLoading(true);
-    try {
-      const response = await API.settings.getTemplateOptionsForEvent(
-        "agent_manual_general_trigger",
-      );
-      if (response.data?.success) {
-        setSmsTemplates(response.data.data?.templates || []);
-      } else {
-        setSmsTemplates([]);
-      }
-    } catch (error) {
-      console.error("Failed to fetch reminder templates:", error);
-      setSmsTemplates([]);
-    } finally {
-      setSmsTemplatesLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchReminderTemplates();
-  }, [fetchReminderTemplates]);
-
   useEffect(() => {
     const fetchSystemPaybill = async () => {
       try {
@@ -790,42 +905,61 @@ const PaymentManagement = () => {
     setSmsLoading(true);
     setSmsResult(null);
 
-    try {
-      const selectedPropertyDetails = properties.find(
-        (p) => p.id === filters.propertyId,
-      );
-      const resolvedPaybill =
-        selectedPropertyDetails?.paybill_number ||
-        selectedPropertyDetails?.paybill ||
-        systemPaybill ||
-        "";
+    const draftsToSend = reminderDrafts.filter((draft) => draft.message.trim());
+    if (draftsToSend.length === 0) {
+      setSmsLoading(false);
+      setSmsResult({
+        success: false,
+        message: "Add at least one reminder message before sending.",
+      });
+      return;
+    }
 
-      const response = await notificationAPI.sendTargetedSMS({
-        tenantIds: selectedTenants,
-        message: smsMessage,
-        messageType: "balance_reminder",
-        template_id: smsTemplateId || undefined,
-        template_variables: {
-          month: filters.month,
-          message: smsMessage,
-          paybill: resolvedPaybill,
-          propertyName: selectedPropertyDetails?.name || "",
+    let sent = 0;
+    let failed = 0;
+    const errors = [];
+    let whatsappSent = 0;
+
+    try {
+      for (const draft of draftsToSend) {
+        updateReminderDraft(draft.tenant_id, { status: "sending", error: "" });
+
+        try {
+          const responseData = await sendReminderDraft(draft);
+          sent += responseData?.data?.sent || 0;
+          whatsappSent += responseData?.data?.whatsapp_sent || 0;
+          updateReminderDraft(draft.tenant_id, { status: "sent", error: "" });
+        } catch (error) {
+          failed += 1;
+          const message =
+            error.response?.data?.message ||
+            error.message ||
+            "Failed to send reminder";
+          errors.push(`${draft.tenant_name}: ${message}`);
+          updateReminderDraft(draft.tenant_id, {
+            status: "failed",
+            error: message,
+          });
+        }
+      }
+
+      setSmsResult({
+        success: failed === 0,
+        message:
+          failed === 0
+            ? `Sent ${sent} reminder${sent === 1 ? "" : "s"}.`
+            : `Sent ${sent} reminder${sent === 1 ? "" : "s"}, ${failed} failed.`,
+        data: {
+          sent,
+          failed,
+          whatsapp_sent: whatsappSent,
+          errors,
         },
       });
 
-      if (response.data.success) {
-        setSmsResult({
-          success: true,
-          message: response.data.message,
-          data: response.data.data,
-        });
+      if (failed === 0) {
         setSelectedTenants([]);
         setSelectAll(false);
-      } else {
-        setSmsResult({
-          success: false,
-          message: response.data.message || "Failed to send reminders",
-        });
       }
     } catch (error) {
       console.error("SMS send error:", error);
@@ -836,6 +970,34 @@ const PaymentManagement = () => {
     } finally {
       setSmsLoading(false);
     }
+  };
+
+  const handleReminderMessageChange = (tenantId, message) => {
+    updateReminderDraft(tenantId, {
+      message,
+      status: "pending",
+      error: "",
+    });
+  };
+
+  const handleApplyMessageToAll = () => {
+    if (!activeReminderDraft?.message) return;
+
+    setReminderDrafts((prev) =>
+      prev.map((draft) => ({
+        ...draft,
+        message: activeReminderDraft.message,
+        status: draft.status === "sent" ? "sent" : "pending",
+        error: "",
+      })),
+    );
+  };
+
+  const handleResetReminderDrafts = () => {
+    const drafts = createReminderDrafts();
+    setReminderDrafts(drafts);
+    setActiveReminderTenantId(drafts[0]?.tenant_id || null);
+    setSmsResult(null);
   };
 
   // ============================================================
@@ -1381,15 +1543,16 @@ const PaymentManagement = () => {
       {/* SMS Reminder Modal */}
       {showSMSModal && (
         <SMSReminderModal
-          selectedCount={selectedTenants.length}
-          message={smsMessage}
-          setMessage={setSmsMessage}
-          templateId={smsTemplateId}
-          setTemplateId={setSmsTemplateId}
-          templates={smsTemplates}
-          templatesLoading={smsTemplatesLoading}
+          drafts={reminderDrafts}
+          activeDraft={activeReminderDraft}
+          month={filters.month}
           loading={smsLoading}
           result={smsResult}
+          onSelectDraft={setActiveReminderTenantId}
+          onMessageChange={handleReminderMessageChange}
+          onApplyToAll={handleApplyMessageToAll}
+          onReset={handleResetReminderDrafts}
+          onSendSingle={handleSendSingleReminder}
           onSend={handleSendReminders}
           onClose={() => setShowSMSModal(false)}
         />
@@ -2473,28 +2636,35 @@ const EditManualPaymentModal = ({
 };
 
 const SMSReminderModal = ({
-  selectedCount,
-  message,
-  setMessage,
-  templateId,
-  setTemplateId,
-  templates,
-  templatesLoading,
+  drafts,
+  activeDraft,
+  month,
   loading,
   result,
+  onSelectDraft,
+  onMessageChange,
+  onApplyToAll,
+  onReset,
+  onSendSingle,
   onSend,
   onClose,
 }) => {
+  const sentCount = drafts.filter((draft) => draft.status === "sent").length;
+  const failedCount = drafts.filter((draft) => draft.status === "failed").length;
+  const pendingCount = drafts.filter(
+    (draft) => draft.status === "pending" || draft.status === "sending",
+  ).length;
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border">
-        <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden border border-gray-200">
+        <div className="p-6 border-b bg-gradient-to-r from-slate-50 via-white to-orange-50 flex justify-between items-start gap-4">
           <div>
-            <h3 className="font-bold text-xl text-gray-800">
-              Send Payment Reminders
+            <h3 className="font-bold text-xl text-gray-900">
+              Review Payment Reminders
             </h3>
-            <p className="text-gray-500 text-sm">
-              Sending to {selectedCount} tenant(s) via SMS & WhatsApp
+            <p className="text-gray-500 text-sm mt-1">
+              Edit each reminder before sending. Messages are sent one tenant at a time so every draft stays reviewable.
             </p>
           </div>
           <button
@@ -2505,7 +2675,104 @@ const SMSReminderModal = ({
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] min-h-[70vh]">
+          <div className="border-r bg-slate-50/70 p-5 space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-2xl bg-white border p-3">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                  Total
+                </p>
+                <p className="text-2xl font-bold text-gray-900">{drafts.length}</p>
+              </div>
+              <div className="rounded-2xl bg-white border p-3">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                  Sent
+                </p>
+                <p className="text-2xl font-bold text-green-600">{sentCount}</p>
+              </div>
+              <div className="rounded-2xl bg-white border p-3">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                  Pending
+                </p>
+                <p className="text-2xl font-bold text-orange-600">{pendingCount}</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">
+                    Recipients
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {formatMonthLabel(month)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onReset}
+                  className="text-xs font-medium text-gray-600 hover:text-gray-900"
+                >
+                  Reset drafts
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-2 max-h-[48vh] overflow-y-auto pr-1">
+                {drafts.map((draft) => {
+                  const isActive = activeDraft?.tenant_id === draft.tenant_id;
+                  const statusStyles =
+                    draft.status === "sent"
+                      ? "bg-green-100 text-green-700"
+                      : draft.status === "failed"
+                        ? "bg-red-100 text-red-700"
+                        : draft.status === "sending"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-orange-100 text-orange-700";
+
+                  return (
+                    <button
+                      key={draft.tenant_id}
+                      type="button"
+                      onClick={() => onSelectDraft(draft.tenant_id)}
+                      className={`w-full text-left rounded-2xl border p-4 transition-all ${
+                        isActive
+                          ? "border-orange-300 bg-orange-50 shadow-sm"
+                          : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-gray-900 truncate">
+                            {draft.tenant_name}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate">
+                            {draft.property_name} {draft.unit_code ? `• ${draft.unit_code}` : ""}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {formatContactPhoneForDisplay(draft.phone_number) || "No phone"}
+                          </p>
+                        </div>
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${statusStyles}`}>
+                          {draft.status}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between text-xs">
+                        <span className="text-gray-500">Outstanding</span>
+                        <span className="font-semibold text-gray-900">
+                          {formatCurrency(draft.total_due)}
+                        </span>
+                      </div>
+                      {draft.error && (
+                        <p className="mt-2 text-xs text-red-600">{draft.error}</p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-4">
           {result && (
             <div
               className={`p-4 rounded-lg ${result.success ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}
@@ -2544,73 +2811,137 @@ const SMSReminderModal = ({
             </div>
           )}
 
-          <TemplatePicker
-            label="Template (Optional)"
-            value={templateId}
-            onChange={setTemplateId}
-            templates={templates}
-            loading={templatesLoading}
-            emptyLabel="Use message text below"
-            helpText="If selected, backend renders this template per tenant."
-            selectClassName="w-full border rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none"
-          />
+            {activeDraft ? (
+              <>
+                <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-orange-600">
+                        Editing
+                      </p>
+                      <h4 className="text-2xl font-bold text-gray-900 mt-1">
+                        {activeDraft.tenant_name}
+                      </h4>
+                      <div className="mt-2 space-y-1 text-sm text-gray-500">
+                        <p>{activeDraft.property_name} {activeDraft.unit_code ? `• ${activeDraft.unit_code}` : ""}</p>
+                        <p>{formatContactPhoneForDisplay(activeDraft.phone_number) || "No phone number"}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 border p-4 min-w-[200px]">
+                      <p className="text-xs uppercase tracking-wide text-gray-500">
+                        Outstanding balance
+                      </p>
+                      <p className="text-2xl font-bold text-gray-900 mt-1">
+                        {formatCurrency(activeDraft.total_due)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Message
-            </label>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              className="w-full border rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              rows={5}
-              placeholder="Enter your reminder message..."
-              maxLength={320}
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              {message.length}/320 characters
-            </p>
-          </div>
+                <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                  <div className="flex items-center justify-between gap-4 mb-3">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-800">
+                        Reminder message
+                      </label>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Review and edit before sending.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onApplyToAll}
+                      className="px-3 py-2 text-sm font-medium rounded-xl border border-gray-200 hover:bg-gray-50"
+                    >
+                      Apply this text to all
+                    </button>
+                  </div>
+                  <textarea
+                    value={activeDraft.message}
+                    onChange={(e) =>
+                      onMessageChange(activeDraft.tenant_id, e.target.value)
+                    }
+                    className="w-full min-h-[240px] border rounded-2xl p-4 focus:ring-2 focus:ring-orange-500 outline-none resize-y"
+                    placeholder="Write the reminder message for this tenant..."
+                    maxLength={160}
+                  />
+                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                    <span>{activeDraft.message.length}/160 characters</span>
+                    {activeDraft.error && (
+                      <span className="text-red-600">{activeDraft.error}</span>
+                    )}
+                  </div>
+                </div>
 
-          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-700">
-            <div className="flex items-start gap-2">
-              <MessageSquare size={18} className="flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium">Messages will be sent via:</p>
-                <ul className="list-disc list-inside mt-1 text-blue-600">
-                  <li>SMS (always)</li>
-                  <li>WhatsApp (if available)</li>
-                </ul>
+                <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-700">
+                  <div className="flex items-start gap-3">
+                    <MessageSquare size={18} className="flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold">Delivery</p>
+                      <p className="mt-1">
+                        Kenyan numbers can go through SMS with WhatsApp fallback logic. International numbers go through WhatsApp review/send only.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="sm:w-auto w-full px-5 py-3 border rounded-2xl font-medium hover:bg-gray-50 transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSendSingle(activeDraft.tenant_id)}
+                    disabled={loading || !activeDraft.message.trim()}
+                    className="sm:w-auto w-full px-5 py-3 bg-slate-900 text-white rounded-2xl font-medium hover:bg-slate-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                  >
+                    {loading && activeDraft.status === "sending" ? (
+                      <>
+                        <RefreshCw size={16} className="animate-spin" />
+                        Sending current...
+                      </>
+                    ) : (
+                      <>
+                        <Send size={16} />
+                        Send current
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={onSend}
+                    disabled={loading || drafts.every((draft) => !draft.message.trim())}
+                    className="sm:w-auto w-full px-5 py-3 bg-orange-600 text-white rounded-2xl font-medium hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                  >
+                    {loading ? (
+                      <>
+                        <RefreshCw size={16} className="animate-spin" />
+                        Sending all...
+                      </>
+                    ) : (
+                      <>
+                        <Send size={16} />
+                        Send all drafts
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="h-full flex items-center justify-center text-center text-gray-500">
+                <div>
+                  <Users size={40} className="mx-auto mb-3 text-gray-300" />
+                  <p className="font-medium">No recipients selected</p>
+                </div>
               </div>
-            </div>
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2.5 border rounded-lg font-medium hover:bg-gray-50 transition-colors"
-            >
-              {result?.success ? "Close" : "Cancel"}
-            </button>
-            {!result?.success && (
-              <button
-                onClick={onSend}
-                disabled={loading || (!message.trim() && !templateId)}
-                className="flex-1 px-4 py-2.5 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {loading ? (
-                  <>
-                    <RefreshCw size={16} className="animate-spin" />
-                    Sending...
-                  </>
-                ) : (
-                  <>
-                    <Send size={16} />
-                    Send Reminders
-                  </>
-                )}
-              </button>
+            )}
+            {failedCount > 0 && (
+              <div className="text-xs text-red-600 font-medium">
+                {failedCount} reminder{failedCount === 1 ? "" : "s"} failed. Fix the highlighted drafts and send again.
+              </div>
             )}
           </div>
         </div>
