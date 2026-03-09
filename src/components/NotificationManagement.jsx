@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useProperty } from "../context/PropertyContext";
 import { API, notificationAPI } from "../services/api";
 import TemplatePicker from "./common/TemplatePicker";
+import { formatContactPhoneForDisplay } from "../utils/phoneUtils";
 import {
   Send,
   MessageSquare,
@@ -682,12 +683,7 @@ const NotificationManagement = () => {
   };
 
   const formatPhone = (phone) => {
-    if (!phone) return "N/A";
-    // Convert 254... to 0...
-    if (phone.startsWith("254")) {
-      return "0" + phone.substring(3);
-    }
-    return phone;
+    return formatContactPhoneForDisplay(phone) || "N/A";
   };
 
   // ============================================================

@@ -4,6 +4,7 @@
 
 import ExcelJS from "exceljs";
 import { API } from "../services/api";
+import { formatContactPhoneForDisplay } from "./phoneUtils";
 
 // Default company branding (fallback)
 const DEFAULT_COMPANY = {
@@ -1355,11 +1356,7 @@ const calculateTotals = (reportType, data) => {
 /* ---------------- Helper Functions ---------------- */
 
 const formatPhone = (phone) => {
-  if (!phone) return "N/A";
-  if (phone.startsWith("254")) {
-    return "0" + phone.substring(3);
-  }
-  return phone;
+  return formatContactPhoneForDisplay(phone) || "N/A";
 };
 
 const formatDate = (dateStr) => {

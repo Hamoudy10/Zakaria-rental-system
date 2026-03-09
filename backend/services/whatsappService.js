@@ -8,6 +8,7 @@
 
 const axios = require("axios");
 const pool = require("../config/database");
+const { toDigitsOnlyPhone } = require("../utils/phoneUtils");
 
 class WhatsAppService {
   constructor() {
@@ -42,23 +43,18 @@ class WhatsAppService {
       throw new Error("Phone number is required");
     }
 
-    let cleaned = phone.toString().replace(/\D/g, "");
-
-    if (cleaned.startsWith("0") && cleaned.length === 10) {
-      cleaned = "254" + cleaned.substring(1);
-    } else if (cleaned.startsWith("7") && cleaned.length === 9) {
-      cleaned = "254" + cleaned;
-    } else if (cleaned.startsWith("1") && cleaned.length === 9) {
-      cleaned = "254" + cleaned;
+    const formatted = toDigitsOnlyPhone(phone);
+    if (!formatted) {
+      throw new Error("WhatsApp requires a valid international phone number");
     }
 
-    return cleaned;
+    return formatted;
   }
 
   validatePhoneNumber(phone) {
     try {
       const formatted = this.formatPhoneNumber(phone);
-      return /^254[17]\d{8}$/.test(formatted);
+      return /^[1-9]\d{7,14}$/.test(formatted);
     } catch (error) {
       return false;
     }
