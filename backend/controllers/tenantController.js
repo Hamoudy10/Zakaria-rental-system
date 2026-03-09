@@ -8,44 +8,7 @@ const {
   ensureDepositCharge,
   ensureDepositPaid,
 } = require("../services/depositService");
-
-// Format phone number to 254 format - UPDATED to support 01xxxxxxxx (new Safaricom)
-const formatPhoneNumber = (phone) => {
-  if (!phone) return null;
-
-  // Remove all non-digit characters
-  const digits = phone.replace(/\D/g, "");
-
-  console.log("📞 Formatting phone number:", { original: phone, digits });
-
-  // Convert to 254 format
-  if (digits.startsWith("0") && digits.length === 10) {
-    // Format: 07xxxxxxxx or 01xxxxxxxx -> 2547xxxxxxxx or 2541xxxxxxxx
-    const formatted = "254" + digits.substring(1);
-    console.log("📞 Converted 0xx format:", formatted);
-    return formatted;
-  } else if (digits.startsWith("254") && digits.length === 12) {
-    // Already in correct format: 2547xxxxxxxx or 2541xxxxxxxx
-    console.log("📞 Already in 254 format:", digits);
-    return digits;
-  } else if (digits.startsWith("+254")) {
-    // Format: +2547xxxxxxxx -> 2547xxxxxxxx
-    const formatted = digits.substring(1);
-    console.log("📞 Converted +254 format:", formatted);
-    return formatted;
-  } else if (
-    (digits.startsWith("7") || digits.startsWith("1")) &&
-    digits.length === 9
-  ) {
-    // Format: 7xxxxxxxx or 1xxxxxxxx -> 2547xxxxxxxx or 2541xxxxxxxx
-    const formatted = "254" + digits;
-    console.log("📞 Converted short format:", formatted);
-    return formatted;
-  } else {
-    console.warn("⚠️ Unusual phone format, adding 254 prefix:", digits);
-    return "254" + digits;
-  }
-};
+const { normalizeContactPhone } = require("../utils/phoneUtils");
 
 const roundToTwo = (value) => {
   const num = Number(value) || 0;
@@ -580,10 +543,32 @@ const createTenant = async (req, res) => {
     }
 
     // Format phone numbers
-    const formattedPhone = formatPhoneNumber(phone_number);
+    const formattedPhone = normalizeContactPhone(phone_number);
     const formattedEmergencyPhone = emergency_contact_phone
-      ? formatPhoneNumber(emergency_contact_phone)
+      ? normalizeContactPhone(emergency_contact_phone)
       : null;
+
+    if (!formattedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant phone number must be a valid phone number.",
+        errors: {
+          phone_number:
+            "Use a Kenyan number like 0712345678 or an international number with country code, for example +14155550123.",
+        },
+      });
+    }
+
+    if (emergency_contact_phone && !formattedEmergencyPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Emergency contact phone number is invalid.",
+        errors: {
+          emergency_contact_phone:
+            "Use a Kenyan number like 0712345678 or an international number with country code, for example +14155550123.",
+        },
+      });
+    }
     const normalizedEmail =
       typeof email === "string" ? email.trim() || null : (email ?? null);
     const normalizedDepositStatus =
@@ -1011,7 +996,18 @@ const updateTenant = async (req, res) => {
 
     // Check for duplicate phone number
     if (phone_number) {
-      const formattedPhone = formatPhoneNumber(phone_number);
+      const formattedPhone = normalizeContactPhone(phone_number);
+      if (!formattedPhone) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "Tenant phone number must be a valid phone number.",
+          fieldErrors: {
+            phone_number:
+              "Use a Kenyan number like 0712345678 or an international number with country code, for example +14155550123.",
+          },
+        });
+      }
       const existingPhone = await client.query(
         "SELECT id FROM tenants WHERE phone_number = $1 AND id != $2",
         [formattedPhone, id],
@@ -1031,11 +1027,23 @@ const updateTenant = async (req, res) => {
 
     // Format phone numbers if provided
     const formattedPhone = phone_number
-      ? formatPhoneNumber(phone_number)
+      ? normalizeContactPhone(phone_number)
       : undefined;
     const formattedEmergencyPhone = emergency_contact_phone
-      ? formatPhoneNumber(emergency_contact_phone)
+      ? normalizeContactPhone(emergency_contact_phone)
       : undefined;
+
+    if (emergency_contact_phone && !formattedEmergencyPhone) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Emergency contact phone number is invalid.",
+        fieldErrors: {
+          emergency_contact_phone:
+            "Use a Kenyan number like 0712345678 or an international number with country code, for example +14155550123.",
+        },
+      });
+    }
     const hasEmail = Object.prototype.hasOwnProperty.call(req.body, "email");
     const normalizedEmail = hasEmail
       ? typeof email === "string"

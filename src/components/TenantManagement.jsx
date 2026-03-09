@@ -5,6 +5,10 @@ import { useAuth } from "../context/AuthContext";
 import { useProperty } from "../context/PropertyContext";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import {
+  formatContactPhoneForDisplay,
+  normalizeContactPhone,
+} from "../utils/phoneUtils";
 const TenantManagement = () => {
   const { user } = useAuth();
   const { properties: assignedProperties, loading: propertiesLoading } =
@@ -242,40 +246,8 @@ const TenantManagement = () => {
       }));
     }
   };
-  // Phone formatting functions - Updated to support 01xxxxxxxx format
-  const formatPhoneForDisplay = (phone) => {
-    if (!phone) return "";
-    // Convert 2547... or 2541... to 07... or 01...
-    if (phone.startsWith("254") && phone.length === 12) {
-      return "0" + phone.substring(3);
-    }
-    return phone.replace(/^254/, "0");
-  };
-  const formatPhoneForBackend = (phone) => {
-    if (!phone) return "";
-    const digits = phone.replace(/\D/g, "");
-
-    // Handle 07xxxxxxxx or 01xxxxxxxx format
-    if (digits.startsWith("0") && digits.length === 10) {
-      return "254" + digits.substring(1);
-    }
-    // Handle 7xxxxxxxx or 1xxxxxxxx format (without leading zero)
-    if (
-      (digits.startsWith("7") || digits.startsWith("1")) &&
-      digits.length === 9
-    ) {
-      return "254" + digits;
-    }
-    // Already in 254... format
-    if (digits.startsWith("254") && digits.length === 12) {
-      return digits;
-    }
-    // Default: prepend 254
-    if (!digits.startsWith("254")) {
-      return "254" + digits;
-    }
-    return digits;
-  };
+  const formatPhoneForDisplay = (phone) => formatContactPhoneForDisplay(phone);
+  const formatPhoneForBackend = (phone) => normalizeContactPhone(phone);
   const handleImageUpload = async (tenantId) => {
     if (!idFrontImage && !idBackImage) return;
     try {
@@ -330,24 +302,18 @@ const TenantManagement = () => {
         errors.monthly_rent = "Monthly rent is required";
     }
 
-    // Updated regex to accept both 07xxxxxxxx and 01xxxxxxxx formats
-    const phoneRegex = /^(?:254|\+254|0)?([17]\d{8})$/;
-    const phoneDigits = formData.phone_number.replace(/\D/g, "");
-    if (formData.phone_number && !phoneRegex.test(phoneDigits)) {
+    const normalizedPhone = formatPhoneForBackend(formData.phone_number);
+    if (formData.phone_number && !normalizedPhone) {
       errors.phone_number =
-        "Invalid phone format. Use 07XXXXXXXX or 01XXXXXXXX";
+        "Use 0712345678 for Kenya or include a country code, for example +14155550123.";
     }
 
-    const emergencyPhoneDigits = formData.emergency_contact_phone.replace(
-      /\D/g,
-      "",
-    );
     if (
       formData.emergency_contact_phone &&
-      emergencyPhoneDigits &&
-      !phoneRegex.test(emergencyPhoneDigits)
+      !formatPhoneForBackend(formData.emergency_contact_phone)
     ) {
-      errors.emergency_contact_phone = "Invalid emergency contact phone format";
+      errors.emergency_contact_phone =
+        "Use 0712345678 for Kenya or include a country code, for example +14155550123.";
     }
 
     setFormErrors(errors);
@@ -907,7 +873,7 @@ const TenantManagement = () => {
                           ? "border-red-500"
                           : "border-gray-300"
                       }`}
-                      placeholder="0712345678 or 0112345678"
+                      placeholder="0712345678 or +14155550123"
                     />
                     {formErrors.phone_number && (
                       <p className="mt-1 text-sm text-red-600">
@@ -1018,7 +984,7 @@ const TenantManagement = () => {
                             ? "border-red-500"
                             : "border-gray-300"
                         }`}
-                        placeholder="0712345678 or 0112345678"
+                        placeholder="0712345678 or +14155550123"
                       />
                       {formErrors.emergency_contact_phone && (
                         <p className="mt-1 text-sm text-red-600">

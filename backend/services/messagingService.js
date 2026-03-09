@@ -8,6 +8,7 @@
 
 const SMSService = require("./smsService");
 const WhatsAppService = require("./whatsappService");
+const { isKenyanContactPhone } = require("../utils/phoneUtils");
 
 class MessagingService {
   constructor() {
@@ -34,7 +35,8 @@ class MessagingService {
    * @param {Function} whatsappFn - Async function that sends WhatsApp (must return result object)
    * @returns {Object} Combined result from both channels
    */
-  async sendParallel(smsFn, whatsappFn) {
+  async sendParallel(smsFn, whatsappFn, options = {}) {
+    const { allowSMSFallback = true } = options;
     const results = {
       sms: { success: false, error: "Not attempted" },
       whatsapp: { success: false, error: "Not attempted" },
@@ -68,7 +70,14 @@ class MessagingService {
           whatsappResult?.notOnWhatsApp ||
           !!whatsappResult?.error);
 
-      if (shouldFallbackToSMS) {
+      if (!allowSMSFallback) {
+        results.sms = {
+          success: false,
+          skipped: true,
+          error: "SMS skipped for non-Kenyan contact number",
+          channel: "sms",
+        };
+      } else if (shouldFallbackToSMS) {
         results.sms = await smsFn().catch((error) => {
           console.error("❌ SMS fallback send error:", error.message);
           return { success: false, error: error.message, channel: "sms" };
@@ -105,6 +114,12 @@ class MessagingService {
     }
   }
 
+  async sendToPhone(phone, smsFn, whatsappFn) {
+    return this.sendParallel(smsFn, whatsappFn, {
+      allowSMSFallback: isKenyanContactPhone(phone),
+    });
+  }
+
   // ============================================================
   // MESSAGE TYPE METHODS
   // ============================================================
@@ -125,7 +140,8 @@ class MessagingService {
       unit: unitCode,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      tenantPhone,
       () =>
         this.sms.sendWelcomeMessage(
           tenantPhone,
@@ -163,7 +179,8 @@ class MessagingService {
       amount,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      tenantPhone,
       () =>
         this.sms.sendPaymentConfirmation(
           tenantPhone,
@@ -203,7 +220,8 @@ class MessagingService {
       breakdown,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      tenantPhone,
       () =>
         this.sms.sendEnhancedPaymentConfirmation(
           tenantPhone,
@@ -247,7 +265,8 @@ class MessagingService {
       total: totalDue,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      tenantPhone,
       () =>
         this.sms.sendBillNotification(
           tenantPhone,
@@ -291,7 +310,8 @@ class MessagingService {
       balance,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      tenantPhone,
       () =>
         this.sms.sendBalanceReminder(
           tenantPhone,
@@ -329,7 +349,8 @@ class MessagingService {
       tenant: tenantName,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      adminPhone,
       () =>
         this.sms.sendAdminAlert(
           adminPhone,
@@ -368,7 +389,8 @@ class MessagingService {
       tenant: tenantName,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      adminPhone,
       () =>
         this.sms.sendAdminPaymentAlert(
           adminPhone,
@@ -417,7 +439,8 @@ class MessagingService {
       coveredMonths: safeCoveredMonthsText,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      tenantPhone,
       () =>
         this.sms.sendAdvancePaymentNotification(
           tenantPhone,
@@ -448,7 +471,8 @@ class MessagingService {
       unit: unitCode,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      tenantPhone,
       () =>
         this.sms.sendMaintenanceUpdate(
           tenantPhone,
@@ -476,7 +500,8 @@ class MessagingService {
       title,
     });
 
-    return this.sendParallel(
+    return this.sendToPhone(
+      phone,
       () => this.sms.sendSMS(phone, message),
       () => this.whatsapp.sendGeneralAnnouncement(phone, title, message),
     );
@@ -502,7 +527,8 @@ class MessagingService {
       type: messageType,
     });
 
-    const result = await this.sendParallel(
+    const result = await this.sendToPhone(
+      phone,
       () => this.sms.sendSMS(phone, message),
       () => {
         if (whatsappTemplateName) {
@@ -522,7 +548,7 @@ class MessagingService {
       },
     );
 
-    if (logSMSNotification) {
+    if (logSMSNotification && isKenyanContactPhone(phone)) {
       await this.sms.logSMSNotification(
         this.sms.formatPhoneNumber(phone),
         messageType,
@@ -555,15 +581,22 @@ class MessagingService {
     };
 
     try {
-      // Queue SMS
-      const formattedPhone = this.sms.formatPhoneNumber(tenantPhone);
-      await require("../config/database").query(
-        `INSERT INTO sms_queue 
-         (recipient_phone, message, message_type, status, billing_month, agent_id, created_at)
-         VALUES ($1, $2, $3, 'pending', $4, $5, NOW())`,
-        [formattedPhone, smsMessage, messageType, billingMonth, agentId],
-      );
-      results.sms = { success: true, queued: true };
+      if (isKenyanContactPhone(tenantPhone)) {
+        const formattedPhone = this.sms.formatPhoneNumber(tenantPhone);
+        await require("../config/database").query(
+          `INSERT INTO sms_queue 
+           (recipient_phone, message, message_type, status, billing_month, agent_id, created_at)
+           VALUES ($1, $2, $3, 'pending', $4, $5, NOW())`,
+          [formattedPhone, smsMessage, messageType, billingMonth, agentId],
+        );
+        results.sms = { success: true, queued: true };
+      } else {
+        results.sms = {
+          success: false,
+          skipped: true,
+          error: "SMS skipped for non-Kenyan contact number",
+        };
+      }
 
       // Queue WhatsApp
       if (this.whatsapp.configured) {

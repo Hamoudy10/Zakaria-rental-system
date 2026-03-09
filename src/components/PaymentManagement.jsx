@@ -7,6 +7,7 @@ import { useAuth } from "../context/AuthContext";
 import { API, notificationAPI, paymentAPI } from "../services/api";
 import { exportToPDF } from "../utils/pdfExport";
 import { exportToExcel } from "../utils/excelExport";
+import { formatContactPhoneForDisplay } from "../utils/phoneUtils";
 import TemplatePicker from "./common/TemplatePicker";
 import {
   Calendar,
@@ -87,7 +88,7 @@ const getMonthOptions = () => {
   return options;
 };
 
-const formatPhone = (phone) => phone?.replace(/^254/, "0") || "";
+const formatPhone = (phone) => formatContactPhoneForDisplay(phone) || "";
 
 const formatExactDueDate = ({ dueDate, rentDueDay, month }) => {
   const parsedDueDate = dueDate ? new Date(dueDate) : null;
@@ -1629,7 +1630,7 @@ const TenantStatusTable = ({
       minimumFractionDigits: 0,
     }).format(toNumericAmount(amount));
 
-  const formatPhone = (phone) => phone?.replace(/^254/, "0") || "";
+  const formatPhone = (phone) => formatContactPhoneForDisplay(phone) || "";
 
   return (
     <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
@@ -2106,7 +2107,7 @@ const ManualPaymentModal = ({
                       unit_code: tenant.unit_code || "",
                       allocation_id: tenant.allocation_id || "",
                       phone_number:
-                        tenant.phone_number?.replace(/^254/, "0") || "",
+                        formatContactPhoneForDisplay(tenant.phone_number) || "",
                     });
                   } else {
                     setData({

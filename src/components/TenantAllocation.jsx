@@ -3,6 +3,7 @@ import { useAllocation } from '../context/TenantAllocationContext'
 import { useProperty } from '../context/PropertyContext'
 import { tenantAPI } from '../services/api'
 import api from '../services/api'
+import { formatContactPhoneForDisplay } from '../utils/phoneUtils'
 
 // NOTE: updateUnit is not used for allocation - backend handles unit occupancy automatically
 
@@ -343,8 +344,7 @@ const TenantAllocation = () => {
   }
 
   const formatPhone = (phone) => {
-    if (!phone) return 'N/A'
-    return phone.replace(/^254/, '0')
+    return formatContactPhoneForDisplay(phone) || 'N/A'
   }
 
   // Combined loading state

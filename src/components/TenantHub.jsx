@@ -1,5 +1,6 @@
 // src/components/TenantHub.jsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { formatContactPhoneForDisplay } from '../utils/phoneUtils';
 import {
   Users,
   Building2,
@@ -1351,8 +1352,7 @@ const TenantHub = () => {
 
   // Formatters
   const formatPhone = (phone) => {
-    if (!phone) return 'N/A';
-    return phone.replace(/^254/, '0');
+    return formatContactPhoneForDisplay(phone) || 'N/A';
   };
 
   const formatDate = (dateStr) => {

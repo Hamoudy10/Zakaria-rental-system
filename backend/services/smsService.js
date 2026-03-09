@@ -7,6 +7,7 @@
 
 const axios = require("axios");
 const pool = require("../config/database");
+const { normalizeKenyanPhone } = require("../utils/phoneUtils");
 
 class SMSService {
   constructor() {
@@ -39,36 +40,12 @@ class SMSService {
       throw new Error("Phone number is required");
     }
 
-    // Remove all non-digit characters
-    let cleaned = phone.toString().replace(/\D/g, "");
-
-    console.log("📞 Formatting phone:", { original: phone, cleaned });
-
-    // Handle different Kenyan phone formats
-    if (cleaned.startsWith("0") && cleaned.length === 10) {
-      // 07xxxxxxxx or 01xxxxxxxx -> 2547xxxxxxxx or 2541xxxxxxxx
-      const formatted = "254" + cleaned.substring(1);
-      console.log("📞 Converted 0xx format:", formatted);
-      return formatted;
+    const formatted = normalizeKenyanPhone(phone);
+    if (!formatted) {
+      throw new Error("SMS only supports valid Kenyan phone numbers");
     }
 
-    if (cleaned.startsWith("254") && cleaned.length === 12) {
-      // Already in correct format
-      return cleaned;
-    }
-
-    if (cleaned.startsWith("7") && cleaned.length === 9) {
-      // 7xxxxxxxx -> 2547xxxxxxxx
-      return "254" + cleaned;
-    }
-
-    if (cleaned.startsWith("1") && cleaned.length === 9) {
-      // 1xxxxxxxx -> 2541xxxxxxxx (new Safaricom)
-      return "254" + cleaned;
-    }
-
-    console.warn("⚠️ Non-standard phone format:", cleaned);
-    return cleaned;
+    return formatted;
   }
 
   /**
