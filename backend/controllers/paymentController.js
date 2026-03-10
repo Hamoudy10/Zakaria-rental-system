@@ -2051,14 +2051,23 @@ const processPaybillPayment = async (req, res) => {
     const formattedPaymentMonth = formatPaymentMonth(payment_month);
 
     // Track rent allocation
-    const trackingResult = await trackRentPayment(
-      unit.tenant_id,
-      unit.id,
-      amount,
-      paymentDate,
-      formattedPaymentMonth.slice(0, 7),
-      client,
-    );
+    let trackingResult;
+    try {
+      trackingResult = await trackRentPayment(
+        unit.tenant_id,
+        unit.id,
+        amount,
+        paymentDate,
+        formattedPaymentMonth.slice(0, 7),
+        client,
+      );
+    } catch (trackError) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: trackError?.message || "Failed to allocate payment.",
+      });
+    }
 
     let paymentResult;
     if (existingUnmatchedPayment) {
