@@ -11,9 +11,6 @@ const API_BASE_URL = String(resolvedApiOrigin).endsWith("/api")
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
   timeout: 120000, // Increased timeout for M-Pesa requests
 });
 
