@@ -5,7 +5,43 @@
 const express = require("express");
 const router = express.Router();
 const paymentController = require("../controllers/paymentController");
-const { protect, adminOnly } = require("../middleware/authMiddleware");
+const {
+  protect,
+  adminOnly,
+  requireAgent,
+  requireRole,
+} = require("../middleware/authMiddleware");
+
+const requireNonProduction = (req, res, next) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).json({ success: false, message: "Not found" });
+  }
+  next();
+};
+
+const allowTenantSelf = (req, res, next) => {
+  if (req.user?.role !== "tenant") return next();
+  const tenantId = req.params?.tenantId;
+  if (!tenantId || tenantId !== req.user.id) {
+    return res.status(403).json({
+      success: false,
+      message: "Access denied to this tenant record",
+    });
+  }
+  next();
+};
+
+const allowAgentSelf = (req, res, next) => {
+  if (req.user?.role !== "agent") return next();
+  const agentId = req.params?.agentId;
+  if (!agentId || agentId !== req.user.id) {
+    return res.status(403).json({
+      success: false,
+      message: "Access denied to this agent record",
+    });
+  }
+  next();
+};
 
 const normalizePaymentMonthInput = (value) => {
   if (value === undefined) return undefined;
@@ -147,7 +183,12 @@ router.post("/c2b/callback", paymentController.handleMpesaCallback);
 
 // ==================== DEBUG CALLBACK ENDPOINT ====================
 // Temporary route to debug column length issues
-router.post("/c2b/callback-debug", async (req, res) => {
+router.post(
+  "/c2b/callback-debug",
+  protect,
+  adminOnly,
+  requireNonProduction,
+  async (req, res) => {
   const pool = require("../config/database");
 
   console.log("═══════════════════════════════════════");
@@ -228,12 +269,18 @@ router.post("/c2b/callback-debug", async (req, res) => {
       error: error.message,
     });
   }
-});
+  },
+);
 
 // ==================== TENANT PAYMENT STATUS (BEFORE /:id) ====================
 // ⚠️ CRITICAL: Must come before ANY parameterized routes like /:id
 
-router.get("/tenant-status", protect, paymentController.getTenantPaymentStatus);
+router.get(
+  "/tenant-status",
+  protect,
+  requireAgent,
+  paymentController.getTenantPaymentStatus,
+);
 
 // ==================== M-PESA CONFIG & TEST ROUTES ====================
 
@@ -257,6 +304,7 @@ router.post(
 router.get(
   "/mpesa/status/:checkoutRequestId",
   protect,
+  requireRole(["admin", "agent", "tenant"]),
   paymentController.checkPaymentStatus,
 );
 
@@ -312,12 +360,18 @@ router.post("/test-sms", protect, adminOnly, paymentController.testSMSService);
 // ==================== PAYBILL ROUTES ====================
 
 // Process paybill payment (admin/agent manually enters M-Pesa receipt)
-router.post("/paybill", protect, paymentController.processPaybillPayment);
+router.post(
+  "/paybill",
+  protect,
+  requireAgent,
+  paymentController.processPaybillPayment,
+);
 
 // Get payment status by unit code
 router.get(
   "/unit/:unitCode/status",
   protect,
+  requireAgent,
   paymentController.getPaymentStatusByUnitCode,
 );
 
@@ -332,12 +386,14 @@ router.post(
 );
 
 // Get all salary payments
-router.get("/salary", protect, paymentController.getSalaryPayments);
+router.get("/salary", protect, adminOnly, paymentController.getSalaryPayments);
 
 // Get salary payments for specific agent
 router.get(
   "/salary/agent/:agentId",
   protect,
+  requireRole(["admin", "agent"]),
+  allowAgentSelf,
   paymentController.getAgentSalaryPayments,
 );
 
@@ -355,6 +411,7 @@ router.post(
 router.get(
   "/reminders/overdue",
   protect,
+  requireAgent,
   paymentController.getOverdueReminders,
 );
 
@@ -370,6 +427,7 @@ router.post(
 router.get(
   "/reminders/upcoming",
   protect,
+  requireAgent,
   paymentController.getUpcomingReminders,
 );
 
@@ -388,16 +446,26 @@ router.post(
 router.get(
   "/history/:tenantId",
   protect,
+  requireRole(["admin", "agent", "tenant"]),
+  allowTenantSelf,
   paymentController.getTenantPaymentHistory,
 );
 
 // Get payments by tenant ID
-router.get("/tenant/:tenantId", protect, paymentController.getPaymentsByTenant);
+router.get(
+  "/tenant/:tenantId",
+  protect,
+  requireRole(["admin", "agent", "tenant"]),
+  allowTenantSelf,
+  paymentController.getPaymentsByTenant,
+);
 
 // Get payment summary for tenant + unit
 router.get(
   "/summary/:tenantId/:unitId",
   protect,
+  requireRole(["admin", "agent", "tenant"]),
+  allowTenantSelf,
   paymentController.getPaymentSummary,
 );
 
@@ -405,6 +473,8 @@ router.get(
 router.get(
   "/details/:tenantId/:unitId",
   protect,
+  requireRole(["admin", "agent", "tenant"]),
+  allowTenantSelf,
   paymentController.getPaymentHistory,
 );
 
@@ -412,23 +482,32 @@ router.get(
 router.get(
   "/future/:tenantId/:unitId",
   protect,
+  requireRole(["admin", "agent", "tenant"]),
+  allowTenantSelf,
   paymentController.getFuturePaymentsStatus,
 );
 
 // ==================== MANUAL PAYMENT RECORDING ====================
 
 // Record manual payment (admin/agent enters cash/bank payment)
-router.post("/manual", protect, paymentController.recordManualPayment);
+router.post("/manual", protect, requireAgent, paymentController.recordManualPayment);
 
 // ==================== DEPOSIT PAYMENT ROUTES ====================
 
 // Record manual tenant deposit payment
-router.post("/deposits/record", protect, paymentController.recordDepositPayment);
+router.post(
+  "/deposits/record",
+  protect,
+  requireAgent,
+  paymentController.recordDepositPayment,
+);
 
 // Get tenant deposit summary
 router.get(
   "/deposits/summary/:tenantId",
   protect,
+  requireRole(["admin", "agent", "tenant"]),
+  allowTenantSelf,
   paymentController.getTenantDepositSummary,
 );
 
@@ -436,19 +515,21 @@ router.get(
 router.get(
   "/deposits/history/:tenantId",
   protect,
+  requireRole(["admin", "agent", "tenant"]),
+  allowTenantSelf,
   paymentController.getTenantDepositTransactions,
 );
 
 // ==================== CORE PAYMENT CRUD ====================
 
 // Get all payments with filters, pagination, sorting
-router.get("/", protect, paymentController.getAllPayments);
+router.get("/", protect, requireAgent, paymentController.getAllPayments);
 
 // ==================== GENERIC ID ROUTES (MUST BE LAST) ====================
 // ⚠️ These use :id parameter and will catch ANYTHING not matched above
 
 // Get payment by ID
-router.get("/:id", protect, paymentController.getPaymentById);
+router.get("/:id", protect, requireAgent, paymentController.getPaymentById);
 
 // Update payment (admin/agent)
 router.put("/:id", protect, async (req, res) => {

@@ -1,12 +1,14 @@
 // server.js
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 require('dotenv').config();
 const http = require('http');
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const pool = require('./config/database');
 const activityLogMiddleware = require('./middleware/activityLogMiddleware');
+const { createRateLimiter } = require('./middleware/rateLimit');
 const { initializeDefaultSettings } = require('./controllers/adminSettingsController');
 const { initializeMessageTemplateSystem } = require('./controllers/messageTemplateController');
 const adminRoutes = require('./routes/adminRoutes');
@@ -15,6 +17,23 @@ const expenseRoutes = require('./routes/expenses');
 const app = express();
 
 // ==================== MIDDLEWARE ====================
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": ["'self'"],
+        "frame-ancestors": ["'none'"],
+      },
+    },
+    frameguard: { action: "deny" },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    referrerPolicy: { policy: "strict-origin" },
+  }),
+);
 app.use(
   cors({
     origin: [
@@ -32,6 +51,16 @@ app.use(
 // Body parsers MUST come BEFORE routes
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+const apiLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 600,
+  message: "Too many requests. Please slow down.",
+  skip: (req) =>
+    req.path.startsWith("/payments/c2b") || req.path.startsWith("/whatsapp"),
+});
+app.use('/api', apiLimiter);
+
 app.use(activityLogMiddleware);
 // ==================== FILE UPLOAD CONFIGURATION ====================
 const path = require('path');

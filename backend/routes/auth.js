@@ -6,9 +6,12 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../config/database');
 const authMiddleware = require('../middleware/authMiddleware').authMiddleware;
+const { createRateLimiter, getClientIp } = require('../middleware/rateLimit');
 const { uploadProfileImage, deleteCloudinaryImage } = require('../middleware/uploadMiddleware');
 const { sendPasswordResetEmail } = require('../services/emailService');
 const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const ADMIN_JWT_EXPIRES_IN = process.env.ADMIN_JWT_EXPIRES_IN || '8h';
 const RESET_TOKEN_EXPIRY_MINUTES = Number(process.env.RESET_TOKEN_EXPIRY_MINUTES || 60);
 const FRONTEND_URL =
   process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
@@ -20,8 +23,8 @@ if (!JWT_SECRET) {
 console.log('✅ AUTH ROUTES LOADED');
 
 const validatePasswordStrength = (password) => {
-  if (password.length < 6) {
-    return 'New password must be at least 6 characters long';
+  if (password.length < 12) {
+    return 'New password must be at least 12 characters long';
   }
   if (!/[A-Z]/.test(password)) {
     return 'New password must contain at least one uppercase letter';
@@ -37,6 +40,58 @@ const validatePasswordStrength = (password) => {
   }
   return null;
 };
+
+const getJwtExpiryForRole = (role) =>
+  role === 'admin' ? ADMIN_JWT_EXPIRES_IN : JWT_EXPIRES_IN;
+
+// Simple in-memory login lockout (per email + IP)
+const loginAttempts = new Map();
+const MAX_LOGIN_ATTEMPTS = Number(process.env.MAX_LOGIN_ATTEMPTS || 5);
+const LOGIN_ATTEMPT_WINDOW_MS = Number(
+  process.env.LOGIN_ATTEMPT_WINDOW_MS || 10 * 60 * 1000,
+);
+const LOGIN_LOCKOUT_MINUTES = Number(process.env.LOGIN_LOCKOUT_MINUTES || 15);
+
+const getLoginKey = (email, ip) =>
+  `${String(email || '').toLowerCase()}|${ip || 'unknown'}`;
+
+const registerFailedLogin = (key) => {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+
+  if (!entry || now - entry.firstAttemptAt > LOGIN_ATTEMPT_WINDOW_MS) {
+    const next = { count: 1, firstAttemptAt: now, lockUntil: null };
+    loginAttempts.set(key, next);
+    return next;
+  }
+
+  const nextCount = entry.count + 1;
+  const next = { ...entry, count: nextCount };
+
+  if (nextCount >= MAX_LOGIN_ATTEMPTS) {
+    next.lockUntil = now + LOGIN_LOCKOUT_MINUTES * 60 * 1000;
+  }
+
+  loginAttempts.set(key, next);
+  return next;
+};
+
+const clearLoginAttempts = (key) => loginAttempts.delete(key);
+
+const loginRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) =>
+    `${getClientIp(req)}:${String(req.body?.email || '').toLowerCase()}`,
+  message: 'Too many login attempts. Please try again later.',
+});
+
+const authRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => getClientIp(req),
+  message: 'Too many requests. Please try again later.',
+});
 
 // Token verification endpoint
 router.get('/verify-token', authMiddleware, (req, res) => {
@@ -71,8 +126,16 @@ const register = async (req, res) => {
       });
     }
 
+    const passwordError = validatePasswordStrength(password);
+    if (passwordError) {
+      return res.status(400).json({
+        success: false,
+        message: passwordError
+      });
+    }
+
     // Hash password
-    const saltRounds = 10;
+    const saltRounds = 12;
     const password_hash = await bcrypt.hash(password, saltRounds);
     
     const query = `
@@ -94,7 +157,7 @@ const register = async (req, res) => {
         role: user.role 
       },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: getJwtExpiryForRole(user.role) }
     );
     
     res.status(201).json({
@@ -142,6 +205,19 @@ const login = async (req, res) => {
       });
     }
     
+    const ip = getClientIp(req);
+    const loginKey = getLoginKey(email, ip);
+    const now = Date.now();
+    const existingAttempt = loginAttempts.get(loginKey);
+    if (existingAttempt?.lockUntil && existingAttempt.lockUntil > now) {
+      const remainingMs = existingAttempt.lockUntil - now;
+      const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60000));
+      return res.status(429).json({
+        success: false,
+        message: `Too many failed attempts. Try again in ${remainingMinutes} minute(s).`
+      });
+    }
+
     const query = `
       SELECT id, national_id, first_name, last_name, email, phone_number, password_hash, role, profile_image, is_active, created_at
       FROM users 
@@ -151,6 +227,13 @@ const login = async (req, res) => {
     const result = await db.query(query, [email]);
     
     if (result.rows.length === 0) {
+      const attempt = registerFailedLogin(loginKey);
+      if (attempt.lockUntil) {
+        return res.status(429).json({
+          success: false,
+          message: `Too many failed attempts. Try again in ${LOGIN_LOCKOUT_MINUTES} minute(s).`
+        });
+      }
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
@@ -162,11 +245,20 @@ const login = async (req, res) => {
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     
     if (!isPasswordValid) {
+      const attempt = registerFailedLogin(loginKey);
+      if (attempt.lockUntil) {
+        return res.status(429).json({
+          success: false,
+          message: `Too many failed attempts. Try again in ${LOGIN_LOCKOUT_MINUTES} minute(s).`
+        });
+      }
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
+
+    clearLoginAttempts(loginKey);
     
     const token = jwt.sign(
       { 
@@ -175,7 +267,7 @@ const login = async (req, res) => {
         role: user.role 
       },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: getJwtExpiryForRole(user.role) }
     );
     
     console.log(`✅ Login successful for user: ${user.email} (${user.role})`);
@@ -634,6 +726,7 @@ const resetPassword = async (req, res) => {
   }
 };
 
+if (process.env.NODE_ENV !== 'production') {
 // Debug login endpoint (for testing only)
 router.post('/debug-login', async (req, res) => {
   try {
@@ -696,12 +789,13 @@ router.post('/debug-login', async (req, res) => {
     });
   }
 });
+}
 
 // Set up routes
-router.post('/register', register);
-router.post('/login', login);
-router.post('/forgot-password', forgotPassword);
-router.post('/reset-password', resetPassword);
+router.post('/register', authRateLimiter, register);
+router.post('/login', loginRateLimiter, login);
+router.post('/forgot-password', authRateLimiter, forgotPassword);
+router.post('/reset-password', authRateLimiter, resetPassword);
 router.get('/profile', authMiddleware, getProfile);
 
 // Profile update with optional image upload
