@@ -3169,7 +3169,15 @@ const checkPaymentStatus = async (req, res) => {
         .json({ success: false, message: "Payment not found" });
     }
 
-    res.json({ success: true, data: { payment: result.rows[0] } });
+    const payment = result.rows[0];
+    if (req.user?.role === "tenant" && payment.tenant_id !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied to this payment",
+      });
+    }
+
+    res.json({ success: true, data: { payment } });
   } catch (error) {
     console.error("Error checking payment status:", error);
     res.status(500).json({
