@@ -1046,6 +1046,84 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
   }
 };
 
+/**
+ * Send SMS + WhatsApp notifications for manual payments (cash, bank, etc.)
+ */
+const sendManualPaymentSMSNotifications = async (
+  payment,
+  trackingResult,
+  unitInfo,
+  carryForwardPayments = [],
+  options = {},
+) => {
+  try {
+    if (!unitInfo) return;
+
+    const tenantName = `${unitInfo.first_name || ""} ${unitInfo.last_name || ""}`.trim();
+    const unitCode = unitInfo.unit_code || "N/A";
+    const month = trackingResult.targetMonth;
+    const balance =
+      trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
+
+    const totalAmount = Number.isFinite(options.amount)
+      ? options.amount
+      : Number(payment.amount) || 0;
+
+    const normalizedTenantPhone = normalizeKenyanPhone(unitInfo.tenant_phone);
+    if (normalizedTenantPhone) {
+      await MessagingService.sendPaymentConfirmation(
+        normalizedTenantPhone,
+        tenantName || "Tenant",
+        totalAmount,
+        unitCode,
+        balance,
+        month,
+      );
+
+      if (
+        trackingResult.carryForwardAmount > 0 &&
+        carryForwardPayments.length > 0
+      ) {
+        const coveredMonths = formatCoveredMonths(carryForwardPayments);
+        await MessagingService.sendAdvancePaymentNotification(
+          normalizedTenantPhone,
+          tenantName || "Tenant",
+          trackingResult.carryForwardAmount,
+          unitCode,
+          coveredMonths.length,
+          coveredMonths.join(", "),
+        );
+      }
+    } else if (unitInfo.tenant_phone) {
+      console.warn(
+        `Skipping tenant payment SMS: invalid phone "${unitInfo.tenant_phone}"`,
+      );
+    }
+
+    // SMS only to all active admins.
+    const adminPhones = await getActiveAdminPhones();
+    for (const adminPhone of adminPhones) {
+      try {
+        await SMSService.sendAdminAlert(
+          adminPhone,
+          tenantName || "Tenant",
+          totalAmount,
+          unitCode,
+          balance,
+          month,
+        );
+      } catch (adminAlertError) {
+        console.error(
+          `Failed admin manual payment alert for ${adminPhone}:`,
+          adminAlertError.message,
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error sending manual payment notifications:", error);
+  }
+};
+
 // ==================== C2B M-PESA HANDLERS ====================
 
 /**
@@ -2718,6 +2796,13 @@ const recordManualPayment = async (req, res) => {
       trackingResult,
       false,
       carryForwardPayments,
+    );
+    await sendManualPaymentSMSNotifications(
+      paymentRecord,
+      trackingResult,
+      unitInfo.rows[0],
+      carryForwardPayments,
+      { amount: Number.parseFloat(amount) },
     );
 
     res.status(201).json({
