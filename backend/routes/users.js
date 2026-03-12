@@ -232,6 +232,30 @@ router.put('/:id', requireAdmin, async (req, res) => {
       });
     }
 
+    const normalizedNationalId =
+      national_id !== undefined ? String(national_id || '').trim() : undefined;
+
+    if (normalizedNationalId !== undefined) {
+      if (!normalizedNationalId) {
+        return res.status(400).json({
+          success: false,
+          error: 'National ID cannot be empty'
+        });
+      }
+
+      const duplicateNationalId = await db.query(
+        'SELECT id FROM users WHERE national_id = $1 AND id <> $2',
+        [normalizedNationalId, id]
+      );
+
+      if (duplicateNationalId.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: 'National ID already exists'
+        });
+      }
+    }
+
     const query = `
       UPDATE users
       SET
@@ -247,7 +271,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       RETURNING id, national_id, first_name, last_name, email, phone_number, role, is_active, updated_at
     `;
     const values = [
-      national_id,
+      normalizedNationalId,
       first_name,
       last_name,
       email,
@@ -268,10 +292,17 @@ router.put('/:id', requireAdmin, async (req, res) => {
     console.error('Update user error:', error);
     
     // Handle duplicate email
-    if (error.code === '23505' && error.constraint.includes('email')) {
+    if (error.code === '23505' && error.constraint?.includes('email')) {
       return res.status(400).json({
         success: false,
         error: 'Email already exists'
+      });
+    }
+
+    if (error.code === '23505' && error.constraint?.includes('national_id')) {
+      return res.status(400).json({
+        success: false,
+        error: 'National ID already exists'
       });
     }
     

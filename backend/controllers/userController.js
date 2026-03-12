@@ -212,6 +212,30 @@ const userController = {
     try {
       const userId = req.params.id;
       const { national_id, first_name, last_name, email, phone_number, role, is_active } = req.body;
+
+      const normalizedNationalId =
+        national_id !== undefined ? String(national_id || '').trim() : undefined;
+
+      if (normalizedNationalId !== undefined && !normalizedNationalId) {
+        return res.status(400).json({
+          success: false,
+          message: 'National ID cannot be empty'
+        });
+      }
+
+      if (normalizedNationalId !== undefined) {
+        const duplicateNationalId = await db.query(
+          'SELECT id FROM users WHERE national_id = $1 AND id <> $2',
+          [normalizedNationalId, userId]
+        );
+        if (duplicateNationalId.rows.length > 0) {
+          return res.status(409).json({
+            success: false,
+            message: 'National ID already exists'
+          });
+        }
+      }
+
       const query = `
         UPDATE users
         SET national_id = COALESCE($1, national_id),
@@ -225,7 +249,7 @@ const userController = {
         WHERE id = $8
         RETURNING id, national_id, first_name, last_name, email, phone_number, role, is_active, created_at
       `;
-      const values = [national_id, first_name, last_name, email, phone_number, role, is_active, userId];
+      const values = [normalizedNationalId, first_name, last_name, email, phone_number, role, is_active, userId];
       const result = await db.query(query, values);
       
       if (result.rows.length === 0) {
@@ -242,6 +266,12 @@ const userController = {
       });
     } catch (error) {
       console.error('Error updating user:', error);
+      if (error.code === '23505' && error.constraint?.includes('national_id')) {
+        return res.status(409).json({
+          success: false,
+          message: 'National ID already exists'
+        });
+      }
       res.status(500).json({
         success: false,
         message: 'Failed to update user'
