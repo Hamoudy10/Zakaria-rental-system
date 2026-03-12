@@ -211,19 +211,22 @@ const userController = {
   updateUser: async (req, res) => {
     try {
       const userId = req.params.id;
-      const { first_name, last_name, email, phone_number, role, is_active } = req.body;
-      
+      const { national_id, first_name, last_name, email, phone_number, role, is_active } = req.body;
       const query = `
-        UPDATE users 
-        SET first_name = $1, last_name = $2, email = $3, phone_number = $4, 
-            role = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $7
+        UPDATE users
+        SET national_id = COALESCE($1, national_id),
+            first_name = COALESCE($2, first_name),
+            last_name = COALESCE($3, last_name),
+            email = COALESCE($4, email),
+            phone_number = COALESCE($5, phone_number),
+            role = COALESCE($6, role),
+            is_active = COALESCE($7, is_active),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $8
         RETURNING id, national_id, first_name, last_name, email, phone_number, role, is_active, created_at
       `;
-      
-      const result = await db.query(query, [
-        first_name, last_name, email, phone_number, role, is_active, userId
-      ]);
+      const values = [national_id, first_name, last_name, email, phone_number, role, is_active, userId];
+      const result = await db.query(query, values);
       
       if (result.rows.length === 0) {
         return res.status(404).json({

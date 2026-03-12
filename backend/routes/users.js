@@ -211,13 +211,14 @@ router.post('/', requireAdmin, async (req, res) => {
 router.put('/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      first_name, 
-      last_name, 
-      email, 
-      phone_number, 
-      role, 
-      is_active 
+    const {
+      national_id,
+      first_name,
+      last_name,
+      email,
+      phone_number,
+      role,
+      is_active
     } = req.body;
 
     // Check if user exists
@@ -232,26 +233,27 @@ router.put('/:id', requireAdmin, async (req, res) => {
     }
 
     const query = `
-      UPDATE users 
-      SET 
-        first_name = COALESCE($1, first_name),
-        last_name = COALESCE($2, last_name),
-        email = COALESCE($3, email),
-        phone_number = COALESCE($4, phone_number),
-        role = COALESCE($5, role),
-        is_active = COALESCE($6, is_active),
+      UPDATE users
+      SET
+        national_id = COALESCE($1, national_id),
+        first_name = COALESCE($2, first_name),
+        last_name = COALESCE($3, last_name),
+        email = COALESCE($4, email),
+        phone_number = COALESCE($5, phone_number),
+        role = COALESCE($6, role),
+        is_active = COALESCE($7, is_active),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $7
+      WHERE id = $8
       RETURNING id, national_id, first_name, last_name, email, phone_number, role, is_active, updated_at
     `;
-    
     const values = [
-      first_name, 
-      last_name, 
-      email, 
-      phone_number, 
-      role, 
-      is_active, 
+      national_id,
+      first_name,
+      last_name,
+      email,
+      phone_number,
+      role,
+      is_active,
       id
     ];
 
