@@ -68,9 +68,9 @@ const PropertyCard = ({ property, onEdit, onDelete, onViewDetails, onOpenGallery
   }, [images.length]);
 
   // Metrics Calculation
-  const expectedRent = property.stats?.expected_rent || property.total_units * 15000;
-  const collectedRent = property.stats?.collected_this_month || 0;
-  const arrearsCount = property.stats?.arrears_count || 0;
+  const expectedRent = property.stats?.expected_rent ?? property.total_units * 15000;
+  const collectedRent = property.stats?.collected_this_month ?? 0;
+  const arrearsCount = property.stats?.arrears_count ?? 0;
   const imageCount = images.length;
 
   useEffect(() => {

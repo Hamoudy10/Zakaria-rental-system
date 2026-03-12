@@ -42,13 +42,44 @@ router.get('/', protect, async (req, res) => {
         SELECT DISTINCT p.*, 
           COUNT(pu.id) as unit_count,
           COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-          COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+          COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count,
+          jsonb_build_object(
+            'expected_rent', COALESCE(alloc_stats.expected_rent, 0),
+            'collected_this_month', COALESCE(payment_stats.collected_this_month, 0),
+            'arrears_count', COALESCE(alloc_stats.arrears_count, 0),
+            'total_arrears', COALESCE(alloc_stats.total_arrears, 0)
+          ) as stats
         FROM properties p
         LEFT JOIN property_units pu ON p.id = pu.property_id
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(SUM(COALESCE(ta.monthly_rent, pu2.rent_amount, 0)), 0) AS expected_rent,
+            COUNT(*) FILTER (WHERE COALESCE(ta.arrears_balance, 0) > 0) AS arrears_count,
+            COALESCE(SUM(COALESCE(ta.arrears_balance, 0)), 0) AS total_arrears
+          FROM tenant_allocations ta
+          JOIN property_units pu2 ON pu2.id = ta.unit_id
+          WHERE pu2.property_id = p.id
+            AND ta.is_active = true
+        ) alloc_stats ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(SUM(COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0)), 0) AS collected_this_month
+          FROM rent_payments rp
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
+            FROM rent_payments child
+            WHERE child.original_payment_id = rp.id
+          ) cf ON true
+          LEFT JOIN property_units pu3 ON pu3.id = rp.unit_id
+          WHERE (pu3.property_id = p.id OR rp.property_id = p.id)
+            AND rp.status = 'completed'
+            AND COALESCE(rp.original_payment_id, rp.id) = rp.id
+            AND DATE_TRUNC('month', COALESCE(rp.payment_date, rp.created_at)) = DATE_TRUNC('month', CURRENT_DATE)
+        ) payment_stats ON TRUE
         INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
         WHERE apa.agent_id = $1 
         AND apa.is_active = true
-        GROUP BY p.id
+        GROUP BY p.id, alloc_stats.expected_rent, alloc_stats.arrears_count, alloc_stats.total_arrears, payment_stats.collected_this_month
         ORDER BY p.created_at DESC
       `, [req.user.id]);
       
@@ -66,10 +97,41 @@ router.get('/', protect, async (req, res) => {
       SELECT p.*, 
         COUNT(pu.id) as unit_count,
         COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
-        COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+        COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count,
+        jsonb_build_object(
+          'expected_rent', COALESCE(alloc_stats.expected_rent, 0),
+          'collected_this_month', COALESCE(payment_stats.collected_this_month, 0),
+          'arrears_count', COALESCE(alloc_stats.arrears_count, 0),
+          'total_arrears', COALESCE(alloc_stats.total_arrears, 0)
+        ) as stats
       FROM properties p
       LEFT JOIN property_units pu ON p.id = pu.property_id
-      GROUP BY p.id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(COALESCE(ta.monthly_rent, pu2.rent_amount, 0)), 0) AS expected_rent,
+          COUNT(*) FILTER (WHERE COALESCE(ta.arrears_balance, 0) > 0) AS arrears_count,
+          COALESCE(SUM(COALESCE(ta.arrears_balance, 0)), 0) AS total_arrears
+        FROM tenant_allocations ta
+        JOIN property_units pu2 ON pu2.id = ta.unit_id
+        WHERE pu2.property_id = p.id
+          AND ta.is_active = true
+      ) alloc_stats ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0)), 0) AS collected_this_month
+        FROM rent_payments rp
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
+          FROM rent_payments child
+          WHERE child.original_payment_id = rp.id
+        ) cf ON true
+        LEFT JOIN property_units pu3 ON pu3.id = rp.unit_id
+        WHERE (pu3.property_id = p.id OR rp.property_id = p.id)
+          AND rp.status = 'completed'
+          AND COALESCE(rp.original_payment_id, rp.id) = rp.id
+          AND DATE_TRUNC('month', COALESCE(rp.payment_date, rp.created_at)) = DATE_TRUNC('month', CURRENT_DATE)
+      ) payment_stats ON TRUE
+      GROUP BY p.id, alloc_stats.expected_rent, alloc_stats.arrears_count, alloc_stats.total_arrears, payment_stats.collected_this_month
       ORDER BY p.created_at DESC
     `);
     
@@ -286,6 +348,39 @@ router.get('/:id', protect, async (req, res) => {
       ORDER BY unit_number
     `, [id]);
 
+    const statsResult = await pool.query(
+      `
+        SELECT
+          COALESCE(SUM(COALESCE(ta.monthly_rent, pu.rent_amount, 0)), 0) AS expected_rent,
+          COUNT(*) FILTER (WHERE COALESCE(ta.arrears_balance, 0) > 0) AS arrears_count,
+          COALESCE(SUM(COALESCE(ta.arrears_balance, 0)), 0) AS total_arrears
+        FROM tenant_allocations ta
+        JOIN property_units pu ON pu.id = ta.unit_id
+        WHERE pu.property_id = $1
+          AND ta.is_active = true
+      `,
+      [id],
+    );
+
+    const collectedResult = await pool.query(
+      `
+        SELECT
+          COALESCE(SUM(COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0)), 0) AS collected_this_month
+        FROM rent_payments rp
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
+          FROM rent_payments child
+          WHERE child.original_payment_id = rp.id
+        ) cf ON true
+        LEFT JOIN property_units pu ON pu.id = rp.unit_id
+        WHERE (pu.property_id = $1 OR rp.property_id = $1)
+          AND rp.status = 'completed'
+          AND COALESCE(rp.original_payment_id, rp.id) = rp.id
+          AND DATE_TRUNC('month', COALESCE(rp.payment_date, rp.created_at)) = DATE_TRUNC('month', CURRENT_DATE)
+      `,
+      [id],
+    );
+
     // Get ALL images for this property (Option A - includes both property and unit images)
     let imagesResult = { rows: [] };
     try {
@@ -302,6 +397,14 @@ router.get('/:id', protect, async (req, res) => {
       success: true, 
       data: {
         ...propertyResult.rows[0],
+        stats: {
+          expected_rent: parseFloat(statsResult.rows[0]?.expected_rent || 0),
+          arrears_count: parseInt(statsResult.rows[0]?.arrears_count || 0, 10),
+          total_arrears: parseFloat(statsResult.rows[0]?.total_arrears || 0),
+          collected_this_month: parseFloat(
+            collectedResult.rows[0]?.collected_this_month || 0,
+          ),
+        },
         units: unitsResult.rows,
         images: imagesResult.rows  // Contains ALL images (property + unit), frontend segregates by unit_id
       }

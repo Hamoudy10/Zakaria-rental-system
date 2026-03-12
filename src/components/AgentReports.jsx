@@ -254,9 +254,9 @@ const AgentReports = () => {
     }
 
     const revenueByMonth = payments.reduce((acc, payment) => {
+      const monthSource = payment.payment_month || payment.created_at;
       const month =
-        payment.payment_month ||
-        payment.created_at?.substring(0, 7) ||
+        (monthSource ? String(monthSource).slice(0, 7) : null) ||
         new Date().toISOString().substring(0, 7);
 
       if (!acc[month]) {
@@ -378,6 +378,12 @@ const AgentReports = () => {
 
   const applyStrictFilters = (rows, reportType) => {
     let filtered = Array.isArray(rows) ? [...rows] : [];
+
+    if (reportType === "revenue") {
+      return filtered.sort((a, b) =>
+        String(a.month || "").localeCompare(String(b.month || "")),
+      );
+    }
 
     const searchText = String(filters.search || "").trim().toLowerCase();
     const startDate = parseFilterDate(filters.startDate);

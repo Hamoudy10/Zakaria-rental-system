@@ -1838,7 +1838,10 @@ const getAllPayments = async (req, res) => {
         t.first_name ILIKE $${paramIndex} OR 
         t.last_name ILIKE $${paramIndex} OR 
         rp.mpesa_receipt_number ILIKE $${paramIndex} OR
-        CONCAT(t.first_name, ' ', t.last_name) ILIKE $${paramIndex}
+        CONCAT(t.first_name, ' ', t.last_name) ILIKE $${paramIndex} OR
+        p.name ILIKE $${paramIndex} OR
+        pu.unit_code ILIKE $${paramIndex} OR
+        rp.phone_number ILIKE $${paramIndex}
       )`);
       queryParams.push(`%${search}%`);
       paramIndex++;
