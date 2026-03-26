@@ -1754,8 +1754,20 @@ const getAllPayments = async (req, res) => {
     let baseQuery = `
       SELECT 
         rp.id,
-        COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
-        rp.amount as allocated_amount,
+        (
+          GREATEST(
+            COALESCE(rp.amount, 0),
+            COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+          ) + COALESCE(cf.carry_forward_amount, 0)
+        ) as amount,
+        GREATEST(
+          COALESCE(rp.amount, 0),
+          COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+        ) as allocated_amount,
         COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
         rp.payment_month, rp.payment_date, rp.status, rp.payment_method, rp.notes,
         rp.mpesa_receipt_number, rp.mpesa_transaction_id, rp.phone_number,
@@ -1926,8 +1938,20 @@ const getTenantPaymentHistory = async (req, res) => {
     const paymentsQuery = await pool.query(
       `SELECT
          rp.*,
-         COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
-         rp.amount as allocated_amount,
+         (
+           GREATEST(
+             COALESCE(rp.amount, 0),
+             COALESCE(rp.allocated_to_rent, 0) +
+               COALESCE(rp.allocated_to_water, 0) +
+               COALESCE(rp.allocated_to_arrears, 0)
+           ) + COALESCE(cf.carry_forward_amount, 0)
+         ) as amount,
+         GREATEST(
+           COALESCE(rp.amount, 0),
+           COALESCE(rp.allocated_to_rent, 0) +
+             COALESCE(rp.allocated_to_water, 0) +
+             COALESCE(rp.allocated_to_arrears, 0)
+         ) as allocated_amount,
          COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
          p.name as property_name,
          pu.unit_code
@@ -2974,8 +2998,20 @@ const getPaymentHistory = async (req, res) => {
     let paymentsQuery = `
       SELECT 
         rp.*,
-        COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
-        rp.amount as allocated_amount,
+        (
+          GREATEST(
+            COALESCE(rp.amount, 0),
+            COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+          ) + COALESCE(cf.carry_forward_amount, 0)
+        ) as amount,
+        GREATEST(
+          COALESCE(rp.amount, 0),
+          COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+        ) as allocated_amount,
         COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
         p.name as property_name, pu.unit_number, pu.unit_code,
         rp.is_advance_payment, rp.original_payment_id
@@ -4309,8 +4345,20 @@ const getPaymentsByTenant = async (req, res) => {
     const result = await pool.query(
       `SELECT
          rp.*,
-         COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) as amount,
-         rp.amount as allocated_amount,
+         (
+           GREATEST(
+             COALESCE(rp.amount, 0),
+             COALESCE(rp.allocated_to_rent, 0) +
+               COALESCE(rp.allocated_to_water, 0) +
+               COALESCE(rp.allocated_to_arrears, 0)
+           ) + COALESCE(cf.carry_forward_amount, 0)
+         ) as amount,
+         GREATEST(
+           COALESCE(rp.amount, 0),
+           COALESCE(rp.allocated_to_rent, 0) +
+             COALESCE(rp.allocated_to_water, 0) +
+             COALESCE(rp.allocated_to_arrears, 0)
+         ) as allocated_amount,
          COALESCE(cf.carry_forward_amount, 0) as carry_forward_amount,
          p.name as property_name,
          pu.unit_number,
