@@ -72,6 +72,7 @@ const TenantManagement = () => {
     property_name: "",
     lease_end_date: "",
     monthly_rent: "",
+    arrears_balance: "",
     security_deposit: "",
   });
   // Form state
@@ -202,6 +203,7 @@ const TenantManagement = () => {
         ? allocation.lease_end_date.toString().split("T")[0]
         : "",
       monthly_rent: allocation?.monthly_rent?.toString?.() || "",
+      arrears_balance: allocation?.arrears_balance?.toString?.() || "",
       security_deposit: allocation?.security_deposit?.toString?.() || "",
     });
     setShowAllocationEditModal(true);
@@ -215,6 +217,7 @@ const TenantManagement = () => {
       property_name: "",
       lease_end_date: "",
       monthly_rent: "",
+      arrears_balance: "",
       security_deposit: "",
     });
   };
@@ -237,6 +240,10 @@ const TenantManagement = () => {
           allocationFormData.monthly_rent === ""
             ? null
             : Number(allocationFormData.monthly_rent),
+        arrears_balance:
+          allocationFormData.arrears_balance === ""
+            ? null
+            : Number(allocationFormData.arrears_balance),
         security_deposit:
           allocationFormData.security_deposit === ""
             ? null
@@ -2048,7 +2055,7 @@ const TenantManagement = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Lease End Date
@@ -2071,6 +2078,20 @@ const TenantManagement = () => {
                     min="0"
                     step="0.01"
                     value={allocationFormData.monthly_rent}
+                    onChange={handleAllocationFormChange}
+                    className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Arrears Balance
+                  </label>
+                  <input
+                    type="number"
+                    name="arrears_balance"
+                    min="0"
+                    step="0.01"
+                    value={allocationFormData.arrears_balance}
                     onChange={handleAllocationFormChange}
                     className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />

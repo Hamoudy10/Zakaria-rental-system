@@ -550,11 +550,49 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     const {
       lease_end_date,
       monthly_rent,
+      arrears_balance,
       security_deposit,
       rent_due_day,
       grace_period_days,
       is_active
     } = req.body;
+
+    const normalizedMonthlyRent =
+      monthly_rent === undefined || monthly_rent === null || monthly_rent === ""
+        ? null
+        : Number(monthly_rent);
+    const normalizedArrearsBalance =
+      arrears_balance === undefined || arrears_balance === null || arrears_balance === ""
+        ? null
+        : Number(arrears_balance);
+    const normalizedSecurityDeposit =
+      security_deposit === undefined || security_deposit === null || security_deposit === ""
+        ? null
+        : Number(security_deposit);
+
+    if (normalizedMonthlyRent !== null && (!Number.isFinite(normalizedMonthlyRent) || normalizedMonthlyRent < 0)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'monthly_rent must be a valid non-negative number'
+      });
+    }
+
+    if (normalizedArrearsBalance !== null && (!Number.isFinite(normalizedArrearsBalance) || normalizedArrearsBalance < 0)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'arrears_balance must be a valid non-negative number'
+      });
+    }
+
+    if (normalizedSecurityDeposit !== null && (!Number.isFinite(normalizedSecurityDeposit) || normalizedSecurityDeposit < 0)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'security_deposit must be a valid non-negative number'
+      });
+    }
     
     // Check if allocation exists
     const allocationCheck = await client.query(`
@@ -674,16 +712,18 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
       `UPDATE tenant_allocations 
        SET lease_end_date = COALESCE($1, lease_end_date),
            monthly_rent = COALESCE($2, monthly_rent),
-           security_deposit = COALESCE($3, security_deposit),
-           rent_due_day = COALESCE($4, rent_due_day),
-           grace_period_days = COALESCE($5, grace_period_days),
-           is_active = COALESCE($6, is_active)
-       WHERE id = $7
+           arrears_balance = COALESCE($3, arrears_balance),
+           security_deposit = COALESCE($4, security_deposit),
+           rent_due_day = COALESCE($5, rent_due_day),
+           grace_period_days = COALESCE($6, grace_period_days),
+           is_active = COALESCE($7, is_active)
+       WHERE id = $8
        RETURNING *`,
       [
         lease_end_date,
-        monthly_rent,
-        security_deposit,
+        normalizedMonthlyRent,
+        normalizedArrearsBalance,
+        normalizedSecurityDeposit,
         rent_due_day,
         grace_period_days,
         is_active,
