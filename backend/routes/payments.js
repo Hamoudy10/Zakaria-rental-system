@@ -76,13 +76,29 @@ const rebalanceTenantUnitPayments = async ({
   }
 
   const sourcePaymentsResult = await client.query(
-    `SELECT id, amount, payment_month, payment_date, mpesa_receipt_number, phone_number
-     FROM rent_payments
-     WHERE tenant_id = $1
-       AND unit_id = $2
-       AND status = 'completed'
-       AND payment_method <> 'carry_forward'
-     ORDER BY COALESCE(payment_date, created_at, NOW()) ASC, created_at ASC, id ASC`,
+    `SELECT
+       rp.id,
+       rp.amount,
+       rp.payment_month,
+       rp.payment_date,
+       rp.mpesa_receipt_number,
+       rp.phone_number,
+       COALESCE(cf.carry_forward_amount, 0) AS carry_forward_amount,
+       COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) AS received_amount
+     FROM rent_payments rp
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
+       FROM rent_payments child
+       WHERE child.original_payment_id = rp.id
+         AND child.status = 'completed'
+         AND child.payment_method IN ('carry_forward', 'carry_forward_fix')
+     ) cf ON TRUE
+     WHERE rp.tenant_id = $1
+       AND rp.unit_id = $2
+       AND rp.status = 'completed'
+       AND rp.payment_method NOT IN ('carry_forward', 'carry_forward_fix')
+       AND COALESCE(rp.original_payment_id, rp.id) = rp.id
+     ORDER BY COALESCE(rp.payment_date, rp.created_at, NOW()) ASC, rp.created_at ASC, rp.id ASC`,
     [tenantId, unitId],
   );
 
@@ -108,7 +124,7 @@ const rebalanceTenantUnitPayments = async ({
     `DELETE FROM rent_payments
      WHERE tenant_id = $1
        AND unit_id = $2
-       AND payment_method = 'carry_forward'`,
+       AND payment_method IN ('carry_forward', 'carry_forward_fix')`,
     [tenantId, unitId],
   );
 
@@ -121,7 +137,7 @@ const rebalanceTenantUnitPayments = async ({
     const tracking = await paymentController.trackRentPayment(
       tenantId,
       unitId,
-      Number(row.amount) || 0,
+      Number(row.received_amount) || 0,
       paymentDate,
       targetMonth,
       client,
@@ -572,13 +588,14 @@ router.put("/:id", protect, async (req, res) => {
     const isEditable =
       method === "manual" ||
       method === "manual_reconciled" ||
-      method === "paybill";
+      method === "paybill" ||
+      method === "mpesa";
 
     if (!isEditable) {
       await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
-        message: "Only manual or paybill payments can be edited",
+        message: "Only manual, paybill, or M-Pesa payments can be edited",
       });
     }
 
