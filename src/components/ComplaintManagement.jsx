@@ -61,6 +61,7 @@ const ComplaintManagement = () => {
 
   const [createForm, setCreateForm] = useState({
     property_id: '',
+    tenant_selection: '',
     tenant_id: '',
     unit_id: '',
     unit_code: '',
@@ -189,36 +190,49 @@ const ComplaintManagement = () => {
     
     try {
       setLoadingTenants(true);
-      const unitsResponse = await propertyAPI.getPropertyUnits(propertyId);
+      const [unitsResponse, allocResponse] = await Promise.all([
+        propertyAPI.getPropertyUnits(propertyId),
+        allocationAPI.getAllocations({
+          is_active: true,
+          property_id: propertyId,
+          page: 1,
+          limit: 500,
+        }),
+      ]);
+
       const unitsData = unitsResponse.data?.data || unitsResponse.data || [];
       const units = Array.isArray(unitsData) ? unitsData : [];
-      const unitIds = units.map(u => u.id);
-      
-      const allocResponse = await allocationAPI.getAllocations({ is_active: true });
       const allocationsData = allocResponse.data?.data || allocResponse.data || [];
       const allocations = Array.isArray(allocationsData) ? allocationsData : [];
-      
-      const tenantsWithUnits = allocations
-        .filter(allocation => {
-          const belongsToProperty = unitIds.includes(allocation.unit_id) || 
-                                    allocation.property_id === propertyId ||
-                                    allocation.unit?.property_id === propertyId;
-          return belongsToProperty && allocation.is_active !== false;
-        })
-        .map(allocation => {
+
+      const tenantMap = new Map();
+
+      allocations.forEach((allocation) => {
+        if (allocation.is_active === false || !allocation.tenant_id || !allocation.unit_id) {
+          return;
+        }
+
           const tenantFirstName = allocation.tenant_first_name || allocation.tenant?.first_name || '';
           const tenantLastName = allocation.tenant_last_name || allocation.tenant?.last_name || '';
           const tenantFullName = allocation.tenant_full_name || `${tenantFirstName} ${tenantLastName}`.trim();
           const unitInfo = units.find(u => u.id === allocation.unit_id);
-          
-          return {
+
+          const tenantRecord = {
             tenant_id: allocation.tenant_id,
             tenant_name: tenantFullName || 'Unknown Tenant',
             unit_id: allocation.unit_id,
             unit_code: allocation.unit_code || unitInfo?.unit_code || allocation.unit?.unit_code || 'Unknown Unit'
           };
+
+          tenantMap.set(getTenantSelectionValue(tenantRecord), tenantRecord);
         });
-      
+
+      const tenantsWithUnits = Array.from(tenantMap.values()).sort((a, b) => {
+        const nameCompare = a.tenant_name.localeCompare(b.tenant_name);
+        if (nameCompare !== 0) return nameCompare;
+        return (a.unit_code || '').localeCompare(b.unit_code || '');
+      });
+
       setTenants(tenantsWithUnits);
     } catch (err) {
       console.error('Error fetching tenants:', err);
@@ -236,25 +250,32 @@ const ComplaintManagement = () => {
   useEffect(() => {
     if (createForm.property_id) {
       fetchTenantsByProperty(createForm.property_id);
-      setCreateForm(prev => ({ ...prev, tenant_id: '', unit_id: '', unit_code: '' }));
+      setCreateForm(prev => ({
+        ...prev,
+        tenant_selection: '',
+        tenant_id: '',
+        unit_id: '',
+        unit_code: ''
+      }));
     }
   }, [createForm.property_id]);
 
   useEffect(() => {
-    if (createForm.tenant_id) {
+    if (createForm.tenant_selection) {
       const selectedTenant = tenants.find(
-        (t) => getTenantSelectionValue(t) === createForm.tenant_id
+        (t) => getTenantSelectionValue(t) === createForm.tenant_selection
       );
       if (selectedTenant) {
         setCreateForm(prev => ({
           ...prev,
+          tenant_selection: getTenantSelectionValue(selectedTenant),
           tenant_id: selectedTenant.tenant_id,
           unit_id: selectedTenant.unit_id,
           unit_code: selectedTenant.unit_code
         }));
       }
     }
-  }, [createForm.tenant_id, tenants]);
+  }, [createForm.tenant_selection, tenants]);
 
   const toggleCategory = (categoryId) => {
     setCreateForm(prev => {
@@ -277,6 +298,7 @@ const ComplaintManagement = () => {
   const resetCreateForm = () => {
     setCreateForm({
       property_id: '',
+      tenant_selection: '',
       tenant_id: '',
       unit_id: '',
       unit_code: '',
@@ -975,7 +997,7 @@ const ComplaintManagement = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Tenant <span className="text-red-500">*</span></label>
-                  <select value={createForm.tenant_id && createForm.unit_id ? `${createForm.tenant_id}::${createForm.unit_id}` : createForm.tenant_id} onChange={(e) => setCreateForm(prev => ({ ...prev, tenant_id: e.target.value }))} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required disabled={!createForm.property_id || loadingTenants}>
+                  <select value={createForm.tenant_selection} onChange={(e) => setCreateForm(prev => ({ ...prev, tenant_selection: e.target.value }))} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required disabled={!createForm.property_id || loadingTenants}>
                     <option value="">{loadingTenants ? 'Loading tenants...' : 'Select a tenant'}</option>
                     {tenants.map(tenant => (<option key={`${tenant.tenant_id}-${tenant.unit_id || tenant.unit_code || 'tenant'}`} value={getTenantSelectionValue(tenant)}>{tenant.tenant_name} ({tenant.unit_code})</option>))}
                   </select>
