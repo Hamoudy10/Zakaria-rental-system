@@ -835,9 +835,10 @@ const PaymentManagement = () => {
     const isEditable =
       method === "manual" ||
       method === "manual_reconciled" ||
-      method === "paybill";
+      method === "paybill" ||
+      method === "mpesa";
     if (!isEditable) {
-      alert("Only manual or paybill payments can be edited.");
+      alert("Only manual, paybill, or M-Pesa payments can be edited.");
       return;
     }
 
@@ -1712,7 +1713,8 @@ const AllPaymentsTable = ({
                         {canEditManual &&
                           (p.payment_method === "manual" ||
                             p.payment_method === "manual_reconciled" ||
-                            p.payment_method === "paybill") && (
+                            p.payment_method === "paybill" ||
+                            p.payment_method === "mpesa") && (
                             <button
                               onClick={() => onEditManualPayment?.(p)}
                               className="bg-amber-50 text-amber-700 p-1.5 rounded-md hover:bg-amber-600 hover:text-white transition-all"
