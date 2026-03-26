@@ -145,15 +145,17 @@ const rebalanceTenantUnitPayments = async ({
 
     await client.query(
       `UPDATE rent_payments
-       SET status = 'completed',
+       SET amount = $1,
+           status = 'completed',
            is_advance_payment = false,
            original_payment_id = NULL,
-           allocated_to_rent = $1,
-           allocated_to_water = $2,
-           allocated_to_arrears = $3,
+           allocated_to_rent = $2,
+           allocated_to_water = $3,
+           allocated_to_arrears = $4,
            updated_at = NOW()
-       WHERE id = $4`,
+       WHERE id = $5`,
       [
+        tracking.allocatedAmount || 0,
         tracking.allocatedToRent || 0,
         tracking.allocatedToWater || 0,
         tracking.allocatedToArrears || 0,
