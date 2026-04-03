@@ -722,6 +722,172 @@ class CronService {
       );
       console.log("✅ Scheduled overdue rent check for 10:00 AM daily");
 
+      // ==================== M-PESA CALLBACK RECONCILIATION ====================
+      cron.schedule(
+        "*/5 * * * *",
+        async () => {
+          console.log("🔄 Running M-Pesa callback reconciliation...");
+          try {
+            const queueResult = await pool.query(
+              `SELECT
+                 i.id,
+                 i.trans_id,
+                 i.process_status,
+                 i.raw_payload,
+                 i.received_at
+               FROM mpesa_callback_inbox i
+               LEFT JOIN rent_payments rp
+                 ON rp.mpesa_receipt_number = i.trans_id
+               WHERE rp.id IS NULL
+                 AND i.process_status = ANY($1::text[])
+               ORDER BY i.received_at ASC
+               LIMIT $2`,
+              [["pending", "failed", "invalid", "pending_unmatched"], 50],
+            );
+
+            const rows = queueResult.rows || [];
+            if (rows.length === 0) {
+              console.log("✅ M-Pesa reconciliation: no pending callbacks");
+              return;
+            }
+
+            console.log(
+              `📋 M-Pesa reconciliation: ${rows.length} pending callback(s) found`,
+            );
+
+            let succeeded = 0;
+            let failed = 0;
+
+            for (const row of rows) {
+              const transId = row.trans_id;
+              const payload =
+                row.raw_payload && typeof row.raw_payload === "object"
+                  ? row.raw_payload
+                  : {};
+              if (!payload.TransID) payload.TransID = transId;
+
+              try {
+                const paymentController = require("../controllers/paymentController");
+                await paymentController.handleMpesaCallback(
+                  { body: payload },
+                  { status: () => ({ json: () => null }) },
+                );
+
+                const latest = await pool.query(
+                  `SELECT process_status
+                   FROM mpesa_callback_inbox
+                   WHERE trans_id = $1
+                   ORDER BY updated_at DESC NULLS LAST, received_at DESC
+                   LIMIT 1`,
+                  [transId],
+                );
+                const postStatus =
+                  latest.rows[0]?.process_status || "unknown";
+                if (postStatus === "processed" || postStatus === "duplicate") {
+                  succeeded += 1;
+                } else {
+                  failed += 1;
+                }
+                console.log(
+                  `✅ Reconciled ${transId}: ${postStatus}`,
+                );
+              } catch (error) {
+                failed += 1;
+                console.error(
+                  `❌ Failed to reconcile ${transId}: ${error.message}`,
+                );
+              }
+            }
+
+            console.log(
+              `✅ M-Pesa reconciliation complete: ${succeeded} succeeded, ${failed} failed`,
+            );
+          } catch (reconcileError) {
+            console.error(
+              "❌ M-Pesa reconciliation error:",
+              reconcileError.message,
+            );
+          }
+        },
+        {
+          scheduled: true,
+          timezone: "Africa/Nairobi",
+        },
+      );
+      console.log("✅ Scheduled M-Pesa callback reconciliation every 5 minutes");
+
+      // ==================== M-PESA CALLBACK HEALTH MONITOR ====================
+      cron.schedule(
+        "*/15 * * * *",
+        async () => {
+          console.log("🔍 Running M-Pesa callback health check...");
+          try {
+            const result = await pool.query(
+              `SELECT MAX(received_at) AS last_callback_at FROM mpesa_callback_inbox`,
+            );
+            const lastCallbackAt = result.rows?.[0]?.last_callback_at;
+
+            if (!lastCallbackAt) {
+              console.log("ℹ️ No callbacks recorded yet — skipping health check");
+              return;
+            }
+
+            const secondsSinceLastCallback = Math.floor(
+              (Date.now() - new Date(lastCallbackAt).getTime()) / 1000,
+            );
+            const hoursSinceLastCallback = Math.floor(secondsSinceLastCallback / 3600);
+
+            if (hoursSinceLastCallback >= 2) {
+              console.warn(
+                `⚠️ M-Pesa callback gap detected: ${hoursSinceLastCallback} hours since last callback`,
+              );
+
+              const pendingCount = await pool.query(
+                `SELECT COUNT(*) AS pending FROM mpesa_callback_inbox
+                 WHERE process_status IN ('pending', 'failed', 'invalid', 'pending_unmatched')`,
+              );
+              const pending = parseInt(pendingCount.rows?.[0]?.pending || 0);
+
+              const adminResult = await pool.query(
+                "SELECT id FROM users WHERE role = 'admin' AND is_active = true",
+              );
+
+              for (const admin of adminResult.rows) {
+                await NotificationService.createNotification({
+                  userId: admin.id,
+                  title: "⚠️ M-Pesa Callback Gap Detected",
+                  message:
+                    `No M-Pesa callbacks received in ${hoursSinceLastCallback} hours. ` +
+                    `Last callback: ${new Date(lastCallbackAt).toLocaleString("en-GB", { timeZone: "Africa/Nairobi" })}. ` +
+                    `Pending inbox entries: ${pending}. ` +
+                    `If you see missing payments, pull your M-Pesa statement and use the reconciliation tool.`,
+                  type: "system_alert",
+                  relatedEntityType: "mpesa_health",
+                });
+              }
+
+              console.log(
+                `✅ M-Pesa health alert sent to ${adminResult.rows.length} admin(s)`,
+              );
+            } else {
+              console.log(
+                `✅ M-Pesa callback health OK — last callback ${Math.floor(secondsSinceLastCallback / 60)} min ago`,
+              );
+            }
+          } catch (healthError) {
+            console.error(
+              "❌ M-Pesa callback health check error:",
+              healthError.message,
+            );
+          }
+        },
+        {
+          scheduled: true,
+          timezone: "Africa/Nairobi",
+        },
+      );
+      console.log("✅ Scheduled M-Pesa callback health monitor every 15 minutes");
+
       console.log("✅ Cron service started successfully");
     } catch (error) {
       console.error("❌ Error starting cron service:", error);
@@ -746,6 +912,8 @@ class CronService {
       leaseExpiryCheck: "Daily at 8:00 AM",
       overdueRentCheck: "Daily at 10:00 AM",
       queueProcessing: "Every 5 minutes (SMS + WhatsApp)",
+      mpesaReconciliation: "Every 5 minutes",
+      mpesaHealthMonitor: "Every 15 minutes",
       whatsappConfigured: WhatsAppService.configured,
     };
   }
