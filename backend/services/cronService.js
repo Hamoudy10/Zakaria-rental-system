@@ -742,7 +742,7 @@ class CronService {
                  AND i.process_status = ANY($1::text[])
                ORDER BY i.received_at ASC
                LIMIT $2`,
-              [["pending", "failed", "invalid", "pending_unmatched"], 50],
+              [["pending", "pending_unmatched"], 50],
             );
 
             const rows = queueResult.rows || [];

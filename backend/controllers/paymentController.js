@@ -485,7 +485,7 @@ const markMpesaCallbackInbox = async ({
       `UPDATE mpesa_callback_inbox
        SET process_status = $2,
            process_error = $3,
-           matched_payment_id = COALESCE($4, matched_payment_id),
+           matched_payment_id = COALESCE($4::uuid, matched_payment_id),
            processed_at = CASE WHEN $2 = 'processed' THEN NOW() ELSE processed_at END,
            updated_at = NOW()
        WHERE trans_id = $1`,
