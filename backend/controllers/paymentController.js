@@ -4448,6 +4448,18 @@ const getTenantPaymentStatus = async (req, res) => {
           AND rp.status = 'completed'
         ), 0) as water_paid,
         COALESCE((
+          SELECT SUM(wb.amount) FROM water_bills wb
+          WHERE wb.tenant_id = t.id
+          AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
+          AND DATE_TRUNC('month', wb.bill_month) < DATE_TRUNC('month', $1::date)
+        ), 0) - COALESCE((
+          SELECT SUM(rp.allocated_to_water) FROM rent_payments rp
+          WHERE rp.tenant_id = t.id
+          AND rp.unit_id = pu.id
+          AND rp.status = 'completed'
+          AND DATE_TRUNC('month', rp.payment_month) < DATE_TRUNC('month', $1::date)
+        ), 0) as water_arrears,
+        COALESCE((
           SELECT SUM(COALESCE(rp.allocated_to_arrears, 0))
           FROM rent_payments rp
           WHERE rp.tenant_id = t.id
@@ -4529,13 +4541,15 @@ const getTenantPaymentStatus = async (req, res) => {
       const rentPaid = parseFloat(row.rent_paid) || 0;
       const waterBill = parseFloat(row.water_bill) || 0;
       const waterPaid = parseFloat(row.water_paid) || 0;
+      const waterArrearsRaw = parseFloat(row.water_arrears) || 0;
+      const waterArrears = Math.max(0, waterArrearsRaw);
       const arrears = parseFloat(row.arrears) || 0;
       const arrearsPaid = parseFloat(row.arrears_paid) || 0;
       const advanceAmount = parseFloat(row.advance_amount) || 0;
       const totalLeaseExpected = parseFloat(row.expected_amount) || 0;
 
       const rawRentDue = Math.max(0, monthlyRent - rentPaid);
-      const rawWaterDue = Math.max(0, waterBill - waterPaid);
+      const rawWaterDue = Math.max(0, waterBill - waterPaid) + waterArrears;
       const rawArrearsDue = Math.max(0, arrears - arrearsPaid);
       const grossDue = rawRentDue + rawWaterDue + rawArrearsDue;
 
@@ -4577,6 +4591,7 @@ const getTenantPaymentStatus = async (req, res) => {
         raw_rent_due: rawRentDue,
         water_bill: waterBill,
         water_paid: waterPaid,
+        water_arrears: waterArrears,
         water_due: effectiveWaterDue,
         raw_water_due: rawWaterDue,
         arrears,
@@ -4600,7 +4615,7 @@ const getTenantPaymentStatus = async (req, res) => {
       paid_count: tenants.filter((t) => t.total_due <= 0).length,
       unpaid_count: tenants.filter((t) => t.total_due > 0).length,
       total_expected: tenants.reduce(
-        (sum, t) => sum + t.monthly_rent + t.water_bill + t.arrears,
+        (sum, t) => sum + t.monthly_rent + t.water_bill + t.water_arrears + t.arrears,
         0,
       ),
       current_month_expected: tenants.reduce(

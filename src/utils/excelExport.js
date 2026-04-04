@@ -611,6 +611,7 @@ const prepareExcelData = (reportType, data) => {
           "Rent Paid",
           "Rent Due",
           "Water Bill",
+          "Water Arrears",
           "Arrears",
           "Total Due",
         ];
@@ -624,6 +625,7 @@ const prepareExcelData = (reportType, data) => {
           parseCurrencyValue(item["Rent Paid"]),
           parseCurrencyValue(item["Rent Due"]),
           parseCurrencyValue(item["Water Bill"]),
+          parseCurrencyValue(item["Water Arrears"] || 0),
           parseCurrencyValue(item["Arrears"]),
           parseCurrencyValue(item["Total Due"]),
         ]);
@@ -639,6 +641,7 @@ const prepareExcelData = (reportType, data) => {
           "Rent Paid",
           "Rent Due",
           "Water Bill",
+          "Water Arrears",
           "Arrears",
           "Total Due",
         ];
@@ -654,6 +657,7 @@ const prepareExcelData = (reportType, data) => {
           parseCurrencyValue(item.rent_paid),
           parseCurrencyValue(item.rent_due),
           parseCurrencyValue(item.water_bill),
+          parseCurrencyValue(item.water_arrears || 0),
           parseCurrencyValue(item.arrears),
           parseCurrencyValue(item.total_due),
         ]);
@@ -665,6 +669,7 @@ const prepareExcelData = (reportType, data) => {
         8: { numFmt: "#,##0", alignment: { horizontal: "right" } },
         9: { numFmt: "#,##0", alignment: { horizontal: "right" } },
         10: { numFmt: "#,##0", alignment: { horizontal: "right" } },
+        11: { numFmt: "#,##0", alignment: { horizontal: "right" } },
       };
       break;
 
@@ -745,23 +750,30 @@ const prepareExcelData = (reportType, data) => {
         "Phone",
         "Amount (KSh)",
         "Month",
-        "M-Pesa Code",
+        "Method",
         "Status",
         "Date",
       ];
-      rows = data.map((item, index) => [
-        index + 1,
-        item.id?.substring(0, 8) || "N/A",
-        item.tenant_name ||
-          `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
-          "N/A",
-        formatPhone(item.phone_number),
-        parseCurrencyValue(item.amount),
-        formatMonth(item.payment_month),
-        item.mpesa_receipt_number || "N/A",
-        capitalizeFirst(item.status) || "Pending",
-        formatDate(item.created_at || item.payment_date),
-      ]);
+      rows = data.map((item, index) => {
+        const receipt =
+          item.mpesa_receipt_number ||
+          item.mpesa_transaction_id ||
+          (item.payment_method === "manual" ? "MANUAL" : item.id?.substring(0, 8)) ||
+          "N/A";
+        return [
+          index + 1,
+          receipt,
+          item.tenant_name ||
+            `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+            "N/A",
+          formatPhone(item.phone_number),
+          parseCurrencyValue(item.amount),
+          formatMonth(item.payment_month),
+          capitalizeFirst(item.payment_method) || "N/A",
+          capitalizeFirst(item.status) || "Pending",
+          formatDate(item.created_at || item.payment_date),
+        ];
+      });
       columnFormats = {
         4: { numFmt: "#,##0", alignment: { horizontal: "right" } },
       };
