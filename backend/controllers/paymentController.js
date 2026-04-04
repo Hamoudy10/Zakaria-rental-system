@@ -4459,6 +4459,21 @@ const getTenantPaymentStatus = async (req, res) => {
           AND rp.status = 'completed'
           AND DATE_TRUNC('month', rp.payment_month) < DATE_TRUNC('month', $1::date)
         ), 0) as water_arrears,
+        GREATEST(
+          COALESCE((
+            SELECT SUM(rp2.amount) FROM rent_payments rp2
+            WHERE rp2.tenant_id = t.id
+            AND rp2.unit_id = pu.id
+            AND rp2.status = 'completed'
+            AND DATE_TRUNC('month', rp2.payment_month) < DATE_TRUNC('month', $1::date)
+            AND (
+              COALESCE(rp2.allocated_to_rent, 0) +
+              COALESCE(rp2.allocated_to_water, 0) +
+              COALESCE(rp2.allocated_to_arrears, 0)
+            ) = 0
+          ), 0),
+          0
+        ) as rent_arrears,
         COALESCE((
           SELECT SUM(COALESCE(rp.allocated_to_arrears, 0))
           FROM rent_payments rp
