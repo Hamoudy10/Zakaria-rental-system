@@ -703,6 +703,7 @@ const prepareTableData = (reportType, data) => {
           "Monthly Rent",
           "Rent Due",
           "Water Bill",
+          "Water Arrears",
           "Arrears",
           "Total Due",
         ];
@@ -715,6 +716,7 @@ const prepareTableData = (reportType, data) => {
           item["Monthly Rent"] || "KSh 0",
           item["Rent Due"] || "KSh 0",
           item["Water Bill"] || "KSh 0",
+          item["Water Arrears"] || "KSh 0",
           item["Arrears"] || "KSh 0",
           item["Total Due"] || "KSh 0",
         ]);
@@ -729,6 +731,7 @@ const prepareTableData = (reportType, data) => {
           "Monthly Rent",
           "Rent Due",
           "Water Due",
+          "Water Arrears",
           "Arrears",
           "Total Due",
         ];
@@ -743,6 +746,7 @@ const prepareTableData = (reportType, data) => {
           formatCurrency(item.monthly_rent),
           formatCurrency(item.rent_due),
           formatCurrency(item.water_due || item.water_bill),
+          formatCurrency(item.water_arrears || 0),
           formatCurrency(item.arrears_balance || item.arrears),
           formatCurrency(item.total_due),
         ]);
@@ -754,6 +758,7 @@ const prepareTableData = (reportType, data) => {
         7: { halign: "right" },
         8: { halign: "right" },
         9: { halign: "right" },
+        10: { halign: "right" },
       };
       break;
 
@@ -826,25 +831,35 @@ const prepareTableData = (reportType, data) => {
         "Tenant",
         "Amount (KSh)",
         "Month",
+        "Method",
         "Status",
         "Date",
       ];
-      rows = data.map((item, index) => [
-        index + 1,
-        item.mpesa_receipt_number || item.id?.substring(0, 8) || "N/A",
-        item.tenant_name ||
-          `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
-          "N/A",
-        formatCurrency(item.amount),
-        formatMonth(item.payment_month),
-        item.status || "Pending",
-        formatDate(item.created_at || item.payment_date),
-      ]);
+      rows = data.map((item, index) => {
+        const receipt =
+          item.mpesa_receipt_number ||
+          item.mpesa_transaction_id ||
+          (item.payment_method === "manual" ? "MANUAL" : item.id?.substring(0, 8)) ||
+          "N/A";
+        return [
+          index + 1,
+          receipt,
+          item.tenant_name ||
+            `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+            "N/A",
+          formatCurrency(item.amount),
+          formatMonth(item.payment_month),
+          capitalizeFirst(item.payment_method) || "N/A",
+          item.status || "Pending",
+          formatDate(item.created_at || item.payment_date),
+        ];
+      });
       columnStyles = {
         0: { halign: "center", cellWidth: 10 },
         3: { halign: "right" },
         5: { halign: "center" },
         6: { halign: "center" },
+        7: { halign: "center" },
       };
       break;
 

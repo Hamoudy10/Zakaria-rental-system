@@ -1022,15 +1022,51 @@ const PaymentManagement = () => {
   // EXPORT HANDLERS
   // ============================================================
 
-  const handleExportPayments = (format) => {
+  const handleExportPayments = async (format) => {
     if (!payments || payments.length === 0) {
       alert("No data available to export.");
       return;
     }
 
+    let exportData = payments;
+
+    if (payments.length < (pagination?.totalCount || 0)) {
+      try {
+        const allPayments = [];
+        const pageSize = 200;
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+          const params = { page, limit: pageSize };
+          if (filters.startDate) params.startDate = filters.startDate;
+          if (filters.endDate) params.endDate = filters.endDate;
+          if (filters.propertyId) params.propertyId = filters.propertyId;
+          if (filters.status) params.status = filters.status;
+
+          const response = await API.payments.getPayments(params);
+          if (response.data?.success && response.data?.data?.payments) {
+            allPayments.push(...response.data.data.payments);
+            const total = response.data.data.pagination?.totalCount || 0;
+            hasMore = allPayments.length < total;
+            page++;
+          } else {
+            hasMore = false;
+          }
+        }
+
+        if (allPayments.length > 0) {
+          exportData = allPayments;
+        }
+      } catch (error) {
+        console.error("Failed to fetch all payments for export:", error);
+        alert("Could not fetch all payments. Exporting current page only.");
+      }
+    }
+
     const config = {
       reportType: "payments",
-      data: payments,
+      data: exportData,
       filters,
       user,
       title: `Payment Transactions - ${filters.period.replace("_", " ").toUpperCase()}`,
@@ -1064,6 +1100,7 @@ const PaymentManagement = () => {
         "Rent Due": t.rent_due,
         "Water Bill": t.water_bill || 0,
         "Water Paid": t.water_paid || 0,
+        "Water Arrears": t.water_arrears || 0,
         Arrears: t.arrears || 0,
         "Total Due": t.total_due,
         Advance: t.advance_amount || 0,
