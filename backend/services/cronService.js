@@ -888,6 +888,110 @@ class CronService {
       );
       console.log("✅ Scheduled M-Pesa callback health monitor every 15 minutes");
 
+      // ==================== RENT ARREARS SYNC ====================
+      cron.schedule(
+        "0 6 * * *",
+        async () => {
+          console.log("🔄 Syncing rent arrears for all active allocations...");
+          try {
+            const result = await pool.query(`
+              WITH all_time_rent AS (
+                SELECT
+                  ta.id AS allocation_id,
+                  ta.tenant_id,
+                  ta.unit_id,
+                  ta.monthly_rent,
+                  ta.lease_start_date,
+                  ta.lease_end_date,
+                  ta.arrears_balance AS current_arrears,
+                  COALESCE(
+                    (SELECT SUM(rp.amount) FROM rent_payments rp
+                     WHERE rp.tenant_id = ta.tenant_id
+                     AND rp.unit_id = ta.unit_id
+                     AND rp.status = 'completed'
+                     AND (
+                       COALESCE(rp.allocated_to_rent, 0) +
+                       COALESCE(rp.allocated_to_water, 0) +
+                       COALESCE(rp.allocated_to_arrears, 0)
+                     ) = 0),
+                    0
+                  ) AS unallocated_payments,
+                  COALESCE(
+                    (SELECT SUM(rp.allocated_to_arrears) FROM rent_payments rp
+                     WHERE rp.tenant_id = ta.tenant_id
+                     AND rp.unit_id = ta.unit_id
+                     AND rp.status = 'completed'),
+                    0
+                  ) AS arrears_paid,
+                  COALESCE(
+                    (SELECT SUM(rp.allocated_to_rent) FROM rent_payments rp
+                     WHERE rp.tenant_id = ta.tenant_id
+                     AND rp.unit_id = ta.unit_id
+                     AND rp.status = 'completed'),
+                    0
+                  ) AS rent_paid,
+                  COALESCE(
+                    (SELECT SUM(rp.allocated_to_water) FROM rent_payments rp
+                     WHERE rp.tenant_id = ta.tenant_id
+                     AND rp.unit_id = ta.unit_id
+                     AND rp.status = 'completed'),
+                    0
+                  ) AS water_paid,
+                  COALESCE(
+                    (SELECT SUM(wb.amount) FROM water_bills wb
+                     WHERE wb.tenant_id = ta.tenant_id
+                     AND (wb.unit_id = ta.unit_id OR wb.unit_id IS NULL)),
+                    0
+                  ) AS total_water_billed
+                FROM tenant_allocations ta
+                WHERE ta.is_active = true
+              ),
+              calculated AS (
+                SELECT
+                  allocation_id,
+                  tenant_id,
+                  unit_id,
+                  monthly_rent,
+                  lease_start_date,
+                  lease_end_date,
+                  current_arrears,
+                  unallocated_payments,
+                  arrears_paid,
+                  rent_paid,
+                  water_paid,
+                  total_water_billed,
+                  GREATEST(
+                    (
+                      (monthly_rent * GREATEST(
+                        EXTRACT(YEAR FROM AGE(NOW(), lease_start_date)) * 12 +
+                        EXTRACT(MONTH FROM AGE(NOW(), lease_start_date)) + 1,
+                        1
+                      )::int)
+                      - rent_paid
+                      - unallocated_payments
+                    ),
+                    0
+                  ) AS calculated_arrears
+                FROM all_time_rent
+              )
+              UPDATE tenant_allocations ta
+              SET arrears_balance = c.calculated_arrears
+              FROM calculated c
+              WHERE ta.id = c.allocation_id
+                AND ABS(ta.arrears_balance - c.calculated_arrears) > 0.01
+            `);
+            console.log(`✅ Rent arrears synced: ${result.rowCount} allocations updated`);
+          } catch (syncError) {
+            console.error("❌ Rent arrears sync error:", syncError.message);
+          }
+        },
+        {
+          scheduled: true,
+          timezone: "Africa/Nairobi",
+        },
+      );
+      console.log("✅ Scheduled rent arrears sync daily at 6:00 AM");
+
       console.log("✅ Cron service started successfully");
     } catch (error) {
       console.error("❌ Error starting cron service:", error);
@@ -914,6 +1018,7 @@ class CronService {
       queueProcessing: "Every 5 minutes (SMS + WhatsApp)",
       mpesaReconciliation: "Every 5 minutes",
       mpesaHealthMonitor: "Every 15 minutes",
+      rentArrearsSync: "Daily at 6:00 AM",
       whatsappConfigured: WhatsAppService.configured,
     };
   }
