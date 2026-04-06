@@ -981,8 +981,14 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
     const tenantPhone = unit.tenant_phone;
     const unitCode = unit.unit_code;
     const month = trackingResult.targetMonth;
-    const balance =
-      trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
+
+    const monthBalance = Math.max(
+      0,
+      trackingResult.rentBalanceAfterPayment +
+      trackingResult.waterBalanceAfterPayment
+    );
+    const totalArrears = Math.max(0, trackingResult.arrearsBalanceAfterPayment || 0);
+    const isMonthComplete = monthBalance <= 0;
 
     // Send tenant notification via SMS + WhatsApp
     const tenantResult = await MessagingService.sendPaymentConfirmation(
@@ -990,7 +996,7 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
       tenantName,
       payment.amount,
       unitCode,
-      balance,
+      monthBalance,
       month,
     );
 
@@ -1004,7 +1010,7 @@ const sendPaybillSMSNotifications = async (payment, trackingResult, unit) => {
           tenantName,
           payment.amount,
           unitCode,
-          balance,
+          monthBalance,
           month,
         );
       } catch (adminAlertError) {
@@ -1062,8 +1068,12 @@ const sendManualPaymentSMSNotifications = async (
     const tenantName = `${unitInfo.first_name || ""} ${unitInfo.last_name || ""}`.trim();
     const unitCode = unitInfo.unit_code || "N/A";
     const month = trackingResult.targetMonth;
-    const balance =
-      trackingResult.remainingForTargetMonth - trackingResult.allocatedAmount;
+
+    const monthBalance = Math.max(
+      0,
+      trackingResult.rentBalanceAfterPayment +
+      trackingResult.waterBalanceAfterPayment
+    );
 
     const totalAmount = Number.isFinite(options.amount)
       ? options.amount
@@ -1076,7 +1086,7 @@ const sendManualPaymentSMSNotifications = async (
         tenantName || "Tenant",
         totalAmount,
         unitCode,
-        balance,
+        monthBalance,
         month,
       );
 
@@ -1109,7 +1119,7 @@ const sendManualPaymentSMSNotifications = async (
           tenantName || "Tenant",
           totalAmount,
           unitCode,
-          balance,
+          monthBalance,
           month,
         );
       } catch (adminAlertError) {
