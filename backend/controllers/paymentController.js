@@ -4621,22 +4621,19 @@ const getTenantPaymentStatus = async (req, res) => {
       const rawWaterDue = Math.max(0, waterBill - waterPaid) + waterArrears;
       const rawArrearsDue = Math.max(0, arrears - arrearsPaid);
 
-      // Prevent double-counting: if rent was paid this month (via arrears allocation),
-      // the arrears_balance already reflects that payment was made.
-      // Only show arrears for months PRIOR to the current month.
-      const currentMonthRentPaid = rentPaid >= monthlyRent;
-      const adjustedArrearsDue = currentMonthRentPaid
-        ? Math.max(0, rawArrearsDue - monthlyRent)
-        : rawArrearsDue;
+      // arrears_balance includes ALL unpaid rent (current + historical).
+      // rent_due already covers current month. Exclude current month from arrears
+      // to prevent double-counting.
+      const arrearsForPriorMonths = Math.max(0, rawArrearsDue - monthlyRent);
 
-      const grossDue = rawRentDue + rawWaterDue + adjustedArrearsDue;
+      const grossDue = rawRentDue + rawWaterDue + arrearsForPriorMonths;
 
       // Apply available advance credit using system allocation priority:
       // arrears -> water -> rent.
       let remainingAdvance = Math.max(0, advanceAmount);
-      const advanceToArrears = Math.min(remainingAdvance, adjustedArrearsDue);
+      const advanceToArrears = Math.min(remainingAdvance, arrearsForPriorMonths);
       remainingAdvance -= advanceToArrears;
-      const effectiveArrearsDue = adjustedArrearsDue - advanceToArrears;
+      const effectiveArrearsDue = arrearsForPriorMonths - advanceToArrears;
 
       const advanceToWater = Math.min(remainingAdvance, rawWaterDue);
       remainingAdvance -= advanceToWater;
