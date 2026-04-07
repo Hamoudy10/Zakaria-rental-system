@@ -1,12 +1,15 @@
 -- ============================================================
--- MIGRATION 020: REPAIR ARREARS BALANCE
+-- MIGRATION 020: REPAIR ARREARS BALANCE (v2 — with date fix)
 -- ============================================================
--- Purpose: Recalculate arrears_balance for all tenant allocations
---          using the correct formula.
+-- Purpose: 
+--   1. Fix corrupted lease_start_date values (e.g. year 0206 → 2026)
+--   2. Recalculate arrears_balance for all tenant allocations
+--      using the correct formula.
 --
 -- Background: The previous daily 6 AM arrears sync cron had a
 --             broken formula that was corrupting arrears data.
 --             It was disabled. This migration repairs the damage.
+--             ALSO fixes lease dates entered as year 0206 instead of 2026.
 --
 -- Formula:
 --   total_expected = monthly_rent × months_from_lease_start_to_now
@@ -19,6 +22,15 @@
 -- ============================================================
 
 BEGIN;
+
+-- Step 0: Fix corrupted lease dates (year 0206 → 2026)
+-- Common data entry error: 2026-03-01 entered as 0206-03-01
+-- This was causing the old broken cron to calculate 1820 years × rent = 414M+
+UPDATE tenant_allocations
+SET lease_start_date = lease_start_date + INTERVAL '1820 years',
+    updated_at = NOW()
+WHERE lease_start_date < '2000-01-01'
+  AND lease_start_date IS NOT NULL;
 
 -- Step 1: Backup current arrears values for audit trail
 DROP TABLE IF EXISTS arrears_repair_backup_020;
