@@ -1583,6 +1583,17 @@ const handleMpesaCallback = async (req, res) => {
 
     const paymentRecord = paymentResult.rows[0];
 
+    // Update arrears_balance in tenant_allocations when payment reduces arrears
+    if (trackingResult.allocatedToArrears > 0) {
+      await client.query(
+        `UPDATE tenant_allocations 
+         SET arrears_balance = GREATEST(0, arrears_balance - $1),
+             updated_at = NOW()
+         WHERE tenant_id = $2 AND unit_id = $3 AND is_active = true`,
+        [trackingResult.allocatedToArrears, tenant.id, unit.id],
+      );
+    }
+
     // Handle carry-forward (overpayment)
     let carryForwardPayments = [];
     if (trackingResult.carryForwardAmount > 0) {
@@ -2262,6 +2273,17 @@ const processPaybillPayment = async (req, res) => {
 
     const paymentRecord = paymentResult.rows[0];
 
+    // Update arrears_balance in tenant_allocations when payment reduces arrears
+    if (trackingResult.allocatedToArrears > 0) {
+      await client.query(
+        `UPDATE tenant_allocations 
+         SET arrears_balance = GREATEST(0, arrears_balance - $1),
+             updated_at = NOW()
+         WHERE tenant_id = $2 AND unit_id = $3 AND is_active = true`,
+        [trackingResult.allocatedToArrears, unit.tenant_id, unit.id],
+      );
+    }
+
     // Carry-forward with transaction client
     let carryForwardPayments = [];
     if (trackingResult.carryForwardAmount > 0) {
@@ -2818,6 +2840,17 @@ const recordManualPayment = async (req, res) => {
     }
 
     const paymentRecord = paymentResult.rows[0];
+
+    // Update arrears_balance in tenant_allocations when payment reduces arrears
+    if (trackingResult.allocatedToArrears > 0) {
+      await client.query(
+        `UPDATE tenant_allocations 
+         SET arrears_balance = GREATEST(0, arrears_balance - $1),
+             updated_at = NOW()
+         WHERE tenant_id = $2 AND unit_id = $3 AND is_active = true`,
+        [trackingResult.allocatedToArrears, tenant_id, unit_id],
+      );
+    }
 
     // Carry-forward with transaction client
     let carryForwardPayments = [];
