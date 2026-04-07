@@ -212,7 +212,7 @@ class BillingService {
         // Add unpaid amount to arrears
         await pool.query(
           `UPDATE tenant_allocations 
-           SET arrears_balance = arrears_balance + $1,
+           SET arrears_balance = arrears_balance + $1
            WHERE tenant_id = $2 AND unit_id = $3 AND is_active = true`,
           [unpaidAmount, tenantId, unitId]
         );

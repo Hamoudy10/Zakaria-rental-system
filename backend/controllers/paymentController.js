@@ -1256,14 +1256,22 @@ const handleMpesaCallback = async (req, res) => {
   res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
   let inboxTransId = buildCallbackInboxTransId(callbackPayload);
 
-  // Best-effort durable inbox persistence after immediate ACK.
+  // Durable inbox persistence — REQUIRED before processing.
+  // On Render free tier (sleeps after 15min idle), this is the safety net:
+  // if inbox persist fails, Safaricom will retry the callback when it wakes.
+  // If inbox succeeds but processing fails, the 5-min reconciliation cron
+  // will re-process it from the inbox on the next run.
   try {
     inboxTransId = await persistMpesaCallbackInbox(callbackPayload);
   } catch (inboxError) {
     console.error(
-      "Failed to persist callback inbox entry after ACK:",
+      "CRITICAL: Failed to persist callback inbox entry. Returning 500 so Safaricom retries:",
       inboxError.message,
     );
+    // Do NOT swallow this error — if we can't persist the inbox,
+    // we must not acknowledge success or the payment will be lost.
+    // Safaricom will retry the callback.
+    return;
   }
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1331,21 +1339,6 @@ const handleMpesaCallback = async (req, res) => {
       return;
     }
 
-    // Check for duplicate (Safaricom may retry callbacks)
-    const duplicateCheck = await client.query(
-      "SELECT id FROM rent_payments WHERE mpesa_receipt_number = $1",
-      [TransID],
-    );
-    if (duplicateCheck.rows.length > 0) {
-      console.log("Duplicate C2B callback ignored:", TransID);
-      await markMpesaCallbackInbox({
-        transId: inboxTransId,
-        status: "duplicate",
-        paymentId: duplicateCheck.rows[0].id,
-      });
-      return;
-    }
-
     const phone = normalizeKenyanPhone(MSISDN);
     if (!phone) {
       console.warn("Invalid callback MSISDN format received:", MSISDN);
@@ -1370,6 +1363,24 @@ const handleMpesaCallback = async (req, res) => {
       "Unknown";
 
     await client.query("BEGIN");
+
+    // Check for duplicate INSIDE the transaction (Safaricom may retry callbacks).
+    // This must be inside the transaction to prevent race conditions where
+    // two concurrent callbacks for the same receipt both pass the check.
+    const duplicateCheck = await client.query(
+      "SELECT id FROM rent_payments WHERE mpesa_receipt_number = $1",
+      [TransID],
+    );
+    if (duplicateCheck.rows.length > 0) {
+      console.log("Duplicate C2B callback ignored:", TransID);
+      await client.query("COMMIT");
+      await markMpesaCallbackInbox({
+        transId: inboxTransId,
+        status: "duplicate",
+        paymentId: duplicateCheck.rows[0].id,
+      });
+      return;
+    }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // TENANT RESOLUTION â€” Try multiple strategies
@@ -1724,7 +1735,7 @@ const handleMpesaCallback = async (req, res) => {
   } finally {
     client.release();
   }
-};;
+}
 
 // ==================== CONTROLLER HANDLERS ====================
 
