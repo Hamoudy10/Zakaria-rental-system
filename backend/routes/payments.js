@@ -178,6 +178,37 @@ const rebalanceTenantUnitPayments = async ({
     }
   }
 
+  // Recalculate and update arrears_balance after rebalance
+  const totalArrearsPaid = await client.query(
+    `SELECT COALESCE(SUM(COALESCE(allocated_to_arrears, 0)), 0) as total
+     FROM rent_payments
+     WHERE tenant_id = $1 AND unit_id = $2 AND status = 'completed'`,
+    [tenantId, unitId],
+  );
+
+  const allocationResult = await client.query(
+    `SELECT arrears_balance FROM tenant_allocations 
+     WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true
+     LIMIT 1`,
+    [tenantId, unitId],
+  );
+
+  if (allocationResult.rows.length > 0) {
+    const currentArrears = parseFloat(allocationResult.rows[0].arrears_balance) || 0;
+    const totalArrearsPaidValue = parseFloat(totalArrearsPaid.rows[0].total) || 0;
+    const correctArrears = Math.max(0, currentArrears - totalArrearsPaidValue);
+
+    if (Math.abs(currentArrears - correctArrears) > 0.01) {
+      await client.query(
+        `UPDATE tenant_allocations 
+         SET arrears_balance = $1,
+             updated_at = NOW()
+         WHERE tenant_id = $2 AND unit_id = $3 AND is_active = true`,
+        [correctArrears, tenantId, unitId],
+      );
+    }
+  }
+
   return { rebalanced: true, sourcePayments: sourcePayments.length };
 };
 
