@@ -4478,7 +4478,7 @@ const getTenantPaymentStatus = async (req, res) => {
                 COALESCE(rp.allocated_to_rent, 0) +
                 COALESCE(rp.allocated_to_water, 0) +
                 COALESCE(rp.allocated_to_arrears, 0)
-              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0) + COALESCE(rp.allocated_to_arrears, 0)
               ELSE COALESCE(rp.amount, 0)
             END
           ) FROM rent_payments rp 
@@ -4620,14 +4620,23 @@ const getTenantPaymentStatus = async (req, res) => {
       const rawRentDue = Math.max(0, monthlyRent - rentPaid);
       const rawWaterDue = Math.max(0, waterBill - waterPaid) + waterArrears;
       const rawArrearsDue = Math.max(0, arrears - arrearsPaid);
-      const grossDue = rawRentDue + rawWaterDue + rawArrearsDue;
+
+      // Prevent double-counting: if rent was paid this month (via arrears allocation),
+      // the arrears_balance already reflects that payment was made.
+      // Only show arrears for months PRIOR to the current month.
+      const currentMonthRentPaid = rentPaid >= monthlyRent;
+      const adjustedArrearsDue = currentMonthRentPaid
+        ? Math.max(0, rawArrearsDue - monthlyRent)
+        : rawArrearsDue;
+
+      const grossDue = rawRentDue + rawWaterDue + adjustedArrearsDue;
 
       // Apply available advance credit using system allocation priority:
       // arrears -> water -> rent.
       let remainingAdvance = Math.max(0, advanceAmount);
-      const advanceToArrears = Math.min(remainingAdvance, rawArrearsDue);
+      const advanceToArrears = Math.min(remainingAdvance, adjustedArrearsDue);
       remainingAdvance -= advanceToArrears;
-      const effectiveArrearsDue = rawArrearsDue - advanceToArrears;
+      const effectiveArrearsDue = adjustedArrearsDue - advanceToArrears;
 
       const advanceToWater = Math.min(remainingAdvance, rawWaterDue);
       remainingAdvance -= advanceToWater;
