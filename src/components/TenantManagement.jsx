@@ -43,8 +43,11 @@ const tenantListInFlight = new Map();
 
 const TenantManagement = () => {
   const { user } = useAuth();
-  const { properties: assignedProperties, loading: propertiesLoading } =
-    useProperty();
+  const {
+    properties: assignedProperties,
+    loading: propertiesLoading,
+    fetchProperties,
+  } = useProperty();
   const [tenants, setTenants] = useState([]);
   const [availableUnits, setAvailableUnits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -572,11 +575,15 @@ const TenantManagement = () => {
       setUploading(false);
     }
   };
-  const handleEdit = (tenant) => {
+  const handleEdit = async (tenant) => {
     setEditingTenant(tenant);
     const currentUnitId =
       tenant.unit_id || tenant.current_allocation?.unit_id || "";
-    fetchAvailableUnits(tenant.id, currentUnitId);
+    // Refresh properties first to ensure we have the latest units
+    if (user?.role === "agent") {
+      await fetchProperties();
+    }
+    await fetchAvailableUnits(tenant.id, currentUnitId);
     setFormData({
       national_id: tenant.national_id || "",
       first_name: tenant.first_name || "",
@@ -610,6 +617,10 @@ const TenantManagement = () => {
 
     setFormErrors({});
     setShowForm(true);
+    // Refresh properties to ensure we have the latest units
+    if (user?.role === "agent") {
+      await fetchProperties();
+    }
     fetchAvailableUnits();
   };
   const resetForm = () => {
@@ -920,7 +931,11 @@ const TenantManagement = () => {
             )}
         </div>
         <button
-          onClick={() => {
+          onClick={async () => {
+            // Refresh properties first to ensure we have the latest units
+            if (user?.role === "agent") {
+              await fetchProperties();
+            }
             fetchAvailableUnits();
             setShowForm(true);
           }}
