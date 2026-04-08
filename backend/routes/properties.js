@@ -910,8 +910,8 @@ router.post('/', protect, adminOnly, async (req, res) => {
       for (let i = 1; i <= parsedTotalUnits; i++) {
         await client.query(
           `INSERT INTO property_units 
-            (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, is_active, is_occupied, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             propertyResult.rows[0].id,
             `${property_code}UNIT${i}`,
@@ -920,6 +920,8 @@ router.post('/', protect, adminOnly, async (req, res) => {
             0,
             0,
             `Unit ${i} of ${name}`,
+            true,   // is_active - default to true
+            false,  // is_occupied - default to false (available)
             req.user.id
           ]
         );

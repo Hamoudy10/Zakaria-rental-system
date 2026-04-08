@@ -123,8 +123,8 @@ router.post('/properties/:propertyId/units', protect, adminOnly, async (req, res
     const unitResult = await client.query(
       `INSERT INTO property_units (
         property_id, unit_code, unit_number, unit_type, rent_amount, 
-        deposit_amount, description, features, is_occupied, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        deposit_amount, description, features, is_active, is_occupied, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *`,
       [
         propertyId,
@@ -135,6 +135,7 @@ router.post('/properties/:propertyId/units', protect, adminOnly, async (req, res
         deposit_amount || rent_amount,
         description,
         features,
+        true,       // is_active - default to true
         is_occupied,
         req.user.id
       ]
