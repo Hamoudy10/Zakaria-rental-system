@@ -491,13 +491,19 @@ export const billingAPI = {
   triggerAgentBilling: (data) => api.post('/cron/agent/trigger-billing', data),
   // Get billing run history
   getBillingHistory: (params = {}) => api.get('/cron/agent/history', { params }),
+
+  // Get pending billing SMS (within grace period)
+  getPendingBillingSMS: () => api.get('/cron/agent/pending-billing'),
   
+  // Cancel pending billing SMS (within grace period)
+  cancelPendingBillingSMS: (data = {}) => api.delete('/cron/agent/pending-billing', { data }),
+
   // Get failed SMS for retry
   getAgentFailedSMS: (params = {}) => api.get('/cron/agent/failed-sms', { params }),
-  
+
   // Retry failed SMS
   retryAgentFailedSMS: (smsIds) => api.post('/cron/agent/retry-sms', { smsIds }),
-  
+
   // Test SMS service
   testSMSService: (testData) => api.post('/cron/agent/test-sms', testData),
 

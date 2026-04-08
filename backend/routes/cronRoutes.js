@@ -59,6 +59,23 @@ router.get(
   cronController.getSMSHistory,
 );
 
+// 4. Pending Billing Management (Grace Period)
+// Get pending billing SMS that haven't been sent yet
+router.get(
+  "/agent/pending-billing",
+  protect,
+  agentOnly,
+  cronController.getPendingBillingSMS,
+);
+
+// Cancel pending billing SMS within grace period
+router.delete(
+  "/agent/pending-billing",
+  protect,
+  agentOnly,
+  cronController.cancelPendingBillingSMS,
+);
+
 console.log("🔍 DEBUG CRON ROUTES: All routes registered");
 
 module.exports = router;
