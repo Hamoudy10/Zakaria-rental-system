@@ -241,29 +241,30 @@ ORDER BY
 -- VERIFICATION QUERY 3: Summary Statistics
 -- =====================================================
 
+WITH tenant_payment_status AS (
+    SELECT
+        t.id AS tenant_id,
+        ta.monthly_rent,
+        COALESCE(SUM(rp.allocated_to_rent), 0) AS total_paid_rent
+    FROM tenants t
+    INNER JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
+    LEFT JOIN rent_payments rp ON rp.tenant_id = t.id
+        AND rp.unit_id = ta.unit_id
+        AND rp.status = 'completed'
+        AND rp.payment_month = '2026-03-01'::date
+    GROUP BY t.id, ta.monthly_rent
+)
+
 SELECT
     COUNT(*) AS total_active_tenants,
     
-    COUNT(*) FILTER (WHERE 
-        COALESCE(SUM(rp.allocated_to_rent), 0) >= ta.monthly_rent
-    ) AS fully_paid,
+    COUNT(*) FILTER (WHERE total_paid_rent >= monthly_rent) AS fully_paid,
     
-    COUNT(*) FILTER (WHERE 
-        COALESCE(SUM(rp.allocated_to_rent), 0) > 0 
-        AND COALESCE(SUM(rp.allocated_to_rent), 0) < ta.monthly_rent
-    ) AS partial_payment,
+    COUNT(*) FILTER (WHERE total_paid_rent > 0 AND total_paid_rent < monthly_rent) AS partial_payment,
     
-    COUNT(*) FILTER (WHERE 
-        COALESCE(SUM(rp.allocated_to_rent), 0) = 0
-    ) AS no_payment
+    COUNT(*) FILTER (WHERE total_paid_rent = 0) AS no_payment
 
-FROM tenants t
-INNER JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
-LEFT JOIN rent_payments rp ON rp.tenant_id = t.id
-    AND rp.unit_id = ta.unit_id
-    AND rp.status = 'completed'
-    AND rp.payment_month = '2026-03-01'::date
-GROUP BY t.id, ta.monthly_rent;
+FROM tenant_payment_status;
 
 
 COMMIT;

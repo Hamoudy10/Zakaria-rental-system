@@ -4621,10 +4621,25 @@ const getTenantPaymentStatus = async (req, res) => {
       const rawWaterDue = Math.max(0, waterBill - waterPaid) + waterArrears;
       const rawArrearsDue = Math.max(0, arrears - arrearsPaid);
 
-      // arrears_balance includes ALL unpaid rent (current + historical).
-      // rent_due already covers current month. Exclude current month from arrears
-      // to prevent double-counting.
-      const arrearsForPriorMonths = Math.max(0, rawArrearsDue - monthlyRent);
+      // FIX: arrears_balance should only contain PRIOR months' unpaid rent.
+      // If arrears_balance is stale/inaccurate, calculate it properly:
+      // arrearsForPriorMonths = arrears_balance - current_month_rent (if unpaid)
+      // But ONLY if arrears_balance > monthly_rent (meaning it includes current month)
+      let arrearsForPriorMonths;
+      
+      if (arrears > monthlyRent && rentPaid < monthlyRent) {
+        // arrears_balance likely includes current month, subtract it
+        arrearsForPriorMonths = Math.max(0, rawArrearsDue - monthlyRent);
+      } else if (arrears > 0 && rentPaid >= monthlyRent) {
+        // Current month is paid, but there might be historical arrears
+        arrearsForPriorMonths = rawArrearsDue;
+      } else {
+        // No arrears or current month unpaid, no double-counting risk
+        arrearsForPriorMonths = 0;
+      }
+      
+      // Safety check: arrears for prior months should never be negative
+      arrearsForPriorMonths = Math.max(0, arrearsForPriorMonths);
 
       const grossDue = rawRentDue + rawWaterDue + arrearsForPriorMonths;
 
