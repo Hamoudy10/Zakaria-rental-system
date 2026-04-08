@@ -409,17 +409,7 @@ const triggerAgentBillingSMS = async (req, res) => {
         ta.monthly_rent, ta.arrears_balance, COALESCE(wb.amount, 0) as water_amount,
         COALESCE(pm.rent_paid, 0) as rent_paid,
         COALESCE(pm.water_paid, 0) as water_paid,
-        COALESCE(pm.arrears_paid_all_time, 0) as arrears_paid_all_time,
-        -- FIX: Calculate actual historical arrears on-the-fly
-        -- instead of relying on potentially stale arrears_balance field
-        GREATEST(0, (
-          -- Total rent owed = monthly_rent * months_active
-          ta.monthly_rent * GREATEST(1,
-            EXTRACT(MONTH FROM AGE(DATE_TRUNC('month', $2::date), DATE_TRUNC('month', ta.allocation_date)))::integer + 1
-          )
-          -- Minus all rent ever paid
-          - COALESCE(all_payments.total_rent_paid_all_time, 0)
-        )) as actual_arrears
+        COALESCE(pm.arrears_paid_all_time, 0) as arrears_paid_all_time
       FROM tenant_allocations ta
       JOIN tenants t ON ta.tenant_id = t.id
       JOIN property_units pu ON ta.unit_id = pu.id
@@ -438,31 +428,13 @@ const triggerAgentBillingSMS = async (req, res) => {
               ELSE COALESCE(rp.amount, 0)
             END
           ), 0) AS rent_paid,
-          COALESCE(SUM(COALESCE(rp.allocated_to_water, 0)), 0) AS water_paid
+          COALESCE(SUM(COALESCE(rp.allocated_to_water, 0)), 0) AS water_paid,
+          COALESCE(SUM(COALESCE(rp.allocated_to_arrears, 0)), 0) AS arrears_paid_all_time
         FROM rent_payments rp
         WHERE rp.tenant_id = ta.tenant_id
           AND rp.unit_id = ta.unit_id
           AND rp.status = 'completed'
-          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $2::date)
       ) pm ON true
-      LEFT JOIN LATERAL (
-        -- FIX: Calculate ALL rent paid across all time for this tenant+unit
-        SELECT
-          COALESCE(SUM(
-            CASE
-              WHEN (
-                COALESCE(rp_all.allocated_to_rent, 0) +
-                COALESCE(rp_all.allocated_to_water, 0) +
-                COALESCE(rp_all.allocated_to_arrears, 0)
-              ) > 0 THEN COALESCE(rp_all.allocated_to_rent, 0)
-              ELSE COALESCE(rp_all.amount, 0)
-            END
-          ), 0) AS total_rent_paid_all_time
-        FROM rent_payments rp_all
-        WHERE rp_all.tenant_id = ta.tenant_id
-          AND rp_all.unit_id = ta.unit_id
-          AND rp_all.status = 'completed'
-      ) all_payments ON true
       WHERE ta.is_active = true AND p.id = ANY($1)
     `;
 
@@ -502,8 +474,12 @@ const triggerAgentBillingSMS = async (req, res) => {
           0,
           Number(tenant.water_amount || 0) - Number(tenant.water_paid || 0),
         );
-        // FIX: Use actual_arrears calculated on-the-fly instead of stale arrears_balance
-        const arrearsDue = Number(tenant.actual_arrears || 0);
+        // FIX: Use arrears_balance directly (should be updated by reconciliation)
+        // Don't recalculate from scratch - causes double-counting
+        const arrearsDue = Math.max(
+          0,
+          Number(tenant.arrears_balance || 0) - Number(tenant.arrears_paid_all_time || 0),
+        );
         const totalDue = rentDue + waterDue + arrearsDue;
 
         if (totalDue <= 0) {
