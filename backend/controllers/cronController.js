@@ -478,11 +478,17 @@ const triggerAgentBillingSMS = async (req, res) => {
         .json({ success: false, message: "No active tenants found" });
     }
 
+    // Generate batch_id for this billing trigger
+    const batchId = require('crypto').randomUUID();
+    const GRACE_PERIOD_MINUTES = 2;
+
     const results = {
       total: tenants.length,
       queued: 0,
       failed: 0,
       skipped_paid: 0,
+      batch_id: batchId,
+      grace_period_ends_at: null,
       details: [],
     };
 
@@ -543,11 +549,18 @@ const triggerAgentBillingSMS = async (req, res) => {
         }
 
         await pool.query(
-          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, billing_month, created_at, agent_id)
-           VALUES ($1, $2, 'bill_notification', 'pending', $3, NOW(), $4)`,
-          [tenant.phone_number, message, targetMonth, agentId],
+          `INSERT INTO sms_queue (recipient_phone, message, message_type, status, billing_month, created_at, agent_id, scheduled_at, batch_id)
+           VALUES ($1, $2, 'bill_notification', 'pending', $3, NOW(), $4, NOW() + INTERVAL '${GRACE_PERIOD_MINUTES} minutes', $5)`,
+          [tenant.phone_number, message, targetMonth, agentId, batchId],
         );
         results.queued++;
+        
+        // Set grace period end time (only once)
+        if (!results.grace_period_ends_at) {
+          const now = new Date();
+          const graceEnds = new Date(now.getTime() + GRACE_PERIOD_MINUTES * 60 * 1000);
+          results.grace_period_ends_at = graceEnds.toISOString();
+        }
         results.details.push({
           tenant: `${tenant.first_name} ${tenant.last_name}`.trim(),
           unit: tenant.unit_code,
@@ -568,7 +581,7 @@ const triggerAgentBillingSMS = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Billing SMS triggered for ${results.queued} tenant(s). Skipped ${results.skipped_paid} fully paid tenant(s).`,
+      message: `Billing SMS queued for ${results.queued} tenant(s). Skipped ${results.skipped_paid} fully paid tenant(s). Messages will be sent in ${GRACE_PERIOD_MINUTES} minutes. You can cancel before then.`,
       data: {
         ...results,
         template_id_used: useTemplateId || null,
@@ -590,6 +603,123 @@ const triggerAgentBillingSMS = async (req, res) => {
         message: "Failed to trigger billing SMS",
         error: error.message,
       });
+  }
+};
+
+// Get pending billing SMS (within grace period)
+const getPendingBillingSMS = async (req, res) => {
+  try {
+    const agentId = req.user.id;
+
+    const result = await pool.query(
+      `SELECT COUNT(*) as pending_count,
+              batch_id,
+              MIN(scheduled_at) as grace_period_ends_at,
+              ARRAY_AGG(DISTINCT billing_month) as billing_months
+       FROM sms_queue
+       WHERE agent_id = $1
+         AND status = 'pending'
+         AND scheduled_at > NOW()
+       GROUP BY batch_id
+       ORDER BY MIN(scheduled_at) ASC
+       LIMIT 1`,
+      [agentId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          has_pending: false,
+          pending_count: 0,
+          batch_id: null,
+          grace_period_ends_at: null,
+        },
+      });
+    }
+
+    const row = result.rows[0];
+    res.json({
+      success: true,
+      data: {
+        has_pending: true,
+        pending_count: parseInt(row.pending_count),
+        batch_id: row.batch_id,
+        grace_period_ends_at: row.grace_period_ends_at,
+        minutes_remaining: Math.max(0, Math.ceil(
+          (new Date(row.grace_period_ends_at).getTime() - Date.now()) / 60000
+        )),
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error getting pending billing SMS:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get pending billing SMS",
+      error: error.message,
+    });
+  }
+};
+
+// Cancel pending billing SMS (within grace period)
+const cancelPendingBillingSMS = async (req, res) => {
+  try {
+    const agentId = req.user.id;
+    const { batch_id } = req.body;
+
+    let result;
+    
+    if (batch_id) {
+      // Cancel specific batch
+      result = await pool.query(
+        `DELETE FROM sms_queue
+         WHERE agent_id = $1
+           AND batch_id = $2
+           AND status = 'pending'
+           AND scheduled_at > NOW()
+         RETURNING id`,
+        [agentId, batch_id],
+      );
+    } else {
+      // Cancel ALL pending billing SMS within grace period
+      result = await pool.query(
+        `DELETE FROM sms_queue
+         WHERE agent_id = $1
+           AND status = 'pending'
+           AND scheduled_at > NOW()
+           AND message_type = 'bill_notification'
+         RETURNING id`,
+        [agentId],
+      );
+    }
+
+    const cancelledCount = result.rowCount;
+
+    if (cancelledCount === 0) {
+      return res.json({
+        success: false,
+        message: "No pending billing SMS found to cancel. Messages may have already been sent.",
+        data: { cancelled_count: 0 },
+      });
+    }
+
+    console.log(`✅ Cancelled ${cancelledCount} pending billing SMS for agent ${agentId}`);
+
+    res.json({
+      success: true,
+      message: `Successfully cancelled ${cancelledCount} pending billing SMS`,
+      data: {
+        cancelled_count: cancelledCount,
+        batch_id: batch_id || null,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error cancelling pending billing SMS:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to cancel pending billing SMS",
+      error: error.message,
+    });
   }
 };
 
@@ -734,4 +864,6 @@ module.exports = {
   retryFailedSMS,
   getSMSHistory,
   triggerAgentBillingSMS,
+  getPendingBillingSMS,
+  cancelPendingBillingSMS,
 };
