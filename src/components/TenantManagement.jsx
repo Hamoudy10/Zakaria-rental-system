@@ -275,6 +275,8 @@ const TenantManagement = () => {
           "🔍 Fetching available units...",
           currentUnitId ? `including current unit ${currentUnitId}` : "",
         );
+        console.log("[fetchAvailableUnits] Current user role:", user?.role);
+        console.log("[fetchAvailableUnits] assignedProperties:", assignedProperties);
 
         let allUnits = [];
 
@@ -288,28 +290,43 @@ const TenantManagement = () => {
           }
         } else {
           // Agent: from assigned properties only
-          console.log("[fetchAvailableUnits] Agent mode - assignedProperties:", assignedProperties.length);
+          console.log("[fetchAvailableUnits] Agent mode - assignedProperties count:", assignedProperties.length);
+          console.log("[fetchAvailableUnits] assignedProperties details:", assignedProperties.map(p => ({ id: p.id, name: p.name })));
+          
           for (const property of assignedProperties) {
             try {
-              const response = await API.properties.getPropertyUnits(
-                property.id,
-              );
-              console.log(`[fetchAvailableUnits] Property ${property.id} units:`, response.data?.data?.length);
+              console.log(`[fetchAvailableUnits] Fetching units for property: ${property.name} (${property.id})`);
+              const response = await API.properties.getPropertyUnits(property.id);
+              console.log(`[fetchAvailableUnits] Property ${property.name} - API response:`, response.data);
+              
               if (response.data.success) {
                 const propertyUnits = response.data.data || [];
-                console.log(`[fetchAvailableUnits] Raw units from API:`, propertyUnits.map(u => ({ id: u.id, unit_code: u.unit_code, is_active: u.is_active, is_occupied: u.is_occupied })));
+                console.log(`[fetchAvailableUnits] Property ${property.name} - Raw units count:`, propertyUnits.length);
+                console.log(`[fetchAvailableUnits] Property ${property.name} - All units:`, propertyUnits.map(u => ({
+                  id: u.id,
+                  unit_code: u.unit_code,
+                  is_active: u.is_active,
+                  is_occupied: u.is_occupied
+                })));
 
                 const availableUnitsInProperty = propertyUnits
                   .filter((unit) => {
+                    console.log(`[fetchAvailableUnits] Checking unit ${unit.unit_code}:`, {
+                      is_active: unit.is_active,
+                      is_occupied: unit.is_occupied,
+                      isCurrentUnit: currentUnitId === unit.id
+                    });
+                    
                     if (!unit.is_active) {
-                      console.log("[fetchAvailableUnits] Filtered out (is_active false):", unit.unit_code);
+                      console.log("[fetchAvailableUnits] ❌ Filtered out (is_active false):", unit.unit_code);
                       return false;
                     }
                     if (currentUnitId && unit.id === currentUnitId) {
+                      console.log("[fetchAvailableUnits] ✅ Keeping current unit:", unit.unit_code);
                       return true;
                     }
                     const isAvailable = unit.is_occupied === false;
-                    console.log("[fetchAvailableUnits] is_occupied check:", unit.unit_code, unit.is_occupied, isAvailable);
+                    console.log("[fetchAvailableUnits]", isAvailable ? "✅ Available" : "❌ Occupied", unit.unit_code, "is_occupied:", unit.is_occupied);
                     return isAvailable;
                   })
                   .map((unit) => ({
@@ -318,6 +335,7 @@ const TenantManagement = () => {
                     property_code: property.property_code || "",
                   }));
 
+                console.log(`[fetchAvailableUnits] Property ${property.name} - Available units after filter:`, availableUnitsInProperty.length);
                 allUnits = [...allUnits, ...availableUnitsInProperty];
               }
             } catch (err) {
@@ -329,7 +347,13 @@ const TenantManagement = () => {
           }
         }
 
-        console.log("✅ Available Units:", allUnits.length);
+        console.log("✅ Final Available Units count:", allUnits.length);
+        console.log("✅ Available Units list:", allUnits.map(u => ({
+          id: u.id,
+          unit_code: u.unit_code,
+          property_name: u.property_name,
+          is_occupied: u.is_occupied
+        })));
         setAvailableUnits(Array.isArray(allUnits) ? allUnits : []);
       } catch (err) {
         console.error("❌ Error fetching available units:", err);
