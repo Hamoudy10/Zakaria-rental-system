@@ -1562,6 +1562,8 @@ const getAvailableUnits = async (req, res) => {
       JOIN properties p ON pu.property_id = p.id
       WHERE pu.is_active = true`;
 
+    console.log("[getAvailableUnits] Initial filter: is_active = true");
+
     if (req.user.role === "agent") {
       query += `
       AND p.id IN (
@@ -1587,6 +1589,9 @@ const getAvailableUnits = async (req, res) => {
     query += ` ORDER BY p.name, pu.unit_number`;
 
     const result = await pool.query(query, params);
+    
+    console.log(`[getAvailableUnits] Returning ${result.rows.length} units`);
+    console.log("[getAvailableUnits] Sample units:", result.rows.slice(0, 3).map(u => ({ id: u.id, unit_code: u.unit_code, is_active: u.is_active, is_occupied: u.is_occupied })));
 
     res.json({
       success: true,

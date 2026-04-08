@@ -279,26 +279,35 @@ const TenantManagement = () => {
           const response = await API.tenants.getAvailableUnits(
             editingTenantId ? { tenant_id: editingTenantId } : {},
           );
+          console.log("[fetchAvailableUnits] Admin API response:", response.data);
           if (response.data.success) {
             allUnits = response.data.data || [];
           }
         } else {
           // Agent: from assigned properties only
+          console.log("[fetchAvailableUnits] Agent mode - assignedProperties:", assignedProperties.length);
           for (const property of assignedProperties) {
             try {
               const response = await API.properties.getPropertyUnits(
                 property.id,
               );
+              console.log(`[fetchAvailableUnits] Property ${property.id} units:`, response.data?.data?.length);
               if (response.data.success) {
                 const propertyUnits = response.data.data || [];
+                console.log(`[fetchAvailableUnits] Raw units from API:`, propertyUnits.map(u => ({ id: u.id, unit_code: u.unit_code, is_active: u.is_active, is_occupied: u.is_occupied })));
 
                 const availableUnitsInProperty = propertyUnits
                   .filter((unit) => {
-                    if (!unit.is_active) return false;
+                    if (!unit.is_active) {
+                      console.log("[fetchAvailableUnits] Filtered out (is_active false):", unit.unit_code);
+                      return false;
+                    }
                     if (currentUnitId && unit.id === currentUnitId) {
                       return true;
                     }
-                    return unit.is_occupied === false;
+                    const isAvailable = unit.is_occupied === false;
+                    console.log("[fetchAvailableUnits] is_occupied check:", unit.unit_code, unit.is_occupied, isAvailable);
+                    return isAvailable;
                   })
                   .map((unit) => ({
                     ...unit,
@@ -601,6 +610,7 @@ const TenantManagement = () => {
 
     setFormErrors({});
     setShowForm(true);
+    fetchAvailableUnits();
   };
   const resetForm = () => {
     setFormData({
@@ -910,7 +920,10 @@ const TenantManagement = () => {
             )}
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => {
+            fetchAvailableUnits();
+            setShowForm(true);
+          }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
           disabled={user.role === "agent" && assignedProperties.length === 0}
         >

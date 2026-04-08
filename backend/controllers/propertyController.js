@@ -557,8 +557,8 @@ const createUnit = async (req, res) => {
     // Create the unit
     const result = await pool.query(
       `INSERT INTO property_units 
-        (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, features, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (property_id, unit_code, unit_type, unit_number, rent_amount, deposit_amount, description, features, is_active, is_occupied, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         propertyId,
@@ -569,6 +569,8 @@ const createUnit = async (req, res) => {
         deposit_amount || 0,
         description,
         features || {},
+        true,  // is_active - default to true
+        false, // is_occupied - default to false (available)
         req.user.id
       ]
     );
