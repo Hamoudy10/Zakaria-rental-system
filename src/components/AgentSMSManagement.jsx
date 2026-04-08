@@ -123,6 +123,12 @@ const AgentSMSManagement = () => {
     useState(false);
   const [loadingSendBalances, setLoadingSendBalances] = useState(false);
   const [sendTenantBalances, setSendTenantBalances] = useState({});
+  
+  // State for pending billing (grace period cancellation)
+  const [pendingBilling, setPendingBilling] = useState(null);
+  const [cancellingBilling, setCancellingBilling] = useState(false);
+  const [cancellationResult, setCancellationResult] = useState(null);
+  const [checkingPending, setCheckingPending] = useState(false);
 
   const selectedNotificationTemplate = useMemo(
     () => notificationTemplates.find((t) => t.id === testTemplateId) || null,
@@ -599,6 +605,17 @@ const AgentSMSManagement = () => {
           message: responseData.message,
           data: responseData.data,
         });
+        
+        // Store pending billing info for cancellation
+        if (responseData.data?.batch_id && responseData.data?.grace_period_ends_at) {
+          setPendingBilling({
+            batch_id: responseData.data.batch_id,
+            grace_period_ends_at: responseData.data.grace_period_ends_at,
+            queued_count: responseData.data.queued || 0,
+          });
+          startGracePeriodTimer(responseData.data.grace_period_ends_at);
+        }
+        
         // Reset confirmation state
         setMissingBillsConfirmation(null);
       } else {
@@ -615,6 +632,55 @@ const AgentSMSManagement = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Start countdown timer for grace period
+  const startGracePeriodTimer = (gracePeriodEndsAt) => {
+    const endTime = new Date(gracePeriodEndsAt).getTime();
+    
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
+      
+      if (remaining <= 0) {
+        clearInterval(timer);
+        setPendingBilling(null); // Grace period expired
+      }
+    }, 1000);
+  };
+
+  // Cancel pending billing
+  const handleCancelPendingBilling = async () => {
+    if (!pendingBilling?.batch_id) return;
+    
+    setCancellingBilling(true);
+    try {
+      const response = await API.billing.cancelPendingBillingSMS({
+        batch_id: pendingBilling.batch_id,
+      });
+      
+      if (response.data.success) {
+        setCancellationResult({
+          type: "success",
+          message: response.data.message,
+          count: response.data.data.cancelled_count,
+        });
+        setPendingBilling(null); // Clear pending billing
+      } else {
+        setCancellationResult({
+          type: "error",
+          message: response.data.message || "Failed to cancel billing",
+        });
+      }
+    } catch (error) {
+      console.error("Error cancelling billing:", error);
+      setCancellationResult({
+        type: "error",
+        message: "Failed to cancel billing. Messages may have already been sent.",
+      });
+    } finally {
+      setCancellingBilling(false);
     }
   };
 
@@ -1325,7 +1391,7 @@ const AgentSMSManagement = () => {
                     ) : (
                       <XCircle className="w-5 h-5 text-red-500 mt-0.5 mr-3" />
                     )}
-                    <div>
+                    <div className="flex-1">
                       <h4
                         className={`text-sm font-medium ${triggerResult.type === "success" ? "text-green-800" : "text-red-800"}`}
                       >
@@ -1359,6 +1425,66 @@ const AgentSMSManagement = () => {
                             <strong>Missing Water Bills:</strong>{" "}
                             {triggerResult.data.missing_water_bills?.count || 0}
                           </p>
+                          
+                          {/* CANCEL BUTTON - Show only during grace period */}
+                          {pendingBilling && (
+                            <div className="mt-4 pt-4 border-t border-green-200">
+                              <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-3">
+                                <div className="flex items-start">
+                                  <AlertTriangle className="w-5 h-5 text-yellow-500 mt-0.5 mr-2 flex-shrink-0" />
+                                  <div>
+                                    <p className="text-sm font-medium text-yellow-800">
+                                      Grace Period Active
+                                    </p>
+                                    <p className="text-xs text-yellow-700 mt-1">
+                                      SMS will be sent in 2 minutes. You can cancel now.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={handleCancelPendingBilling}
+                                  disabled={cancellingBilling}
+                                  className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  {cancellingBilling ? (
+                                    <>
+                                      <span className="inline-block h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                                      Cancelling...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <XCircle className="w-4 h-4 inline mr-1" />
+                                      Cancel All SMS
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Cancellation Result */}
+                          {cancellationResult && (
+                            <div className={`mt-3 p-3 rounded-md text-sm ${
+                              cancellationResult.type === "success" 
+                                ? "bg-green-100 text-green-800" 
+                                : "bg-red-100 text-red-800"
+                            }`}>
+                              {cancellationResult.type === "success" ? (
+                                <>
+                                  <CheckCircle className="w-4 h-4 inline mr-1" />
+                                  Cancelled {cancellationResult.count} SMS successfully!
+                                </>
+                              ) : (
+                                <>
+                                  <XCircle className="w-4 h-4 inline mr-1" />
+                                  {cancellationResult.message}
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
