@@ -185,6 +185,12 @@ export const paymentAPI = {
   getTenantPaymentStatus: (params = {}) =>
     api.get("/payments/tenant-status", { params }),
 
+  // AI Payment Prediction
+  getTenantPaymentScore: (tenantId, unitId = null) =>
+    unitId
+      ? api.get(`/payments/tenant/${tenantId}/unit/${unitId}/score`)
+      : api.get(`/payments/tenant/${tenantId}/score`),
+
   // ==================== MANUAL PAYMENT ====================
   recordManualPayment: (paymentData) =>
     api.post("/payments/manual", paymentData),
