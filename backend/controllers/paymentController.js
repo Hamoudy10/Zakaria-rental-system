@@ -668,22 +668,58 @@ const trackRentPayment = async (
     );
     const waterAmount = parseFloat(waterBillResult.rows[0]?.amount) || 0;
 
-    const remainingArrears = Math.max(0, arrearsBalance - arrearsPaidAllTime);
+    // FIX: Calculate accurate remaining balances
+    // IMPORTANT: Arrears should only include ACTUAL historical debt, NOT current month rent
+    // Recalculate arrears from scratch using payment history
+    const totalRentOwed = monthlyRent * Math.max(1, 
+      Math.ceil((new Date(paymentMonth + '-01') - new Date(allocation.allocation_date)) / (1000 * 60 * 60 * 24 * 30))
+    );
+    
+    const totalRentPaidAllTimeResult = await db.query(
+      `SELECT COALESCE(SUM(
+        CASE
+          WHEN (
+            COALESCE(allocated_to_rent, 0) +
+            COALESCE(allocated_to_water, 0) +
+            COALESCE(allocated_to_arrears, 0)
+          ) > 0 THEN COALESCE(allocated_to_rent, 0)
+          ELSE COALESCE(amount, 0)
+        END
+      ), 0) AS total_rent_paid
+      FROM rent_payments
+      WHERE tenant_id = $1 AND unit_id = $2 AND status = 'completed'`,
+      [tenantId, unitId],
+    );
+    const totalRentPaidAllTime = parseFloat(totalRentPaidAllTimeResult.rows[0].total_rent_paid) || 0;
+    
+    // True arrears = total rent owed - total rent paid (historical)
+    const trueArrears = Math.max(0, totalRentOwed - totalRentPaidAllTime - monthlyRent); // Exclude current month
+    const remainingArrears = Math.max(0, trueArrears - arrearsPaidAllTime);
     const remainingRent = Math.max(0, monthlyRent - rentPaidForMonth);
     const remainingWater = Math.max(0, waterAmount - waterPaidForMonth);
 
+    // CORRECT ALLOCATION PRIORITY (per system design):
+    // 1. Arrears (historical unpaid rent)
+    // 2. Water (current month water bill)
+    // 3. Rent (current month rent)
+    // 4. Advance (future months)
+    
     const totalDueBeforePayment = remainingArrears + remainingRent + remainingWater;
     let remainingPayment = paymentAmount;
 
+    // Step 1: Pay arrears first
     const allocatedToArrears = Math.min(remainingPayment, remainingArrears);
     remainingPayment -= allocatedToArrears;
 
-    const allocatedToRent = Math.min(remainingPayment, remainingRent);
-    remainingPayment -= allocatedToRent;
-
+    // Step 2: Pay water second
     const allocatedToWater = Math.min(remainingPayment, remainingWater);
     remainingPayment -= allocatedToWater;
 
+    // Step 3: Pay rent third
+    const allocatedToRent = Math.min(remainingPayment, remainingRent);
+    remainingPayment -= allocatedToRent;
+
+    // Step 4: Remainder goes to advance (carry forward)
     const allocatedAmount = allocatedToArrears + allocatedToRent + allocatedToWater;
     const carryForwardAmount = remainingPayment;
     const totalDueAfterPayment = Math.max(0, totalDueBeforePayment - allocatedAmount);
