@@ -4494,7 +4494,7 @@ const getTenantPaymentStatus = async (req, res) => {
     const monthStart = `${targetMonth}-01`;
 
     let baseQuery = `
-      SELECT 
+      SELECT
         t.id as tenant_id, t.first_name, t.last_name,
         CONCAT(t.first_name, ' ', t.last_name) as tenant_name,
         t.phone_number,
@@ -4517,22 +4517,22 @@ const getTenantPaymentStatus = async (req, res) => {
               ) > 0 THEN COALESCE(rp.allocated_to_rent, 0) + COALESCE(rp.allocated_to_arrears, 0)
               ELSE COALESCE(rp.amount, 0)
             END
-          ) FROM rent_payments rp 
-          WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id 
+          ) FROM rent_payments rp
+          WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id
           AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
           AND rp.status = 'completed'
         ), 0) as rent_paid,
         COALESCE((
-          SELECT wb.amount FROM water_bills wb 
-          WHERE wb.tenant_id = t.id 
+          SELECT wb.amount FROM water_bills wb
+          WHERE wb.tenant_id = t.id
           AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
           AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
           ORDER BY CASE WHEN wb.unit_id = pu.id THEN 0 ELSE 1 END
           LIMIT 1
         ), 0) as water_bill,
         COALESCE((
-          SELECT SUM(rp.allocated_to_water) FROM rent_payments rp 
-          WHERE rp.tenant_id = t.id 
+          SELECT SUM(rp.allocated_to_water) FROM rent_payments rp
+          WHERE rp.tenant_id = t.id
           AND rp.unit_id = pu.id
           AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
           AND rp.status = 'completed'
@@ -4581,8 +4581,8 @@ const getTenantPaymentStatus = async (req, res) => {
               ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
               ELSE COALESCE(rp.amount, 0)
             END
-          ) FROM rent_payments rp 
-          WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id 
+          ) FROM rent_payments rp
+          WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id
           AND DATE_TRUNC('month', rp.payment_month) > DATE_TRUNC('month', $1::date)
           AND rp.status = 'completed'
           AND (
@@ -4591,13 +4591,14 @@ const getTenantPaymentStatus = async (req, res) => {
           )
         ), 0) as advance_amount,
         (
-          SELECT MAX(rp.payment_date) FROM rent_payments rp 
+          SELECT MAX(rp.payment_date) FROM rent_payments rp
           WHERE rp.tenant_id = t.id AND rp.status = 'completed'
         ) as last_payment_date
       FROM tenants t
       INNER JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
       INNER JOIN property_units pu ON ta.unit_id = pu.id AND pu.is_active = true
       INNER JOIN properties p ON pu.property_id = p.id
+      WHERE (ta.lease_start_date IS NULL OR ta.lease_start_date < ($1::date + INTERVAL '1 month'))
     `;
 
     const whereClauses = [];
