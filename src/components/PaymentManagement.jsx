@@ -8,6 +8,7 @@ import { API, notificationAPI, paymentAPI } from "../services/api";
 import { exportToPDF } from "../utils/pdfExport";
 import { exportToExcel } from "../utils/excelExport";
 import { formatContactPhoneForDisplay } from "../utils/phoneUtils";
+import PaymentRiskBadge from "./PaymentRiskBadge";
 import {
   Calendar,
   DollarSign,
@@ -1924,6 +1925,13 @@ const TenantStatusTable = ({
                 </th>
                 <th className="p-4">Status</th>
                 <th className="p-4">Actions</th>
+                {activeTab === "unpaid" && (
+                  <th className="p-4 text-center">
+                    <span title="AI Payment Risk Score" className="inline-flex items-center gap-1 cursor-help">
+                      🤖 AI Risk
+                    </span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -2058,6 +2066,14 @@ const TenantStatusTable = ({
                         )}
                       </div>
                     </td>
+                    {activeTab === "unpaid" && (
+                      <td className="p-4 text-center">
+                        <PaymentRiskBadge 
+                          tenantId={t.tenant_id} 
+                          compact 
+                        />
+                      </td>
+                    )}
                   </tr>
                 );
               })}

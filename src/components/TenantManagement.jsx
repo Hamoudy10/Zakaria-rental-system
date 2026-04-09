@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { API, allocationAPI } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useProperty } from "../context/PropertyContext";
+import PaymentRiskBadge from "./PaymentRiskBadge";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
@@ -1852,6 +1853,20 @@ const TenantManagement = () => {
                   </div>
                 )}
               </div>
+              
+              {/* AI Payment Intelligence */}
+              <div className="mb-6">
+                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                  <span>🤖</span> AI Payment Intelligence
+                </h4>
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-5">
+                  <PaymentRiskBadge 
+                    tenantId={selectedTenantData.id} 
+                    unitId={selectedTenantData.unit_id || getActiveAllocations(selectedTenantData)[0]?.unit_id}
+                  />
+                </div>
+              </div>
+              
               {/* Modal Footer */}
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <button
