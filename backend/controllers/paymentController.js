@@ -4734,6 +4734,36 @@ const getTenantPaymentStatus = async (req, res) => {
   }
 };
 
+// Get tenant payment risk score (AI prediction)
+const getTenantPaymentScore = async (req, res) => {
+  try {
+    const { tenantId, unitId } = req.params;
+    const paymentPredictor = require('../services/paymentPredictor');
+    
+    const result = await paymentPredictor.calculateTenantScore(tenantId, unitId || null);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        data: result.data
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: "Failed to calculate payment score",
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error("Error getting tenant payment score:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get tenant payment score",
+      error: error.message
+    });
+  }
+};
+
 // ==================== EXPORTS ====================
 
 module.exports = {
@@ -4763,6 +4793,7 @@ module.exports = {
   getPaymentHistory,
   getFuturePaymentsStatus,
   getTenantPaymentStatus,
+  getTenantPaymentScore,
   getTenantDepositSummary,
   getTenantDepositTransactions,
   recordDepositPayment,

@@ -331,6 +331,22 @@ router.get(
   paymentController.getTenantPaymentStatus,
 );
 
+// Tenant payment risk score (AI prediction)
+router.get(
+  "/tenant/:tenantId/score",
+  protect,
+  requireAgent,
+  paymentController.getTenantPaymentScore,
+);
+
+// Tenant payment risk score (with unit specificity)
+router.get(
+  "/tenant/:tenantId/unit/:unitId/score",
+  protect,
+  requireAgent,
+  paymentController.getTenantPaymentScore,
+);
+
 // ==================== M-PESA CONFIG & TEST ROUTES ====================
 
 // Test M-Pesa configuration (admin only)
