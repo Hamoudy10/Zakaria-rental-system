@@ -416,7 +416,7 @@ const DashboardOverview = ({
         </button>
       </div>
 
-{/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
       {user?.email === 'hamoudybadi@gmail.com' && (
       <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
