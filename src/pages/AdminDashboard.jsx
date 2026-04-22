@@ -55,10 +55,10 @@ const TabLoadingSpinner = () => (
 );
 
 const AdminDashboard = () => {
-  const { notifications = [], refreshNotifications } = useNotification();
+const { notifications = [], refreshNotifications } = useNotification();
   const { user } = useAuth();
   const canViewMpesaOverview =
-    String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com';
+    user && String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com';
   const [activeTab, setActiveTab] = useState('overview');
   const [comprehensiveStats, setComprehensiveStats] = useState(null);
   const [recentActivities, setRecentActivities] = useState([]);
@@ -417,7 +417,7 @@ const DashboardOverview = ({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
-      {user && user.email === 'hamoudybadi@gmail.com' && (
+      {user && String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com' && (
       <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
