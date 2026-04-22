@@ -57,8 +57,11 @@ const TabLoadingSpinner = () => (
 const AdminDashboard = () => {
 const { notifications = [], refreshNotifications } = useNotification();
   const { user } = useAuth();
-  const canViewMpesaOverview =
-    user && String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com';
+  const restrictedAdminEmail = 'hamoudybadi@gmail.com';
+  const isRestrictedAdmin =
+    String(user?.email || '').trim().toLowerCase() === restrictedAdminEmail;
+  const canViewActionAlerts = isRestrictedAdmin;
+  const canViewMpesaOverview = isRestrictedAdmin;
   const [activeTab, setActiveTab] = useState('overview');
   const [comprehensiveStats, setComprehensiveStats] = useState(null);
   const [recentActivities, setRecentActivities] = useState([]);
@@ -210,6 +213,7 @@ const { notifications = [], refreshNotifications } = useNotification();
             expenseStats={expenseStats}
             netProfitData={netProfitData}
             mpesaAudit={mpesaAudit}
+            canViewActionAlerts={canViewActionAlerts}
             canViewMpesaOverview={canViewMpesaOverview}
             waterProfitability={waterProfitability}
             loading={loading}
@@ -273,6 +277,7 @@ const DashboardOverview = ({
   expenseStats,
   netProfitData,
   mpesaAudit,
+  canViewActionAlerts,
   canViewMpesaOverview,
   waterProfitability,
   loading,
@@ -417,6 +422,7 @@ const DashboardOverview = ({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
+      {canViewActionAlerts && (
       <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -468,6 +474,7 @@ const DashboardOverview = ({
           </div>
         )}
       </div>
+      )}
 
       {canViewMpesaOverview && (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
