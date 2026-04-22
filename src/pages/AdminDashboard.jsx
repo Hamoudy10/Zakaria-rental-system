@@ -417,7 +417,6 @@ const DashboardOverview = ({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
-      {user && String(user?.email || '').trim().toLowerCase() === 'hamoudybadi@gmail.com' && (
       <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -469,7 +468,6 @@ const DashboardOverview = ({
           </div>
         )}
       </div>
-      )}
 
       {canViewMpesaOverview && (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
