@@ -4635,7 +4635,7 @@ const getTenantPaymentStatus = async (req, res) => {
     }
 
     if (whereClauses.length > 0) {
-      baseQuery += ` WHERE ${whereClauses.join(" AND ")}`;
+      baseQuery += ` AND ${whereClauses.join(" AND ")}`;
     }
 
     baseQuery += ` ORDER BY p.name, pu.unit_code`;
