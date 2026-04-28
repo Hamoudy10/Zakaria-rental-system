@@ -175,6 +175,16 @@ const chooseTool = (question) => {
   const q = question.toLowerCase();
 
   if (
+    q.includes("all data") ||
+    q.includes("everything") ||
+    q.includes("database") ||
+    q.includes("system data") ||
+    q.includes("full data")
+  ) {
+    return "global_data_pack";
+  }
+
+  if (
     (q.includes("missing rent") ||
       q.includes("unpaid rent") ||
       q.includes("outstanding rent") ||
@@ -204,6 +214,158 @@ const chooseTool = (question) => {
   }
 
   return "tenant";
+};
+
+const runSafeQuery = async (query, params = []) => {
+  try {
+    const result = await db.query(query, params);
+    return result.rows || [];
+  } catch (error) {
+    return [];
+  }
+};
+
+const getGlobalDataPack = async ({ user }) => {
+  const scopeCondition =
+    user.role === "agent"
+      ? `
+      AND EXISTS (
+        SELECT 1
+        FROM agent_property_assignments apa
+        WHERE apa.agent_id = $1
+          AND apa.property_id = p.id
+          AND apa.is_active = true
+      )`
+      : "";
+  const scopeParams = user.role === "agent" ? [user.id] : [];
+
+  const propertiesSummaryQ = `
+    SELECT
+      COUNT(*)::int AS properties_count,
+      COALESCE(SUM(p.total_units), 0)::int AS units_declared
+    FROM properties p
+    WHERE 1=1
+    ${scopeCondition}
+  `;
+
+  const activeTenantsQ = `
+    SELECT
+      COUNT(*)::int AS active_tenants
+    FROM tenant_allocations ta
+    JOIN property_units pu ON pu.id = ta.unit_id
+    JOIN properties p ON p.id = pu.property_id
+    WHERE ta.is_active = true
+    ${scopeCondition}
+  `;
+
+  const paymentsSummaryQ = `
+    SELECT
+      COUNT(*)::int AS payments_count_45d,
+      COALESCE(SUM(COALESCE(rp.amount, 0)), 0) AS payments_amount_45d
+    FROM rent_payments rp
+    JOIN properties p ON p.id = rp.property_id
+    WHERE rp.created_at >= NOW() - INTERVAL '45 days'
+      AND rp.status = 'completed'
+    ${scopeCondition}
+  `;
+
+  const complaintsSummaryQ = `
+    SELECT
+      COUNT(*)::int AS open_complaints
+    FROM complaints c
+    JOIN property_units pu ON pu.id = c.unit_id
+    JOIN properties p ON p.id = pu.property_id
+    WHERE c.status IN ('open','in_progress')
+    ${scopeCondition}
+  `;
+
+  const topTenantsDueQ = `
+    SELECT
+      t.first_name,
+      t.last_name,
+      pu.unit_code,
+      p.name AS property_name,
+      (
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+        GREATEST(0, COALESCE(ta.arrears_balance, 0))
+      ) AS missing_rent
+    FROM tenant_allocations ta
+    JOIN tenants t ON t.id = ta.tenant_id
+    JOIN property_units pu ON pu.id = ta.unit_id
+    JOIN properties p ON p.id = pu.property_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN (
+            COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+          ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+          ELSE COALESCE(rp.amount, 0)
+        END
+      ), 0) AS rent_paid
+      FROM rent_payments rp
+      WHERE rp.tenant_id = ta.tenant_id
+        AND rp.unit_id = ta.unit_id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+        AND rp.status = 'completed'
+    ) pm ON TRUE
+    WHERE ta.is_active = true
+      AND (
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+        GREATEST(0, COALESCE(ta.arrears_balance, 0))
+      ) > 0
+    ${scopeCondition}
+    ORDER BY missing_rent DESC
+    LIMIT 8
+  `;
+
+  const recentPaymentsQ = `
+    SELECT
+      rp.payment_date,
+      rp.amount,
+      rp.status,
+      rp.mpesa_receipt_number,
+      t.first_name,
+      t.last_name,
+      pu.unit_code,
+      p.name AS property_name
+    FROM rent_payments rp
+    LEFT JOIN tenants t ON t.id = rp.tenant_id
+    LEFT JOIN property_units pu ON pu.id = rp.unit_id
+    LEFT JOIN properties p ON p.id = rp.property_id
+    WHERE rp.created_at >= NOW() - INTERVAL '30 days'
+    ${scopeCondition}
+    ORDER BY COALESCE(rp.payment_date, rp.created_at) DESC
+    LIMIT 10
+  `;
+
+  const [propertiesSummaryRows, activeTenantsRows, paymentsSummaryRows, complaintsSummaryRows] =
+    await Promise.all([
+      runSafeQuery(propertiesSummaryQ, scopeParams),
+      runSafeQuery(activeTenantsQ, scopeParams),
+      runSafeQuery(paymentsSummaryQ, scopeParams),
+      runSafeQuery(complaintsSummaryQ, scopeParams),
+    ]);
+
+  const [topTenantsDueRows, recentPaymentsRows] = await Promise.all([
+    runSafeQuery(topTenantsDueQ, scopeParams),
+    runSafeQuery(recentPaymentsQ, scopeParams),
+  ]);
+
+  return {
+    label: "Global Data Pack",
+    rows: [
+      {
+        properties_summary: propertiesSummaryRows[0] || {},
+        active_tenants_summary: activeTenantsRows[0] || {},
+        payments_summary: paymentsSummaryRows[0] || {},
+        complaints_summary: complaintsSummaryRows[0] || {},
+        top_tenants_due: topTenantsDueRows,
+        recent_payments: recentPaymentsRows,
+      },
+    ],
+  };
 };
 
 const getOutstandingRentSummary = async ({ user }) => {
@@ -637,11 +799,23 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     return `Total missing rent so far is KES ${Number(summary.total_missing_rent_so_far || 0).toLocaleString()} (current month unpaid rent: KES ${Number(summary.current_month_unpaid_rent || 0).toLocaleString()}, arrears: KES ${Number(summary.total_arrears || 0).toLocaleString()}).`;
   }
 
+  if (toolLabel === "Global Data Pack") {
+    const pack = rows[0] || {};
+    const payments = pack.payments_summary || {};
+    const complaints = pack.complaints_summary || {};
+    const activeTenants = pack.active_tenants_summary || {};
+    return `I gathered system-wide data in your access scope: active tenants ${Number(activeTenants.active_tenants || 0)}, payments in last 45 days KES ${Number(payments.payments_amount_45d || 0).toLocaleString()}, and open complaints ${Number(complaints.open_complaints || 0)}.`;
+  }
+
   return `I found ${rows.length} matching records for your request.`;
 };
 
 const runReadOnlyTool = async ({ user, question }) => {
   const selected = chooseTool(question);
+
+  if (selected === "global_data_pack") {
+    return getGlobalDataPack({ user });
+  }
 
   if (selected === "outstanding_rent") {
     return getOutstandingRentSummary({ user });
@@ -665,7 +839,11 @@ const runReadOnlyTool = async ({ user, question }) => {
     if (tenantResult.rows.length > 0) return tenantResult;
     return getRecentPayments({ user });
   }
-  return getTenantSnapshot({ user, question });
+  const tenantSnapshot = await getTenantSnapshot({ user, question });
+  if (tenantSnapshot.rows.length === 0) {
+    return getGlobalDataPack({ user });
+  }
+  return tenantSnapshot;
 };
 
 const saveHistoryMessage = async ({
