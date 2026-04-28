@@ -190,7 +190,7 @@ const extractJsonObject = (text) => {
 };
 
 const getSchemaContext = async () => {
-  const result = await db.query(
+  const columnsResult = await db.query(
     `
       SELECT
         c.table_name,
@@ -204,8 +204,45 @@ const getSchemaContext = async () => {
     [DEFAULT_ANALYST_TABLES],
   );
 
+  let routinesResult = [];
+  try {
+    const routines = await db.query(
+      `
+        SELECT
+          routine_name,
+          routine_type
+        FROM information_schema.routines
+        WHERE specific_schema = 'public'
+        ORDER BY routine_name
+        LIMIT 40
+      `,
+    );
+    routinesResult = routines.rows || [];
+  } catch (error) {
+    routinesResult = [];
+  }
+
+  let triggersResult = [];
+  try {
+    const triggers = await db.query(
+      `
+        SELECT
+          event_object_table AS table_name,
+          trigger_name,
+          event_manipulation
+        FROM information_schema.triggers
+        WHERE trigger_schema = 'public'
+        ORDER BY event_object_table, trigger_name
+        LIMIT 80
+      `,
+    );
+    triggersResult = triggers.rows || [];
+  } catch (error) {
+    triggersResult = [];
+  }
+
   const grouped = {};
-  for (const row of result.rows) {
+  for (const row of columnsResult.rows) {
     if (!grouped[row.table_name]) grouped[row.table_name] = [];
     grouped[row.table_name].push(`${row.column_name}:${row.data_type}`);
   }
@@ -213,7 +250,14 @@ const getSchemaContext = async () => {
   const lines = Object.entries(grouped).map(
     ([table, cols]) => `${table}(${cols.slice(0, 40).join(", ")})`,
   );
-  return lines.join("\n").slice(0, 12000);
+  const routinesLine = `routines(${routinesResult
+    .map((r) => `${r.routine_name}:${r.routine_type}`)
+    .join(", ")})`;
+  const triggersLine = `triggers(${triggersResult
+    .map((t) => `${t.table_name}.${t.trigger_name}:${t.event_manipulation}`)
+    .join(", ")})`;
+
+  return `${lines.join("\n")}\n${routinesLine}\n${triggersLine}`.slice(0, 16000);
 };
 
 const normalizeHistory = (history) => {
@@ -296,6 +340,14 @@ const chooseTool = (question) => {
   const q = question.toLowerCase();
 
   if (
+    (q.includes("not paid") || q.includes("unpaid")) &&
+    (q.includes("this month") || q.includes("current month")) &&
+    (q.includes("building") || q.includes("property") || q.includes("in "))
+  ) {
+    return "unpaid_tenants_property_month";
+  }
+
+  if (
     q.includes("arrears") &&
     (q.includes("this month") || q.includes("current month") || q.includes("month")) &&
     (q.includes("all properties") || q.includes("properties") || q.includes("property"))
@@ -343,6 +395,90 @@ const chooseTool = (question) => {
   }
 
   return "tenant";
+};
+
+const getUnpaidTenantsForPropertyThisMonth = async ({ user, question }) => {
+  const patterns = extractSearchPatterns(question);
+  const propertyQueryBase = `
+    SELECT p.id, p.name, p.property_code
+    FROM properties p
+    WHERE (
+      p.name ILIKE ANY($1::text[])
+      OR p.property_code ILIKE ANY($1::text[])
+    )
+  `;
+  const propertyQuery =
+    user.role === "agent"
+      ? `${propertyQueryBase}
+         AND EXISTS (
+           SELECT 1
+           FROM agent_property_assignments apa
+           WHERE apa.agent_id = $2
+             AND apa.property_id = p.id
+             AND apa.is_active = true
+         )
+         ORDER BY p.name ASC
+         LIMIT 1`
+      : `${propertyQueryBase}
+         ORDER BY p.name ASC
+         LIMIT 1`;
+
+  const propertyParams = user.role === "agent" ? [patterns, user.id] : [patterns];
+  const propertyResult = await db.query(propertyQuery, propertyParams);
+  const property = propertyResult.rows[0];
+  if (!property) {
+    return {
+      label: "Unpaid Tenants This Month",
+      rows: [],
+    };
+  }
+
+  const unpaidQuery = `
+    SELECT
+      t.id AS tenant_id,
+      t.first_name,
+      t.last_name,
+      t.phone_number,
+      pu.unit_code,
+      p.name AS property_name,
+      p.property_code,
+      COALESCE(ta.monthly_rent, pu.rent_amount, 0) AS monthly_rent,
+      COALESCE(pm.rent_paid, 0) AS rent_paid_this_month,
+      GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) AS unpaid_rent_this_month
+    FROM tenant_allocations ta
+    JOIN tenants t ON t.id = ta.tenant_id
+    JOIN property_units pu ON pu.id = ta.unit_id
+    JOIN properties p ON p.id = pu.property_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN (
+            COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+          ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+          ELSE COALESCE(rp.amount, 0)
+        END
+      ), 0) AS rent_paid
+      FROM rent_payments rp
+      WHERE rp.tenant_id = ta.tenant_id
+        AND rp.unit_id = ta.unit_id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+        AND rp.status = 'completed'
+    ) pm ON TRUE
+    WHERE ta.is_active = true
+      AND p.id = $1
+      AND GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) > 0
+    ORDER BY unpaid_rent_this_month DESC, t.first_name ASC
+    LIMIT 100
+  `;
+
+  const unpaidResult = await db.query(unpaidQuery, [property.id]);
+
+  return {
+    label: "Unpaid Tenants This Month",
+    rows: unpaidResult.rows,
+  };
 };
 
 const getMonthlyPropertyArrears = async ({ user }) => {
@@ -985,7 +1121,7 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
     },
     {
       role: "system",
-      content: `${roleScopeInstruction}\n${errorHint}\nAlways prefer meaningful aggregations when the user asks broad questions.`,
+      content: `${roleScopeInstruction}\n${errorHint}\nAlways prefer meaningful aggregations when the user asks broad questions.\nWhen user asks who has not paid this month in a property/building, compute unpaid rent from tenant_allocations + rent_payments for CURRENT_DATE month and return tenant-level rows with unpaid amount.`,
     },
     {
       role: "user",
@@ -1154,6 +1290,15 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     return `I found ${rows.length} properties with rent arrears this month. Total arrears across those properties is KES ${total.toLocaleString()}.`;
   }
 
+  if (toolLabel === "Unpaid Tenants This Month") {
+    const totalUnpaid = rows.reduce(
+      (sum, row) => sum + Number(row.unpaid_rent_this_month || 0),
+      0,
+    );
+    const propertyName = rows[0]?.property_name || "the selected property";
+    return `I found ${rows.length} tenant(s) with unpaid rent this month in ${propertyName}. Total unpaid rent is KES ${totalUnpaid.toLocaleString()}.`;
+  }
+
   if (toolLabel === "Global Data Pack") {
     const pack = rows[0] || {};
     const payments = pack.payments_summary || {};
@@ -1171,6 +1316,10 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
 
 const runReadOnlyTool = async ({ user, question }) => {
   const selected = chooseTool(question);
+
+  if (selected === "unpaid_tenants_property_month") {
+    return getUnpaidTenantsForPropertyThisMonth({ user, question });
+  }
 
   if (selected === "monthly_property_arrears") {
     return getMonthlyPropertyArrears({ user });
