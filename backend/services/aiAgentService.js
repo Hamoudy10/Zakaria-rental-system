@@ -2,8 +2,14 @@ const axios = require("axios");
 const db = require("../config/database");
 
 const MAX_QUESTION_LENGTH = 600;
-const MAX_HISTORY_ITEMS = 4;
-const MAX_HISTORY_ITEM_LENGTH = 300;
+const MAX_HISTORY_ITEMS = 20;
+const MAX_HISTORY_ITEM_LENGTH = 420;
+const MAX_CONTEXT_DB_ITEMS = 140;
+const MAX_CONTEXT_CHAR_BUDGET = 9000;
+const MAX_CONTEXT_RECENT_ITEMS = 14;
+const MAX_CONTEXT_SUMMARY_CHARS = 2400;
+const MAX_ROUTER_HISTORY_ITEMS = 10;
+const MAX_ROUTER_HISTORY_CHARS = 2200;
 const MAX_DYNAMIC_ROWS = 200;
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -274,6 +280,177 @@ const normalizeHistory = (history) => {
     .filter((item) => item.content.trim().length > 0);
 };
 
+const normalizeHistoryText = (value, max = MAX_HISTORY_ITEM_LENGTH) =>
+  String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+
+const buildContextSummary = (rows) => {
+  if (!Array.isArray(rows) || rows.length === 0) return "";
+
+  const userIntents = rows
+    .filter((row) => row.role === "user")
+    .map((row) => normalizeHistoryText(row.message_text, 140))
+    .filter(Boolean)
+    .slice(-8);
+
+  const actionLines = rows
+    .filter((row) => row.role === "assistant")
+    .map((row) => {
+      const tool = String(row.tool_used || "none").trim();
+      if (!tool || tool.toLowerCase() === "none") return null;
+      const records = Number(row.records_count || 0);
+      if (Number.isFinite(records) && records > 0) {
+        return `${tool} returned ${records} record(s).`;
+      }
+      return `${tool} was used.`;
+    })
+    .filter(Boolean)
+    .slice(-8);
+
+  const lastAssistant = [...rows]
+    .reverse()
+    .find((row) => row.role === "assistant");
+  const lastDisplay = lastAssistant?.metadata?.display_context || null;
+  const displayLine =
+    lastDisplay && Number.isFinite(Number(lastDisplay.displayed_count))
+      ? `Latest displayed cohort had ${Number(lastDisplay.displayed_count)} tenant(s).`
+      : null;
+
+  const lines = [];
+  if (userIntents.length > 0) {
+    lines.push("User intents so far:");
+    userIntents.forEach((intent, index) => {
+      lines.push(`${index + 1}. ${intent}`);
+    });
+  }
+  if (actionLines.length > 0) {
+    lines.push("Verified tool actions:");
+    actionLines.forEach((action, index) => {
+      lines.push(`${index + 1}. ${action}`);
+    });
+  }
+  if (displayLine) lines.push(displayLine);
+
+  return lines.join("\n").slice(0, MAX_CONTEXT_SUMMARY_CHARS);
+};
+
+const compactContextHistory = (items) => {
+  const normalized = (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      role: item?.role === "assistant" ? "assistant" : "user",
+      content: normalizeHistoryText(item?.content, MAX_HISTORY_ITEM_LENGTH),
+      metadata: item?.metadata || {},
+      tool_used: item?.tool_used || null,
+      records_count: item?.records_count || null,
+      message_text: item?.content || "",
+    }))
+    .filter((item) => item.content.length > 0);
+
+  const totalChars = normalized.reduce((sum, item) => sum + item.content.length, 0);
+  if (totalChars <= MAX_CONTEXT_CHAR_BUDGET) {
+    return {
+      history: normalized.map(({ role, content }) => ({ role, content })),
+      compacted: false,
+      summary: null,
+      sourceCount: normalized.length,
+    };
+  }
+
+  const splitAt = Math.max(0, normalized.length - MAX_CONTEXT_RECENT_ITEMS);
+  const older = normalized.slice(0, splitAt);
+  const recent = normalized.slice(splitAt);
+  const summary = buildContextSummary(older);
+
+  const history = [
+    ...(summary
+      ? [
+          {
+            role: "assistant",
+            content: `Context summary (older turns compacted):\n${summary}`,
+          },
+        ]
+      : []),
+    ...recent.map(({ role, content }) => ({ role, content })),
+  ];
+
+  return {
+    history,
+    compacted: true,
+    summary,
+    sourceCount: normalized.length,
+  };
+};
+
+const getConversationHistoryForContext = async ({
+  user,
+  conversationId,
+  limit = MAX_CONTEXT_DB_ITEMS,
+}) => {
+  const safeConversationId = normalizeConversationId(conversationId);
+  if (!safeConversationId) return [];
+
+  try {
+    const safeLimit = Math.min(Math.max(Number(limit) || MAX_CONTEXT_DB_ITEMS, 20), 300);
+    const result = await db.query(
+      `
+        SELECT role, message_text, tool_used, records_count, metadata, created_at
+        FROM (
+          SELECT role, message_text, tool_used, records_count, metadata, created_at
+          FROM ai_chat_history
+          WHERE conversation_id = $1
+            AND user_id = $2
+          ORDER BY created_at DESC
+          LIMIT $3
+        ) recent
+        ORDER BY created_at ASC
+      `,
+      [safeConversationId, user.id, safeLimit],
+    );
+
+    return result.rows || [];
+  } catch (error) {
+    return [];
+  }
+};
+
+const buildWorkingHistory = async ({ user, conversationId, providedHistory }) => {
+  const normalizedProvided = normalizeHistory(providedHistory);
+  const dbRows = await getConversationHistoryForContext({ user, conversationId });
+
+  if (!dbRows.length) {
+    const compactedProvided = compactContextHistory(normalizedProvided);
+    return {
+      history: compactedProvided.history,
+      compacted: compactedProvided.compacted,
+      summary: compactedProvided.summary,
+      source: "request",
+      sourceCount: compactedProvided.sourceCount,
+    };
+  }
+
+  const dbHistory = dbRows
+    .map((row) => ({
+      role: row?.role === "assistant" ? "assistant" : "user",
+      content: normalizeHistoryText(row?.message_text, MAX_HISTORY_ITEM_LENGTH),
+      metadata: row?.metadata || {},
+      tool_used: row?.tool_used || null,
+      records_count: row?.records_count || null,
+      message_text: row?.message_text || "",
+    }))
+    .filter((item) => item.content.length > 0);
+  const compactedDb = compactContextHistory(dbHistory);
+
+  return {
+    history: compactedDb.history,
+    compacted: compactedDb.compacted,
+    summary: compactedDb.summary,
+    source: "database",
+    sourceCount: compactedDb.sourceCount,
+  };
+};
+
 const resolveQuestionContext = (question, history) => {
   const q = String(question || "").trim();
   const lower = q.toLowerCase();
@@ -500,9 +677,10 @@ Available actions:
 `;
 
   const historySnippet = history
-    .slice(-4)
+    .slice(-MAX_ROUTER_HISTORY_ITEMS)
     .map((h) => `${h.role}: ${h.content}`)
-    .join("\n");
+    .join("\n")
+    .slice(-MAX_ROUTER_HISTORY_CHARS);
 
   return [
     {
@@ -537,7 +715,10 @@ const callGroqToolRouter = async ({ user, question, history }) => {
     return { success: false, error: "GROQ_API_KEY is not configured." };
   }
 
-  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const model =
+    process.env.GROQ_ROUTER_MODEL ||
+    process.env.GROQ_MODEL ||
+    "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 
   const response = await axios.post(
@@ -607,7 +788,32 @@ const buildQuestionWithHints = (question, hints = {}) => {
   if (hints.status) parts.push(`status ${hints.status}`);
   if (hints.priority) parts.push(`priority ${hints.priority}`);
   if (hints.limit) parts.push(`top ${hints.limit}`);
+  if (Array.isArray(hints.unit_codes) && hints.unit_codes.length > 0) {
+    parts.push(`[unit_codes:${hints.unit_codes.join(",")}]`);
+  }
+  if (typeof hints.unpaid_only === "boolean") {
+    parts.push(`[unpaid_only:${hints.unpaid_only ? "true" : "false"}]`);
+  }
   return parts.join(" ").trim();
+};
+
+const extractHintUnitCodesFromQuestion = (question) => {
+  const q = String(question || "");
+  const match = q.match(/\[unit_codes:([^\]]+)\]/i);
+  if (!match?.[1]) return [];
+  return match[1]
+    .split(",")
+    .map((item) => String(item || "").trim().toUpperCase())
+    .filter((item) => /^[A-Z0-9-]{2,25}$/.test(item));
+};
+
+const extractHintBooleanFromQuestion = (question, key) => {
+  const q = String(question || "");
+  const escapedKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`\\[${escapedKey}:(true|false)\\]`, "i");
+  const match = q.match(regex);
+  if (!match?.[1]) return null;
+  return String(match[1]).toLowerCase() === "true";
 };
 
 const getLastAssistantContext = async ({ user, conversationId }) => {
@@ -617,7 +823,7 @@ const getLastAssistantContext = async ({ user, conversationId }) => {
   try {
     const result = await db.query(
       `
-        SELECT tool_used, metadata, message_text, created_at
+        SELECT tool_used, metadata, message_text, records_count, created_at
         FROM ai_chat_history
         WHERE conversation_id = $1
           AND user_id = $2
@@ -653,13 +859,34 @@ const isDataAccessFollowUp = (question) => {
   );
 };
 
+const isAmountEnhancementFollowUp = (question) => {
+  const q = String(question || "").toLowerCase();
+  return (
+    q.includes("amount") ||
+    q.includes("has to pay") ||
+    q.includes("how much") ||
+    q.includes("add amount") ||
+    q.includes("include amount") ||
+    q.includes("due amount") ||
+    q.includes("total due")
+  );
+};
+
 const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
   if (!lastContext?.tool_used) return routerDecision;
   const lastTool = String(lastContext.tool_used || "");
   const q = String(question || "").toLowerCase();
   const next = { ...routerDecision, hints: { ...(routerDecision.hints || {}) } };
+  const lastLimit = Number(
+    next.hints.limit ||
+      lastContext?.metadata?.display_context?.displayed_count ||
+      lastContext?.metadata?.router_hints?.limit ||
+      lastContext?.records_count ||
+      0,
+  );
 
   const lastWasTenantStatus = lastTool === "Tenant Payment Status Route";
+  const lastWasTenantsList = lastTool === "Tenants List Route";
   const questionAboutPaymentState =
     q.includes("not paid") ||
     q.includes("unpaid") ||
@@ -677,6 +904,31 @@ const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
   if (questionAboutPaymentState && lastWasTenantStatus) {
     next.action = "route_tenant_payment_status";
     next.confidence = Math.max(Number(next.confidence || 0), 0.72);
+  }
+
+  if (questionAboutPaymentState && lastWasTenantsList) {
+    next.action = "route_tenant_payment_status";
+    next.response_mode = "list";
+    if (Number.isFinite(lastLimit) && lastLimit > 0) {
+      next.hints.limit = Math.min(lastLimit, 200);
+    }
+    next.confidence = Math.max(Number(next.confidence || 0), 0.74);
+  }
+
+  if (isAmountEnhancementFollowUp(question) && (lastWasTenantsList || lastWasTenantStatus)) {
+    next.action = "route_tenant_payment_status";
+    next.response_mode = "list";
+    if (Number.isFinite(lastLimit) && lastLimit > 0) {
+      next.hints.limit = Math.min(lastLimit, 200);
+    }
+    const previousDisplay = lastContext?.metadata?.display_context || {};
+    if (Array.isArray(previousDisplay.unit_codes) && previousDisplay.unit_codes.length > 0) {
+      next.hints.unit_codes = previousDisplay.unit_codes.slice(0, 200);
+    }
+    if (previousDisplay.unpaid_only === true) {
+      next.hints.unpaid_only = true;
+    }
+    next.confidence = Math.max(Number(next.confidence || 0), 0.78);
   }
 
   return next;
@@ -697,14 +949,27 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
       q.includes("unpaid") ||
       q.includes("overdue") ||
       q.includes("outstanding");
-    const filtered = wantsUnpaid ? tenants.filter((t) => Number(t.total_due || 0) > 0) : tenants;
+    const forceUnpaid = payload?.filters?.unpaid_only === true;
+    const filtered =
+      wantsUnpaid || forceUnpaid
+        ? tenants.filter((t) => Number(t.total_due || 0) > 0)
+        : tenants;
 
     if (!wantsList) {
-      return `I checked tenant payment status for ${payload.month || "the selected month"}: unpaid ${Number(summary.unpaid_count || 0)}, paid ${Number(summary.paid_count || 0)}, total outstanding KES ${Number(summary.total_outstanding || 0).toLocaleString()}.`;
+      return {
+        answer: `I checked tenant payment status for ${payload.month || "the selected month"}: unpaid ${Number(summary.unpaid_count || 0)}, paid ${Number(summary.paid_count || 0)}, total outstanding KES ${Number(summary.total_outstanding || 0).toLocaleString()}.`,
+      };
     }
 
     if (filtered.length === 0) {
-      return "No matching tenants found in the current scope.";
+      return {
+        answer: "No matching tenants found in the current scope.",
+        displayContext: {
+          displayed_count: 0,
+          unpaid_only: wantsUnpaid || payload?.filters?.unpaid_only === true,
+          unit_codes: [],
+        },
+      };
     }
 
     const lines = filtered.map((tenant, index) => {
@@ -714,20 +979,45 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
       const due = Number(tenant.total_due || 0).toLocaleString();
       return `${index + 1}. ${name} - ${property} (${unit}) - KES ${due}`;
     });
-    return `Here is the list (${filtered.length}):\n${lines.join("\n")}`;
+    return {
+      answer: `Here is the list (${filtered.length}):\n${lines.join("\n")}`,
+      displayContext: {
+        displayed_count: filtered.length,
+        unpaid_only: wantsUnpaid || payload?.filters?.unpaid_only === true,
+        unit_codes: filtered
+          .map((tenant) => String(tenant.unit_code || "").trim().toUpperCase())
+          .filter((code) => /^[A-Z0-9-]{2,25}$/.test(code)),
+      },
+    };
   }
 
   if (label === "Tenants List Route" && wantsList) {
     const payload = rows[0] || {};
     const tenants = Array.isArray(payload.tenants) ? payload.tenants : [];
-    if (tenants.length === 0) return "No tenants found for the selected scope.";
+    if (tenants.length === 0) {
+      return {
+        answer: "No tenants found for the selected scope.",
+        displayContext: {
+          displayed_count: 0,
+          unit_codes: [],
+        },
+      };
+    }
     const lines = tenants.map((tenant, index) => {
       const name = `${tenant.first_name || ""} ${tenant.last_name || ""}`.trim();
       const property = tenant.property_name || "Unknown property";
       const unit = tenant.unit_code || "N/A";
       return `${index + 1}. ${name} - ${property} (${unit})`;
     });
-    return `Here is the tenant list (${tenants.length}):\n${lines.join("\n")}`;
+    return {
+      answer: `Here is the tenant list (${tenants.length}):\n${lines.join("\n")}`,
+      displayContext: {
+        displayed_count: tenants.length,
+        unit_codes: tenants
+          .map((tenant) => String(tenant.unit_code || "").trim().toUpperCase())
+          .filter((code) => /^[A-Z0-9-]{2,25}$/.test(code)),
+      },
+    };
   }
 
   return null;
@@ -1529,6 +1819,9 @@ const getRouteTenantPaymentStatus = async ({ user, question }) => {
   const monthStart = toMonthDate(month);
   const property = await resolvePropertyFromQuestion({ user, question });
   const search = extractSearchPhrase(question);
+  const hintedUnitCodes = extractHintUnitCodesFromQuestion(question);
+  const hintedUnpaidOnly = extractHintBooleanFromQuestion(question, "unpaid_only");
+  const hintedLimit = extractTopLimit(question, 40, 200);
 
   let baseQuery = `
     SELECT
@@ -1722,6 +2015,17 @@ const getRouteTenantPaymentStatus = async ({ user, question }) => {
     total_outstanding: tenants.reduce((sum, t) => sum + t.total_due, 0),
   };
 
+  let displayTenants = tenants;
+  if (hintedUnitCodes.length > 0) {
+    const codeSet = new Set(hintedUnitCodes);
+    displayTenants = displayTenants.filter((tenant) =>
+      codeSet.has(String(tenant.unit_code || "").trim().toUpperCase()),
+    );
+  }
+  if (hintedUnpaidOnly === true) {
+    displayTenants = displayTenants.filter((tenant) => Number(tenant.total_due || 0) > 0);
+  }
+
   return {
     label: "Tenant Payment Status Route",
     rows: [
@@ -1732,10 +2036,13 @@ const getRouteTenantPaymentStatus = async ({ user, question }) => {
           property_id: property?.id || null,
           property_name: property?.name || null,
           search: search || null,
+          unit_codes: hintedUnitCodes,
+          unpaid_only: hintedUnpaidOnly === true,
         },
         summary,
         tenants_count: tenants.length,
-        tenants_preview: tenants.slice(0, extractTopLimit(question, 40, 200)),
+        display_tenants_count: displayTenants.length,
+        tenants_preview: displayTenants.slice(0, hintedLimit),
       },
     ],
   };
@@ -2373,7 +2680,10 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     };
   }
 
-  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const model =
+    process.env.GROQ_NARRATIVE_MODEL ||
+    process.env.GROQ_MODEL ||
+    "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
   const compactFacts = JSON.stringify(toolRows).slice(0, 5000);
 
@@ -2450,7 +2760,10 @@ const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError
     return { success: false, error: "GROQ_API_KEY is not configured." };
   }
 
-  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const model =
+    process.env.GROQ_SQL_PLANNER_MODEL ||
+    process.env.GROQ_MODEL ||
+    "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 
   const response = await axios.post(
@@ -2892,7 +3205,12 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     };
   }
 
-  const safeHistory = normalizeHistory(history);
+  const workingHistory = await buildWorkingHistory({
+    user,
+    conversationId: safeConversationId,
+    providedHistory: history,
+  });
+  const safeHistory = workingHistory.history;
   const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
   const lastAssistantContext = await getLastAssistantContext({
     user,
@@ -2978,11 +3296,13 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     }
   }
 
-  const deterministicAnswer = buildDeterministicRouteAnswer({
+  const deterministicResult = buildDeterministicRouteAnswer({
     question: contextualQuestion,
     toolResult,
     routerMode: routerDecision.response_mode,
   });
+  const deterministicAnswer = deterministicResult?.answer || null;
+  const displayContext = deterministicResult?.displayContext || null;
 
   const narration = deterministicAnswer
     ? {
@@ -3032,10 +3352,14 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       messageText: answer,
       toolUsed: toolResult.label,
       fallback: narration.usedFallback,
-      recordsCount: toolResult.rows.length,
+      recordsCount:
+        displayContext && Number.isFinite(Number(displayContext.displayed_count))
+          ? Number(displayContext.displayed_count)
+          : toolResult.rows.length,
       usage: narration.usage,
       metadata: {
         sample: toolResult.rows.slice(0, 3),
+        display_context: displayContext,
         generated_sql: dynamicSqlInfo?.sql || null,
         planner_reason: dynamicSqlInfo?.planner_reason || null,
         router_action: routerDecision.action,
@@ -3043,6 +3367,12 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
         router_mode: routerDecision.response_mode,
         router_hints: routerDecision.hints || {},
         router_usage: routerUsage,
+        context_compacted: workingHistory.compacted,
+        context_source: workingHistory.source,
+        context_source_count: workingHistory.sourceCount,
+        context_summary_excerpt: workingHistory.summary
+          ? String(workingHistory.summary).slice(0, 600)
+          : null,
       },
     });
   }
@@ -3056,11 +3386,16 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       answer,
       usage: narration.usage,
       fallback: narration.usedFallback,
-      records: toolResult.rows.length,
+      records:
+        displayContext && Number.isFinite(Number(displayContext.displayed_count))
+          ? Number(displayContext.displayed_count)
+          : toolResult.rows.length,
       sample: toolResult.rows.slice(0, 3),
       generated_sql: dynamicSqlInfo?.sql || null,
       routed_action: routerDecision.action,
       routed_confidence: routerDecision.confidence,
+      context_compacted: workingHistory.compacted,
+      context_source: workingHistory.source,
     },
   };
 };
