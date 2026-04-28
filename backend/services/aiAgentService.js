@@ -26,6 +26,9 @@ const MUTATION_KEYWORDS = [
 ];
 
 const SEARCH_STOPWORDS = new Set([
+  "hello",
+  "hi",
+  "hey",
   "what",
   "which",
   "who",
@@ -71,6 +74,13 @@ const SEARCH_STOPWORDS = new Set([
   "rent",
   "water",
   "arrears",
+  "paid",
+  "missing",
+  "unpaid",
+  "outstanding",
+  "find",
+  "out",
+  "far",
 ]);
 
 const ensureSafeQuestion = (question) => {
@@ -94,6 +104,30 @@ const normalizeHistory = (history) => {
       content: String(item?.content || "").slice(0, MAX_HISTORY_ITEM_LENGTH),
     }))
     .filter((item) => item.content.trim().length > 0);
+};
+
+const resolveQuestionContext = (question, history) => {
+  const q = String(question || "").trim();
+  const lower = q.toLowerCase();
+  const isVagueFollowUp =
+    q.length < 40 &&
+    (lower.includes("find it") ||
+      lower.includes("that") ||
+      lower.includes("this") ||
+      lower.includes("it") ||
+      lower.includes("same") ||
+      lower.includes("continue"));
+
+  if (!isVagueFollowUp || !Array.isArray(history) || history.length === 0) {
+    return q;
+  }
+
+  const previousUser = [...history]
+    .reverse()
+    .find((item) => item.role === "user" && item.content?.trim());
+  if (!previousUser) return q;
+
+  return `${previousUser.content.trim()} ${q}`.trim();
 };
 
 const isMutationIntent = (question) => {
@@ -140,6 +174,20 @@ const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) =>
 const chooseTool = (question) => {
   const q = question.toLowerCase();
 
+  if (
+    (q.includes("missing rent") ||
+      q.includes("unpaid rent") ||
+      q.includes("outstanding rent") ||
+      q.includes("rent not paid")) &&
+    (q.includes("so far") ||
+      q.includes("overall") ||
+      q.includes("total") ||
+      q.includes("all") ||
+      q.includes("current"))
+  ) {
+    return "outstanding_rent";
+  }
+
   if (q.includes("complaint") || q.includes("maintenance")) return "complaints";
   if (q.includes("dashboard") || q.includes("overview") || q.includes("stat"))
     return "dashboard";
@@ -156,6 +204,119 @@ const chooseTool = (question) => {
   }
 
   return "tenant";
+};
+
+const getOutstandingRentSummary = async ({ user }) => {
+  const scopeCondition =
+    user.role === "agent"
+      ? `
+      AND EXISTS (
+        SELECT 1
+        FROM agent_property_assignments apa
+        WHERE apa.agent_id = $1
+          AND apa.property_id = p.id
+          AND apa.is_active = true
+      )`
+      : "";
+  const scopeParams = user.role === "agent" ? [user.id] : [];
+
+  const summaryQuery = `
+    SELECT
+      COUNT(*)::int AS active_tenants,
+      COALESCE(SUM(
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0))
+      ), 0) AS current_month_unpaid_rent,
+      COALESCE(SUM(GREATEST(0, COALESCE(ta.arrears_balance, 0))), 0) AS total_arrears,
+      COALESCE(SUM(
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+        GREATEST(0, COALESCE(ta.arrears_balance, 0))
+      ), 0) AS total_missing_rent_so_far
+    FROM tenant_allocations ta
+    JOIN property_units pu ON pu.id = ta.unit_id
+    JOIN properties p ON p.id = pu.property_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN (
+            COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+          ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+          ELSE COALESCE(rp.amount, 0)
+        END
+      ), 0) AS rent_paid
+      FROM rent_payments rp
+      WHERE rp.tenant_id = ta.tenant_id
+        AND rp.unit_id = ta.unit_id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+        AND rp.status = 'completed'
+    ) pm ON TRUE
+    WHERE ta.is_active = true
+    ${scopeCondition}
+  `;
+
+  const topDebtorsQuery = `
+    SELECT
+      t.first_name,
+      t.last_name,
+      pu.unit_code,
+      p.name AS property_name,
+      (
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+        GREATEST(0, COALESCE(ta.arrears_balance, 0))
+      ) AS missing_rent
+    FROM tenant_allocations ta
+    JOIN tenants t ON t.id = ta.tenant_id
+    JOIN property_units pu ON pu.id = ta.unit_id
+    JOIN properties p ON p.id = pu.property_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN (
+            COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+          ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+          ELSE COALESCE(rp.amount, 0)
+        END
+      ), 0) AS rent_paid
+      FROM rent_payments rp
+      WHERE rp.tenant_id = ta.tenant_id
+        AND rp.unit_id = ta.unit_id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+        AND rp.status = 'completed'
+    ) pm ON TRUE
+    WHERE ta.is_active = true
+      AND (
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+        GREATEST(0, COALESCE(ta.arrears_balance, 0))
+      ) > 0
+    ${scopeCondition}
+    ORDER BY missing_rent DESC
+    LIMIT 5
+  `;
+
+  const [summaryResult, topDebtorsResult] = await Promise.all([
+    db.query(summaryQuery, scopeParams),
+    db.query(topDebtorsQuery, scopeParams),
+  ]);
+
+  const summary = summaryResult.rows[0] || {
+    active_tenants: 0,
+    current_month_unpaid_rent: 0,
+    total_arrears: 0,
+    total_missing_rent_so_far: 0,
+  };
+
+  return {
+    label: "Outstanding Rent Summary",
+    rows: [
+      {
+        ...summary,
+        top_debtors: topDebtorsResult.rows || [],
+      },
+    ],
+  };
 };
 
 const getTenantSnapshot = async ({ user, question }) => {
@@ -471,11 +632,20 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     return `I found ${rows.length} properties in scope.`;
   }
 
+  if (toolLabel === "Outstanding Rent Summary") {
+    const summary = rows[0] || {};
+    return `Total missing rent so far is KES ${Number(summary.total_missing_rent_so_far || 0).toLocaleString()} (current month unpaid rent: KES ${Number(summary.current_month_unpaid_rent || 0).toLocaleString()}, arrears: KES ${Number(summary.total_arrears || 0).toLocaleString()}).`;
+  }
+
   return `I found ${rows.length} matching records for your request.`;
 };
 
 const runReadOnlyTool = async ({ user, question }) => {
   const selected = chooseTool(question);
+
+  if (selected === "outstanding_rent") {
+    return getOutstandingRentSummary({ user });
+  }
 
   if (selected === "complaints") {
     return getOpenComplaints({ user });
@@ -635,10 +805,11 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   }
 
   const safeHistory = normalizeHistory(history);
-  const toolResult = await runReadOnlyTool({ user, question: safeQuestion });
+  const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
+  const toolResult = await runReadOnlyTool({ user, question: contextualQuestion });
 
   const narration = await callGroqForNarrative({
-    question: safeQuestion,
+    question: contextualQuestion,
     history: safeHistory,
     toolLabel: toolResult.label,
     toolRows: toolResult.rows,
@@ -646,7 +817,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   }).catch(() => ({
     usedFallback: true,
     answer: formatFallbackResponse({
-      question: safeQuestion,
+      question: contextualQuestion,
       toolLabel: toolResult.label,
       rows: toolResult.rows,
     }),
@@ -654,7 +825,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   }));
 
   const fallbackAnswer = formatFallbackResponse({
-    question: safeQuestion,
+    question: contextualQuestion,
     toolLabel: toolResult.label,
     rows: toolResult.rows,
   });
@@ -668,7 +839,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       userId: user.id,
       role: "user",
       messageText: safeQuestion,
-      metadata: { source: "prompt" },
+      metadata: { source: "prompt", contextual_question: contextualQuestion },
     });
 
     await saveHistoryMessage({
