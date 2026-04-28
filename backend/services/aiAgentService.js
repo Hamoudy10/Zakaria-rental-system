@@ -119,6 +119,9 @@ const SEARCH_STOPWORDS = new Set([
   "out",
   "far",
 ]);
+const MONTH_REGEX = /\b(20\d{2})[-\/](0[1-9]|1[0-2])\b/;
+const PAYMENT_STATUS_KEYWORDS = ["pending", "completed", "failed", "overdue"];
+const COMPLAINT_STATUS_KEYWORDS = ["open", "in_progress", "resolved", "closed"];
 
 const ensureSafeQuestion = (question) => {
   const normalized = String(question || "").trim();
@@ -316,6 +319,121 @@ const extractSearchPatterns = (question) => {
   return tokens.map((token) => `%${token}%`);
 };
 
+const extractMonthFromQuestion = (question) => {
+  const match = String(question || "").match(MONTH_REGEX);
+  if (!match) return null;
+  return `${match[1]}-${match[2]}`;
+};
+
+const toMonthDate = (monthValue) => {
+  if (!monthValue || !/^\d{4}-\d{2}$/.test(monthValue)) return null;
+  return `${monthValue}-01`;
+};
+
+const extractTopLimit = (question, fallback = 30, max = 200) => {
+  const match = String(question || "")
+    .toLowerCase()
+    .match(/\b(?:top|first|latest|last)\s+(\d{1,3})\b/);
+  if (!match) return fallback;
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+};
+
+const extractKeywordStatus = (question, allowedStatuses) => {
+  const lower = String(question || "").toLowerCase();
+  return allowedStatuses.find((status) => lower.includes(status)) || null;
+};
+
+const extractPriority = (question) => {
+  const q = String(question || "").toLowerCase();
+  if (
+    q.includes("high priority") ||
+    q.includes("priority high") ||
+    q.includes("priority: high")
+  ) {
+    return "high";
+  }
+  if (
+    q.includes("medium priority") ||
+    q.includes("priority medium") ||
+    q.includes("priority: medium")
+  ) {
+    return "medium";
+  }
+  if (
+    q.includes("low priority") ||
+    q.includes("priority low") ||
+    q.includes("priority: low")
+  ) {
+    return "low";
+  }
+  return null;
+};
+
+const extractSearchPhrase = (question) => {
+  const text = String(question || "").trim();
+  const quoted = text.match(/"([^"]{2,80})"/);
+  if (quoted?.[1]) return quoted[1].trim();
+
+  const patterns = extractSearchPatterns(text);
+  if (patterns.length === 1 && patterns[0] === "%%") return "";
+  return patterns
+    .map((pattern) => pattern.replace(/%/g, ""))
+    .join(" ")
+    .trim();
+};
+
+const getMonthRange = (month) => {
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+    return { startDate: null, endDate: null };
+  }
+  const [year, monthPart] = month.split("-").map(Number);
+  const start = new Date(year, monthPart - 1, 1);
+  const end = new Date(year, monthPart, 0);
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
+};
+
+const resolvePropertyFromQuestion = async ({ user, question }) => {
+  const patterns = extractSearchPatterns(question);
+  if (patterns.length === 1 && patterns[0] === "%%") {
+    return null;
+  }
+
+  let query = `
+    SELECT p.id, p.name
+    FROM properties p
+    WHERE (
+      p.name ILIKE ANY($1::text[])
+      OR p.property_code ILIKE ANY($1::text[])
+      OR p.address ILIKE ANY($1::text[])
+      OR p.town ILIKE ANY($1::text[])
+      OR p.county ILIKE ANY($1::text[])
+    )
+  `;
+  const params = [patterns];
+
+  if (user.role === "agent") {
+    query += `
+      AND EXISTS (
+        SELECT 1
+        FROM agent_property_assignments apa
+        WHERE apa.agent_id = $2
+          AND apa.property_id = p.id
+          AND apa.is_active = true
+      )
+    `;
+    params.push(user.id);
+  }
+
+  query += " ORDER BY p.name ASC LIMIT 1";
+  const result = await db.query(query, params);
+  return result.rows[0] || null;
+};
+
 const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) => {
   if (user.role !== "agent") {
     return { query, params };
@@ -338,6 +456,58 @@ const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) =>
 
 const chooseTool = (question) => {
   const q = question.toLowerCase();
+
+  if (
+    q.includes("tenant status") ||
+    q.includes("who paid") ||
+    q.includes("who has paid") ||
+    q.includes("who has not paid") ||
+    q.includes("unpaid this month") ||
+    q.includes("rent due") ||
+    q.includes("payments/tenant-status")
+  ) {
+    return "route_tenant_payment_status";
+  }
+
+  if (
+    (q.includes("payments list") || q.includes("payment list") || q.includes("payment records")) &&
+    !q.includes("tenant status")
+  ) {
+    return "route_payments";
+  }
+
+  if (q.includes("complaints list") || q.includes("complaint list")) {
+    return "route_complaints";
+  }
+
+  if (
+    q.includes("properties list") ||
+    q.includes("properties data") ||
+    q.includes("property stats")
+  ) {
+    return "route_properties";
+  }
+
+  if (
+    q.includes("water bill list") ||
+    q.includes("water bills list") ||
+    q.includes("water profitability")
+  ) {
+    return q.includes("profitability")
+      ? "route_water_profitability"
+      : "route_water_bills";
+  }
+
+  if (q.includes("tenants list") || q.includes("tenant list")) {
+    return "route_tenants";
+  }
+
+  if (
+    q.includes("comprehensive stats") ||
+    q.includes("dashboard comprehensive")
+  ) {
+    return "route_dashboard_comprehensive";
+  }
 
   if (
     (q.includes("not paid") || q.includes("unpaid")) &&
@@ -1048,6 +1218,776 @@ const getDashboardSummary = async ({ user }) => {
   };
 };
 
+const getRouteTenantPaymentStatus = async ({ user, question }) => {
+  const month = extractMonthFromQuestion(question) || new Date().toISOString().slice(0, 7);
+  const monthStart = toMonthDate(month);
+  const property = await resolvePropertyFromQuestion({ user, question });
+  const search = extractSearchPhrase(question);
+
+  let baseQuery = `
+    SELECT
+      t.id as tenant_id, t.first_name, t.last_name,
+      CONCAT(t.first_name, ' ', t.last_name) as tenant_name,
+      t.phone_number,
+      p.id as property_id, p.name as property_name,
+      pu.id as unit_id, pu.unit_code,
+      ta.monthly_rent, ta.arrears_balance as arrears, ta.expected_amount,
+      LEAST(GREATEST(COALESCE(ta.rent_due_day, 1), 1), 28) as rent_due_day,
+      MAKE_DATE(
+        EXTRACT(YEAR FROM $1::date)::int,
+        EXTRACT(MONTH FROM $1::date)::int,
+        LEAST(GREATEST(COALESCE(ta.rent_due_day, 1), 1), 28)
+      ) as due_date,
+      COALESCE((
+        SELECT SUM(
+          CASE
+            WHEN (
+              COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(rp.allocated_to_rent, 0) + COALESCE(rp.allocated_to_arrears, 0)
+            ELSE COALESCE(rp.amount, 0)
+          END
+        ) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
+        AND rp.status = 'completed'
+      ), 0) as rent_paid,
+      COALESCE((
+        SELECT wb.amount FROM water_bills wb
+        WHERE wb.tenant_id = t.id
+        AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
+        AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
+        ORDER BY CASE WHEN wb.unit_id = pu.id THEN 0 ELSE 1 END
+        LIMIT 1
+      ), 0) as water_bill,
+      COALESCE((
+        SELECT SUM(rp.allocated_to_water) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id
+        AND rp.unit_id = pu.id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
+        AND rp.status = 'completed'
+      ), 0) as water_paid,
+      COALESCE((
+        SELECT SUM(wb.amount) FROM water_bills wb
+        WHERE wb.tenant_id = t.id
+        AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
+        AND DATE_TRUNC('month', wb.bill_month) < DATE_TRUNC('month', $1::date)
+      ), 0) - COALESCE((
+        SELECT SUM(rp.allocated_to_water) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id
+        AND rp.unit_id = pu.id
+        AND rp.status = 'completed'
+        AND DATE_TRUNC('month', rp.payment_month) < DATE_TRUNC('month', $1::date)
+      ), 0) as water_arrears,
+      COALESCE((
+        SELECT SUM(COALESCE(rp.allocated_to_arrears, 0))
+        FROM rent_payments rp
+        WHERE rp.tenant_id = t.id
+        AND rp.unit_id = pu.id
+        AND rp.status = 'completed'
+      ), 0) as arrears_paid,
+      COALESCE((
+        SELECT SUM(
+          CASE
+            WHEN (
+              COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+            ELSE COALESCE(rp.amount, 0)
+          END
+        ) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id
+        AND DATE_TRUNC('month', rp.payment_month) > DATE_TRUNC('month', $1::date)
+        AND rp.status = 'completed'
+        AND (
+          rp.is_advance_payment = true
+          OR rp.payment_method IN ('carry_forward', 'carry_forward_fix')
+        )
+      ), 0) as advance_amount
+    FROM tenants t
+    INNER JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+    INNER JOIN property_units pu ON ta.unit_id = pu.id AND pu.is_active = true
+    INNER JOIN properties p ON pu.property_id = p.id
+    WHERE (ta.lease_start_date IS NULL OR ta.lease_start_date < ($1::date + INTERVAL '1 month'))
+  `;
+
+  const whereClauses = [];
+  const params = [monthStart];
+  let paramIndex = 2;
+
+  if (user.role === "agent") {
+    whereClauses.push(`
+      p.id IN (
+        SELECT property_id FROM agent_property_assignments
+        WHERE agent_id = $${paramIndex}::uuid AND is_active = true
+      )
+    `);
+    params.push(user.id);
+    paramIndex += 1;
+  }
+
+  if (property?.id) {
+    whereClauses.push(`p.id = $${paramIndex}::uuid`);
+    params.push(property.id);
+    paramIndex += 1;
+  }
+
+  if (search) {
+    whereClauses.push(`(
+      t.first_name ILIKE $${paramIndex} OR t.last_name ILIKE $${paramIndex} OR
+      pu.unit_code ILIKE $${paramIndex} OR p.name ILIKE $${paramIndex} OR
+      t.phone_number ILIKE $${paramIndex} OR
+      CONCAT(t.first_name, ' ', t.last_name) ILIKE $${paramIndex}
+    )`);
+    params.push(`%${search}%`);
+    paramIndex += 1;
+  }
+
+  if (whereClauses.length > 0) {
+    baseQuery += ` AND ${whereClauses.join(" AND ")}`;
+  }
+
+  baseQuery += " ORDER BY p.name, pu.unit_code";
+  const result = await db.query(baseQuery, params);
+
+  const tenants = result.rows.map((row) => {
+    const monthlyRent = parseFloat(row.monthly_rent) || 0;
+    const rentPaid = parseFloat(row.rent_paid) || 0;
+    const waterBill = parseFloat(row.water_bill) || 0;
+    const waterPaid = parseFloat(row.water_paid) || 0;
+    const waterArrears = Math.max(0, parseFloat(row.water_arrears) || 0);
+    const arrears = parseFloat(row.arrears) || 0;
+    const arrearsPaid = parseFloat(row.arrears_paid) || 0;
+    const advanceAmount = Math.max(0, parseFloat(row.advance_amount) || 0);
+    const totalLeaseExpected = parseFloat(row.expected_amount) || 0;
+
+    const rawRentDue = Math.max(0, monthlyRent - rentPaid);
+    const rawWaterDue = Math.max(0, waterBill - waterPaid) + waterArrears;
+    const rawArrearsDue = Math.max(0, arrears - arrearsPaid);
+    const arrearsForPriorMonths = Math.max(0, rawArrearsDue);
+
+    let remainingAdvance = advanceAmount;
+    const advanceToArrears = Math.min(remainingAdvance, arrearsForPriorMonths);
+    remainingAdvance -= advanceToArrears;
+    const effectiveArrearsDue = arrearsForPriorMonths - advanceToArrears;
+
+    const advanceToWater = Math.min(remainingAdvance, rawWaterDue);
+    remainingAdvance -= advanceToWater;
+    const effectiveWaterDue = rawWaterDue - advanceToWater;
+
+    const advanceToRent = Math.min(remainingAdvance, rawRentDue);
+    remainingAdvance -= advanceToRent;
+    const effectiveRentDue = rawRentDue - advanceToRent;
+
+    const totalDue = effectiveRentDue + effectiveWaterDue + effectiveArrearsDue;
+
+    return {
+      tenant_id: row.tenant_id,
+      tenant_name: row.tenant_name,
+      phone_number: row.phone_number,
+      property_id: row.property_id,
+      property_name: row.property_name,
+      unit_id: row.unit_id,
+      unit_code: row.unit_code,
+      monthly_rent: monthlyRent,
+      total_expected: totalLeaseExpected,
+      rent_paid: rentPaid,
+      rent_due: effectiveRentDue,
+      water_bill: waterBill,
+      water_paid: waterPaid,
+      water_due: effectiveWaterDue,
+      arrears: arrears,
+      arrears_due: effectiveArrearsDue,
+      advance_amount: advanceAmount,
+      advance_credit: remainingAdvance,
+      total_due: totalDue,
+      is_fully_paid: totalDue <= 0,
+      due_date: row.due_date,
+      rent_due_day: Number(row.rent_due_day) || 1,
+    };
+  });
+
+  const summary = {
+    total_tenants: tenants.length,
+    paid_count: tenants.filter((t) => t.total_due <= 0).length,
+    unpaid_count: tenants.filter((t) => t.total_due > 0).length,
+    total_outstanding: tenants.reduce((sum, t) => sum + t.total_due, 0),
+  };
+
+  return {
+    label: "Tenant Payment Status Route",
+    rows: [
+      {
+        route: "/api/payments/tenant-status",
+        month,
+        filters: {
+          property_id: property?.id || null,
+          property_name: property?.name || null,
+          search: search || null,
+        },
+        summary,
+        tenants_count: tenants.length,
+        tenants_preview: tenants.slice(0, extractTopLimit(question, 40, 200)),
+      },
+    ],
+  };
+};
+
+const getRoutePaymentsList = async ({ user, question }) => {
+  const month = extractMonthFromQuestion(question);
+  const monthRange = getMonthRange(month);
+  const search = extractSearchPhrase(question);
+  const status = extractKeywordStatus(question, PAYMENT_STATUS_KEYWORDS);
+  const property = await resolvePropertyFromQuestion({ user, question });
+  const limit = extractTopLimit(question, 25, 200);
+
+  let baseQuery = `
+    SELECT
+      rp.id,
+      (
+        GREATEST(
+          COALESCE(rp.amount, 0),
+          COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+        ) + COALESCE(cf.carry_forward_amount, 0)
+      ) as amount,
+      rp.payment_month, rp.payment_date, rp.status, rp.payment_method,
+      rp.mpesa_receipt_number, rp.phone_number,
+      t.id as tenant_id, t.first_name, t.last_name,
+      p.id as property_id, p.name as property_name,
+      pu.unit_code
+    FROM rent_payments rp
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(child.amount), 0) as carry_forward_amount
+      FROM rent_payments child
+      WHERE child.original_payment_id = rp.id
+    ) cf ON true
+    LEFT JOIN tenants t ON rp.tenant_id = t.id
+    LEFT JOIN property_units pu ON rp.unit_id = pu.id
+    LEFT JOIN properties p ON pu.property_id = p.id
+  `;
+
+  const whereClauses = [
+    "COALESCE(rp.original_payment_id, rp.id) = rp.id",
+    `NOT (
+      rp.tenant_id IS NULL AND rp.unit_id IS NULL AND rp.property_id IS NULL
+    )`,
+  ];
+  const params = [];
+  let paramIndex = 1;
+
+  if (user.role === "agent") {
+    whereClauses.push(`
+      p.id IN (
+        SELECT property_id FROM agent_property_assignments
+        WHERE agent_id = $${paramIndex}::uuid AND is_active = true
+      )
+    `);
+    params.push(user.id);
+    paramIndex += 1;
+  }
+
+  if (property?.id) {
+    whereClauses.push(`p.id = $${paramIndex}::uuid`);
+    params.push(property.id);
+    paramIndex += 1;
+  }
+
+  if (monthRange.startDate) {
+    whereClauses.push(`rp.payment_date::date >= $${paramIndex}::date`);
+    params.push(monthRange.startDate);
+    paramIndex += 1;
+  }
+
+  if (monthRange.endDate) {
+    whereClauses.push(`rp.payment_date::date <= $${paramIndex}::date`);
+    params.push(monthRange.endDate);
+    paramIndex += 1;
+  }
+
+  if (status) {
+    whereClauses.push(`rp.status = $${paramIndex}`);
+    params.push(status);
+    paramIndex += 1;
+  }
+
+  if (search) {
+    whereClauses.push(`(
+      t.first_name ILIKE $${paramIndex} OR
+      t.last_name ILIKE $${paramIndex} OR
+      rp.mpesa_receipt_number ILIKE $${paramIndex} OR
+      p.name ILIKE $${paramIndex} OR
+      pu.unit_code ILIKE $${paramIndex} OR
+      rp.phone_number ILIKE $${paramIndex}
+    )`);
+    params.push(`%${search}%`);
+    paramIndex += 1;
+  }
+
+  baseQuery += ` WHERE ${whereClauses.join(" AND ")}`;
+  const countQuery = `SELECT COUNT(*)::int as count FROM (${baseQuery}) payments`;
+  const countResult = await db.query(countQuery, params);
+
+  const query = `${baseQuery} ORDER BY rp.payment_date DESC NULLS LAST LIMIT $${paramIndex}`;
+  const result = await db.query(query, [...params, limit]);
+
+  return {
+    label: "Payments List Route",
+    rows: [
+      {
+        route: "/api/payments",
+        filters: {
+          property_id: property?.id || null,
+          property_name: property?.name || null,
+          month: month || null,
+          status: status || null,
+          search: search || null,
+        },
+        count: Number(countResult.rows[0]?.count || 0),
+        payments_preview: result.rows,
+      },
+    ],
+  };
+};
+
+const getRoutePropertiesList = async ({ user }) => {
+  let query = "";
+  let params = [];
+
+  if (user.role === "agent") {
+    query = `
+      SELECT DISTINCT p.*,
+        COUNT(pu.id) as unit_count,
+        COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+        COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+      FROM properties p
+      LEFT JOIN property_units pu ON p.id = pu.property_id
+      INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
+      WHERE apa.agent_id = $1
+        AND apa.is_active = true
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+    `;
+    params = [user.id];
+  } else {
+    query = `
+      SELECT p.*,
+        COUNT(pu.id) as unit_count,
+        COUNT(CASE WHEN pu.is_occupied = true THEN 1 END) as occupied_units,
+        COUNT(CASE WHEN pu.is_occupied = false THEN 1 END) as available_units_count
+      FROM properties p
+      LEFT JOIN property_units pu ON p.id = pu.property_id
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+    `;
+  }
+
+  const result = await db.query(query, params);
+  return {
+    label: "Properties List Route",
+    rows: [
+      {
+        route: "/api/properties",
+        count: result.rows.length,
+        properties: result.rows,
+      },
+    ],
+  };
+};
+
+const getRouteTenantsList = async ({ user, question }) => {
+  const search = extractSearchPhrase(question);
+  const limit = extractTopLimit(question, 20, 200);
+  const offset = 0;
+
+  let query = `
+    SELECT
+      t.id, t.first_name, t.last_name, t.phone_number, t.email, t.national_id,
+      ca.unit_code, ca.property_name, ca.monthly_rent, ca.lease_start_date, ca.lease_end_date
+    FROM tenants t
+    LEFT JOIN LATERAL (
+      SELECT
+        ta.monthly_rent, ta.lease_start_date, ta.lease_end_date,
+        pu.unit_code, p.name as property_name
+      FROM tenant_allocations ta
+      LEFT JOIN property_units pu ON ta.unit_id = pu.id
+      LEFT JOIN properties p ON pu.property_id = p.id
+      WHERE ta.tenant_id = t.id AND ta.is_active = true
+      ORDER BY ta.allocation_date DESC NULLS LAST, ta.id DESC
+      LIMIT 1
+    ) ca ON true
+  `;
+
+  let countQuery = "SELECT COUNT(*)::int as count FROM tenants t";
+  const queryParams = [];
+  const countParams = [];
+
+  if (user.role === "agent") {
+    query += `
+      WHERE EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_agent
+        JOIN property_units pu_agent ON ta_agent.unit_id = pu_agent.id
+        JOIN agent_property_assignments apa ON apa.property_id = pu_agent.property_id
+        WHERE ta_agent.tenant_id = t.id
+          AND ta_agent.is_active = true
+          AND apa.agent_id = $1
+          AND apa.is_active = true
+      )
+    `;
+    countQuery += `
+      WHERE EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_agent
+        JOIN property_units pu_agent ON ta_agent.unit_id = pu_agent.id
+        JOIN agent_property_assignments apa ON apa.property_id = pu_agent.property_id
+        WHERE ta_agent.tenant_id = t.id
+          AND ta_agent.is_active = true
+          AND apa.agent_id = $1
+          AND apa.is_active = true
+      )
+    `;
+    queryParams.push(user.id);
+    countParams.push(user.id);
+
+    if (search) {
+      query += ` AND (
+        t.first_name ILIKE $2 OR t.last_name ILIKE $2
+        OR t.phone_number ILIKE $2 OR t.national_id ILIKE $2
+      )`;
+      countQuery += ` AND (
+        t.first_name ILIKE $2 OR t.last_name ILIKE $2
+        OR t.phone_number ILIKE $2 OR t.national_id ILIKE $2
+      )`;
+      queryParams.push(`%${search}%`);
+      countParams.push(`%${search}%`);
+    }
+  } else if (search) {
+    query += ` WHERE (
+      t.first_name ILIKE $1 OR t.last_name ILIKE $1
+      OR t.phone_number ILIKE $1 OR t.national_id ILIKE $1
+    )`;
+    countQuery += ` WHERE (
+      t.first_name ILIKE $1 OR t.last_name ILIKE $1
+      OR t.phone_number ILIKE $1 OR t.national_id ILIKE $1
+    )`;
+    queryParams.push(`%${search}%`);
+    countParams.push(`%${search}%`);
+  }
+
+  query += ` ORDER BY t.created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+  queryParams.push(limit, offset);
+
+  const [rowsResult, countResult] = await Promise.all([
+    db.query(query, queryParams),
+    db.query(countQuery, countParams),
+  ]);
+
+  return {
+    label: "Tenants List Route",
+    rows: [
+      {
+        route: "/api/tenants",
+        filters: { search: search || null, limit },
+        count: Number(countResult.rows[0]?.count || 0),
+        tenants: rowsResult.rows,
+      },
+    ],
+  };
+};
+
+const getRouteComplaintsList = async ({ user, question }) => {
+  const property = await resolvePropertyFromQuestion({ user, question });
+  const status = extractKeywordStatus(question, COMPLAINT_STATUS_KEYWORDS);
+  const priority = extractPriority(question);
+  const search = extractSearchPhrase(question);
+  const limit = extractTopLimit(question, 30, 200);
+
+  let query = `
+    SELECT
+      c.id, c.title, c.status, c.priority, c.raised_at,
+      t.first_name as tenant_first_name, t.last_name as tenant_last_name,
+      p.id as property_id, p.name as property_name, pu.unit_code
+    FROM complaints c
+    LEFT JOIN tenants t ON c.tenant_id = t.id
+    LEFT JOIN property_units pu ON c.unit_id = pu.id
+    LEFT JOIN properties p ON pu.property_id = p.id
+    WHERE 1=1
+  `;
+  const params = [];
+  let paramCount = 0;
+
+  if (user.role === "agent") {
+    paramCount += 1;
+    query += ` AND pu.property_id IN (
+      SELECT property_id FROM agent_property_assignments
+      WHERE agent_id = $${paramCount}::uuid AND is_active = true
+    )`;
+    params.push(user.id);
+  }
+  if (property?.id) {
+    paramCount += 1;
+    query += ` AND p.id = $${paramCount}::uuid`;
+    params.push(property.id);
+  }
+  if (status) {
+    paramCount += 1;
+    query += ` AND c.status = $${paramCount}`;
+    params.push(status);
+  }
+  if (priority) {
+    paramCount += 1;
+    query += ` AND c.priority = $${paramCount}`;
+    params.push(priority);
+  }
+  if (search) {
+    paramCount += 1;
+    query += ` AND (
+      c.title ILIKE $${paramCount} OR c.description ILIKE $${paramCount}
+      OR t.first_name ILIKE $${paramCount} OR t.last_name ILIKE $${paramCount}
+      OR pu.unit_code ILIKE $${paramCount}
+    )`;
+    params.push(`%${search}%`);
+  }
+  query += ` ORDER BY c.raised_at DESC LIMIT $${paramCount + 1}`;
+  params.push(limit);
+
+  const result = await db.query(query, params);
+  return {
+    label: "Complaints List Route",
+    rows: [
+      {
+        route: "/api/complaints",
+        filters: {
+          property_id: property?.id || null,
+          property_name: property?.name || null,
+          status: status || null,
+          priority: priority || null,
+          search: search || null,
+        },
+        count: result.rows.length,
+        complaints: result.rows,
+      },
+    ],
+  };
+};
+
+const getRouteWaterBillsList = async ({ user, question }) => {
+  const property = await resolvePropertyFromQuestion({ user, question });
+  const month = extractMonthFromQuestion(question);
+  const limit = extractTopLimit(question, 50, 300);
+  const params = [];
+  let where = "WHERE 1=1";
+
+  if (user.role !== "admin") {
+    params.push(user.id);
+    where += `
+      AND (
+        wb.property_id IN (
+          SELECT property_id
+          FROM agent_property_assignments
+          WHERE agent_id = $1 AND is_active = true
+        )
+        OR wb.agent_id = $1
+      )
+    `;
+  }
+  if (property?.id) {
+    params.push(property.id);
+    where += ` AND wb.property_id = $${params.length}`;
+  }
+  if (month) {
+    params.push(`${month}-01`);
+    where += ` AND wb.bill_month = $${params.length}`;
+  }
+
+  const query = `
+    SELECT wb.*, t.first_name, t.last_name, pu.unit_code, p.name as property_name
+    FROM water_bills wb
+    LEFT JOIN tenants t ON t.id = wb.tenant_id
+    LEFT JOIN property_units pu ON pu.id = wb.unit_id
+    LEFT JOIN properties p ON p.id = wb.property_id
+    ${where}
+    ORDER BY wb.bill_month DESC, wb.created_at DESC
+    LIMIT $${params.length + 1}
+  `;
+  const result = await db.query(query, [...params, limit]);
+
+  return {
+    label: "Water Bills Route",
+    rows: [
+      {
+        route: "/api/water-bills",
+        filters: {
+          property_id: property?.id || null,
+          property_name: property?.name || null,
+          month: month || null,
+        },
+        count: result.rows.length,
+        water_bills: result.rows,
+      },
+    ],
+  };
+};
+
+const getRouteWaterProfitability = async ({ user, question }) => {
+  const property = await resolvePropertyFromQuestion({ user, question });
+  const months = [...String(question || "").matchAll(new RegExp(MONTH_REGEX.source, "g"))].map(
+    (m) => `${m[1]}-${m[2]}`,
+  );
+  const fromMonth = months[0] || new Date().toISOString().slice(0, 7);
+  const toMonth = months[1] || fromMonth;
+  const startMonth = `${fromMonth}-01`;
+  const endMonth = `${toMonth}-01`;
+
+  const params = [startMonth, endMonth];
+  let propertyFilterForBills = "";
+  let propertyFilterForPaid = "";
+  let propertyFilterForExpense = "";
+
+  if (property?.id) {
+    params.push(property.id);
+    propertyFilterForBills += ` AND wb.property_id = $${params.length}`;
+    propertyFilterForPaid += ` AND rp.property_id = $${params.length}`;
+    propertyFilterForExpense += ` AND wde.property_id = $${params.length}`;
+  }
+
+  if (user.role !== "admin") {
+    params.push(user.id);
+    const agentParam = `$${params.length}`;
+    propertyFilterForBills += ` AND wb.property_id IN (
+      SELECT property_id FROM agent_property_assignments
+      WHERE agent_id = ${agentParam} AND is_active = true
+    )`;
+    propertyFilterForPaid += ` AND rp.property_id IN (
+      SELECT property_id FROM agent_property_assignments
+      WHERE agent_id = ${agentParam} AND is_active = true
+    )`;
+    propertyFilterForExpense += ` AND wde.property_id IN (
+      SELECT property_id FROM agent_property_assignments
+      WHERE agent_id = ${agentParam} AND is_active = true
+    )`;
+  }
+
+  const query = `
+    WITH months AS (
+      SELECT generate_series(
+        DATE_TRUNC('month', $1::date),
+        DATE_TRUNC('month', $2::date),
+        INTERVAL '1 month'
+      )::date AS month
+    ),
+    billed AS (
+      SELECT DATE_TRUNC('month', wb.bill_month)::date AS month,
+             COALESCE(SUM(wb.amount), 0)::numeric AS water_billed
+      FROM water_bills wb
+      WHERE wb.bill_month >= DATE_TRUNC('month', $1::date)
+        AND wb.bill_month <= DATE_TRUNC('month', $2::date)
+        ${propertyFilterForBills}
+      GROUP BY DATE_TRUNC('month', wb.bill_month)::date
+    ),
+    paid AS (
+      SELECT DATE_TRUNC('month', rp.payment_month)::date AS month,
+             COALESCE(SUM(rp.allocated_to_water), 0)::numeric AS water_collected
+      FROM rent_payments rp
+      WHERE rp.status = 'completed'
+        AND rp.payment_month >= DATE_TRUNC('month', $1::date)
+        AND rp.payment_month <= DATE_TRUNC('month', $2::date)
+        ${propertyFilterForPaid}
+      GROUP BY DATE_TRUNC('month', rp.payment_month)::date
+    ),
+    expenses AS (
+      SELECT DATE_TRUNC('month', wde.bill_month)::date AS month,
+             COALESCE(SUM(wde.amount), 0)::numeric AS water_expense
+      FROM water_delivery_expenses wde
+      WHERE wde.is_active = true
+        AND wde.bill_month >= DATE_TRUNC('month', $1::date)
+        AND wde.bill_month <= DATE_TRUNC('month', $2::date)
+        ${propertyFilterForExpense}
+      GROUP BY DATE_TRUNC('month', wde.bill_month)::date
+    )
+    SELECT
+      m.month,
+      COALESCE(b.water_billed, 0) AS water_billed,
+      COALESCE(p.water_collected, 0) AS water_collected,
+      COALESCE(e.water_expense, 0) AS water_expense,
+      (COALESCE(p.water_collected, 0) - COALESCE(e.water_expense, 0)) AS water_profit_or_loss
+    FROM months m
+    LEFT JOIN billed b ON b.month = m.month
+    LEFT JOIN paid p ON p.month = m.month
+    LEFT JOIN expenses e ON e.month = m.month
+    ORDER BY m.month ASC
+  `;
+
+  const result = await db.query(query, params);
+  const totals = (result.rows || []).reduce(
+    (acc, row) => {
+      acc.water_billed += Number(row.water_billed) || 0;
+      acc.water_collected += Number(row.water_collected) || 0;
+      acc.water_expense += Number(row.water_expense) || 0;
+      acc.water_profit_or_loss += Number(row.water_profit_or_loss) || 0;
+      return acc;
+    },
+    { water_billed: 0, water_collected: 0, water_expense: 0, water_profit_or_loss: 0 },
+  );
+
+  return {
+    label: "Water Profitability Route",
+    rows: [
+      {
+        route: "/api/water-bills/profitability",
+        filters: {
+          property_id: property?.id || null,
+          property_name: property?.name || null,
+          from_month: fromMonth,
+          to_month: toMonth,
+        },
+        totals,
+        monthly: result.rows || [],
+      },
+    ],
+  };
+};
+
+const getRouteDashboardComprehensive = async () => {
+  const propertyStats = await db.query(`
+    SELECT
+      COUNT(DISTINCT p.id) as total_properties,
+      COUNT(DISTINCT pu.id) as total_units,
+      COUNT(DISTINCT CASE WHEN pu.is_occupied = true AND pu.is_active = true THEN pu.id END) as occupied_units,
+      COUNT(DISTINCT CASE WHEN pu.is_occupied = false AND pu.is_active = true THEN pu.id END) as vacant_units
+    FROM properties p
+    LEFT JOIN property_units pu ON p.id = pu.property_id
+  `);
+
+  const tenantStats = await db.query(`
+    SELECT
+      COUNT(DISTINCT t.id) as total_tenants,
+      COUNT(DISTINCT CASE WHEN ta.is_active = true THEN t.id END) as active_tenants,
+      COUNT(DISTINCT CASE WHEN COALESCE(ta.arrears_balance, 0) > 0 AND ta.is_active = true THEN t.id END) as tenants_with_arrears,
+      COALESCE(SUM(CASE WHEN ta.is_active = true THEN COALESCE(ta.arrears_balance, 0) ELSE 0 END), 0) as total_arrears
+    FROM tenants t
+    LEFT JOIN tenant_allocations ta ON t.id = ta.tenant_id
+  `);
+
+  return {
+    label: "Comprehensive Dashboard Route",
+    rows: [
+      {
+        route: "/api/admin/dashboard/comprehensive-stats",
+        data: {
+          property: propertyStats.rows[0] || {},
+          tenant: tenantStats.rows[0] || {},
+          generated_at: new Date().toISOString(),
+        },
+      },
+    ],
+  };
+};
+
 const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, user }) => {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -1311,11 +2251,84 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     return `I queried the database directly and found ${rows.length} matching record(s).`;
   }
 
+  if (toolLabel === "Tenant Payment Status Route") {
+    const summary = rows[0]?.summary || {};
+    return `I used /api/payments/tenant-status and found ${Number(summary.total_tenants || 0)} tenant records for the selected scope, with outstanding balance of KES ${Number(summary.total_outstanding || 0).toLocaleString()}.`;
+  }
+
+  if (toolLabel === "Payments List Route") {
+    const count = Number(rows[0]?.count || 0);
+    return `I used /api/payments and found ${count} matching payment record(s) in your current scope.`;
+  }
+
+  if (toolLabel === "Tenants List Route") {
+    const count = Number(rows[0]?.count || 0);
+    return `I used /api/tenants and found ${count} tenant record(s).`;
+  }
+
+  if (toolLabel === "Properties List Route") {
+    const count = Number(rows[0]?.count || 0);
+    return `I used /api/properties and found ${count} property record(s).`;
+  }
+
+  if (toolLabel === "Complaints List Route") {
+    const count = Number(rows[0]?.count || 0);
+    return `I used /api/complaints and found ${count} complaint record(s).`;
+  }
+
+  if (toolLabel === "Water Bills Route") {
+    const count = Number(rows[0]?.count || 0);
+    return `I used /api/water-bills and found ${count} water bill record(s).`;
+  }
+
+  if (toolLabel === "Water Profitability Route") {
+    const totals = rows[0]?.totals || {};
+    return `I used /api/water-bills/profitability. Net water profit/loss for the selected period is KES ${Number(totals.water_profit_or_loss || 0).toLocaleString()}.`;
+  }
+
+  if (toolLabel === "Comprehensive Dashboard Route") {
+    const property = rows[0]?.data?.property || {};
+    const tenant = rows[0]?.data?.tenant || {};
+    return `I used /api/admin/dashboard/comprehensive-stats and found ${Number(property.total_properties || 0)} properties and ${Number(tenant.active_tenants || 0)} active tenants.`;
+  }
+
   return `I found ${rows.length} matching records for your request.`;
 };
 
 const runReadOnlyTool = async ({ user, question }) => {
   const selected = chooseTool(question);
+
+  if (selected === "route_tenant_payment_status") {
+    return getRouteTenantPaymentStatus({ user, question });
+  }
+
+  if (selected === "route_payments") {
+    return getRoutePaymentsList({ user, question });
+  }
+
+  if (selected === "route_tenants") {
+    return getRouteTenantsList({ user, question });
+  }
+
+  if (selected === "route_properties") {
+    return getRoutePropertiesList({ user, question });
+  }
+
+  if (selected === "route_complaints") {
+    return getRouteComplaintsList({ user, question });
+  }
+
+  if (selected === "route_water_bills") {
+    return getRouteWaterBillsList({ user, question });
+  }
+
+  if (selected === "route_water_profitability") {
+    return getRouteWaterProfitability({ user, question });
+  }
+
+  if (selected === "route_dashboard_comprehensive") {
+    return getRouteDashboardComprehensive({ user, question });
+  }
 
   if (selected === "unpaid_tenants_property_month") {
     return getUnpaidTenantsForPropertyThisMonth({ user, question });
@@ -1496,11 +2509,11 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
 
   const safeHistory = normalizeHistory(history);
   const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
-  let toolResult = null;
+  let toolResult = await runReadOnlyTool({ user, question: contextualQuestion });
   let dynamicSqlInfo = null;
   const dynamicEnabled = String(process.env.AI_DYNAMIC_SQL_ENABLED || "true").toLowerCase() !== "false";
 
-  if (dynamicEnabled) {
+  if ((!toolResult || !toolResult.rows || toolResult.rows.length === 0) && dynamicEnabled) {
     const dynamicResult = await runSchemaAwareDynamicQuery({
       user,
       question: contextualQuestion,
@@ -1516,10 +2529,6 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
         planner_usage: dynamicResult.data.planner_usage,
       };
     }
-  }
-
-  if (!toolResult) {
-    toolResult = await runReadOnlyTool({ user, question: contextualQuestion });
   }
 
   const narration = await callGroqForNarrative({
