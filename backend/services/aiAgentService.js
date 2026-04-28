@@ -175,6 +175,14 @@ const chooseTool = (question) => {
   const q = question.toLowerCase();
 
   if (
+    q.includes("arrears") &&
+    (q.includes("this month") || q.includes("current month") || q.includes("month")) &&
+    (q.includes("all properties") || q.includes("properties") || q.includes("property"))
+  ) {
+    return "monthly_property_arrears";
+  }
+
+  if (
     q.includes("all data") ||
     q.includes("everything") ||
     q.includes("database") ||
@@ -214,6 +222,72 @@ const chooseTool = (question) => {
   }
 
   return "tenant";
+};
+
+const getMonthlyPropertyArrears = async ({ user }) => {
+  const scopeCondition =
+    user.role === "agent"
+      ? `
+      AND EXISTS (
+        SELECT 1
+        FROM agent_property_assignments apa
+        WHERE apa.agent_id = $1
+          AND apa.property_id = p.id
+          AND apa.is_active = true
+      )`
+      : "";
+  const scopeParams = user.role === "agent" ? [user.id] : [];
+
+  const query = `
+    SELECT
+      p.id AS property_id,
+      p.name AS property_name,
+      p.property_code,
+      COUNT(*)::int AS active_allocations,
+      COALESCE(SUM(
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0))
+      ), 0) AS current_month_unpaid_rent,
+      COALESCE(SUM(GREATEST(0, COALESCE(ta.arrears_balance, 0))), 0) AS arrears_balance_total,
+      COALESCE(SUM(
+        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+        GREATEST(0, COALESCE(ta.arrears_balance, 0))
+      ), 0) AS total_rent_arrears_this_month
+    FROM tenant_allocations ta
+    JOIN property_units pu ON pu.id = ta.unit_id
+    JOIN properties p ON p.id = pu.property_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN (
+            COALESCE(rp.allocated_to_rent, 0) +
+            COALESCE(rp.allocated_to_water, 0) +
+            COALESCE(rp.allocated_to_arrears, 0)
+          ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+          ELSE COALESCE(rp.amount, 0)
+        END
+      ), 0) AS rent_paid
+      FROM rent_payments rp
+      WHERE rp.tenant_id = ta.tenant_id
+        AND rp.unit_id = ta.unit_id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+        AND rp.status = 'completed'
+    ) pm ON TRUE
+    WHERE ta.is_active = true
+    ${scopeCondition}
+    GROUP BY p.id, p.name, p.property_code
+    HAVING COALESCE(SUM(
+      GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
+      GREATEST(0, COALESCE(ta.arrears_balance, 0))
+    ), 0) > 0
+    ORDER BY total_rent_arrears_this_month DESC, p.name ASC
+    LIMIT 50
+  `;
+
+  const result = await db.query(query, scopeParams);
+  return {
+    label: "Monthly Property Arrears",
+    rows: result.rows,
+  };
 };
 
 const runSafeQuery = async (query, params = []) => {
@@ -736,7 +810,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     {
       role: "system",
       content:
-        "You are a rental operations assistant. Use only provided facts. Be concise. If data is insufficient, say what is missing. Explain errors in simple language and give one practical next step.",
+        "You are a rental operations assistant. Use only provided facts. Be concise. If data is insufficient, say what is missing. Explain errors in simple language and give one practical next step. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
     },
     ...history,
     {
@@ -772,6 +846,14 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
   };
 };
 
+const normalizeCurrencyText = (text) => {
+  const value = String(text || "");
+  return value
+    .replace(/(^|[^\w])\$\s?(\d[\d,]*(?:\.\d+)?)/g, "$1KES $2")
+    .replace(/\bUSD\b/gi, "KES")
+    .replace(/\bdollars?\b/gi, "Kenyan shillings");
+};
+
 const formatFallbackResponse = ({ question, toolLabel, rows }) => {
   if (!rows || rows.length === 0) {
     return `I could not find matching records for "${question}". Try including a tenant name, phone number, or unit code.`;
@@ -799,6 +881,14 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     return `Total missing rent so far is KES ${Number(summary.total_missing_rent_so_far || 0).toLocaleString()} (current month unpaid rent: KES ${Number(summary.current_month_unpaid_rent || 0).toLocaleString()}, arrears: KES ${Number(summary.total_arrears || 0).toLocaleString()}).`;
   }
 
+  if (toolLabel === "Monthly Property Arrears") {
+    const total = rows.reduce(
+      (sum, row) => sum + Number(row.total_rent_arrears_this_month || 0),
+      0,
+    );
+    return `I found ${rows.length} properties with rent arrears this month. Total arrears across those properties is KES ${total.toLocaleString()}.`;
+  }
+
   if (toolLabel === "Global Data Pack") {
     const pack = rows[0] || {};
     const payments = pack.payments_summary || {};
@@ -812,6 +902,10 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
 
 const runReadOnlyTool = async ({ user, question }) => {
   const selected = chooseTool(question);
+
+  if (selected === "monthly_property_arrears") {
+    return getMonthlyPropertyArrears({ user });
+  }
 
   if (selected === "global_data_pack") {
     return getGlobalDataPack({ user });
@@ -1007,9 +1101,10 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     toolLabel: toolResult.label,
     rows: toolResult.rows,
   });
-  const answer = narration.usedFallback
+  const rawAnswer = narration.usedFallback
     ? fallbackAnswer
     : narration.answer || fallbackAnswer;
+  const answer = normalizeCurrencyText(rawAnswer);
 
   if (safeConversationId) {
     await saveHistoryMessage({
