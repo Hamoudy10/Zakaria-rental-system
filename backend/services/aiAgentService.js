@@ -434,6 +434,146 @@ const resolvePropertyFromQuestion = async ({ user, question }) => {
   return result.rows[0] || null;
 };
 
+const ROUTER_ACTIONS = [
+  "route_tenant_payment_status",
+  "route_payments",
+  "route_tenants",
+  "route_properties",
+  "route_complaints",
+  "route_water_bills",
+  "route_water_profitability",
+  "route_dashboard_comprehensive",
+  "unpaid_tenants_property_month",
+  "monthly_property_arrears",
+  "outstanding_rent",
+  "complaints",
+  "properties",
+  "dashboard",
+  "tenant_or_payments",
+  "tenant",
+  "dynamic_sql",
+];
+
+const buildRouterMessages = ({ user, question, history }) => {
+  const routeCatalog = `
+Available actions:
+- route_tenant_payment_status: mirrors /api/payments/tenant-status for who owes/paid/dues per tenant.
+- route_payments: mirrors /api/payments for payment records and filters.
+- route_tenants: mirrors /api/tenants for tenant lists/search by tenant or property context.
+- route_properties: mirrors /api/properties for property/unit occupancy overviews.
+- route_complaints: mirrors /api/complaints for complaint status/priority tracking.
+- route_water_bills: mirrors /api/water-bills for billed water records.
+- route_water_profitability: mirrors /api/water-bills/profitability for billed vs collected vs expense.
+- route_dashboard_comprehensive: mirrors /api/admin/dashboard/comprehensive-stats for broad dashboard KPIs.
+- unpaid_tenants_property_month: focused list of unpaid tenants in a property this month.
+- monthly_property_arrears: arrears by property.
+- outstanding_rent: global arrears summary.
+- complaints/properties/dashboard/tenant_or_payments/tenant: legacy focused tools.
+- dynamic_sql: only when no route/tool can answer accurately.
+`;
+
+  const historySnippet = history
+    .slice(-4)
+    .map((h) => `${h.role}: ${h.content}`)
+    .join("\n");
+
+  return [
+    {
+      role: "system",
+      content:
+        "You are a routing planner for a rental ops AI assistant. Pick ONE best action. Prefer route_* actions when possible. Use dynamic_sql only as last resort.",
+    },
+    {
+      role: "system",
+      content:
+        `Return STRICT JSON only with keys: action, confidence, rationale, response_mode, hints.\n` +
+        `action must be one of: ${ROUTER_ACTIONS.join(", ")}\n` +
+        `confidence must be 0..1.\n` +
+        `response_mode: \"summary\" or \"list\".\n` +
+        `hints: object with optional fields property, tenant, month, status, priority, limit.\n` +
+        `Never ask for all data unless explicitly requested.\n` +
+        routeCatalog,
+    },
+    {
+      role: "user",
+      content:
+        `User role: ${user.role}\n` +
+        `User question: ${question}\n` +
+        `Recent context:\n${historySnippet || "none"}`,
+    },
+  ];
+};
+
+const callGroqToolRouter = async ({ user, question, history }) => {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    return { success: false, error: "GROQ_API_KEY is not configured." };
+  }
+
+  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+
+  const response = await axios.post(
+    `${baseURL}/chat/completions`,
+    {
+      model,
+      temperature: 0.0,
+      max_tokens: 260,
+      messages: buildRouterMessages({ user, question, history }),
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    },
+  );
+
+  const content = response.data?.choices?.[0]?.message?.content || "";
+  const parsed = extractJsonObject(content);
+  const action = String(parsed?.action || "").trim();
+  const confidence = Number(parsed?.confidence);
+  const responseMode = String(parsed?.response_mode || "summary").trim();
+  const hints = typeof parsed?.hints === "object" && parsed.hints ? parsed.hints : {};
+
+  if (!ROUTER_ACTIONS.includes(action)) {
+    return { success: false, error: "Router returned invalid action." };
+  }
+
+  return {
+    success: true,
+    data: {
+      action,
+      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.5,
+      response_mode: responseMode === "list" ? "list" : "summary",
+      hints,
+      usage: response.data?.usage || null,
+    },
+  };
+};
+
+const heuristicRouter = (question) => {
+  const action = chooseTool(question);
+  return {
+    action,
+    confidence: 0.55,
+    response_mode: /list|all|show/i.test(String(question || "")) ? "list" : "summary",
+    hints: {},
+  };
+};
+
+const buildQuestionWithHints = (question, hints = {}) => {
+  const parts = [String(question || "").trim()];
+  if (hints.property) parts.push(`property ${hints.property}`);
+  if (hints.tenant) parts.push(`tenant ${hints.tenant}`);
+  if (hints.month) parts.push(`month ${hints.month}`);
+  if (hints.status) parts.push(`status ${hints.status}`);
+  if (hints.priority) parts.push(`priority ${hints.priority}`);
+  if (hints.limit) parts.push(`top ${hints.limit}`);
+  return parts.join(" ").trim();
+};
+
 const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) => {
   if (user.role !== "agent") {
     return { query, params };
@@ -499,6 +639,13 @@ const chooseTool = (question) => {
   }
 
   if (q.includes("tenants list") || q.includes("tenant list")) {
+    return "route_tenants";
+  }
+
+  if (
+    q.includes("tenant") &&
+    (q.includes("list") || q.includes("all"))
+  ) {
     return "route_tenants";
   }
 
@@ -1600,6 +1747,7 @@ const getRoutePropertiesList = async ({ user }) => {
 
 const getRouteTenantsList = async ({ user, question }) => {
   const search = extractSearchPhrase(question);
+  const property = await resolvePropertyFromQuestion({ user, question });
   const limit = extractTopLimit(question, 20, 200);
   const offset = 0;
 
@@ -1653,14 +1801,36 @@ const getRouteTenantsList = async ({ user, question }) => {
     queryParams.push(user.id);
     countParams.push(user.id);
 
+    if (property?.id) {
+      query += ` AND EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_prop
+        JOIN property_units pu_prop ON ta_prop.unit_id = pu_prop.id
+        WHERE ta_prop.tenant_id = t.id
+          AND ta_prop.is_active = true
+          AND pu_prop.property_id = $2::uuid
+      )`;
+      countQuery += ` AND EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_prop
+        JOIN property_units pu_prop ON ta_prop.unit_id = pu_prop.id
+        WHERE ta_prop.tenant_id = t.id
+          AND ta_prop.is_active = true
+          AND pu_prop.property_id = $2::uuid
+      )`;
+      queryParams.push(property.id);
+      countParams.push(property.id);
+    }
+
     if (search) {
+      const nextParam = queryParams.length + 1;
       query += ` AND (
-        t.first_name ILIKE $2 OR t.last_name ILIKE $2
-        OR t.phone_number ILIKE $2 OR t.national_id ILIKE $2
+        t.first_name ILIKE $${nextParam} OR t.last_name ILIKE $${nextParam}
+        OR t.phone_number ILIKE $${nextParam} OR t.national_id ILIKE $${nextParam}
       )`;
       countQuery += ` AND (
-        t.first_name ILIKE $2 OR t.last_name ILIKE $2
-        OR t.phone_number ILIKE $2 OR t.national_id ILIKE $2
+        t.first_name ILIKE $${countParams.length + 1} OR t.last_name ILIKE $${countParams.length + 1}
+        OR t.phone_number ILIKE $${countParams.length + 1} OR t.national_id ILIKE $${countParams.length + 1}
       )`;
       queryParams.push(`%${search}%`);
       countParams.push(`%${search}%`);
@@ -1678,6 +1848,46 @@ const getRouteTenantsList = async ({ user, question }) => {
     countParams.push(`%${search}%`);
   }
 
+  if (user.role !== "agent" && property?.id) {
+    if (query.includes(" WHERE ")) {
+      query += ` AND EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_prop
+        JOIN property_units pu_prop ON ta_prop.unit_id = pu_prop.id
+        WHERE ta_prop.tenant_id = t.id
+          AND ta_prop.is_active = true
+          AND pu_prop.property_id = $${queryParams.length + 1}::uuid
+      )`;
+      countQuery += ` AND EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_prop
+        JOIN property_units pu_prop ON ta_prop.unit_id = pu_prop.id
+        WHERE ta_prop.tenant_id = t.id
+          AND ta_prop.is_active = true
+          AND pu_prop.property_id = $${countParams.length + 1}::uuid
+      )`;
+    } else {
+      query += ` WHERE EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_prop
+        JOIN property_units pu_prop ON ta_prop.unit_id = pu_prop.id
+        WHERE ta_prop.tenant_id = t.id
+          AND ta_prop.is_active = true
+          AND pu_prop.property_id = $${queryParams.length + 1}::uuid
+      )`;
+      countQuery += ` WHERE EXISTS (
+        SELECT 1
+        FROM tenant_allocations ta_prop
+        JOIN property_units pu_prop ON ta_prop.unit_id = pu_prop.id
+        WHERE ta_prop.tenant_id = t.id
+          AND ta_prop.is_active = true
+          AND pu_prop.property_id = $${countParams.length + 1}::uuid
+      )`;
+    }
+    queryParams.push(property.id);
+    countParams.push(property.id);
+  }
+
   query += ` ORDER BY t.created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
   queryParams.push(limit, offset);
 
@@ -1691,7 +1901,12 @@ const getRouteTenantsList = async ({ user, question }) => {
     rows: [
       {
         route: "/api/tenants",
-        filters: { search: search || null, limit },
+        filters: {
+          property_id: property?.id || null,
+          property_name: property?.name || null,
+          search: search || null,
+          limit,
+        },
         count: Number(countResult.rows[0]?.count || 0),
         tenants: rowsResult.rows,
       },
@@ -2295,8 +2510,14 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
   return `I found ${rows.length} matching records for your request.`;
 };
 
-const runReadOnlyTool = async ({ user, question }) => {
-  const selected = chooseTool(question);
+const runReadOnlyToolByAction = async ({ user, question, selected }) => {
+  if (selected === "dynamic_sql") {
+    return {
+      label: "Dynamic Database Query",
+      rows: [],
+      metadata: { requested_dynamic_sql: true },
+    };
+  }
 
   if (selected === "route_tenant_payment_status") {
     return getRouteTenantPaymentStatus({ user, question });
@@ -2369,6 +2590,11 @@ const runReadOnlyTool = async ({ user, question }) => {
     return getGlobalDataPack({ user });
   }
   return tenantSnapshot;
+};
+
+const runReadOnlyTool = async ({ user, question }) => {
+  const selected = chooseTool(question);
+  return runReadOnlyToolByAction({ user, question, selected });
 };
 
 const saveHistoryMessage = async ({
@@ -2509,14 +2735,45 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
 
   const safeHistory = normalizeHistory(history);
   const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
-  let toolResult = await runReadOnlyTool({ user, question: contextualQuestion });
+  let routerDecision = heuristicRouter(contextualQuestion);
+  let routerUsage = null;
+  try {
+    const routed = await callGroqToolRouter({
+      user,
+      question: contextualQuestion,
+      history: safeHistory,
+    });
+    if (routed.success) {
+      routerDecision = routed.data;
+      routerUsage = routed.data.usage || null;
+    }
+  } catch (error) {
+    // Fallback to heuristic router
+  }
+
+  const routedQuestion = buildQuestionWithHints(
+    contextualQuestion,
+    routerDecision.hints || {},
+  );
+  let toolResult = await runReadOnlyToolByAction({
+    user,
+    question: routedQuestion,
+    selected: routerDecision.action,
+  });
   let dynamicSqlInfo = null;
   const dynamicEnabled = String(process.env.AI_DYNAMIC_SQL_ENABLED || "true").toLowerCase() !== "false";
 
-  if ((!toolResult || !toolResult.rows || toolResult.rows.length === 0) && dynamicEnabled) {
+  const shouldTryDynamicSql =
+    dynamicEnabled &&
+    (routerDecision.action === "dynamic_sql" ||
+      !toolResult ||
+      !toolResult.rows ||
+      toolResult.rows.length === 0);
+
+  if (shouldTryDynamicSql) {
     const dynamicResult = await runSchemaAwareDynamicQuery({
       user,
-      question: contextualQuestion,
+      question: routedQuestion,
     });
     if (dynamicResult.success) {
       toolResult = {
@@ -2579,6 +2836,11 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
         sample: toolResult.rows.slice(0, 3),
         generated_sql: dynamicSqlInfo?.sql || null,
         planner_reason: dynamicSqlInfo?.planner_reason || null,
+        router_action: routerDecision.action,
+        router_confidence: routerDecision.confidence,
+        router_mode: routerDecision.response_mode,
+        router_hints: routerDecision.hints || {},
+        router_usage: routerUsage,
       },
     });
   }
@@ -2595,6 +2857,8 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       records: toolResult.rows.length,
       sample: toolResult.rows.slice(0, 3),
       generated_sql: dynamicSqlInfo?.sql || null,
+      routed_action: routerDecision.action,
+      routed_confidence: routerDecision.confidence,
     },
   };
 };
