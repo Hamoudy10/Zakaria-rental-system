@@ -277,16 +277,22 @@ const normalizeHistory = (history) => {
 const resolveQuestionContext = (question, history) => {
   const q = String(question || "").trim();
   const lower = q.toLowerCase();
+  const isCountCorrection =
+    /\bnot\s+\d{1,3}\b/i.test(q) ||
+    /\bonly\s+\d{1,3}\b/i.test(q) ||
+    /\b(?:you gave|you gave me|you gave us|got|received)\s+\d{1,3}\b/i.test(q);
   const isVagueFollowUp =
-    q.length < 40 &&
+    q.length < 70 &&
     (lower.includes("find it") ||
       lower.includes("that") ||
       lower.includes("this") ||
       lower.includes("it") ||
       lower.includes("same") ||
-      lower.includes("continue"));
+      lower.includes("continue") ||
+      lower.includes("not ") ||
+      lower.includes("only "));
 
-  if (!isVagueFollowUp || !Array.isArray(history) || history.length === 0) {
+  if (!(isVagueFollowUp || isCountCorrection) || !Array.isArray(history) || history.length === 0) {
     return q;
   }
 
@@ -331,13 +337,29 @@ const toMonthDate = (monthValue) => {
 };
 
 const extractTopLimit = (question, fallback = 30, max = 200) => {
-  const match = String(question || "")
-    .toLowerCase()
-    .match(/\b(?:top|first|latest|last)\s+(\d{1,3})\b/);
+  const text = String(question || "").toLowerCase();
+  const match = text.match(/\b(?:top|first|latest|last)\s+(\d{1,3})\b/);
   if (!match) return fallback;
   const parsed = Number(match[1]);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
+};
+
+const extractCorrectionTargetCount = (question) => {
+  const q = String(question || "").toLowerCase();
+  const paired = q.match(/\bnot\s+(\d{1,3})\b[\s\S]{0,40}\bonly\s+(\d{1,3})\b/);
+  if (paired?.[1]) {
+    const expected = Number(paired[1]);
+    if (Number.isFinite(expected) && expected > 0) return Math.min(expected, 200);
+  }
+
+  const want = q.match(/\b(?:need|want|expect|expected)\s+(\d{1,3})\b/);
+  if (want?.[1]) {
+    const expected = Number(want[1]);
+    if (Number.isFinite(expected) && expected > 0) return Math.min(expected, 200);
+  }
+
+  return null;
 };
 
 const extractKeywordStatus = (question, allowedStatuses) => {
@@ -375,6 +397,11 @@ const extractSearchPhrase = (question) => {
   const text = String(question || "").trim();
   const quoted = text.match(/"([^"]{2,80})"/);
   if (quoted?.[1]) return quoted[1].trim();
+
+  // Only treat the prompt as search text when user explicitly asks to search/find by a term.
+  const hasExplicitSearchIntent =
+    /\b(search|find|lookup|named|called|phone|id|unit|receipt)\b/i.test(text);
+  if (!hasExplicitSearchIntent) return "";
 
   const patterns = extractSearchPatterns(text);
   if (patterns.length === 1 && patterns[0] === "%%") return "";
@@ -554,12 +581,21 @@ const callGroqToolRouter = async ({ user, question, history }) => {
 };
 
 const heuristicRouter = (question) => {
+  const lower = String(question || "").toLowerCase();
+  const correctionTarget = extractCorrectionTargetCount(question);
   const action = chooseTool(question);
+  const isListCorrection =
+    correctionTarget &&
+    (lower.includes("tenant") ||
+      lower.includes("list") ||
+      lower.includes("not ") ||
+      lower.includes("only "));
+
   return {
-    action,
+    action: isListCorrection ? "route_tenants" : action,
     confidence: 0.55,
     response_mode: /list|all|show/i.test(String(question || "")) ? "list" : "summary",
-    hints: {},
+    hints: correctionTarget ? { limit: correctionTarget } : {},
   };
 };
 
@@ -2749,6 +2785,22 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     }
   } catch (error) {
     // Fallback to heuristic router
+  }
+
+  const correctionTarget = extractCorrectionTargetCount(contextualQuestion);
+  if (correctionTarget) {
+    const actionIsListCapable =
+      String(routerDecision.action || "").startsWith("route_") ||
+      routerDecision.action === "unpaid_tenants_property_month";
+    if (!actionIsListCapable || routerDecision.action === "tenant") {
+      routerDecision.action = "route_tenants";
+      routerDecision.confidence = Math.max(Number(routerDecision.confidence || 0), 0.6);
+    }
+    routerDecision.response_mode = "list";
+    routerDecision.hints = {
+      ...(routerDecision.hints || {}),
+      limit: correctionTarget,
+    };
   }
 
   const routedQuestion = buildQuestionWithHints(
