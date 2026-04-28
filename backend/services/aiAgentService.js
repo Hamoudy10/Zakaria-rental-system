@@ -610,6 +610,129 @@ const buildQuestionWithHints = (question, hints = {}) => {
   return parts.join(" ").trim();
 };
 
+const getLastAssistantContext = async ({ user, conversationId }) => {
+  const safeConversationId = normalizeConversationId(conversationId);
+  if (!safeConversationId) return null;
+
+  try {
+    const result = await db.query(
+      `
+        SELECT tool_used, metadata, message_text, created_at
+        FROM ai_chat_history
+        WHERE conversation_id = $1
+          AND user_id = $2
+          AND role = 'assistant'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [safeConversationId, user.id],
+    );
+    if (!result.rows?.length) return null;
+    return result.rows[0];
+  } catch (error) {
+    return null;
+  }
+};
+
+const isListFollowUp = (question) => {
+  const q = String(question || "").toLowerCase();
+  return (
+    /\b(list|list them|list down|who are|name them|show names|give names)\b/.test(q) ||
+    q.includes("no i need you to list")
+  );
+};
+
+const isDataAccessFollowUp = (question) => {
+  const q = String(question || "").toLowerCase();
+  return (
+    q.includes("access the database") ||
+    q.includes("look for the information in the database") ||
+    q.includes("go ahead and access") ||
+    q.includes("access the payment history") ||
+    q.includes("query the database")
+  );
+};
+
+const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
+  if (!lastContext?.tool_used) return routerDecision;
+  const lastTool = String(lastContext.tool_used || "");
+  const q = String(question || "").toLowerCase();
+  const next = { ...routerDecision, hints: { ...(routerDecision.hints || {}) } };
+
+  const lastWasTenantStatus = lastTool === "Tenant Payment Status Route";
+  const questionAboutPaymentState =
+    q.includes("not paid") ||
+    q.includes("unpaid") ||
+    q.includes("overdue") ||
+    q.includes("outstanding") ||
+    q.includes("owe");
+
+  // Keep context for follow-up operations instead of switching tools.
+  if ((isListFollowUp(question) || isDataAccessFollowUp(question)) && lastWasTenantStatus) {
+    next.action = "route_tenant_payment_status";
+    next.response_mode = "list";
+    next.confidence = Math.max(Number(next.confidence || 0), 0.72);
+  }
+
+  if (questionAboutPaymentState && lastWasTenantStatus) {
+    next.action = "route_tenant_payment_status";
+    next.confidence = Math.max(Number(next.confidence || 0), 0.72);
+  }
+
+  return next;
+};
+
+const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => {
+  const label = toolResult?.label;
+  const rows = toolResult?.rows || [];
+  const q = String(question || "").toLowerCase();
+  const wantsList = routerMode === "list" || isListFollowUp(question);
+
+  if (label === "Tenant Payment Status Route") {
+    const payload = rows[0] || {};
+    const summary = payload.summary || {};
+    const tenants = Array.isArray(payload.tenants_preview) ? payload.tenants_preview : [];
+    const wantsUnpaid =
+      q.includes("not paid") ||
+      q.includes("unpaid") ||
+      q.includes("overdue") ||
+      q.includes("outstanding");
+    const filtered = wantsUnpaid ? tenants.filter((t) => Number(t.total_due || 0) > 0) : tenants;
+
+    if (!wantsList) {
+      return `I checked tenant payment status for ${payload.month || "the selected month"}: unpaid ${Number(summary.unpaid_count || 0)}, paid ${Number(summary.paid_count || 0)}, total outstanding KES ${Number(summary.total_outstanding || 0).toLocaleString()}.`;
+    }
+
+    if (filtered.length === 0) {
+      return "No matching tenants found in the current scope.";
+    }
+
+    const lines = filtered.map((tenant, index) => {
+      const name = tenant.tenant_name || `${tenant.first_name || ""} ${tenant.last_name || ""}`.trim();
+      const property = tenant.property_name || "Unknown property";
+      const unit = tenant.unit_code || "N/A";
+      const due = Number(tenant.total_due || 0).toLocaleString();
+      return `${index + 1}. ${name} - ${property} (${unit}) - KES ${due}`;
+    });
+    return `Here is the list (${filtered.length}):\n${lines.join("\n")}`;
+  }
+
+  if (label === "Tenants List Route" && wantsList) {
+    const payload = rows[0] || {};
+    const tenants = Array.isArray(payload.tenants) ? payload.tenants : [];
+    if (tenants.length === 0) return "No tenants found for the selected scope.";
+    const lines = tenants.map((tenant, index) => {
+      const name = `${tenant.first_name || ""} ${tenant.last_name || ""}`.trim();
+      const property = tenant.property_name || "Unknown property";
+      const unit = tenant.unit_code || "N/A";
+      return `${index + 1}. ${name} - ${property} (${unit})`;
+    });
+    return `Here is the tenant list (${tenants.length}):\n${lines.join("\n")}`;
+  }
+
+  return null;
+};
+
 const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) => {
   if (user.role !== "agent") {
     return { query, params };
@@ -2771,6 +2894,10 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
 
   const safeHistory = normalizeHistory(history);
   const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
+  const lastAssistantContext = await getLastAssistantContext({
+    user,
+    conversationId: safeConversationId,
+  });
   let routerDecision = heuristicRouter(contextualQuestion);
   let routerUsage = null;
   try {
@@ -2787,14 +2914,25 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     // Fallback to heuristic router
   }
 
+  routerDecision = inferFollowUpAction({
+    question: contextualQuestion,
+    lastContext: lastAssistantContext,
+    routerDecision,
+  });
+
   const correctionTarget = extractCorrectionTargetCount(contextualQuestion);
   if (correctionTarget) {
     const actionIsListCapable =
       String(routerDecision.action || "").startsWith("route_") ||
       routerDecision.action === "unpaid_tenants_property_month";
-    if (!actionIsListCapable || routerDecision.action === "tenant") {
+    const keepTenantStatus =
+      String(lastAssistantContext?.tool_used || "") === "Tenant Payment Status Route";
+    if ((!actionIsListCapable || routerDecision.action === "tenant") && !keepTenantStatus) {
       routerDecision.action = "route_tenants";
       routerDecision.confidence = Math.max(Number(routerDecision.confidence || 0), 0.6);
+    } else if (keepTenantStatus) {
+      routerDecision.action = "route_tenant_payment_status";
+      routerDecision.confidence = Math.max(Number(routerDecision.confidence || 0), 0.72);
     }
     routerDecision.response_mode = "list";
     routerDecision.hints = {
@@ -2840,26 +2978,38 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     }
   }
 
-  const narration = await callGroqForNarrative({
+  const deterministicAnswer = buildDeterministicRouteAnswer({
     question: contextualQuestion,
-    history: safeHistory,
-    toolLabel: toolResult.label,
-    toolRows: toolResult.rows,
-    user,
-  }).catch(() => ({
-    usedFallback: true,
-    answer: formatFallbackResponse({
+    toolResult,
+    routerMode: routerDecision.response_mode,
+  });
+
+  const narration = deterministicAnswer
+    ? {
+        usedFallback: false,
+        answer: deterministicAnswer,
+        usage: null,
+      }
+    : await callGroqForNarrative({
+        question: contextualQuestion,
+        history: safeHistory,
+        toolLabel: toolResult.label,
+        toolRows: toolResult.rows,
+        user,
+      }).catch(() => ({
+        usedFallback: true,
+        answer: formatFallbackResponse({
+          question: contextualQuestion,
+          toolLabel: toolResult.label,
+          rows: toolResult.rows,
+        }),
+        usage: null,
+      }));
+
+  const fallbackAnswer = deterministicAnswer || formatFallbackResponse({
       question: contextualQuestion,
       toolLabel: toolResult.label,
       rows: toolResult.rows,
-    }),
-    usage: null,
-  }));
-
-  const fallbackAnswer = formatFallbackResponse({
-    question: contextualQuestion,
-    toolLabel: toolResult.label,
-    rows: toolResult.rows,
   });
   const rawAnswer = narration.usedFallback
     ? fallbackAnswer
