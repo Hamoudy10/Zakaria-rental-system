@@ -1037,6 +1037,19 @@ export const chatAPI = {
   },
 };
 
+// AI Agent API (Phase 1: read-only)
+export const aiAgentAPI = {
+  ask: (question, history = [], conversationId = null) =>
+    api.post("/ai-agent/query", {
+      question,
+      history,
+      conversationId,
+    }),
+  getHistory: (conversationId, limit = 80) =>
+    api.get("/ai-agent/history", { params: { conversationId, limit } }),
+  health: () => api.get("/ai-agent/health"),
+};
+
 // ==================== EXPENSE API ====================
 export const expenseAPI = {
   // Get expense categories
@@ -1099,6 +1112,7 @@ export const API = {
   billing: billingAPI, 
   tenants: tenantAPI,          // Admin billing endpoints
   agentSMS: agentSMSAPI,
+  aiAgent: aiAgentAPI,
    chatAPI,// NEW: Added paybill API
 };
 

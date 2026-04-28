@@ -325,6 +325,7 @@ const optionalRoutes = [
   { path: '/api/salary-payments', file: './routes/salaryPayments', name: 'Salary Payments' },
   { path: '/api/agent-permissions', file: './routes/agentPermissions', name: 'Agent Permissions' },
   { path: '/api/chat', file: './routes/chat', name: 'Chat' },
+  { path: '/api/ai-agent', file: './routes/aiAgent', name: 'AI Agent' },
   { path: '/api/agent-properties', file: './routes/agentProperties', name: 'Agent Properties' },
   { path: '/api/reports', file: './routes/reports', name: 'Reports' },
   { path: '/api/notifications', file: './routes/notifications', name: 'Notifications' },
