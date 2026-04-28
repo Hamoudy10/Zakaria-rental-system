@@ -16,6 +16,7 @@ const MessageInput = React.lazy(() => import("./chat/MessageInput"));
 const NewConversationModal = React.lazy(
   () => import("./chat/NewConversationModal"),
 );
+const AIAssistantPanel = React.lazy(() => import("./chat/AIAssistantPanel"));
 
 // Loading fallback
 const LoadingSpinner = () => (
@@ -473,6 +474,7 @@ const ChatModule = () => {
   const { user } = useAuth();
 
   const [showNewConversation, setShowNewConversation] = useState(false);
+  const [isAiMode, setIsAiMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [lastDeletedMessageId, setLastDeletedMessageId] = useState(null);
   const [lastClearedConversationId, setLastClearedConversationId] = useState(null);
@@ -486,6 +488,7 @@ const ChatModule = () => {
   const activeMessages = activeConversation
     ? getMessagesForConversation(activeConversation.id)
     : [];
+  const canUseAI = user?.role === "admin" || user?.role === "agent";
 
   const typingUsers = activeConversation
     ? getTypingUsers(activeConversation.id)
@@ -513,6 +516,7 @@ const ChatModule = () => {
       );
 
       // Set the active conversation
+      setIsAiMode(false);
       setActiveConversation(state.conversation);
       hasHandledNavigationRef.current = true;
 
@@ -546,12 +550,22 @@ const ChatModule = () => {
 
   // Close active chat
   const handleCloseChat = useCallback(() => {
+    setIsAiMode(false);
     if (activeConversation?.id) {
       clearConversationMessages(activeConversation.id);
     }
     setActiveConversation(null);
     prevActiveConvIdRef.current = null;
   }, [setActiveConversation, clearConversationMessages, activeConversation]);
+
+  const handleOpenAIAssistant = useCallback(() => {
+    setActiveConversation(null);
+    setIsAiMode(true);
+  }, [setActiveConversation]);
+
+  const handleCloseAIAssistant = useCallback(() => {
+    setIsAiMode(false);
+  }, []);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -684,6 +698,7 @@ const ChatModule = () => {
   // Select conversation handler
   const handleSelectConversation = useCallback(
     (conversation) => {
+      setIsAiMode(false);
       setActiveConversation(conversation);
     },
     [setActiveConversation],
@@ -701,7 +716,7 @@ const ChatModule = () => {
       {/* Sidebar - Conversations List */}
       <div
         className={`
-        ${activeConversation ? "hidden md:flex" : "flex"} 
+        ${activeConversation || isAiMode ? "hidden md:flex" : "flex"} 
         w-full md:w-96 lg:w-[420px] flex-col border-r border-gray-200 bg-white shrink-0
       `}
       >
@@ -728,6 +743,19 @@ const ChatModule = () => {
             )}
           </div>
           <div className="flex items-center gap-1">
+            {canUseAI && (
+              <button
+                onClick={handleOpenAIAssistant}
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+                  isAiMode
+                    ? "bg-amber-200 text-amber-900"
+                    : "hover:bg-amber-100 text-amber-700"
+                }`}
+                title="AI Assistant"
+              >
+                <span className="text-xs font-bold">AI</span>
+              </button>
+            )}
             <button
               onClick={openNewConversationModal}
               className="w-10 h-10 rounded-full hover:bg-slate-200 flex items-center justify-center transition-colors"
@@ -796,6 +824,22 @@ const ChatModule = () => {
           </div>
         </div>
 
+        {canUseAI && (
+          <div className="px-3 pb-2">
+            <button
+              onClick={handleOpenAIAssistant}
+              className="w-full text-left bg-amber-50 border border-amber-200 hover:bg-amber-100 rounded-xl px-3 py-2 transition-colors"
+            >
+              <p className="text-sm font-semibold text-amber-900">
+                AI Operations Assistant
+              </p>
+              <p className="text-xs text-amber-800">
+                Separate from normal user chats (read-only)
+              </p>
+            </button>
+          </div>
+        )}
+
         {/* Conversations List */}
         <div className="flex-1 overflow-y-auto">
           {filteredConversations.length === 0 ? (
@@ -849,11 +893,20 @@ const ChatModule = () => {
       {/* Chat Area */}
       <div
         className={`
-        ${activeConversation ? "flex" : "hidden md:flex"} 
+        ${activeConversation || isAiMode ? "flex" : "hidden md:flex"} 
         flex-1 flex-col min-w-0
       `}
       >
-        {activeConversation ? (
+        {isAiMode ? (
+          <Suspense fallback={<LoadingSpinner />}>
+            <AIAssistantPanel
+              onBack={handleCloseAIAssistant}
+              onClose={handleCloseAIAssistant}
+              canUseAI={canUseAI}
+              currentUserId={user?.id}
+            />
+          </Suspense>
+        ) : activeConversation ? (
           <>
             {/* Chat Header */}
             <ChatHeader
