@@ -199,7 +199,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
 
   if (!canUseAI) {
     return (
-      <div className="flex-1 flex flex-col min-h-0 bg-amber-50">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-amber-50">
         <div className="h-16 border-b border-amber-200 bg-amber-100 px-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -251,7 +251,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-amber-50">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-amber-50">
       <div className="h-16 border-b border-amber-200 bg-amber-100 px-4 flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
           <button

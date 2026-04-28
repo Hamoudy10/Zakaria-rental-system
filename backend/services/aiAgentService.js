@@ -4,8 +4,45 @@ const db = require("../config/database");
 const MAX_QUESTION_LENGTH = 600;
 const MAX_HISTORY_ITEMS = 4;
 const MAX_HISTORY_ITEM_LENGTH = 300;
+const MAX_DYNAMIC_ROWS = 200;
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DANGEROUS_SQL_KEYWORDS = [
+  "insert",
+  "update",
+  "delete",
+  "drop",
+  "alter",
+  "truncate",
+  "create",
+  "grant",
+  "revoke",
+  "comment",
+  "vacuum",
+  "refresh",
+  "merge",
+  "copy",
+  "call",
+  "do",
+  "execute",
+];
+const DEFAULT_ANALYST_TABLES = [
+  "users",
+  "tenants",
+  "properties",
+  "property_units",
+  "tenant_allocations",
+  "rent_payments",
+  "water_bills",
+  "complaints",
+  "expenses",
+  "notifications",
+  "agent_property_assignments",
+  "admin_settings",
+  "chat_conversations",
+  "chat_messages",
+  "chat_participants",
+];
 
 const MUTATION_KEYWORDS = [
   "update",
@@ -93,6 +130,90 @@ const normalizeConversationId = (conversationId) => {
   const value = String(conversationId || "").trim();
   if (!value || !UUID_REGEX.test(value)) return null;
   return value;
+};
+
+const isReadOnlySelectSql = (sql) => {
+  const normalized = String(sql || "").trim().toLowerCase();
+  if (!normalized) return false;
+  if (!(normalized.startsWith("select") || normalized.startsWith("with"))) {
+    return false;
+  }
+
+  const semicolonCount = (normalized.match(/;/g) || []).length;
+  if (semicolonCount > 1) return false;
+  if (semicolonCount === 1 && !normalized.endsWith(";")) return false;
+
+  return !DANGEROUS_SQL_KEYWORDS.some((kw) =>
+    new RegExp(`\\b${kw}\\b`, "i").test(normalized),
+  );
+};
+
+const ensureLimitedSql = (sql) => {
+  const trimmed = String(sql || "").trim().replace(/;+\s*$/, "");
+  if (!/\blimit\s+\d+\b/i.test(trimmed)) {
+    return `${trimmed}\nLIMIT ${MAX_DYNAMIC_ROWS}`;
+  }
+  return trimmed;
+};
+
+const extractJsonObject = (text) => {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    // continue
+  }
+
+  const fencedMatch = raw.match(/```json\s*([\s\S]*?)```/i);
+  if (fencedMatch?.[1]) {
+    try {
+      return JSON.parse(fencedMatch[1].trim());
+    } catch (err) {
+      // continue
+    }
+  }
+
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const maybe = raw.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(maybe);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  return null;
+};
+
+const getSchemaContext = async () => {
+  const result = await db.query(
+    `
+      SELECT
+        c.table_name,
+        c.column_name,
+        c.data_type
+      FROM information_schema.columns c
+      WHERE c.table_schema = 'public'
+        AND c.table_name = ANY($1::text[])
+      ORDER BY c.table_name, c.ordinal_position
+    `,
+    [DEFAULT_ANALYST_TABLES],
+  );
+
+  const grouped = {};
+  for (const row of result.rows) {
+    if (!grouped[row.table_name]) grouped[row.table_name] = [];
+    grouped[row.table_name].push(`${row.column_name}:${row.data_type}`);
+  }
+
+  const lines = Object.entries(grouped).map(
+    ([table, cols]) => `${table}(${cols.slice(0, 40).join(", ")})`,
+  );
+  return lines.join("\n").slice(0, 12000);
 };
 
 const normalizeHistory = (history) => {
@@ -846,6 +967,150 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
   };
 };
 
+const buildPlannerMessages = ({ user, question, schemaContext, previousError = null }) => {
+  const roleScopeInstruction =
+    user.role === "agent"
+      ? `You MUST enforce agent scope by filtering properties through active assignments for agent_id='${user.id}' (table: agent_property_assignments).`
+      : "Admin scope: no property restriction required.";
+
+  const errorHint = previousError
+    ? `Previous SQL failed with error: ${previousError}. Fix the SQL accordingly.`
+    : "No previous SQL error.";
+
+  return [
+    {
+      role: "system",
+      content:
+        "You are a PostgreSQL analytics planner for a rental management system. Return ONLY JSON with keys: sql, reason. sql must be a single read-only SELECT/WITH query. No markdown. No extra keys.",
+    },
+    {
+      role: "system",
+      content: `${roleScopeInstruction}\n${errorHint}\nAlways prefer meaningful aggregations when the user asks broad questions.`,
+    },
+    {
+      role: "user",
+      content: `Schema:\n${schemaContext}\n\nQuestion:\n${question}`,
+    },
+  ];
+};
+
+const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError = null }) => {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    return { success: false, error: "GROQ_API_KEY is not configured." };
+  }
+
+  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+
+  const response = await axios.post(
+    `${baseURL}/chat/completions`,
+    {
+      model,
+      temperature: 0.0,
+      max_tokens: 450,
+      messages: buildPlannerMessages({ user, question, schemaContext, previousError }),
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 25000,
+    },
+  );
+
+  const content = response.data?.choices?.[0]?.message?.content || "";
+  const parsed = extractJsonObject(content);
+  const sql = String(parsed?.sql || "").trim();
+  const reason = String(parsed?.reason || "").trim();
+
+  if (!sql) {
+    return { success: false, error: "Planner did not return SQL." };
+  }
+
+  return {
+    success: true,
+    data: {
+      sql,
+      reason,
+      usage: response.data?.usage || null,
+    },
+  };
+};
+
+const executeReadOnlySql = async (sql) => {
+  if (!isReadOnlySelectSql(sql)) {
+    return { success: false, error: "Generated SQL failed read-only safety checks." };
+  }
+
+  const safeSql = ensureLimitedSql(sql);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL TRANSACTION READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '12000ms'");
+    const result = await client.query(safeSql);
+    await client.query("COMMIT");
+    return {
+      success: true,
+      data: {
+        sql: safeSql,
+        rows: result.rows || [],
+      },
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return { success: false, error: error.message || "SQL execution failed." };
+  } finally {
+    client.release();
+  }
+};
+
+const runSchemaAwareDynamicQuery = async ({ user, question }) => {
+  const schemaContext = await getSchemaContext();
+  let plannerError = null;
+  let plannerUsage = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const planned = await callGroqSqlPlanner({
+      user,
+      question,
+      schemaContext,
+      previousError: plannerError,
+    });
+
+    if (!planned.success) {
+      plannerError = planned.error || "Planner failed.";
+      continue;
+    }
+
+    plannerUsage = planned.data.usage || plannerUsage;
+    const executed = await executeReadOnlySql(planned.data.sql);
+    if (executed.success) {
+      return {
+        success: true,
+        data: {
+          label: "Dynamic Database Query",
+          rows: executed.data.rows,
+          sql: executed.data.sql,
+          planner_reason: planned.data.reason,
+          planner_usage: plannerUsage,
+        },
+      };
+    }
+
+    plannerError = executed.error;
+  }
+
+  return {
+    success: false,
+    error:
+      plannerError ||
+      "Could not generate a safe dynamic query for this request.",
+  };
+};
+
 const normalizeCurrencyText = (text) => {
   const value = String(text || "");
   return value
@@ -895,6 +1160,10 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     const complaints = pack.complaints_summary || {};
     const activeTenants = pack.active_tenants_summary || {};
     return `I gathered system-wide data in your access scope: active tenants ${Number(activeTenants.active_tenants || 0)}, payments in last 45 days KES ${Number(payments.payments_amount_45d || 0).toLocaleString()}, and open complaints ${Number(complaints.open_complaints || 0)}.`;
+  }
+
+  if (toolLabel === "Dynamic Database Query") {
+    return `I queried the database directly and found ${rows.length} matching record(s).`;
   }
 
   return `I found ${rows.length} matching records for your request.`;
@@ -1078,7 +1347,31 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
 
   const safeHistory = normalizeHistory(history);
   const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
-  const toolResult = await runReadOnlyTool({ user, question: contextualQuestion });
+  let toolResult = null;
+  let dynamicSqlInfo = null;
+  const dynamicEnabled = String(process.env.AI_DYNAMIC_SQL_ENABLED || "true").toLowerCase() !== "false";
+
+  if (dynamicEnabled) {
+    const dynamicResult = await runSchemaAwareDynamicQuery({
+      user,
+      question: contextualQuestion,
+    });
+    if (dynamicResult.success) {
+      toolResult = {
+        label: dynamicResult.data.label,
+        rows: dynamicResult.data.rows,
+      };
+      dynamicSqlInfo = {
+        sql: dynamicResult.data.sql,
+        planner_reason: dynamicResult.data.planner_reason,
+        planner_usage: dynamicResult.data.planner_usage,
+      };
+    }
+  }
+
+  if (!toolResult) {
+    toolResult = await runReadOnlyTool({ user, question: contextualQuestion });
+  }
 
   const narration = await callGroqForNarrative({
     question: contextualQuestion,
@@ -1126,6 +1419,8 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       usage: narration.usage,
       metadata: {
         sample: toolResult.rows.slice(0, 3),
+        generated_sql: dynamicSqlInfo?.sql || null,
+        planner_reason: dynamicSqlInfo?.planner_reason || null,
       },
     });
   }
@@ -1141,6 +1436,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       fallback: narration.usedFallback,
       records: toolResult.rows.length,
       sample: toolResult.rows.slice(0, 3),
+      generated_sql: dynamicSqlInfo?.sql || null,
     },
   };
 };
