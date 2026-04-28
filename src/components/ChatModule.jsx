@@ -712,7 +712,7 @@ const ChatModule = () => {
   });
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-14 bg-white flex">
+    <div className="fixed inset-x-0 bottom-0 top-14 bg-white flex min-h-0">
       {/* Sidebar - Conversations List */}
       <div
         className={`
@@ -894,7 +894,7 @@ const ChatModule = () => {
       <div
         className={`
         ${activeConversation || isAiMode ? "flex" : "hidden md:flex"} 
-        flex-1 flex-col min-w-0
+        flex-1 flex-col min-w-0 min-h-0
       `}
       >
         {isAiMode ? (
