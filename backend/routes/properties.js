@@ -53,28 +53,45 @@ router.get('/', protect, async (req, res) => {
         LEFT JOIN property_units pu ON p.id = pu.property_id
         LEFT JOIN LATERAL (
           SELECT
-            COALESCE(SUM(COALESCE(ta.monthly_rent, pu2.rent_amount, 0)), 0) AS expected_rent,
-            COUNT(*) FILTER (WHERE COALESCE(ta.arrears_balance, 0) > 0) AS arrears_count,
-            COALESCE(SUM(COALESCE(ta.arrears_balance, 0)), 0) AS total_arrears
-          FROM tenant_allocations ta
-          JOIN property_units pu2 ON pu2.id = ta.unit_id
-          WHERE pu2.property_id = p.id
-            AND ta.is_active = true
+            COALESCE((
+              SELECT SUM(COALESCE(pu2.rent_amount, 0))
+              FROM property_units pu2
+              WHERE pu2.property_id = p.id
+                AND pu2.is_active = true
+            ), 0) AS expected_rent,
+            COALESCE((
+              SELECT COUNT(*)
+              FROM tenant_allocations ta
+              JOIN property_units pu2 ON pu2.id = ta.unit_id
+              WHERE pu2.property_id = p.id
+                AND ta.is_active = true
+                AND COALESCE(ta.arrears_balance, 0) > 0
+            ), 0) AS arrears_count,
+            COALESCE((
+              SELECT SUM(COALESCE(ta.arrears_balance, 0))
+              FROM tenant_allocations ta
+              JOIN property_units pu2 ON pu2.id = ta.unit_id
+              WHERE pu2.property_id = p.id
+                AND ta.is_active = true
+            ), 0) AS total_arrears
         ) alloc_stats ON TRUE
         LEFT JOIN LATERAL (
           SELECT
-            COALESCE(SUM(COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0)), 0) AS collected_this_month
+            COALESCE(SUM(
+              CASE
+                WHEN (
+                  COALESCE(rp.allocated_to_rent, 0) +
+                  COALESCE(rp.allocated_to_water, 0) +
+                  COALESCE(rp.allocated_to_arrears, 0)
+                ) > 0 THEN COALESCE(rp.allocated_to_rent, 0) + COALESCE(rp.allocated_to_arrears, 0)
+                ELSE COALESCE(rp.amount, 0)
+              END
+            ), 0) AS collected_this_month
           FROM rent_payments rp
-          LEFT JOIN LATERAL (
-            SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
-            FROM rent_payments child
-            WHERE child.original_payment_id = rp.id
-          ) cf ON true
           LEFT JOIN property_units pu3 ON pu3.id = rp.unit_id
-          WHERE (pu3.property_id = p.id OR rp.property_id = p.id)
+          WHERE COALESCE(rp.property_id, pu3.property_id) = p.id
             AND rp.status = 'completed'
-            AND COALESCE(rp.original_payment_id, rp.id) = rp.id
-            AND DATE_TRUNC('month', COALESCE(rp.payment_date, rp.created_at)) = DATE_TRUNC('month', CURRENT_DATE)
+            AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
         ) payment_stats ON TRUE
         INNER JOIN agent_property_assignments apa ON p.id = apa.property_id
         WHERE apa.agent_id = $1 
@@ -108,28 +125,45 @@ router.get('/', protect, async (req, res) => {
       LEFT JOIN property_units pu ON p.id = pu.property_id
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(SUM(COALESCE(ta.monthly_rent, pu2.rent_amount, 0)), 0) AS expected_rent,
-          COUNT(*) FILTER (WHERE COALESCE(ta.arrears_balance, 0) > 0) AS arrears_count,
-          COALESCE(SUM(COALESCE(ta.arrears_balance, 0)), 0) AS total_arrears
-        FROM tenant_allocations ta
-        JOIN property_units pu2 ON pu2.id = ta.unit_id
-        WHERE pu2.property_id = p.id
-          AND ta.is_active = true
+          COALESCE((
+            SELECT SUM(COALESCE(pu2.rent_amount, 0))
+            FROM property_units pu2
+            WHERE pu2.property_id = p.id
+              AND pu2.is_active = true
+          ), 0) AS expected_rent,
+          COALESCE((
+            SELECT COUNT(*)
+            FROM tenant_allocations ta
+            JOIN property_units pu2 ON pu2.id = ta.unit_id
+            WHERE pu2.property_id = p.id
+              AND ta.is_active = true
+              AND COALESCE(ta.arrears_balance, 0) > 0
+          ), 0) AS arrears_count,
+          COALESCE((
+            SELECT SUM(COALESCE(ta.arrears_balance, 0))
+            FROM tenant_allocations ta
+            JOIN property_units pu2 ON pu2.id = ta.unit_id
+            WHERE pu2.property_id = p.id
+              AND ta.is_active = true
+          ), 0) AS total_arrears
       ) alloc_stats ON TRUE
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(SUM(COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0)), 0) AS collected_this_month
+          COALESCE(SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0) + COALESCE(rp.allocated_to_arrears, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ), 0) AS collected_this_month
         FROM rent_payments rp
-        LEFT JOIN LATERAL (
-          SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
-          FROM rent_payments child
-          WHERE child.original_payment_id = rp.id
-        ) cf ON true
         LEFT JOIN property_units pu3 ON pu3.id = rp.unit_id
-        WHERE (pu3.property_id = p.id OR rp.property_id = p.id)
+        WHERE COALESCE(rp.property_id, pu3.property_id) = p.id
           AND rp.status = 'completed'
-          AND COALESCE(rp.original_payment_id, rp.id) = rp.id
-          AND DATE_TRUNC('month', COALESCE(rp.payment_date, rp.created_at)) = DATE_TRUNC('month', CURRENT_DATE)
+          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
       ) payment_stats ON TRUE
       GROUP BY p.id, alloc_stats.expected_rent, alloc_stats.arrears_count, alloc_stats.total_arrears, payment_stats.collected_this_month
       ORDER BY p.created_at DESC
@@ -351,13 +385,27 @@ router.get('/:id', protect, async (req, res) => {
     const statsResult = await pool.query(
       `
         SELECT
-          COALESCE(SUM(COALESCE(ta.monthly_rent, pu.rent_amount, 0)), 0) AS expected_rent,
-          COUNT(*) FILTER (WHERE COALESCE(ta.arrears_balance, 0) > 0) AS arrears_count,
-          COALESCE(SUM(COALESCE(ta.arrears_balance, 0)), 0) AS total_arrears
-        FROM tenant_allocations ta
-        JOIN property_units pu ON pu.id = ta.unit_id
-        WHERE pu.property_id = $1
-          AND ta.is_active = true
+          COALESCE((
+            SELECT SUM(COALESCE(pu.rent_amount, 0))
+            FROM property_units pu
+            WHERE pu.property_id = $1
+              AND pu.is_active = true
+          ), 0) AS expected_rent,
+          COALESCE((
+            SELECT COUNT(*)
+            FROM tenant_allocations ta
+            JOIN property_units pu ON pu.id = ta.unit_id
+            WHERE pu.property_id = $1
+              AND ta.is_active = true
+              AND COALESCE(ta.arrears_balance, 0) > 0
+          ), 0) AS arrears_count,
+          COALESCE((
+            SELECT SUM(COALESCE(ta.arrears_balance, 0))
+            FROM tenant_allocations ta
+            JOIN property_units pu ON pu.id = ta.unit_id
+            WHERE pu.property_id = $1
+              AND ta.is_active = true
+          ), 0) AS total_arrears
       `,
       [id],
     );
@@ -365,18 +413,21 @@ router.get('/:id', protect, async (req, res) => {
     const collectedResult = await pool.query(
       `
         SELECT
-          COALESCE(SUM(COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0)), 0) AS collected_this_month
+          COALESCE(SUM(
+            CASE
+              WHEN (
+                COALESCE(rp.allocated_to_rent, 0) +
+                COALESCE(rp.allocated_to_water, 0) +
+                COALESCE(rp.allocated_to_arrears, 0)
+              ) > 0 THEN COALESCE(rp.allocated_to_rent, 0) + COALESCE(rp.allocated_to_arrears, 0)
+              ELSE COALESCE(rp.amount, 0)
+            END
+          ), 0) AS collected_this_month
         FROM rent_payments rp
-        LEFT JOIN LATERAL (
-          SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
-          FROM rent_payments child
-          WHERE child.original_payment_id = rp.id
-        ) cf ON true
         LEFT JOIN property_units pu ON pu.id = rp.unit_id
-        WHERE (pu.property_id = $1 OR rp.property_id = $1)
+        WHERE COALESCE(rp.property_id, pu.property_id) = $1
           AND rp.status = 'completed'
-          AND COALESCE(rp.original_payment_id, rp.id) = rp.id
-          AND DATE_TRUNC('month', COALESCE(rp.payment_date, rp.created_at)) = DATE_TRUNC('month', CURRENT_DATE)
+          AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
       `,
       [id],
     );

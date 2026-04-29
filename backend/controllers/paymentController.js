@@ -4737,9 +4737,11 @@ const getTenantPaymentStatus = async (req, res) => {
       };
     });
 
+    const paidTenants = tenants.filter((t) => t.total_due <= 0);
+
     const summary = {
       total_tenants: tenants.length,
-      paid_count: tenants.filter((t) => t.total_due <= 0).length,
+      paid_count: paidTenants.length,
       unpaid_count: tenants.filter((t) => t.total_due > 0).length,
       total_expected: tenants.reduce(
         (sum, t) => sum + t.monthly_rent + t.water_bill + t.water_arrears + t.arrears,
@@ -4750,8 +4752,17 @@ const getTenantPaymentStatus = async (req, res) => {
         0,
       ),
       lease_total_expected: tenants.reduce((sum, t) => sum + t.total_expected, 0),
-      total_collected: tenants.reduce(
-        (sum, t) => sum + t.rent_paid + t.water_paid,
+      // Rent collected from tenants who are fully paid in the current filter scope.
+      total_collected: paidTenants.reduce(
+        (sum, t) => sum + t.rent_paid,
+        0,
+      ),
+      total_collected_all: tenants.reduce(
+        (sum, t) => sum + t.rent_paid,
+        0,
+      ),
+      total_water_collected: tenants.reduce(
+        (sum, t) => sum + t.water_paid,
         0,
       ),
       total_outstanding: tenants.reduce((sum, t) => sum + t.total_due, 0),
