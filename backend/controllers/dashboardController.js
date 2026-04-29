@@ -268,12 +268,12 @@ const getComprehensiveStats = async (req, res) => {
       console.error('Error fetching financial stats:', e.message);
     }
 
-    // Expected monthly rent from active allocations
+    // Expected monthly rent from all active units (occupied + vacant).
     let expectedRent = 0;
     try {
       const expectedRentResult = await pool.query(`
-        SELECT COALESCE(SUM(monthly_rent), 0) as expected_rent
-        FROM tenant_allocations
+        SELECT COALESCE(SUM(COALESCE(rent_amount, 0)), 0) AS expected_rent
+        FROM property_units
         WHERE is_active = true
       `);
       expectedRent = parseFloat(expectedRentResult.rows[0]?.expected_rent) || 0;
