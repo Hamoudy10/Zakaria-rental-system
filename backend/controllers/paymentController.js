@@ -1840,6 +1840,7 @@ const getAllPayments = async (req, res) => {
         rp.payment_month, rp.payment_date, rp.status, rp.payment_method, rp.notes,
         rp.mpesa_receipt_number, rp.mpesa_transaction_id, rp.phone_number,
         t.id as tenant_id, t.first_name, t.last_name,
+        rp.unit_id,
         p.id as property_id, p.name as property_name,
         pu.unit_code
       FROM rent_payments rp
@@ -1933,16 +1934,29 @@ const getAllPayments = async (req, res) => {
 
     // Count + total amount over the full filtered result set (before pagination)
     const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) as filtered_payments`;
-    const totalAmountQuery = `
-      SELECT COALESCE(SUM(COALESCE(amount, 0)), 0) AS total_amount
+    const totalsQuery = `
+      SELECT
+        COALESCE(SUM(COALESCE(amount, 0)), 0) AS total_amount,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN status = 'completed' THEN COALESCE(amount, 0)
+              ELSE 0
+            END
+          ),
+          0
+        ) AS completed_amount
       FROM (${baseQuery}) as filtered_payments
     `;
-    const [countResult, totalAmountResult] = await Promise.all([
+    const [countResult, totalsResult] = await Promise.all([
       pool.query(countQuery, queryParams),
-      pool.query(totalAmountQuery, queryParams),
+      pool.query(totalsQuery, queryParams),
     ]);
     const totalCount = parseInt(countResult.rows[0].count, 10);
-    const totalAmount = parseFloat(totalAmountResult.rows[0]?.total_amount || 0);
+    const totalAmount = parseFloat(totalsResult.rows[0]?.total_amount || 0);
+    const completedAmount = parseFloat(
+      totalsResult.rows[0]?.completed_amount || 0,
+    );
 
     // Add sorting and pagination
     baseQuery += ` ORDER BY ${safeSortColumn} ${safeSortOrder}`;
@@ -1960,6 +1974,9 @@ const getAllPayments = async (req, res) => {
           totalPages: Math.max(1, Math.ceil(totalCount / parseInt(limit, 10))),
           totalCount,
           totalAmount: Number.isFinite(totalAmount) ? totalAmount : 0,
+          completedAmount: Number.isFinite(completedAmount)
+            ? completedAmount
+            : 0,
         },
       },
     });
@@ -1979,33 +1996,100 @@ const getAllPayments = async (req, res) => {
 const getTenantPaymentHistory = async (req, res) => {
   try {
     const { tenantId } = req.params;
+    const { unitId, month, months = 12 } = req.query;
+
+    const safeMonths = Math.min(Math.max(parseInt(months, 10) || 12, 1), 36);
+    const statementMonthRaw =
+      typeof month === "string" && /^\d{4}-\d{2}$/.test(month)
+        ? month
+        : new Date().toISOString().slice(0, 7);
+
+    const toMonthStart = (yyyyMm) => {
+      const [year, monthPart] = String(yyyyMm).split("-");
+      return new Date(Number(year), Number(monthPart) - 1, 1);
+    };
+
+    const monthStartToKey = (date) => {
+      const year = date.getFullYear();
+      const monthPart = String(date.getMonth() + 1).padStart(2, "0");
+      return `${year}-${monthPart}`;
+    };
+
+    const addMonths = (date, diff) =>
+      new Date(date.getFullYear(), date.getMonth() + diff, 1);
 
     const parseDateOnly = (value) => {
       if (!value) return null;
-
       if (value instanceof Date) {
         if (Number.isNaN(value.getTime())) return null;
         return new Date(value.getFullYear(), value.getMonth(), value.getDate());
       }
-
-      if (typeof value === "string") {
-        const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (match) {
-          const year = Number(match[1]);
-          const monthIndex = Number(match[2]) - 1;
-          const day = Number(match[3]);
-          return new Date(year, monthIndex, day);
-        }
-      }
-
       const parsed = new Date(value);
       if (Number.isNaN(parsed.getTime())) return null;
       return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
     };
 
+    const statementMonthStart = toMonthStart(statementMonthRaw);
+    const rangeStart = addMonths(statementMonthStart, -(safeMonths - 1));
+    const rangeStartKey = monthStartToKey(rangeStart);
+    const statementMonthKey = monthStartToKey(statementMonthStart);
+
+    const queryParams = [tenantId];
+    let paramIndex = 2;
+    let unitFilterPayments = "";
+    let unitFilterAllocations = "";
+    let unitFilterBills = "";
+
+    if (unitId) {
+      unitFilterPayments = ` AND rp.unit_id = $${paramIndex}::uuid`;
+      unitFilterAllocations = ` AND ta.unit_id = $${paramIndex}::uuid`;
+      unitFilterBills = ` AND (wb.unit_id = $${paramIndex}::uuid OR wb.unit_id IS NULL)`;
+      queryParams.push(unitId);
+      paramIndex++;
+    }
+
+    queryParams.push(`${rangeStartKey}-01`);
+    const rangeParamIndex = paramIndex++;
+    queryParams.push(`${statementMonthKey}-01`);
+    const endParamIndex = paramIndex++;
+
+    const allocationsQuery = await pool.query(
+      `SELECT
+         ta.unit_id,
+         ta.monthly_rent,
+         ta.lease_start_date,
+         ta.lease_end_date,
+         ta.is_active,
+         ta.updated_at,
+         pu.unit_code,
+         p.name as property_name
+       FROM tenant_allocations ta
+       JOIN property_units pu ON pu.id = ta.unit_id
+       JOIN properties p ON p.id = pu.property_id
+       WHERE ta.tenant_id = $1
+       ${unitFilterAllocations}
+       ORDER BY ta.is_active DESC, ta.updated_at DESC NULLS LAST, ta.lease_start_date DESC NULLS LAST`,
+      unitId ? queryParams.slice(0, 2) : queryParams.slice(0, 1),
+    );
+
     const paymentsQuery = await pool.query(
       `SELECT
-         rp.*,
+         rp.id,
+         rp.tenant_id,
+         rp.unit_id,
+         rp.payment_month,
+         rp.payment_date,
+         rp.created_at,
+         rp.status,
+         rp.payment_method,
+         rp.notes,
+         rp.mpesa_receipt_number,
+         rp.mpesa_transaction_id,
+         rp.is_advance_payment,
+         rp.original_payment_id,
+         COALESCE(rp.allocated_to_rent, 0) as allocated_to_rent,
+         COALESCE(rp.allocated_to_water, 0) as allocated_to_water,
+         COALESCE(rp.allocated_to_arrears, 0) as allocated_to_arrears,
          (
            GREATEST(
              COALESCE(rp.amount, 0),
@@ -2029,86 +2113,203 @@ const getTenantPaymentHistory = async (req, res) => {
          FROM rent_payments child
          WHERE child.original_payment_id = rp.id
        ) cf ON true
-       JOIN property_units pu ON rp.unit_id = pu.id
-       JOIN properties p ON pu.property_id = p.id
-       WHERE rp.tenant_id = $1 
+       LEFT JOIN property_units pu ON pu.id = rp.unit_id
+       LEFT JOIN properties p ON p.id = pu.property_id
+       WHERE rp.tenant_id = $1
+       ${unitFilterPayments}
        AND COALESCE(rp.original_payment_id, rp.id) = rp.id
-       ORDER BY rp.payment_date DESC`,
-      [tenantId],
+       AND DATE_TRUNC('month', rp.payment_month) >= DATE_TRUNC('month', $${rangeParamIndex}::date)
+       AND DATE_TRUNC('month', rp.payment_month) <= DATE_TRUNC('month', $${endParamIndex}::date)
+       ORDER BY rp.payment_month ASC, rp.payment_date ASC, rp.created_at ASC`,
+      queryParams,
     );
 
-    const allocationsQuery = await pool.query(
-      `SELECT lease_start_date, lease_end_date, monthly_rent, is_active, updated_at
-       FROM tenant_allocations
-       WHERE tenant_id = $1
-       ORDER BY is_active DESC, updated_at DESC NULLS LAST, lease_start_date DESC NULLS LAST`,
-      [tenantId],
+    const waterBillsQuery = await pool.query(
+      `SELECT
+         DATE_TRUNC('month', wb.bill_month)::date as bill_month_start,
+         wb.amount,
+         wb.unit_id
+       FROM water_bills wb
+       WHERE wb.tenant_id = $1
+       ${unitFilterBills}
+       AND DATE_TRUNC('month', wb.bill_month) >= DATE_TRUNC('month', $${rangeParamIndex}::date)
+       AND DATE_TRUNC('month', wb.bill_month) <= DATE_TRUNC('month', $${endParamIndex}::date)
+       ORDER BY wb.bill_month ASC`,
+      queryParams,
     );
-
-    let totalExpected = 0;
-    let currentMonthExpected = 0;
-    const now = new Date();
-    const nowMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const normalizedAllocations = allocationsQuery.rows.map((alloc) => ({
       ...alloc,
+      monthly_rent: parseFloat(alloc.monthly_rent) || 0,
+      start: parseDateOnly(alloc.lease_start_date),
+      end: parseDateOnly(alloc.lease_end_date),
       is_active:
         alloc.is_active === true ||
         alloc.is_active === "true" ||
         alloc.is_active === 1,
-      updated_at: alloc.updated_at ? new Date(alloc.updated_at) : null,
     }));
 
-    // Prefer active allocations for expected metrics.
-    // If none are active (legacy/inconsistent data), fall back to the latest allocation.
-    const activeAllocations = normalizedAllocations.filter((a) => a.is_active);
-    const allocationsForMetrics =
-      activeAllocations.length > 0
-        ? activeAllocations
-        : normalizedAllocations.slice(0, 1);
+    const selectedAllocation =
+      normalizedAllocations.find((a) => a.is_active) || normalizedAllocations[0] || null;
 
-    allocationsForMetrics.forEach((alloc) => {
-      const start = parseDateOnly(alloc.lease_start_date);
-      const end = alloc.lease_end_date ? parseDateOnly(alloc.lease_end_date) : now;
-      if (!start || !end || end < start) return;
+    const monthKeys = [];
+    for (let i = 0; i < safeMonths; i++) {
+      monthKeys.push(monthStartToKey(addMonths(rangeStart, i)));
+    }
 
-      let months = (end.getFullYear() - start.getFullYear()) * 12;
-      months -= start.getMonth();
-      months += end.getMonth();
-      const monthCount = months < 0 ? 0 : months + 1;
-
-      totalExpected += monthCount * parseFloat(alloc.monthly_rent);
-
-      const allocationStartMonth = new Date(
-        start.getFullYear(),
-        start.getMonth(),
-        1,
-      );
-      const allocationEndMonth = new Date(end.getFullYear(), end.getMonth(), 1);
-      if (
-        nowMonthStart >= allocationStartMonth &&
-        nowMonthStart <= allocationEndMonth
-      ) {
-        currentMonthExpected += parseFloat(alloc.monthly_rent);
+    const billsByMonth = new Map();
+    waterBillsQuery.rows.forEach((row) => {
+      const key = monthStartToKey(new Date(row.bill_month_start));
+      const amount = parseFloat(row.amount) || 0;
+      const existing = billsByMonth.get(key) || { unitSpecific: null, fallback: null };
+      if (row.unit_id && unitId && row.unit_id === unitId) {
+        existing.unitSpecific = amount;
+      } else if (!row.unit_id) {
+        existing.fallback = amount;
+      } else if (!unitId) {
+        // If statement is tenant-wide (no unit filter), sum unit-level records.
+        existing.fallback = (existing.fallback || 0) + amount;
       }
+      billsByMonth.set(key, existing);
     });
 
-    const totalPaid = paymentsQuery.rows
-      .filter((p) => p.status === "completed")
-      .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const paymentsByMonth = new Map();
+    paymentsQuery.rows.forEach((payment) => {
+      const monthKey = payment.payment_month
+        ? new Date(payment.payment_month).toISOString().slice(0, 7)
+        : statementMonthKey;
+      if (!paymentsByMonth.has(monthKey)) paymentsByMonth.set(monthKey, []);
+      paymentsByMonth.get(monthKey).push(payment);
+    });
 
-    const balance = totalExpected - totalPaid;
+    const reconciliationMonths = [];
+    let runningBalance = 0;
+
+    for (const monthKey of monthKeys) {
+      const monthStart = toMonthStart(monthKey);
+      const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+
+      const rentExpected = normalizedAllocations.reduce((sum, alloc) => {
+        const start = alloc.start || rangeStart;
+        const end = alloc.end || statementMonthStart;
+        const allocationStartMonth = new Date(start.getFullYear(), start.getMonth(), 1);
+        const allocationEndMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+        if (monthStart >= allocationStartMonth && monthStart <= allocationEndMonth) {
+          return sum + alloc.monthly_rent;
+        }
+        return sum;
+      }, 0);
+
+      const billEntry = billsByMonth.get(monthKey);
+      const waterBill =
+        billEntry?.unitSpecific !== null && billEntry?.unitSpecific !== undefined
+          ? billEntry.unitSpecific
+          : billEntry?.fallback || 0;
+
+      const openingBalance = runningBalance;
+      let runningAfterPayment = openingBalance + rentExpected + waterBill;
+
+      const monthPayments = (paymentsByMonth.get(monthKey) || []).map((p) => {
+        const allocatedRent = parseFloat(p.allocated_to_rent) || 0;
+        const allocatedWater = parseFloat(p.allocated_to_water) || 0;
+        const allocatedArrears = parseFloat(p.allocated_to_arrears) || 0;
+        const allocatedSum = allocatedRent + allocatedWater + allocatedArrears;
+        const grossAmount = parseFloat(p.amount) || 0;
+        const effectiveAmount = allocatedSum > 0 ? allocatedSum : grossAmount;
+        const isCompleted = String(p.status || "").toLowerCase() === "completed";
+
+        if (isCompleted) {
+          runningAfterPayment -= effectiveAmount;
+        }
+
+        return {
+          ...p,
+          allocated_to_rent: allocatedRent,
+          allocated_to_water: allocatedWater,
+          allocated_to_arrears: allocatedArrears,
+          gross_amount: grossAmount,
+          effective_amount: isCompleted ? effectiveAmount : 0,
+          running_balance_after: runningAfterPayment,
+        };
+      });
+
+      const totalPaidThisMonth = monthPayments.reduce(
+        (sum, p) => sum + (String(p.status || "").toLowerCase() === "completed" ? p.effective_amount : 0),
+        0,
+      );
+
+      const monthExpectedTotal = rentExpected + waterBill;
+      const monthOutstanding = Math.max(0, monthExpectedTotal - totalPaidThisMonth);
+      const accruedBeforeMonth = Math.max(0, openingBalance);
+      const closingBalance = runningAfterPayment;
+      const carryForwardDue = Math.max(0, closingBalance);
+      const carryForwardCredit = Math.max(0, -closingBalance);
+
+      const isCompleted = closingBalance <= 0.0001;
+
+      reconciliationMonths.push({
+        month: monthKey,
+        period_start: `${monthKey}-01`,
+        period_end: monthEnd.toISOString().slice(0, 10),
+        opening_balance: openingBalance,
+        accrued_before_month: accruedBeforeMonth,
+        rent_expected: rentExpected,
+        water_bill: waterBill,
+        month_expected_total: monthExpectedTotal,
+        total_paid_this_month: totalPaidThisMonth,
+        month_outstanding: monthOutstanding,
+        closing_balance: closingBalance,
+        carry_forward_due: carryForwardDue,
+        carry_forward_credit: carryForwardCredit,
+        status: isCompleted ? "completed" : "incomplete",
+        payments: monthPayments,
+      });
+
+      runningBalance = closingBalance;
+    }
+
+    const statementMonth =
+      reconciliationMonths.find((m) => m.month === statementMonthKey) ||
+      reconciliationMonths[reconciliationMonths.length - 1] ||
+      null;
+
+    const totalPaidAllPeriods = reconciliationMonths.reduce(
+      (sum, m) => sum + (parseFloat(m.total_paid_this_month) || 0),
+      0,
+    );
+
+    const currentMonthExpected = statementMonth?.rent_expected || 0;
+    const totalPaid = statementMonth?.total_paid_this_month || 0;
+    const balance = Math.max(0, statementMonth?.month_outstanding || 0);
 
     res.json({
       success: true,
       data: {
         payments: paymentsQuery.rows,
+        reconciliation: {
+          unit_id: selectedAllocation?.unit_id || unitId || null,
+          unit_code: selectedAllocation?.unit_code || null,
+          property_name: selectedAllocation?.property_name || null,
+          statement_month: statementMonthKey,
+          months: reconciliationMonths,
+        },
         summary: {
-          totalExpected,
+          // New month-focused fields for statement modal.
+          statementMonth: statementMonthKey,
+          expectedRentThisMonth: statementMonth?.rent_expected || 0,
+          totalPaidThisMonth: statementMonth?.total_paid_this_month || 0,
+          outstandingThisMonth: Math.max(0, statementMonth?.month_outstanding || 0),
+          accruedBalance: Math.max(0, statementMonth?.accrued_before_month || 0),
+          totalDueAtMonthEnd: Math.max(0, statementMonth?.closing_balance || 0),
+          status: statementMonth?.status || "incomplete",
+
+          // Backward-compatible fields still used by existing export/UI paths.
           currentMonthExpected,
+          totalExpected: statementMonth?.month_expected_total || 0,
           totalPaid,
           balance,
-          arrears: balance > 0 ? balance : 0,
+          arrears: Math.max(0, statementMonth?.closing_balance || 0),
+          totalPaidAcrossPeriods: totalPaidAllPeriods,
         },
       },
     });
