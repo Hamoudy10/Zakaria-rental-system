@@ -2272,7 +2272,7 @@ const TenantHistoryModal = ({
                     <div key={m.month} className="border rounded-xl overflow-hidden">
                       <div className="bg-gray-50 border-b px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                         <div>
-                          <p className="font-bold text-gray-800">{formatMonth(m.month)}</p>
+                          <p className="font-bold text-gray-800">{formatMonthLabel(m.month)}</p>
                           <p className="text-xs text-gray-500">
                             Statement month: {m.month}
                           </p>
