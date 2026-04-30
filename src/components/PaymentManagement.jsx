@@ -518,13 +518,17 @@ const PaymentManagement = () => {
     setSelectAll(!selectAll);
   };
 
-  const handleViewHistory = async (tenantId, fullName) => {
+  const handleViewHistory = async (tenantId, fullName, unitId = null) => {
     setLoadingHistory(true);
     setHistoryError("");
-    setSelectedTenant({ id: tenantId, name: fullName });
+    setSelectedTenant({ id: tenantId, name: fullName, unitId });
 
     try {
-      const historyData = await fetchTenantHistory(tenantId);
+      const historyData = await fetchTenantHistory(tenantId, {
+        unitId: unitId || undefined,
+        month: filters.month || undefined,
+        months: 12,
+      });
       if (historyData) {
         setTenantHistory(historyData);
       } else {
@@ -1151,9 +1155,10 @@ const PaymentManagement = () => {
       user,
       title: `Payment Statement - ${selectedTenant.name}`,
       totalsOverride: {
-        "Total Expected": formatCurrency(summary.totalExpected || 0),
-        "Total Paid": formatCurrency(summary.totalPaid || 0),
-        "Outstanding Balance": formatCurrency(summary.balance || 0),
+        "Expected Rent (Month)": formatCurrency(summary.expectedRentThisMonth || summary.currentMonthExpected || 0),
+        "Total Paid (Month)": formatCurrency(summary.totalPaidThisMonth || summary.totalPaid || 0),
+        "Outstanding (Month)": formatCurrency(summary.outstandingThisMonth || summary.balance || 0),
+        "Accrued Balance": formatCurrency(summary.accruedBalance || 0),
         "Payment Records": `${tenantHistory.payments.length}`,
       },
     };
@@ -1176,6 +1181,21 @@ const PaymentManagement = () => {
     if (pagedTotal > 0) return pagedTotal;
     return payments?.reduce((sum, p) => sum + toNumericAmount(p.amount), 0) || 0;
   }, [payments, pagination?.totalAmount]);
+
+  const completedInView = useMemo(() => {
+    const completedTotal = toNumericAmount(pagination?.completedAmount);
+    if (completedTotal > 0) return completedTotal;
+    return (
+      payments?.reduce(
+        (sum, p) =>
+          sum +
+          (String(p.status || "").toLowerCase() === "completed"
+            ? toNumericAmount(p.amount)
+            : 0),
+        0,
+      ) || 0
+    );
+  }, [payments, pagination?.completedAmount]);
 
   const monthOptions = useMemo(() => getMonthOptions(), []);
 
@@ -1256,14 +1276,27 @@ const PaymentManagement = () => {
 
       {/* Stats Cards */}
       {activeTab === "all" ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-white p-5 rounded-xl border shadow-sm flex items-center gap-4">
+            <div className="bg-emerald-100 p-3 rounded-full">
+              <CheckCircle className="text-emerald-600" />
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">
+                Collected (Completed)
+              </p>
+              <p className="text-2xl font-bold text-gray-800">
+                {formatCurrency(completedInView)}
+              </p>
+            </div>
+          </div>
           <div className="bg-white p-5 rounded-xl border shadow-sm flex items-center gap-4">
             <div className="bg-blue-100 p-3 rounded-full">
               <DollarSign className="text-blue-600" />
             </div>
             <div>
               <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">
-                Total in View
+                All Recorded in View
               </p>
               <p className="text-2xl font-bold text-gray-800">
                 {formatCurrency(totalInView)}
@@ -1646,6 +1679,14 @@ const AllPaymentsTable = ({
   const formatDate = (dateString) =>
     dateString ? new Date(dateString).toLocaleDateString("en-GB") : "N/A";
 
+  const formatMonth = (monthKey) => {
+    if (!monthKey || !/^\d{4}-\d{2}$/.test(monthKey)) return monthKey || "N/A";
+    return new Date(`${monthKey}-01`).toLocaleDateString("en-GB", {
+      month: "long",
+      year: "numeric",
+    });
+  };
+
   return (
     <>
       <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
@@ -1739,9 +1780,10 @@ const AllPaymentsTable = ({
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() =>
-                            onViewHistory(
+                          onViewHistory(
                               p.tenant_id,
                               `${p.first_name} ${p.last_name}`,
+                              p.unit_id || null,
                             )
                           }
                           className="bg-blue-50 text-blue-600 px-3 py-1 rounded-md text-xs font-bold hover:bg-blue-600 hover:text-white transition-all touch-manipulation"
@@ -2048,7 +2090,11 @@ const TenantStatusTable = ({
                       <div className="flex gap-1">
                         <button
                           onClick={() =>
-                            onViewHistory(t.tenant_id, t.tenant_name)
+                            onViewHistory(
+                              t.tenant_id,
+                              t.tenant_name,
+                              t.unit_id || null,
+                            )
                           }
                           className="p-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
                           title="View History"
@@ -2153,92 +2199,205 @@ const TenantHistoryModal = ({
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                 <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl">
                   <p className="text-xs font-bold text-indigo-400 uppercase mb-1">
-                    Current Month Expected
+                    Expected Rent (Month)
                   </p>
                   <p className="text-xl font-black text-indigo-700">
-                    {formatCurrency(history.summary?.currentMonthExpected)}
-                  </p>
-                </div>
-                <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl">
-                  <p className="text-xs font-bold text-blue-400 uppercase mb-1">
-                    Total Expected
-                  </p>
-                  <p className="text-xl font-black text-blue-700">
-                    {formatCurrency(history.summary?.totalExpected)}
+                    {formatCurrency(
+                      history.summary?.expectedRentThisMonth ??
+                        history.summary?.currentMonthExpected ??
+                        0,
+                    )}
                   </p>
                 </div>
                 <div className="bg-green-50 border border-green-100 p-4 rounded-xl">
                   <p className="text-xs font-bold text-green-400 uppercase mb-1">
-                    Total Paid
+                    Total Paid (Month)
                   </p>
                   <p className="text-xl font-black text-green-700">
-                    {formatCurrency(history.summary?.totalPaid)}
+                    {formatCurrency(
+                      history.summary?.totalPaidThisMonth ??
+                        history.summary?.totalPaid ??
+                        0,
+                    )}
                   </p>
                 </div>
                 <div
-                  className={`${(history.summary?.balance || 0) > 0 ? "bg-red-50 border-red-100" : "bg-gray-50 border-gray-100"} border p-4 rounded-xl`}
+                  className={`${(history.summary?.outstandingThisMonth ?? history.summary?.balance ?? 0) > 0 ? "bg-red-50 border-red-100" : "bg-gray-50 border-gray-100"} border p-4 rounded-xl`}
                 >
                   <p className="text-xs font-bold text-gray-400 uppercase mb-1">
-                    Outstanding Balance
+                    Outstanding (Month)
                   </p>
                   <p
-                    className={`text-xl font-black ${(history.summary?.balance || 0) > 0 ? "text-red-600" : "text-gray-700"}`}
+                    className={`text-xl font-black ${(history.summary?.outstandingThisMonth ?? history.summary?.balance ?? 0) > 0 ? "text-red-600" : "text-gray-700"}`}
                   >
-                    {formatCurrency(history.summary?.balance || 0)}
+                    {formatCurrency(
+                      history.summary?.outstandingThisMonth ??
+                        history.summary?.balance ??
+                        0,
+                    )}
                   </p>
                 </div>
               </div>
 
-              <div className="border rounded-xl overflow-hidden max-h-[40vh] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0 border-b">
-                    <tr>
-                      <th className="p-3 text-left">Date</th>
-                      <th className="p-3 text-left">Amount</th>
-                      <th className="p-3 text-left">Ref Code</th>
-                      <th className="p-3 text-left">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {!history.payments || history.payments.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          className="text-center py-8 text-gray-500"
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl">
+                  <p className="text-xs font-bold text-amber-500 uppercase mb-1">
+                    Accrued Balance (Before Month)
+                  </p>
+                  <p className="text-xl font-black text-amber-700">
+                    {formatCurrency(history.summary?.accruedBalance || 0)}
+                  </p>
+                </div>
+                <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl">
+                  <p className="text-xs font-bold text-slate-500 uppercase mb-1">
+                    Month-End Status
+                  </p>
+                  <p
+                    className={`text-xl font-black ${String(history.summary?.status || "").toLowerCase() === "completed" ? "text-green-700" : "text-red-700"}`}
+                  >
+                    {String(history.summary?.status || "").toLowerCase() === "completed"
+                      ? "Completed"
+                      : "Incomplete"}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    End balance:{" "}
+                    {formatCurrency(history.summary?.totalDueAtMonthEnd || 0)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 max-h-[44vh] overflow-y-auto pr-1">
+                {history.reconciliation?.months?.length ? (
+                  history.reconciliation.months.map((m) => (
+                    <div key={m.month} className="border rounded-xl overflow-hidden">
+                      <div className="bg-gray-50 border-b px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <div>
+                          <p className="font-bold text-gray-800">{formatMonth(m.month)}</p>
+                          <p className="text-xs text-gray-500">
+                            Statement month: {m.month}
+                          </p>
+                        </div>
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase w-fit ${
+                            String(m.status).toLowerCase() === "completed"
+                              ? "bg-green-100 text-green-700"
+                              : "bg-red-100 text-red-700"
+                          }`}
                         >
-                          No payment records found
-                        </td>
-                      </tr>
-                    ) : (
-                      history.payments.map((p) => (
-                        <tr key={p.id} className="hover:bg-gray-50">
-                          <td className="p-3">{formatDate(p.payment_date)}</td>
-                          <td className="p-3 font-bold">
-                            {formatCurrency(p.amount)}
-                          </td>
-                          <td className="p-3 font-mono text-xs">
-                            {p.mpesa_receipt_number ||
-                              p.mpesa_transaction_id ||
-                              "N/A"}
-                          </td>
-                          <td className="p-3">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                p.status === "completed"
-                                  ? "bg-green-100 text-green-700"
-                                  : p.status === "pending"
-                                    ? "bg-yellow-100 text-yellow-700"
-                                    : "bg-red-100 text-red-700"
-                              }`}
-                            >
-                              {p.status || "Unknown"}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                          {String(m.status).toLowerCase() === "completed"
+                            ? "Completed"
+                            : "Incomplete"}
+                        </span>
+                      </div>
+
+                      <div className="p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase">Opening</p>
+                          <p className="font-bold text-gray-800">{formatCurrency(m.opening_balance)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase">Rent Bill</p>
+                          <p className="font-bold text-indigo-700">{formatCurrency(m.rent_expected)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase">Water Bill</p>
+                          <p className="font-bold text-blue-700">{formatCurrency(m.water_bill)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase">Paid</p>
+                          <p className="font-bold text-green-700">{formatCurrency(m.total_paid_this_month)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase">Closing</p>
+                          <p
+                            className={`font-bold ${
+                              Number(m.closing_balance) > 0 ? "text-red-700" : "text-green-700"
+                            }`}
+                          >
+                            {formatCurrency(m.closing_balance)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="border-t">
+                        <table className="w-full text-xs md:text-sm">
+                          <thead className="bg-gray-50 border-b">
+                            <tr>
+                              <th className="p-2 text-left">Date</th>
+                              <th className="p-2 text-left">Ref</th>
+                              <th className="p-2 text-right">Paid</th>
+                              <th className="p-2 text-right">Rent</th>
+                              <th className="p-2 text-right">Water</th>
+                              <th className="p-2 text-right">Arrears</th>
+                              <th className="p-2 text-right">Balance After</th>
+                              <th className="p-2 text-left">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {!m.payments?.length ? (
+                              <tr>
+                                <td colSpan={8} className="p-3 text-center text-gray-500">
+                                  No transactions posted for this month.
+                                </td>
+                              </tr>
+                            ) : (
+                              m.payments.map((p) => (
+                                <tr key={p.id} className="border-b last:border-b-0">
+                                  <td className="p-2">{formatDate(p.payment_date)}</td>
+                                  <td className="p-2 font-mono">
+                                    {p.mpesa_receipt_number || p.mpesa_transaction_id || "N/A"}
+                                  </td>
+                                  <td className="p-2 text-right font-semibold">
+                                    {formatCurrency(p.gross_amount ?? p.amount)}
+                                  </td>
+                                  <td className="p-2 text-right">{formatCurrency(p.allocated_to_rent)}</td>
+                                  <td className="p-2 text-right">{formatCurrency(p.allocated_to_water)}</td>
+                                  <td className="p-2 text-right">{formatCurrency(p.allocated_to_arrears)}</td>
+                                  <td className="p-2 text-right font-semibold">
+                                    {formatCurrency(p.running_balance_after)}
+                                  </td>
+                                  <td className="p-2">
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                        p.status === "completed"
+                                          ? "bg-green-100 text-green-700"
+                                          : p.status === "pending"
+                                            ? "bg-yellow-100 text-yellow-700"
+                                            : "bg-red-100 text-red-700"
+                                      }`}
+                                    >
+                                      {p.status || "Unknown"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="px-4 py-3 bg-slate-50 border-t text-xs md:text-sm">
+                        {Number(m.carry_forward_due) > 0 ? (
+                          <p className="text-red-700 font-semibold">
+                            Carry forward to next month: {formatCurrency(m.carry_forward_due)} due.
+                          </p>
+                        ) : Number(m.carry_forward_credit) > 0 ? (
+                          <p className="text-green-700 font-semibold">
+                            Carry forward credit to next month: {formatCurrency(m.carry_forward_credit)}.
+                          </p>
+                        ) : (
+                          <p className="text-green-700 font-semibold">
+                            Month closed with zero balance.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="border rounded-xl p-8 text-center text-gray-500">
+                    No reconciliation rows available for this statement period.
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -2271,6 +2271,7 @@ const getTenantsByProperty = async (req, res) => {
          t.last_name, 
          t.phone_number,
          t.national_id,
+         pu.id as unit_id,
          pu.unit_code,
          pu.unit_number,
          ta.is_active as allocation_active,

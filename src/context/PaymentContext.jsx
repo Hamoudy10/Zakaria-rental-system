@@ -74,10 +74,10 @@ export const PaymentProvider = ({ children }) => {
   }, []);
 
  // ✅ NEW: Fetch full payment history for a single tenant (used by PaymentManagement.jsx)
-  const fetchTenantHistory = useCallback(async (tenantId) => {
+  const fetchTenantHistory = useCallback(async (tenantId, params = {}) => {
     try {
       // paymentAPI.getPaymentHistory now accepts optional params for flexibility
-      const response = await paymentAPI.getPaymentHistory(tenantId); 
+      const response = await paymentAPI.getPaymentHistory(tenantId, params);
       if (response.data.success) {
         // Expecting { payments: [], summary: {} } from this specific API call
         return response.data.data; 

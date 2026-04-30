@@ -62,6 +62,43 @@ const getTenantUnitSummary = (tenant) =>
 const getTenantSelectionValue = (tenant) =>
   tenant?.unit_id ? `${tenant.id || tenant.tenant_id}::${tenant.unit_id}` : `${tenant.id || tenant.tenant_id || ""}`;
 
+const getCurrentMonthKey = () => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const getMonthLabel = (monthKey) => {
+  if (!monthKey || !/^\d{4}-\d{2}$/.test(String(monthKey))) {
+    return new Date().toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+  }
+  return new Date(`${monthKey}-01`).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+};
+
+const isBalanceReminderTemplate = (template) => {
+  if (!template) return false;
+  const haystack = [
+    template.template_key,
+    template.whatsapp_template_name,
+    template.name,
+    template.description,
+    template.category,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    haystack.includes("balance_reminder") ||
+    (haystack.includes("reminder") && haystack.includes("balance"))
+  );
+};
+
 const AgentSMSManagement = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("trigger");
@@ -110,6 +147,7 @@ const AgentSMSManagement = () => {
 
   // State for Send Notifications Tab
   const [sendPropertyId, setSendPropertyId] = useState("");
+  const [sendMonth, setSendMonth] = useState("");
   const [sendTenants, setSendTenants] = useState([]);
   const [loadingSendTenants, setLoadingSendTenants] = useState(false);
   const [selectedSendTenantId, setSelectedSendTenantId] = useState("");
@@ -158,10 +196,9 @@ const AgentSMSManagement = () => {
     fetchNotificationTemplates();
     fetchSystemPaybill();
     // Set default month to current month
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, "0");
-    setMonth(`${year}-${month}`);
+    const currentMonth = getCurrentMonthKey();
+    setMonth(currentMonth);
+    setSendMonth(currentMonth);
   }, []);
 
   // Load data based on active tab
@@ -269,18 +306,19 @@ const AgentSMSManagement = () => {
   };
 
   const buildVariableContext = (tenant) => {
-    const now = new Date();
-    const monthLong = now.toLocaleDateString("en-US", {
-      month: "long",
-      year: "numeric",
-    });
-    const monthShort = now
+    const monthLong = getMonthLabel(sendMonth);
+    const monthShort = new Date(`${(sendMonth || getCurrentMonthKey())}-01`)
       .toLocaleDateString("en-US", { month: "short", year: "numeric" })
       .toUpperCase();
 
     const property = properties.find((p) => p.id === sendPropertyId);
-    const selectedTenantKey = tenant?.id || tenant?.tenant_id || selectedSendTenantId;
-    const dueValue = toNumeric(sendTenantBalances[selectedTenantKey] ?? testAmount);
+    const tenantId = String(tenant?.id || tenant?.tenant_id || "");
+    const selectionKey = getTenantSelectionValue(tenant);
+    const dueValue = toNumeric(
+      sendTenantBalances[selectionKey] ??
+        sendTenantBalances[tenantId] ??
+        testAmount,
+    );
     const dueDayNumber = toNumeric(tenant?.rent_due_day);
     const dueDay = dueDayNumber > 0 ? `${getOrdinal(dueDayNumber)} of every month` : "";
     const dueDate = dueDayNumber > 0 ? `${getOrdinal(dueDayNumber)} ${monthLong}` : "";
@@ -318,6 +356,7 @@ const AgentSMSManagement = () => {
       totalDue: `${dueValue}`,
       outstanding: `${dueValue}`,
       rent: `${toNumeric(tenant?.monthly_rent)}`,
+      monthlyRent: `${toNumeric(tenant?.monthly_rent)}`,
       dueDay,
       due_day: dueDay,
       dueDate,
@@ -344,6 +383,18 @@ const AgentSMSManagement = () => {
       }
       resolved[key] = "N/A";
     });
+
+    // Guardrail: for balance reminder templates, force rent-like placeholders
+    // to use the outstanding amount to avoid showing full monthly rent.
+    if (isBalanceReminderTemplate(template)) {
+      const due = String(
+        toNumeric(resolved.total ?? resolved.totalDue ?? resolved.outstanding ?? 0),
+      );
+      resolved.total = due;
+      resolved.totalDue = due;
+      resolved.outstanding = due;
+      resolved.rent = due;
+    }
 
     return resolved;
   };
@@ -393,10 +444,63 @@ const AgentSMSManagement = () => {
     sendTenants,
     notificationTemplates,
     sendPropertyId,
+    sendMonth,
     testAmount,
     sendTenantBalances,
     systemPaybill,
   ]);
+
+  const fetchSendBalancesByProperty = async (
+    selectedProperty,
+    selectedMonth,
+    tenants = [],
+  ) => {
+    if (!selectedProperty) {
+      setSendTenantBalances({});
+      return;
+    }
+
+    setLoadingSendBalances(true);
+    try {
+      const balanceMonth = selectedMonth || getCurrentMonthKey();
+      const statusResponse = await API.payments.getTenantPaymentStatus({
+        propertyId: selectedProperty,
+        month: balanceMonth,
+      });
+      const statusTenants = statusResponse?.data?.data?.tenants || [];
+      const balanceMap = {};
+
+      statusTenants.forEach((row) => {
+        const tenantId = String(row.tenant_id || row.id || "");
+        const unitId = String(row.unit_id || "");
+        if (!tenantId) return;
+        const rawDue = Number(row.total_due ?? row.balance ?? row.rent_due ?? 0);
+        const due = Number.isFinite(rawDue) ? rawDue : 0;
+
+        // Scoped key (tenant + unit) for precise matching
+        if (unitId) {
+          balanceMap[`${tenantId}::${unitId}`] = due;
+        }
+        // Tenant-level fallback uses sum across active allocations.
+        balanceMap[tenantId] = toNumeric(balanceMap[tenantId]) + due;
+      });
+
+      tenants.forEach((tenant) => {
+        const selectionKey = getTenantSelectionValue(tenant);
+        const tenantId = String(tenant.id || tenant.tenant_id || "");
+        if (balanceMap[selectionKey] === undefined && tenantId) {
+          balanceMap[selectionKey] = toNumeric(balanceMap[tenantId]);
+        }
+      });
+
+      setSendTenantBalances(balanceMap);
+    } catch (balanceError) {
+      console.error("Error fetching tenant balances for prefill:", balanceError);
+      setSendTenantBalances({});
+    } finally {
+      setLoadingSendBalances(false);
+    }
+  };
 
   const fetchSendTenantsByProperty = async (selectedProperty) => {
     if (!selectedProperty) {
@@ -421,32 +525,7 @@ const AgentSMSManagement = () => {
       setSendTenants(tenants);
       setSelectedSendTenantId("");
       setTestAmount("");
-
-      // Auto-load balance snapshot for current month to prefill amount on tenant select.
-      setLoadingSendBalances(true);
-      try {
-        const balanceMonth =
-          month ||
-          `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-        const statusResponse = await API.payments.getTenantPaymentStatus({
-          propertyId: selectedProperty,
-          month: balanceMonth,
-        });
-        const statusTenants = statusResponse?.data?.data?.tenants || [];
-        const balanceMap = {};
-        statusTenants.forEach((row) => {
-          const id = String(row.tenant_id || row.id || "");
-          if (!id) return;
-          const rawDue = Number(row.total_due ?? row.balance ?? row.rent_due ?? 0);
-          balanceMap[id] = Number.isFinite(rawDue) ? rawDue : 0;
-        });
-        setSendTenantBalances(balanceMap);
-      } catch (balanceError) {
-        console.error("Error fetching tenant balances for prefill:", balanceError);
-        setSendTenantBalances({});
-      } finally {
-        setLoadingSendBalances(false);
-      }
+      await fetchSendBalancesByProperty(selectedProperty, sendMonth, tenants);
     } catch (error) {
       console.error("Error fetching property tenants for test send:", error);
       setSendTenants([]);
@@ -462,12 +541,22 @@ const AgentSMSManagement = () => {
   };
 
   useEffect(() => {
+    if (activeTab !== "send" || !sendPropertyId) return;
+    fetchSendBalancesByProperty(sendPropertyId, sendMonth, sendTenants);
+  }, [activeTab, sendPropertyId, sendMonth]);
+
+  useEffect(() => {
     if (!selectedSendTenantId) return;
     const selectedTenant = sendTenants.find(
       (tenant) => getTenantSelectionValue(tenant) === selectedSendTenantId,
     );
-    const balanceKey = selectedTenant?.id || selectedTenant?.tenant_id || selectedSendTenantId;
-    const due = Number(sendTenantBalances[balanceKey]);
+    const selectionKey = selectedTenant
+      ? getTenantSelectionValue(selectedTenant)
+      : selectedSendTenantId;
+    const tenantId = String(selectedTenant?.id || selectedTenant?.tenant_id || "");
+    const due = Number(
+      sendTenantBalances[selectionKey] ?? sendTenantBalances[tenantId],
+    );
     if (!Number.isFinite(due)) return;
     setTestAmount(due > 0 ? String(due) : "0");
   }, [selectedSendTenantId, sendTenantBalances]);
@@ -517,14 +606,15 @@ const AgentSMSManagement = () => {
         tenantName,
         unitCode: getTenantUnitSummary(selectedTenant),
         propertyName: selectedProperty?.name || "",
-        rent: selectedTenant?.monthly_rent ?? "",
+        rent:
+          isBalanceReminderTemplate(selectedNotificationTemplate)
+            ? String(toNumeric(testAmount))
+            : selectedTenant?.monthly_rent ?? "",
+        monthlyRent: selectedTenant?.monthly_rent ?? "",
         dueDay: dueDayValue,
         month:
           resolvedTemplateVariables?.month ||
-          new Date().toLocaleDateString("en-US", {
-            month: "long",
-            year: "numeric",
-          }),
+          getMonthLabel(sendMonth),
         total: testAmount.trim(),
         totalDue: testAmount.trim(),
         outstanding: testAmount.trim(),
@@ -1017,6 +1107,37 @@ const AgentSMSManagement = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Balance Month *
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="month"
+                      value={sendMonth}
+                      onChange={(e) => setSendMonth(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        fetchSendBalancesByProperty(
+                          sendPropertyId,
+                          sendMonth,
+                          sendTenants,
+                        )
+                      }
+                      disabled={!sendPropertyId || loadingSendBalances}
+                      className="px-3 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      title="Refresh balance snapshot"
+                    >
+                      <RefreshCw
+                        className={`w-4 h-4 ${loadingSendBalances ? "animate-spin" : ""}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Tenant *
                   </label>
                   <select
@@ -1151,6 +1272,7 @@ const AgentSMSManagement = () => {
                 <button
                   onClick={() => {
                     setSendPropertyId("");
+                    setSendMonth(getCurrentMonthKey());
                     setSendTenants([]);
                     setSelectedSendTenantId("");
                     setTestTemplateId("");
