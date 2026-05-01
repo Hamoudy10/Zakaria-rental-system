@@ -616,10 +616,8 @@ const TenantManagement = () => {
       email: tenant.email || "",
       phone_number: formatPhoneForDisplay(tenant.phone_number) || "",
       emergency_contact_name: tenant.emergency_contact_name || "",
-      emergency_contact_phone:
+emergency_contact_phone: formatPhoneForDisplay(tenant.emergency_contact_phone) || "",
 
-        // Populate form with tenant data; include current unit info for edit dropdown
-        emergency_contact_phone: formatPhoneForDisplay(tenant.emergency_contact_phone) || "",
         unit_id: currentUnitId,
         currentUnit: currentUnitId
           ? {
@@ -1222,18 +1220,17 @@ const TenantManagement = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Select Unit *
                       </label>
-                      <select
-                        name="unit_id"
-                        value={formData.unit_id}
-                        onChange={handleUnitChange}
-                        required
-                        disabled={isMultiAllocationEdit}
-                        className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                          formErrors.unit_id
-                            ? "border-red-500"
-                            : "border-gray-300"
-                        }`}
-                      >
+<select
+                          name="unit_id"
+                          value={formData.unit_id}
+                          onChange={handleUnitChange}
+                          disabled={isMultiAllocationEdit}
+                          className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                            formErrors.unit_id
+                              ? "border-red-500"
+                              : "border-gray-300"
+                          }`}
+                          >
   <option value="">
     {availableUnits.length === 0
       ? "No available units in assigned properties"
