@@ -480,7 +480,7 @@ const TenantManagement = () => {
     if (!formData.phone_number.trim())
       errors.phone_number = "Phone number is required";
 
-    if (!formData.unit_id) {
+    if (!editingTenant && !formData.unit_id) {
       errors.unit_id = "Unit allocation is required";
     }
     if (formData.unit_id) {
@@ -520,17 +520,36 @@ const TenantManagement = () => {
       setUploading(true);
 
       let response;
-      const formattedData = {
-        ...formData,
+      const tenantFields = {
+        national_id: formData.national_id,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
         email: formData.email?.trim() ? formData.email.trim() : null,
         phone_number: formatPhoneForBackend(formData.phone_number),
+        emergency_contact_name: formData.emergency_contact_name,
         emergency_contact_phone: formData.emergency_contact_phone
           ? formatPhoneForBackend(formData.emergency_contact_phone)
           : "",
+      };
+      const allocationFields = {
+        unit_id: formData.unit_id,
+        lease_start_date: formData.lease_start_date,
+        lease_end_date: formData.lease_end_date,
         monthly_rent: parseFloat(formData.monthly_rent) || 0,
         security_deposit: parseFloat(formData.security_deposit) || 0,
         deposit_status: formData.deposit_status || "unpaid",
       };
+      const shouldUpdateAllocation =
+        Boolean(formData.unit_id) && !isMultiAllocationEdit;
+      const formattedData = editingTenant
+        ? {
+            ...tenantFields,
+            ...(shouldUpdateAllocation ? allocationFields : {}),
+          }
+        : {
+            ...tenantFields,
+            ...allocationFields,
+          };
       if (editingTenant) {
         response = await API.tenants.updateTenant(
           editingTenant.id,
