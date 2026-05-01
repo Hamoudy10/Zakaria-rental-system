@@ -1735,6 +1735,50 @@ const TenantHub = () => {
 
   // Delete tenant
   const handleDelete = async () => {
+    // Archive tenant (default)
+    if (!selectedTenant) return;
+    setActionLoading(true);
+    try {
+      const response = await tenantAPI.archiveTenant(selectedTenant.id, { reason: 'Archived from Tenant Hub by admin' });
+      if (response.data.success) {
+        setShowDeleteConfirm(false);
+        await fetchTenants();
+        await fetchAllocations();
+        addToast(`${selectedTenant.first_name} archived successfully`, 'success');
+        setSelectedTenant(null);
+      } else {
+        addToast(response.data.message || 'Failed to archive tenant', 'error');
+      }
+    } catch (err) {
+      console.error('Delete error:', err);
+      addToast(err.response?.data?.message || 'Failed to archive tenant', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Permanent delete for archived tenants
+  const handlePermanentDelete = async () => {
+    if (!selectedTenant) return;
+    setActionLoading(true);
+    try {
+      const response = await tenantAPI.deleteTenant(selectedTenant.id, { permanent: true });
+      if (response.data?.success) {
+        setShowDeleteConfirm(false);
+        await fetchTenants();
+        await fetchAllocations();
+        addToast(`${selectedTenant.first_name} permanently deleted`, 'success');
+        setSelectedTenant(null);
+      } else {
+        addToast(response.data?.message || 'Failed to delete tenant', 'error');
+      }
+    } catch (err) {
+      console.error('Permanent delete error:', err);
+      addToast(err.response?.data?.message || 'Failed to delete tenant', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
     if (!selectedTenant) return;
     
     setActionLoading(true);
@@ -2459,7 +2503,7 @@ const TenantHub = () => {
         loading={actionLoading}
       />
 
-      <ConfirmationModal
+<ConfirmationModal
         isOpen={showDeleteConfirm}
         onClose={() => { setShowDeleteConfirm(false); setSelectedTenant(null); }}
         onConfirm={handleDelete}
@@ -2468,6 +2512,19 @@ const TenantHub = () => {
         confirmText="Archive Tenant"
         confirmColor="amber"
         icon={Trash2}
+        loading={actionLoading}
+      />
+
+      {/* Permanent Delete Modal - Only for Archived Tenants */}
+      <ConfirmationModal
+        isOpen={showDeleteConfirm && selectedTenant?.is_archived}
+        onClose={() => { setShowDeleteConfirm(false); setSelectedTenant(null); }}
+        onConfirm={handlePermanentDelete}
+        title="Permanently Delete Tenant"
+        message={`PERMANENTLY DELETE ${selectedTenant?.first_name} ${selectedTenant?.last_name}? This will remove all tenant records including payments, complaints, and history. This action CANNOT be undone. Are you absolutely sure?`}
+        confirmText="Permanently Delete"
+        confirmColor="red"
+        icon={UserX}
         loading={actionLoading}
       />
 
