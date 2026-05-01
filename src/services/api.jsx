@@ -858,21 +858,28 @@ export const notificationUtils = {
 
 // Tenant Management API
 export const tenantAPI = {
-  // Get all tenants with pagination
-  getTenants: (params = {}) => api.get('/tenants', { params }),
-  
-  // Get single tenant by ID
-  getTenant: (id) => api.get(`/tenants/${id}`),
-  
-  // Create new tenant
-  createTenant: (tenantData) => api.post('/tenants', tenantData),
-  
-  // Update tenant
-  updateTenant: (id, tenantData) => api.put(`/tenants/${id}`, tenantData),
-  
-  // Delete tenant
-  deleteTenant: (id) => api.delete(`/tenants/${id}`),
-  archiveTenant: (id, payload = {}) => api.post(`/tenants/${id}/archive`, payload),
+   // Get all tenants with pagination
+   getTenants: (params = {}) => api.get('/tenants', { params }),
+   
+   // Get single tenant by ID
+   getTenant: (id) => api.get(`/tenants/${id}`),
+   
+   // Create new tenant
+   createTenant: (tenantData) => api.post('/tenants', tenantData),
+   
+   // Update tenant
+   updateTenant: (id, tenantData) => api.put(`/tenants/${id}`, tenantData),
+   
+   // Delete tenant
+   deleteTenant: (id, options = {}) => {
+     const query = new URLSearchParams();
+     if (options.permanent) {
+       query.append('permanent', 'true');
+     }
+     const url = query.toString() ? `/tenants/${id}?${query.toString()}` : `/tenants/${id}`;
+     return api.delete(url);
+   },
+   archiveTenant: (id, payload = {}) => api.post(`/tenants/${id}/archive`, payload),
 
     checkMissingWaterBills: (month, propertyId = null) => {
     const params = new URLSearchParams();
