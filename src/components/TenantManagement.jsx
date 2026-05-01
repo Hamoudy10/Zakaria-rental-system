@@ -624,7 +624,7 @@ emergency_contact_phone: formatPhoneForDisplay(tenant.emergency_contact_phone) |
               id: currentUnitId,
               property_name: tenant.property_name || tenant.current_allocation?.property_name || '',
               unit_code: tenant.unit_code || tenant.current_allocation?.unit_code || '',
-              rent_amount: tenant.monthly_rent ?? tenant.current_allocation?.monthly_rent || 0,
+              rent_amount: (tenant.monthly_rent ?? tenant.current_allocation?.monthly_rent) || 0,
             }
           : null,
         lease_start_date: tenant.lease_start_date
