@@ -617,29 +617,38 @@ const TenantManagement = () => {
       phone_number: formatPhoneForDisplay(tenant.phone_number) || "",
       emergency_contact_name: tenant.emergency_contact_name || "",
       emergency_contact_phone:
-        formatPhoneForDisplay(tenant.emergency_contact_phone) || "",
-      unit_id: currentUnitId,
-      lease_start_date: tenant.lease_start_date
-        ? tenant.lease_start_date.toString().split("T")[0]
-        : tenant.current_allocation?.lease_start_date
-          ? tenant.current_allocation.lease_start_date.split("T")[0]
-          : "",
-      lease_end_date: tenant.lease_end_date
-        ? tenant.lease_end_date.toString().split("T")[0]
-        : tenant.current_allocation?.lease_end_date
-          ? tenant.current_allocation.lease_end_date.split("T")[0]
-          : "",
-      monthly_rent:
-        (
-          tenant.monthly_rent ?? tenant.current_allocation?.monthly_rent
-        )?.toString() || "",
-      security_deposit:
-        (
-          tenant.security_deposit ?? tenant.current_allocation?.security_deposit
-        )?.toString() || "",
-      deposit_status: "unpaid",
-    });
 
+        // Populate form with tenant data; include current unit info for edit dropdown
+        emergency_contact_phone: formatPhoneForDisplay(tenant.emergency_contact_phone) || "",
+        unit_id: currentUnitId,
+        currentUnit: currentUnitId
+          ? {
+              id: currentUnitId,
+              property_name: tenant.property_name || tenant.current_allocation?.property_name || '',
+              unit_code: tenant.unit_code || tenant.current_allocation?.unit_code || '',
+              rent_amount: tenant.monthly_rent ?? tenant.current_allocation?.monthly_rent || 0,
+            }
+          : null,
+        lease_start_date: tenant.lease_start_date
+          ? tenant.lease_start_date.toString().split("T")[0]
+          : tenant.current_allocation?.lease_start_date
+            ? tenant.current_allocation.lease_start_date.split("T")[0]
+            : "",
+        lease_end_date: tenant.lease_end_date
+          ? tenant.lease_end_date.toString().split("T")[0]
+          : tenant.current_allocation?.lease_end_date
+            ? tenant.current_allocation.lease_end_date.split("T")[0]
+            : "",
+        monthly_rent:
+          (
+            tenant.monthly_rent ?? tenant.current_allocation?.monthly_rent
+          )?.toString() || "",
+        security_deposit:
+          (
+            tenant.security_deposit ?? tenant.current_allocation?.security_deposit
+          )?.toString() || "",
+        deposit_status: "unpaid",
+      });
     setFormErrors({});
     setShowForm(true);
     // Refresh properties to ensure we have the latest units
@@ -1225,22 +1234,28 @@ const TenantManagement = () => {
                             : "border-gray-300"
                         }`}
                       >
-                        <option value="">
-                          {availableUnits.length === 0
-                            ? "No available units in assigned properties"
-                            : "Select a unit"}
-                        </option>
-                        {Array.isArray(availableUnits) &&
-                          availableUnits.map((unit) => (
-                            <option
-                              key={unit?.id || Math.random()}
-                              value={unit?.id || ""}
-                            >
-                              {unit?.property_name || "Unknown"} -{" "}
-                              {unit?.unit_code || "N/A"} (KES{" "}
-                              {unit?.rent_amount?.toLocaleString() || 0})
-                            </option>
-                          ))}
+  <option value="">
+    {availableUnits.length === 0
+      ? "No available units in assigned properties"
+      : "Select a unit"}
+  </option>
+  {formData.currentUnit && (
+    <option value={formData.currentUnit.id}>
+      Current: {formData.currentUnit.property_name || ''} - {formData.currentUnit.unit_code || 'N/A'} (KES {formData.currentUnit.rent_amount?.toLocaleString() || 0})
+    </option>
+  )}
+  {Array.isArray(availableUnits) &&
+    availableUnits
+      .filter(u => u.id !== formData.currentUnit?.id)
+      .map((unit) => (
+        <option
+          key={unit?.id || Math.random()}
+          value={unit?.id || ""}
+        >
+          {unit?.property_name || "Unknown"} - {unit?.unit_code || "N/A"} (KES {unit?.rent_amount?.toLocaleString() || 0})
+        </option>
+      ))}
+
                       </select>
                       {formErrors.unit_id && (
                         <p className="mt-1 text-sm text-red-600">
