@@ -468,6 +468,7 @@ export const exportToPDF = async (config) => {
       "messaging",
       "complaints",
       "properties",
+      "audit_logs",
     ].includes(reportType);
     const doc = new jsPDF(useLandscape ? "landscape" : "portrait");
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -1167,6 +1168,39 @@ const prepareTableData = (reportType, data) => {
       };
       break;
 
+    case "audit_logs":
+      headers = [
+        "#",
+        "Timestamp",
+        "Actor",
+        "Module",
+        "Action",
+        "Entity",
+        "Status",
+        "Path / Summary",
+      ];
+      rows = data.map((item, index) => [
+        item.no || index + 1,
+        item.timestamp || "N/A",
+        item.actor || "System",
+        item.module || "N/A",
+        item.action || "N/A",
+        `${item.entityType || "N/A"} ${item.entityId || ""}`.trim(),
+        item.statusCode ?? "N/A",
+        item.metadataSummary || item.requestPath || "N/A",
+      ]);
+      columnStyles = {
+        0: { halign: "center", cellWidth: 10 },
+        1: { halign: "center", cellWidth: 28 },
+        2: { halign: "left", cellWidth: 25 },
+        3: { halign: "left", cellWidth: 20 },
+        4: { halign: "left", cellWidth: 28 },
+        5: { halign: "left", cellWidth: 32 },
+        6: { halign: "center", cellWidth: 14 },
+        7: { halign: "left", cellWidth: 80 },
+      };
+      break;
+
     default:
       headers = ["#", "Name", "Description", "Date", "Amount (KSh)", "Status"];
       rows = data.map((item, index) => [
@@ -1411,6 +1445,11 @@ const calculateTotals = (reportType, data) => {
         Sent: `${sentCount}`,
         Failed: `${failedCount}`,
         Pending: `${pendingSmsCount}`,
+      };
+
+    case "audit_logs":
+      return {
+        "Total Entries": `${data.length}`,
       };
 
     default:

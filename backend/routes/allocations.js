@@ -3,8 +3,30 @@ const router = express.Router();
 const pool = require('../config/database');
 const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 const AllocationIntegrityService = require('../services/allocationIntegrityService');
+const { logActivity } = require('../services/activityLogService');
 
 console.log('Allocations routes loaded');
+
+const toMonthKey = (dateInput) => {
+  const d = new Date(dateInput);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const formatDateOnly = (dateInput) => {
+  const d = new Date(dateInput);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+};
+
+const dayBefore = (dateInput) => {
+  const d = new Date(dateInput);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() - 1);
+  return formatDateOnly(d);
+};
 
 // GET ALL ALLOCATIONS (with advanced filtering)
 router.get('/', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
@@ -255,6 +277,322 @@ router.get('/tenant/:tenantId', authMiddleware, requireRole(['admin', 'agent', '
       message: 'Error fetching tenant allocations',
       error: error.message
     });
+  }
+});
+
+// TRANSFER ALLOCATION WIZARD ACTION
+router.post('/:id/transfer', authMiddleware, requireRole(['admin', 'agent']), async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const { id } = req.params;
+    const {
+      target_unit_id,
+      effective_date,
+      new_monthly_rent,
+      security_deposit,
+      transfer_mode = 'carry_balance', // carry_balance | start_fresh | shift_records
+      carry_balance_amount,
+      shift_records_from_month,
+      reason = '',
+    } = req.body || {};
+
+    if (!effective_date) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'effective_date is required',
+      });
+    }
+
+    const effectiveDate = formatDateOnly(effective_date);
+    if (!effectiveDate) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'effective_date is invalid',
+      });
+    }
+
+    const currentAllocationResult = await client.query(
+      `SELECT
+         ta.*,
+         t.first_name,
+         t.last_name,
+         pu.unit_code AS current_unit_code,
+         pu.property_id AS current_property_id
+       FROM tenant_allocations ta
+       JOIN tenants t ON t.id = ta.tenant_id
+       JOIN property_units pu ON pu.id = ta.unit_id
+       WHERE ta.id = $1`,
+      [id],
+    );
+
+    if (currentAllocationResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'Allocation not found',
+      });
+    }
+
+    const current = currentAllocationResult.rows[0];
+    if (!current.is_active) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'Only active allocations can be transferred',
+      });
+    }
+
+    const targetUnitId = target_unit_id || current.unit_id;
+    const targetIsSameUnit = targetUnitId === current.unit_id;
+
+    let targetUnit = null;
+    if (!targetIsSameUnit) {
+      const targetUnitResult = await client.query(
+        `SELECT pu.id, pu.unit_code, pu.is_active, pu.is_occupied, pu.property_id
+         FROM property_units pu
+         WHERE pu.id = $1`,
+        [targetUnitId],
+      );
+      if (targetUnitResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          message: 'Target unit not found',
+        });
+      }
+
+      targetUnit = targetUnitResult.rows[0];
+      if (!targetUnit.is_active) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          message: 'Target unit is inactive',
+        });
+      }
+
+      const targetConflicts = await client.query(
+        `SELECT id
+         FROM tenant_allocations
+         WHERE unit_id = $1
+           AND is_active = true`,
+        [targetUnitId],
+      );
+
+      if (targetConflicts.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          success: false,
+          message: 'Target unit is already allocated',
+        });
+      }
+    } else {
+      targetUnit = {
+        id: current.unit_id,
+        unit_code: current.current_unit_code,
+        property_id: current.current_property_id,
+      };
+    }
+
+    const normalizedMode = String(transfer_mode || 'carry_balance').toLowerCase();
+    if (!['carry_balance', 'start_fresh', 'shift_records'].includes(normalizedMode)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'transfer_mode must be carry_balance, start_fresh, or shift_records',
+      });
+    }
+
+    const autoSuggestedBalance = Number(current.arrears_balance || 0);
+    const providedCarry = Number(carry_balance_amount);
+    const carryBalance =
+      normalizedMode === 'start_fresh'
+        ? 0
+        : Number.isFinite(providedCarry)
+          ? Math.max(0, providedCarry)
+          : Math.max(0, autoSuggestedBalance);
+
+    const resolvedRent = Number(
+      new_monthly_rent !== undefined && new_monthly_rent !== null
+        ? new_monthly_rent
+        : current.monthly_rent,
+    );
+    if (!Number.isFinite(resolvedRent) || resolvedRent <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'new_monthly_rent must be a positive number',
+      });
+    }
+
+    const resolvedDeposit =
+      security_deposit !== undefined && security_deposit !== null
+        ? Number(security_deposit)
+        : Number(current.security_deposit || 0);
+
+    // Close current allocation
+    const closedLeaseEndDate = dayBefore(effectiveDate) || current.lease_end_date;
+    await client.query(
+      `UPDATE tenant_allocations
+       SET is_active = false,
+           lease_end_date = COALESCE($1, lease_end_date),
+           updated_at = NOW()
+       WHERE id = $2`,
+      [closedLeaseEndDate, current.id],
+    );
+
+    // Free old unit when tenant moved out
+    if (!targetIsSameUnit) {
+      await client.query(
+        `UPDATE property_units
+         SET is_occupied = false
+         WHERE id = $1`,
+        [current.unit_id],
+      );
+    }
+
+    // Create new allocation
+    const newAllocationResult = await client.query(
+      `INSERT INTO tenant_allocations (
+         tenant_id, unit_id, lease_start_date, lease_end_date,
+         monthly_rent, security_deposit, rent_due_day, grace_period_days,
+         allocated_by, is_active, allocation_date, arrears_balance
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, NOW(), $10)
+       RETURNING *`,
+      [
+        current.tenant_id,
+        targetUnitId,
+        effectiveDate,
+        current.lease_end_date || null,
+        resolvedRent,
+        Number.isFinite(resolvedDeposit) ? resolvedDeposit : 0,
+        current.rent_due_day || 1,
+        current.grace_period_days || 5,
+        req.user.id,
+        carryBalance,
+      ],
+    );
+
+    // Occupy new unit
+    await client.query(
+      `UPDATE property_units
+       SET is_occupied = true
+       WHERE id = $1`,
+      [targetUnitId],
+    );
+
+    // Recalculate property availability for old and new properties
+    const touchedPropertyIds = new Set([current.current_property_id, targetUnit.property_id]);
+    for (const propertyId of touchedPropertyIds) {
+      if (!propertyId) continue;
+      await client.query(
+        `UPDATE properties p
+         SET available_units = (
+           SELECT COUNT(*)
+           FROM property_units pu
+           WHERE pu.property_id = p.id
+             AND pu.is_active = true
+             AND pu.is_occupied = false
+         )
+         WHERE p.id = $1`,
+        [propertyId],
+      );
+    }
+
+    // Optional record shifting for reconciliation corrections
+    let shiftedPayments = 0;
+    let shiftedWaterBills = 0;
+    if (normalizedMode === 'shift_records' && !targetIsSameUnit) {
+      const shiftMonth = shift_records_from_month || toMonthKey(effectiveDate);
+      if (!shiftMonth || !/^\d{4}-\d{2}$/.test(shiftMonth)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          message: 'shift_records_from_month must be in YYYY-MM format',
+        });
+      }
+
+      const shiftedPaymentsResult = await client.query(
+        `UPDATE rent_payments
+         SET unit_id = $1
+         WHERE tenant_id = $2
+           AND unit_id = $3
+           AND DATE_TRUNC('month', payment_month) >= DATE_TRUNC('month', $4::date)`,
+        [targetUnitId, current.tenant_id, current.unit_id, `${shiftMonth}-01`],
+      );
+      shiftedPayments = shiftedPaymentsResult.rowCount || 0;
+
+      const shiftedWaterResult = await client.query(
+        `UPDATE water_bills
+         SET unit_id = $1
+         WHERE tenant_id = $2
+           AND unit_id = $3
+           AND DATE_TRUNC('month', bill_month) >= DATE_TRUNC('month', $4::date)`,
+        [targetUnitId, current.tenant_id, current.unit_id, `${shiftMonth}-01`],
+      );
+      shiftedWaterBills = shiftedWaterResult.rowCount || 0;
+    }
+
+    await logActivity({
+      actorUserId: req.user.id,
+      module: 'allocations',
+      action: 'TRANSFER_ALLOCATION',
+      entityType: 'tenant_allocation',
+      entityId: current.id,
+      requestMethod: req.method,
+      requestPath: req.originalUrl,
+      responseStatus: 200,
+      metadata: {
+        tenant_id: current.tenant_id,
+        tenant_name: `${current.first_name} ${current.last_name}`.trim(),
+        from_allocation_id: current.id,
+        to_allocation_id: newAllocationResult.rows[0].id,
+        from_unit_id: current.unit_id,
+        from_unit_code: current.current_unit_code,
+        to_unit_id: targetUnitId,
+        to_unit_code: targetUnit.unit_code,
+        transfer_mode: normalizedMode,
+        effective_date: effectiveDate,
+        carry_balance_amount: carryBalance,
+        monthly_rent_before: Number(current.monthly_rent || 0),
+        monthly_rent_after: resolvedRent,
+        shifted_payments: shiftedPayments,
+        shifted_water_bills: shiftedWaterBills,
+        reason: reason || null,
+      },
+    });
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Allocation transfer completed successfully',
+      data: {
+        previous_allocation_id: current.id,
+        new_allocation: newAllocationResult.rows[0],
+        summary: {
+          transfer_mode: normalizedMode,
+          carry_balance_amount: carryBalance,
+          shifted_payments: shiftedPayments,
+          shifted_water_bills: shiftedWaterBills,
+        },
+      },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error transferring allocation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to transfer allocation',
+      error: error.message,
+    });
+  } finally {
+    client.release();
   }
 });
 

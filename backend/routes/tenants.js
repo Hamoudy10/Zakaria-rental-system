@@ -25,6 +25,7 @@ router.put('/:id', tenantController.updateTenant);
 // Route to delete a tenant
 // Route to delete a tenant (ADMIN ONLY - tenants must be unallocated)
 router.delete('/:id', requireRole(['admin']), tenantController.deleteTenant);
+router.post('/:id/archive', requireRole(['admin']), tenantController.archiveTenant);
 
 // ✅ SINGLE ROUTE for ID image upload (using multer middleware)
 router.post('/:id/upload-id', uploadIDImages, tenantController.uploadIDImages);

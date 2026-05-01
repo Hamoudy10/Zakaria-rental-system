@@ -9,6 +9,7 @@ const {
   ensureDepositPaid,
 } = require("../services/depositService");
 const { normalizeContactPhone } = require("../utils/phoneUtils");
+const { logActivity } = require("../services/activityLogService");
 
 const roundToTwo = (value) => {
   const num = Number(value) || 0;
@@ -228,8 +229,17 @@ const deleteTenantAgreementFromCloudinary = async (fileUrl) => {
 // Get all tenants with agent data isolation
 const getTenants = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = "" } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      search = "",
+      include_archived = "false",
+    } = req.query;
     const offset = (page - 1) * limit;
+    const includeArchived = String(include_archived).toLowerCase() === "true";
+    const archiveFilter = includeArchived
+      ? "1=1"
+      : "COALESCE(t.is_archived, false) = false";
 
     let query = `
       SELECT 
@@ -309,7 +319,8 @@ const getTenants = async (req, res) => {
     // Add agent property assignment filter only for agents
     if (req.user.role === "agent") {
       query += ` 
-        WHERE EXISTS (
+        WHERE ${archiveFilter}
+        AND EXISTS (
           SELECT 1
           FROM tenant_allocations ta_agent
           JOIN property_units pu_agent ON ta_agent.unit_id = pu_agent.id
@@ -321,7 +332,8 @@ const getTenants = async (req, res) => {
         )
       `;
       countQuery += ` 
-        WHERE EXISTS (
+        WHERE ${archiveFilter}
+        AND EXISTS (
           SELECT 1
           FROM tenant_allocations ta_agent
           JOIN property_units pu_agent ON ta_agent.unit_id = pu_agent.id
@@ -345,11 +357,14 @@ const getTenants = async (req, res) => {
     } else {
       // Admin sees all tenants (original logic)
       if (search) {
-        const searchCondition = ` WHERE (t.first_name ILIKE $${queryParams.length + 1} OR t.last_name ILIKE $${queryParams.length + 1} OR t.phone_number ILIKE $${queryParams.length + 1} OR t.national_id ILIKE $${queryParams.length + 1})`;
+        const searchCondition = ` WHERE ${archiveFilter} AND (t.first_name ILIKE $${queryParams.length + 1} OR t.last_name ILIKE $${queryParams.length + 1} OR t.phone_number ILIKE $${queryParams.length + 1} OR t.national_id ILIKE $${queryParams.length + 1})`;
         query += searchCondition;
         countQuery += searchCondition;
         queryParams.push(`%${search}%`);
         countParams.push(`%${search}%`);
+      } else {
+        query += ` WHERE ${archiveFilter}`;
+        countQuery += ` WHERE ${archiveFilter}`;
       }
     }
 
@@ -1460,7 +1475,139 @@ const updateTenant = async (req, res) => {
   }
 };
 
-// Delete tenant - ADMIN ONLY, must be unallocated
+// Archive tenant - ADMIN ONLY (non-destructive, preserves financial/audit records)
+const archiveTenant = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const { id } = req.params;
+    const { reason = "" } = req.body || {};
+
+    const tenantCheck = await client.query(
+      `SELECT id, first_name, last_name, is_archived
+       FROM tenants
+       WHERE id = $1`,
+      [id],
+    );
+
+    if (tenantCheck.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Tenant not found",
+      });
+    }
+
+    const tenant = tenantCheck.rows[0];
+    if (tenant.is_archived) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Tenant is already archived",
+      });
+    }
+
+    const activeAllocations = await client.query(
+      `SELECT ta.id, ta.unit_id, pu.property_id
+       FROM tenant_allocations ta
+       JOIN property_units pu ON pu.id = ta.unit_id
+       WHERE ta.tenant_id = $1 AND ta.is_active = true`,
+      [id],
+    );
+
+    // Close active allocations to ensure unit can be reused safely.
+    if (activeAllocations.rows.length > 0) {
+      await client.query(
+        `UPDATE tenant_allocations
+         SET is_active = false,
+             lease_end_date = COALESCE(lease_end_date, CURRENT_DATE),
+             updated_at = NOW()
+         WHERE tenant_id = $1
+           AND is_active = true`,
+        [id],
+      );
+
+      const affectedUnits = activeAllocations.rows.map((row) => row.unit_id).filter(Boolean);
+      if (affectedUnits.length > 0) {
+        await client.query(
+          `UPDATE property_units
+           SET is_occupied = false
+           WHERE id = ANY($1::uuid[])`,
+          [affectedUnits],
+        );
+      }
+
+      const propertyIds = [
+        ...new Set(
+          activeAllocations.rows.map((row) => row.property_id).filter(Boolean),
+        ),
+      ];
+      for (const propertyId of propertyIds) {
+        await client.query(
+          `UPDATE properties p
+           SET available_units = (
+             SELECT COUNT(*)
+             FROM property_units pu
+             WHERE pu.property_id = p.id
+               AND pu.is_active = true
+               AND pu.is_occupied = false
+           )
+           WHERE p.id = $1`,
+          [propertyId],
+        );
+      }
+    }
+
+    await client.query(
+      `UPDATE tenants
+       SET is_archived = true,
+           archived_at = NOW(),
+           archived_by = $2,
+           archive_reason = NULLIF($3, ''),
+           is_active = false,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [id, req.user.id, reason],
+    );
+
+    await logActivity({
+      actorUserId: req.user.id,
+      module: "tenants",
+      action: "ARCHIVE_TENANT",
+      entityType: "tenant",
+      entityId: id,
+      requestMethod: req.method,
+      requestPath: req.originalUrl,
+      responseStatus: 200,
+      metadata: {
+        tenant_name: `${tenant.first_name} ${tenant.last_name}`.trim(),
+        reason: reason || null,
+        closed_active_allocations: activeAllocations.rows.length,
+      },
+    });
+
+    await client.query("COMMIT");
+
+    return res.json({
+      success: true,
+      message: `Tenant ${tenant.first_name} ${tenant.last_name} archived successfully`,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Archive tenant error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error archiving tenant",
+      error: error.message,
+    });
+  } finally {
+    client.release();
+  }
+};
+
+// Delete tenant - ADMIN ONLY, must be unallocated.
+// This is now protected behind explicit permanent intent.
 const deleteTenant = async (req, res) => {
   const client = await pool.connect();
 
@@ -1468,6 +1615,16 @@ const deleteTenant = async (req, res) => {
     await client.query("BEGIN");
 
     const { id } = req.params;
+    const permanentDelete = String(req.query.permanent || "").toLowerCase() === "true";
+
+    if (!permanentDelete) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message:
+          "Permanent delete is blocked by default. Use tenant archive instead, or call with ?permanent=true after confirming audit retention requirements.",
+      });
+    }
 
     // Check if tenant exists
     const tenantCheck = await client.query(
@@ -1517,6 +1674,20 @@ const deleteTenant = async (req, res) => {
 
     // Finally delete the tenant
     await client.query("DELETE FROM tenants WHERE id = $1", [id]);
+
+    await logActivity({
+      actorUserId: req.user.id,
+      module: "tenants",
+      action: "PERMANENT_DELETE_TENANT",
+      entityType: "tenant",
+      entityId: id,
+      requestMethod: req.method,
+      requestPath: req.originalUrl,
+      responseStatus: 200,
+      metadata: {
+        tenant_name: `${tenant.first_name} ${tenant.last_name}`.trim(),
+      },
+    });
 
     await client.query("COMMIT");
 
@@ -2016,6 +2187,7 @@ module.exports = {
   getTenant,
   createTenant,
   updateTenant,
+  archiveTenant,
   deleteTenant,
   getAvailableUnits,
   uploadIDImages,

@@ -42,7 +42,8 @@ import {
   UserX,
   HomeIcon,
   TrendingUp,
-  Layers
+  Layers,
+  ArrowRightLeft
 } from 'lucide-react';
 import { useAllocation } from '../context/TenantAllocationContext';
 import { useProperty } from '../context/PropertyContext';
@@ -868,6 +869,7 @@ const TenantCard = ({
   onViewDetails, 
   onAllocate, 
   onDeallocate, 
+  onTransfer,
   onDelete,
   formatPhone,
   formatCurrency,
@@ -985,13 +987,22 @@ const TenantCard = ({
         </button>
         
         {tenant.unit_id ? (
-          <button
-            onClick={() => onDeallocate(tenant)}
-            className="flex-1 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors inline-flex items-center justify-center gap-1.5"
-          >
-            <UserMinus className="w-4 h-4" />
-            Deallocate
-          </button>
+          <>
+            <button
+              onClick={() => onTransfer(tenant)}
+              className="flex-1 px-3 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors inline-flex items-center justify-center gap-1.5"
+            >
+              <ArrowRightLeft className="w-4 h-4" />
+              Transfer
+            </button>
+            <button
+              onClick={() => onDeallocate(tenant)}
+              className="flex-1 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors inline-flex items-center justify-center gap-1.5"
+            >
+              <UserMinus className="w-4 h-4" />
+              Deallocate
+            </button>
+          </>
         ) : (
           <>
             <button
@@ -1021,12 +1032,20 @@ const TenantCard = ({
           View
         </button>
         {tenant.unit_id ? (
-          <button
-            onClick={() => onDeallocate(tenant)}
-            className="flex-1 px-3 py-2.5 text-sm font-medium text-red-600 bg-red-50 rounded-lg"
-          >
-            Deallocate
-          </button>
+          <>
+            <button
+              onClick={() => onTransfer(tenant)}
+              className="flex-1 px-3 py-2.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg"
+            >
+              Transfer
+            </button>
+            <button
+              onClick={() => onDeallocate(tenant)}
+              className="flex-1 px-3 py-2.5 text-sm font-medium text-red-600 bg-red-50 rounded-lg"
+            >
+              Deallocate
+            </button>
+          </>
         ) : (
           <button
             onClick={() => onAllocate(tenant)}
@@ -1036,6 +1055,212 @@ const TenantCard = ({
             Allocate
           </button>
         )}
+      </div>
+    </div>
+  );
+};
+
+const TransferWizardModal = ({
+  isOpen,
+  tenant,
+  availableUnits,
+  loading,
+  onClose,
+  onSubmit,
+  formatCurrency,
+}) => {
+  const [form, setForm] = useState({
+    target_unit_id: "",
+    effective_date: "",
+    new_monthly_rent: "",
+    transfer_mode: "carry_balance",
+    carry_balance_amount: "",
+    shift_records_from_month: "",
+    reason: "",
+  });
+
+  useEffect(() => {
+    if (!isOpen || !tenant) return;
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const monthKey = `${yyyy}-${mm}`;
+
+    setForm({
+      target_unit_id: "",
+      effective_date: `${yyyy}-${mm}-${dd}`,
+      new_monthly_rent: tenant.monthly_rent || "",
+      transfer_mode: "carry_balance",
+      carry_balance_amount: Number(tenant.arrears_balance || 0),
+      shift_records_from_month: monthKey,
+      reason: "",
+    });
+  }, [isOpen, tenant]);
+
+  if (!isOpen || !tenant) return null;
+
+  const submit = (e) => {
+    e.preventDefault();
+    onSubmit(form);
+  };
+
+  const currentUnitLabel = `${tenant.property_name || "Property"} - ${
+    getTenantUnitCodes(tenant).join(", ") || tenant.unit_code || "Current unit"
+  }`;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="flex items-center justify-center min-h-screen px-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+        <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6">
+          <h3 className="text-xl font-bold text-gray-900">Transfer Wizard</h3>
+          <p className="text-sm text-gray-600 mt-1">
+            Move tenant allocation safely while keeping history and audit trail intact.
+          </p>
+
+          <form onSubmit={submit} className="mt-4 space-y-4">
+            <div className="bg-gray-50 border rounded-xl p-3 text-sm">
+              <p className="font-semibold text-gray-800">
+                {tenant.first_name} {tenant.last_name}
+              </p>
+              <p className="text-gray-600">Current allocation: {currentUnitLabel}</p>
+              <p className="text-gray-600">
+                Current rent: {formatCurrency(tenant.monthly_rent)} | Suggested carry balance:{" "}
+                {formatCurrency(tenant.arrears_balance || 0)}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-gray-700">Effective Date *</label>
+                <input
+                  type="date"
+                  value={form.effective_date}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, effective_date: e.target.value }))
+                  }
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700">New Monthly Rent *</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.new_monthly_rent}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, new_monthly_rent: e.target.value }))
+                  }
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700">Target Unit</label>
+              <select
+                value={form.target_unit_id}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, target_unit_id: e.target.value }))
+                }
+                className="mt-1 w-full border rounded-lg px-3 py-2"
+              >
+                <option value="">Keep same unit (rent change only)</option>
+                {availableUnits.map((unit) => {
+                  const property = tenant?.property_name
+                    ? tenant.property_name
+                    : "";
+                  return (
+                    <option key={unit.id} value={unit.id}>
+                      {property ? `${property} - ` : ""}
+                      {unit.unit_code} ({unit.unit_type}) - {formatCurrency(unit.rent_amount)}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700">Transfer Mode *</label>
+              <select
+                value={form.transfer_mode}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, transfer_mode: e.target.value }))
+                }
+                className="mt-1 w-full border rounded-lg px-3 py-2"
+              >
+                <option value="carry_balance">Carry Balance (Recommended)</option>
+                <option value="start_fresh">Start Fresh (No carry-forward)</option>
+                <option value="shift_records">Shift Records from Month</option>
+              </select>
+            </div>
+
+            {form.transfer_mode !== "start_fresh" && (
+              <div>
+                <label className="text-sm font-medium text-gray-700">Carry Balance Amount</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.carry_balance_amount}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, carry_balance_amount: e.target.value }))
+                  }
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+            )}
+
+            {form.transfer_mode === "shift_records" && (
+              <div>
+                <label className="text-sm font-medium text-gray-700">
+                  Shift Records From Month
+                </label>
+                <input
+                  type="month"
+                  value={form.shift_records_from_month}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, shift_records_from_month: e.target.value }))
+                  }
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="text-sm font-medium text-gray-700">Reason / Note</label>
+              <textarea
+                rows={2}
+                value={form.reason}
+                onChange={(e) => setForm((prev) => ({ ...prev, reason: e.target.value }))}
+                className="mt-1 w-full border rounded-lg px-3 py-2"
+                placeholder="Optional context for audit trail..."
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={loading}
+                className="px-4 py-2 border rounded-lg text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+              >
+                {loading ? "Processing..." : "Apply Transfer"}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );
@@ -1211,6 +1436,7 @@ const TenantHub = () => {
     loading: allocationsLoading, 
     allocateTenant, 
     deallocateTenant, 
+    transferAllocation,
     fetchAllocations,
     clearError: clearAllocationError 
   } = useAllocation();
@@ -1233,6 +1459,7 @@ const TenantHub = () => {
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [showDeallocateConfirm, setShowDeallocateConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Toast
@@ -1454,6 +1681,11 @@ const TenantHub = () => {
     setShowDeallocateConfirm(true);
   };
 
+  const handleOpenTransfer = (tenant) => {
+    setSelectedTenant(tenant);
+    setShowTransferModal(true);
+  };
+
   // Deallocate tenant
   const handleDeallocate = async () => {
     if (!selectedTenant?.allocation_id) return;
@@ -1474,6 +1706,27 @@ const TenantHub = () => {
     }
   };
 
+  const handleTransfer = async (transferData) => {
+    if (!selectedTenant?.allocation_id) return;
+    setActionLoading(true);
+    try {
+      await transferAllocation(selectedTenant.allocation_id, transferData);
+      setShowTransferModal(false);
+      await fetchAllocations();
+      await fetchTenants();
+      addToast(
+        `${selectedTenant.first_name} transfer completed and recorded in audit trail.`,
+        'success',
+      );
+      setSelectedTenant(null);
+    } catch (err) {
+      console.error('Transfer error:', err);
+      addToast(err.response?.data?.message || 'Failed to transfer allocation', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Open delete confirmation
   const handleOpenDelete = (tenant) => {
     setSelectedTenant(tenant);
@@ -1486,20 +1739,22 @@ const TenantHub = () => {
     
     setActionLoading(true);
     try {
-      const response = await tenantAPI.deleteTenant(selectedTenant.id);
+      const response = await tenantAPI.archiveTenant(selectedTenant.id, {
+        reason: 'Archived from Tenant Hub by admin',
+      });
       
       if (response.data.success) {
         setShowDeleteConfirm(false);
         await fetchTenants();
         await fetchAllocations();
-        addToast(`${selectedTenant.first_name} deleted permanently`, 'success');
+        addToast(`${selectedTenant.first_name} archived successfully`, 'success');
         setSelectedTenant(null);
       } else {
-        addToast(response.data.message || 'Failed to delete tenant', 'error');
+        addToast(response.data.message || 'Failed to archive tenant', 'error');
       }
     } catch (err) {
       console.error('Delete error:', err);
-      addToast(err.response?.data?.message || 'Failed to delete tenant', 'error');
+      addToast(err.response?.data?.message || 'Failed to archive tenant', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -2136,6 +2391,7 @@ const TenantHub = () => {
                   onViewDetails={handleViewDetails}
                   onAllocate={handleOpenAllocate}
                   onDeallocate={handleOpenDeallocate}
+                  onTransfer={handleOpenTransfer}
                   onDelete={handleOpenDelete}
                   formatPhone={formatPhone}
                   formatCurrency={formatCurrency}
@@ -2181,6 +2437,16 @@ const TenantHub = () => {
         formatCurrency={formatCurrency}
       />
 
+      <TransferWizardModal
+        isOpen={showTransferModal}
+        tenant={selectedTenant}
+        availableUnits={availableUnits}
+        loading={actionLoading}
+        onClose={() => { setShowTransferModal(false); setSelectedTenant(null); }}
+        onSubmit={handleTransfer}
+        formatCurrency={formatCurrency}
+      />
+
       <ConfirmationModal
         isOpen={showDeallocateConfirm}
         onClose={() => { setShowDeallocateConfirm(false); setSelectedTenant(null); }}
@@ -2197,10 +2463,10 @@ const TenantHub = () => {
         isOpen={showDeleteConfirm}
         onClose={() => { setShowDeleteConfirm(false); setSelectedTenant(null); }}
         onConfirm={handleDelete}
-        title="Delete Tenant Permanently"
-        message={`Are you sure you want to PERMANENTLY delete ${selectedTenant?.first_name} ${selectedTenant?.last_name}? This action cannot be undone and all tenant data including payment history will be removed.`}
-        confirmText="Delete Permanently"
-        confirmColor="red"
+        title="Archive Tenant"
+        message={`Archive ${selectedTenant?.first_name} ${selectedTenant?.last_name}? This preserves payments, complaints, water bills, and tenant history for audit while removing them from active operations.`}
+        confirmText="Archive Tenant"
+        confirmColor="amber"
         icon={Trash2}
         loading={actionLoading}
       />

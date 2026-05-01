@@ -1079,6 +1079,37 @@ const prepareExcelData = (reportType, data) => {
       };
       break;
 
+    case "audit_logs":
+      headers = [
+        "#",
+        "Timestamp",
+        "Actor",
+        "Actor Email",
+        "Module",
+        "Action",
+        "Entity Type",
+        "Entity ID",
+        "Status Code",
+        "Method",
+        "Request Path",
+        "Summary",
+      ];
+      rows = data.map((item, index) => [
+        item.no || index + 1,
+        item.timestamp || "N/A",
+        item.actor || "System",
+        item.actorEmail || "N/A",
+        item.module || "N/A",
+        item.action || "N/A",
+        item.entityType || "N/A",
+        item.entityId || "N/A",
+        Number(item.statusCode) || 0,
+        item.requestMethod || "N/A",
+        item.requestPath || "N/A",
+        item.metadataSummary || "",
+      ]);
+      break;
+
     default:
       headers = ["#", "Name", "Description", "Date", "Amount (KSh)", "Status"];
       rows = data.map((item, index) => [
@@ -1358,6 +1389,11 @@ const calculateTotals = (reportType, data) => {
         "WhatsApp Messages": `${whatsappCount}`,
         "Sent Successfully": `${sentCount}`,
         Failed: `${failedCount}`,
+      };
+
+    case "audit_logs":
+      return {
+        "Total Entries": `${data.length}`,
       };
 
     default:
