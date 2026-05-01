@@ -85,6 +85,23 @@ export const AllocationProvider = ({ children }) => {
     }
   }, []);
 
+  const transferAllocation = useCallback(async (allocationId, payload) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await allocationAPI.transferAllocation(allocationId, payload);
+      await fetchAllocations();
+      return response.data;
+    } catch (err) {
+      console.error('❌ Error transferring allocation:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to transfer allocation';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchAllocations]);
+
   // Get active allocations
   const getActiveAllocations = useCallback(() => {
     return allocations.filter(allocation => allocation.is_active);
@@ -234,6 +251,7 @@ export const AllocationProvider = ({ children }) => {
     fetchAllocations,
     allocateTenant,
     deallocateTenant,
+    transferAllocation,
     getActiveAllocations,
     updateAllocation,
     getAllocation,
@@ -250,6 +268,7 @@ export const AllocationProvider = ({ children }) => {
     fetchAllocations,
     allocateTenant,
     deallocateTenant,
+    transferAllocation,
     getActiveAllocations,
     updateAllocation,
     getAllocation,

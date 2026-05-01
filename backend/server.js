@@ -328,6 +328,7 @@ const optionalRoutes = [
   { path: '/api/ai-agent', file: './routes/aiAgent', name: 'AI Agent' },
   { path: '/api/agent-properties', file: './routes/agentProperties', name: 'Agent Properties' },
   { path: '/api/reports', file: './routes/reports', name: 'Reports' },
+  { path: '/api/audit', file: './routes/audit', name: 'Audit' },
   { path: '/api/notifications', file: './routes/notifications', name: 'Notifications' },
   { path: '/api/units', file: './routes/units', name: 'Units' },
   { path: '/api/allocations', file: './routes/allocations', name: 'Allocations' }

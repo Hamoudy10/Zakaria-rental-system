@@ -436,6 +436,7 @@ export const allocationAPI = {
   updateAllocation: (id, updates) => api.put(`/allocations/${id}`, updates),
   deleteAllocation: (id) => api.delete(`/allocations/${id}`),
   deallocateTenant: (id) => api.put(`/allocations/${id}`, { is_active: false }),
+  transferAllocation: (id, payload) => api.post(`/allocations/${id}/transfer`, payload),
   runMaintenanceDiagnostics: () => api.get('/allocations/maintenance/diagnostics'),
   reconcileAllocations: (options = {}) =>
     api.post('/allocations/maintenance/reconcile', options),
@@ -871,6 +872,7 @@ export const tenantAPI = {
   
   // Delete tenant
   deleteTenant: (id) => api.delete(`/tenants/${id}`),
+  archiveTenant: (id, payload = {}) => api.post(`/tenants/${id}/archive`, payload),
 
     checkMissingWaterBills: (month, propertyId = null) => {
     const params = new URLSearchParams();
@@ -937,6 +939,10 @@ export const tenantAPI = {
     
     return formData;
   }
+};
+
+export const auditAPI = {
+  getLogs: (params = {}) => api.get('/audit/logs', { params }),
 };
 
 // Then add to API object:
@@ -1111,6 +1117,7 @@ export const API = {
   paybill: paybillAPI, 
   billing: billingAPI, 
   tenants: tenantAPI,          // Admin billing endpoints
+  audit: auditAPI,
   agentSMS: agentSMSAPI,
   aiAgent: aiAgentAPI,
    chatAPI,// NEW: Added paybill API
