@@ -1779,30 +1779,6 @@ const TenantHub = () => {
       setActionLoading(false);
     }
   };
-    if (!selectedTenant) return;
-    
-    setActionLoading(true);
-    try {
-      const response = await tenantAPI.archiveTenant(selectedTenant.id, {
-        reason: 'Archived from Tenant Hub by admin',
-      });
-      
-      if (response.data.success) {
-        setShowDeleteConfirm(false);
-        await fetchTenants();
-        await fetchAllocations();
-        addToast(`${selectedTenant.first_name} archived successfully`, 'success');
-        setSelectedTenant(null);
-      } else {
-        addToast(response.data.message || 'Failed to archive tenant', 'error');
-      }
-    } catch (err) {
-      console.error('Delete error:', err);
-      addToast(err.response?.data?.message || 'Failed to archive tenant', 'error');
-    } finally {
-      setActionLoading(false);
-    }
-  };
 
   // Fetch company info
   const fetchCompanyInfo = async () => {
