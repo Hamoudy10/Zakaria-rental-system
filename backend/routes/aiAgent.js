@@ -16,11 +16,33 @@ router.use(requireRole(["admin", "agent"]));
 router.use(aiRateLimiter);
 
 router.get("/health", (req, res) => {
+  const availableActions = aiAgentService.getAvailableActions({
+    user: req.user,
+    includeDisabled: false,
+  });
+
   res.json({
     success: true,
     message: "AI agent route is available",
     mode: "phase_1_read_only",
+    autonomousWritesEnabled: false,
+    availableActions: availableActions.length,
     timestamp: new Date().toISOString(),
+  });
+});
+
+router.get("/actions", (req, res) => {
+  const includeDisabled = String(req.query?.includeDisabled || "true") !== "false";
+  res.json({
+    success: true,
+    mode: "phase_1_read_only",
+    autonomousWritesEnabled: false,
+    data: {
+      actions: aiAgentService.getAvailableActions({
+        user: req.user,
+        includeDisabled,
+      }),
+    },
   });
 });
 

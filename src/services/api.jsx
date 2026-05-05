@@ -1060,6 +1060,8 @@ export const aiAgentAPI = {
     }),
   getHistory: (conversationId, limit = 80) =>
     api.get("/ai-agent/history", { params: { conversationId, limit } }),
+  getActions: (includeDisabled = true) =>
+    api.get("/ai-agent/actions", { params: { includeDisabled } }),
   health: () => api.get("/ai-agent/health"),
 };
 

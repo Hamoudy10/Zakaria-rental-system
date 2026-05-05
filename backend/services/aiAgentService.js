@@ -50,6 +50,8 @@ const DEFAULT_ANALYST_TABLES = [
   "chat_participants",
 ];
 
+const AI_AGENT_PHASE = "phase_1_read_only";
+
 const MUTATION_KEYWORDS = [
   "update",
   "change",
@@ -2982,86 +2984,235 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
   return `I found ${rows.length} matching records for your request.`;
 };
 
-const runReadOnlyToolByAction = async ({ user, question, selected }) => {
-  if (selected === "dynamic_sql") {
-    return {
+const createAction = ({
+  id,
+  label,
+  description,
+  mode = "read_only",
+  risk = "low",
+  requiresConfirmation = false,
+  roles = ["admin", "agent"],
+  enabled = true,
+  phase = AI_AGENT_PHASE,
+  handler = null,
+}) => ({
+  id,
+  label,
+  description,
+  mode,
+  risk,
+  requiresConfirmation,
+  roles,
+  enabled,
+  phase,
+  handler,
+});
+
+const AI_ACTION_REGISTRY = [
+  createAction({
+    id: "route_tenant_payment_status",
+    label: "Tenant Payment Status Route",
+    description: "Checks paid, unpaid, due, and outstanding tenant balances.",
+    handler: getRouteTenantPaymentStatus,
+  }),
+  createAction({
+    id: "route_payments",
+    label: "Payments List Route",
+    description: "Lists rent payment records with role-aware filtering.",
+    handler: getRoutePaymentsList,
+  }),
+  createAction({
+    id: "route_tenants",
+    label: "Tenants List Route",
+    description: "Lists tenants and allocation context.",
+    handler: getRouteTenantsList,
+  }),
+  createAction({
+    id: "route_properties",
+    label: "Properties List Route",
+    description: "Summarizes properties, units, and occupancy.",
+    handler: getRoutePropertiesList,
+  }),
+  createAction({
+    id: "route_complaints",
+    label: "Complaints List Route",
+    description: "Checks complaint status, priority, and assignment data.",
+    handler: getRouteComplaintsList,
+  }),
+  createAction({
+    id: "route_water_bills",
+    label: "Water Bills Route",
+    description: "Lists water bills for the selected scope.",
+    handler: getRouteWaterBillsList,
+  }),
+  createAction({
+    id: "route_water_profitability",
+    label: "Water Profitability Route",
+    description: "Summarizes billed water, collected water, expenses, and profit/loss.",
+    handler: getRouteWaterProfitability,
+  }),
+  createAction({
+    id: "route_dashboard_comprehensive",
+    label: "Comprehensive Dashboard Route",
+    description: "Reads broad dashboard KPIs.",
+    roles: ["admin"],
+    handler: getRouteDashboardComprehensive,
+  }),
+  createAction({
+    id: "unpaid_tenants_property_month",
+    label: "Unpaid Tenants This Month",
+    description: "Finds unpaid tenants for a property in the selected month.",
+    handler: getUnpaidTenantsForPropertyThisMonth,
+  }),
+  createAction({
+    id: "monthly_property_arrears",
+    label: "Monthly Property Arrears",
+    description: "Summarizes monthly arrears by property.",
+    handler: getMonthlyPropertyArrears,
+  }),
+  createAction({
+    id: "global_data_pack",
+    label: "Global Data Pack",
+    description: "Reads a compact operational overview.",
+    handler: getGlobalDataPack,
+  }),
+  createAction({
+    id: "outstanding_rent",
+    label: "Outstanding Rent Summary",
+    description: "Summarizes outstanding rent and arrears.",
+    handler: getOutstandingRentSummary,
+  }),
+  createAction({
+    id: "complaints",
+    label: "Open Complaints",
+    description: "Reads open complaint records.",
+    handler: getOpenComplaints,
+  }),
+  createAction({
+    id: "properties",
+    label: "Property Summary",
+    description: "Reads property portfolio summary.",
+    handler: getPropertySummary,
+  }),
+  createAction({
+    id: "dashboard",
+    label: "Dashboard Summary",
+    description: "Reads dashboard summary metrics.",
+    handler: getDashboardSummary,
+  }),
+  createAction({
+    id: "tenant_or_payments",
+    label: "Tenant Or Payments Lookup",
+    description: "Finds a tenant snapshot or falls back to recent payments.",
+    handler: async ({ user, question }) => {
+      const patterns = extractSearchPatterns(question);
+      if (patterns[0] === "%%") {
+        return getRecentPayments({ user });
+      }
+      const tenantResult = await getTenantSnapshot({ user, question });
+      if (tenantResult.rows.length > 0) return tenantResult;
+      return getRecentPayments({ user });
+    },
+  }),
+  createAction({
+    id: "tenant",
+    label: "Tenant Snapshot",
+    description: "Reads a tenant snapshot from search terms.",
+    handler: async ({ user, question }) => {
+      const tenantSnapshot = await getTenantSnapshot({ user, question });
+      if (tenantSnapshot.rows.length === 0) {
+        return getGlobalDataPack({ user });
+      }
+      return tenantSnapshot;
+    },
+  }),
+  createAction({
+    id: "dynamic_sql",
+    label: "Dynamic Database Query",
+    description: "Plans and executes a guarded read-only SQL query as a last resort.",
+    risk: "medium",
+    handler: async () => ({
       label: "Dynamic Database Query",
       rows: [],
       metadata: { requested_dynamic_sql: true },
-    };
+    }),
+  }),
+  createAction({
+    id: "draft_sms_reminder",
+    label: "Draft SMS Reminder",
+    description: "Phase 2 placeholder: drafts tenant reminders without sending.",
+    phase: "phase_2_approval_required",
+    enabled: false,
+  }),
+  createAction({
+    id: "send_sms_after_approval",
+    label: "Send SMS After Approval",
+    description: "Phase 2 placeholder: sends SMS only after explicit user confirmation.",
+    mode: "write",
+    risk: "high",
+    requiresConfirmation: true,
+    phase: "phase_2_approval_required",
+    enabled: false,
+  }),
+  createAction({
+    id: "create_water_bill_after_approval",
+    label: "Create Water Bill After Approval",
+    description: "Phase 2 placeholder: creates a water bill only after explicit user confirmation.",
+    mode: "write",
+    risk: "high",
+    requiresConfirmation: true,
+    phase: "phase_2_approval_required",
+    enabled: false,
+  }),
+  createAction({
+    id: "assign_complaint_after_approval",
+    label: "Assign Complaint After Approval",
+    description: "Phase 2 placeholder: assigns complaints only after explicit user confirmation.",
+    mode: "write",
+    risk: "high",
+    requiresConfirmation: true,
+    roles: ["admin"],
+    phase: "phase_2_approval_required",
+    enabled: false,
+  }),
+];
+
+const getActionForUser = ({ actionId, user }) => {
+  const action = AI_ACTION_REGISTRY.find((item) => item.id === actionId);
+  if (!action || !action.enabled || !action.roles.includes(user.role)) {
+    return null;
+  }
+  return action;
+};
+
+const serializeAction = (action) => ({
+  id: action.id,
+  label: action.label,
+  description: action.description,
+  mode: action.mode,
+  risk: action.risk,
+  requiresConfirmation: action.requiresConfirmation,
+  roles: action.roles,
+  enabled: action.enabled,
+  phase: action.phase,
+});
+
+const getAvailableActions = ({ user, includeDisabled = true } = {}) => {
+  const role = user?.role || "agent";
+  return AI_ACTION_REGISTRY
+    .filter((action) => action.roles.includes(role))
+    .filter((action) => includeDisabled || action.enabled)
+    .map(serializeAction);
+};
+
+const runReadOnlyToolByAction = async ({ user, question, selected }) => {
+  const action = getActionForUser({ actionId: selected, user });
+  if (action?.handler) {
+    return action.handler({ user, question });
   }
 
-  if (selected === "route_tenant_payment_status") {
-    return getRouteTenantPaymentStatus({ user, question });
-  }
-
-  if (selected === "route_payments") {
-    return getRoutePaymentsList({ user, question });
-  }
-
-  if (selected === "route_tenants") {
-    return getRouteTenantsList({ user, question });
-  }
-
-  if (selected === "route_properties") {
-    return getRoutePropertiesList({ user, question });
-  }
-
-  if (selected === "route_complaints") {
-    return getRouteComplaintsList({ user, question });
-  }
-
-  if (selected === "route_water_bills") {
-    return getRouteWaterBillsList({ user, question });
-  }
-
-  if (selected === "route_water_profitability") {
-    return getRouteWaterProfitability({ user, question });
-  }
-
-  if (selected === "route_dashboard_comprehensive") {
-    return getRouteDashboardComprehensive({ user, question });
-  }
-
-  if (selected === "unpaid_tenants_property_month") {
-    return getUnpaidTenantsForPropertyThisMonth({ user, question });
-  }
-
-  if (selected === "monthly_property_arrears") {
-    return getMonthlyPropertyArrears({ user });
-  }
-
-  if (selected === "global_data_pack") {
-    return getGlobalDataPack({ user });
-  }
-
-  if (selected === "outstanding_rent") {
-    return getOutstandingRentSummary({ user });
-  }
-
-  if (selected === "complaints") {
-    return getOpenComplaints({ user });
-  }
-  if (selected === "properties") {
-    return getPropertySummary({ user });
-  }
-  if (selected === "dashboard") {
-    return getDashboardSummary({ user });
-  }
-  if (selected === "tenant_or_payments") {
-    const patterns = extractSearchPatterns(question);
-    if (patterns[0] === "%%") {
-      return getRecentPayments({ user });
-    }
-    const tenantResult = await getTenantSnapshot({ user, question });
-    if (tenantResult.rows.length > 0) return tenantResult;
-    return getRecentPayments({ user });
-  }
-  const tenantSnapshot = await getTenantSnapshot({ user, question });
-  if (tenantSnapshot.rows.length === 0) {
-    return getGlobalDataPack({ user });
-  }
-  return tenantSnapshot;
+  const fallbackAction = getActionForUser({ actionId: "tenant", user });
+  return fallbackAction.handler({ user, question });
 };
 
 const runReadOnlyTool = async ({ user, question }) => {
@@ -3403,4 +3554,5 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
 module.exports = {
   answerQuestion,
   getConversationHistory,
+  getAvailableActions,
 };
