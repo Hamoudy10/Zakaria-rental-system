@@ -538,6 +538,12 @@ const extractCorrectionTargetCount = (question) => {
     if (Number.isFinite(expected) && expected > 0) return Math.min(expected, 200);
   }
 
+  const total = q.match(/\b(?:total(?:\s+of)?|should\s+be|need(?:s)?\s+to\s+be)\s+(\d{1,3})\b/);
+  if (total?.[1]) {
+    const expected = Number(total[1]);
+    if (Number.isFinite(expected) && expected > 0) return Math.min(expected, 300);
+  }
+
   return null;
 };
 
@@ -777,9 +783,36 @@ const heuristicRouter = (question) => {
   return {
     action: isListCorrection ? "route_tenants" : action,
     confidence: 0.55,
-    response_mode: /list|all|show/i.test(String(question || "")) ? "list" : "summary",
+    response_mode: /\b(list|all|show|which|who)\b/i.test(String(question || ""))
+      ? "list"
+      : "summary",
     hints: correctionTarget ? { limit: correctionTarget } : {},
   };
+};
+
+const isExplicitActionQuestion = (question, action) => {
+  const q = String(question || "").toLowerCase();
+  const explicitMap = {
+    route_tenant_payment_status:
+      /\b(tenant payment status|who paid|who has paid|who has not paid|not paid|unpaid|rent due|outstanding rent|owe|owes)\b/,
+    route_payments: /\b(payment records|payments list|payment list|mpesa receipt|receipt|rent payments)\b/,
+    route_tenants: /\b(tenant list|tenants list|list tenants|show tenants|all tenants)\b/,
+    route_properties: /\b(property stats|properties list|property list|show properties|all properties|occupancy)\b/,
+    route_complaints: /\b(open complaints|complaints list|complaint list|list complaints|show complaints|complaints|complaint)\b/,
+    route_water_bills: /\b(water bill|water bills|water billing)\b/,
+    route_water_profitability: /\b(water profitability|water profit|water loss)\b/,
+    route_dashboard_comprehensive: /\b(comprehensive stats|dashboard comprehensive|dashboard summary)\b/,
+  };
+
+  return Boolean(explicitMap[action]?.test(q));
+};
+
+const isCorrectionFollowUp = (question) => {
+  const q = String(question || "").toLowerCase();
+  return (
+    extractCorrectionTargetCount(question) ||
+    /\b(missing|remaining|left out|not complete|total should be|there should be|need(?:s)? to be)\b/.test(q)
+  );
 };
 
 const buildQuestionWithHints = (question, hints = {}) => {
@@ -895,6 +928,36 @@ const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
     q.includes("overdue") ||
     q.includes("outstanding") ||
     q.includes("owe");
+  const routerAction = String(routerDecision.action || "");
+  const explicitNewAction =
+    isExplicitActionQuestion(question, routerAction) && routerAction !== "tenant";
+
+  if (explicitNewAction) {
+    const explicitNext = {
+      ...next,
+      confidence: Math.max(Number(next.confidence || 0), 0.82),
+    };
+    if (routerAction === "route_tenant_payment_status" && questionAboutPaymentState) {
+      explicitNext.response_mode = "list";
+      explicitNext.hints = {
+        ...explicitNext.hints,
+        unpaid_only: true,
+        limit: Number(explicitNext.hints.limit || 200),
+      };
+    }
+    return explicitNext;
+  }
+
+  if (isCorrectionFollowUp(question) && lastWasTenantStatus) {
+    next.action = "route_tenant_payment_status";
+    next.response_mode = "list";
+    next.hints = {
+      ...next.hints,
+      limit: 200,
+    };
+    next.confidence = Math.max(Number(next.confidence || 0), 0.76);
+    return next;
+  }
 
   // Keep context for follow-up operations instead of switching tools.
   if ((isListFollowUp(question) || isDataAccessFollowUp(question)) && lastWasTenantStatus) {
@@ -911,9 +974,11 @@ const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
   if (questionAboutPaymentState && lastWasTenantsList) {
     next.action = "route_tenant_payment_status";
     next.response_mode = "list";
-    if (Number.isFinite(lastLimit) && lastLimit > 0) {
+    if (!isExplicitActionQuestion(question, "route_tenant_payment_status") && Number.isFinite(lastLimit) && lastLimit > 0) {
       next.hints.limit = Math.min(lastLimit, 200);
     }
+    next.hints.unpaid_only = true;
+    if (!next.hints.limit) next.hints.limit = 200;
     next.confidence = Math.max(Number(next.confidence || 0), 0.74);
   }
 
@@ -1022,6 +1087,37 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
     };
   }
 
+  if (label === "Complaints List Route" && wantsList) {
+    const payload = rows[0] || {};
+    const complaints = Array.isArray(payload.complaints) ? payload.complaints : [];
+    if (complaints.length === 0) {
+      return {
+        answer: "No matching complaints found in the current scope.",
+        displayContext: {
+          displayed_count: 0,
+        },
+      };
+    }
+
+    const lines = complaints.map((complaint, index) => {
+      const tenant =
+        `${complaint.tenant_first_name || ""} ${complaint.tenant_last_name || ""}`.trim() ||
+        "Unknown tenant";
+      const property = complaint.property_name || "Unknown property";
+      const unit = complaint.unit_code || "N/A";
+      const status = complaint.status || "unknown";
+      const priority = complaint.priority || "normal";
+      return `${index + 1}. ${complaint.title || "Untitled complaint"} - ${tenant} - ${property} (${unit}) - ${status}, ${priority}`;
+    });
+
+    return {
+      answer: `Here is the complaint list (${complaints.length}):\n${lines.join("\n")}`,
+      displayContext: {
+        displayed_count: complaints.length,
+      },
+    };
+  }
+
   return null;
 };
 
@@ -1050,10 +1146,15 @@ const chooseTool = (question) => {
 
   if (
     q.includes("tenant status") ||
+    q.includes("payment status") ||
     q.includes("who paid") ||
     q.includes("who has paid") ||
     q.includes("who has not paid") ||
+    q.includes("which tenants have not paid") ||
+    q.includes("tenants have not paid") ||
+    q.includes("tenant has not paid") ||
     q.includes("unpaid this month") ||
+    q.includes("unpaid tenants") ||
     q.includes("rent due") ||
     q.includes("payments/tenant-status")
   ) {
@@ -1067,7 +1168,13 @@ const chooseTool = (question) => {
     return "route_payments";
   }
 
-  if (q.includes("complaints list") || q.includes("complaint list")) {
+  if (
+    q.includes("complaints list") ||
+    q.includes("complaint list") ||
+    q.includes("open complaints") ||
+    q.includes("list complaints") ||
+    q.includes("show complaints")
+  ) {
     return "route_complaints";
   }
 
@@ -1823,7 +1930,7 @@ const getRouteTenantPaymentStatus = async ({ user, question }) => {
   const search = extractSearchPhrase(question);
   const hintedUnitCodes = extractHintUnitCodesFromQuestion(question);
   const hintedUnpaidOnly = extractHintBooleanFromQuestion(question, "unpaid_only");
-  const hintedLimit = extractTopLimit(question, 40, 200);
+  const hintedLimit = extractTopLimit(question, 200, 300);
 
   let baseQuery = `
     SELECT
@@ -3381,6 +3488,22 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     }
   } catch (error) {
     // Fallback to heuristic router
+  }
+
+  const explicitHeuristicAction = chooseTool(contextualQuestion);
+  if (
+    explicitHeuristicAction &&
+    explicitHeuristicAction !== "tenant" &&
+    isExplicitActionQuestion(contextualQuestion, explicitHeuristicAction)
+  ) {
+    routerDecision = {
+      ...routerDecision,
+      action: explicitHeuristicAction,
+      confidence: Math.max(Number(routerDecision.confidence || 0), 0.86),
+      response_mode: /\b(list|all|show|which|who)\b/i.test(contextualQuestion)
+        ? "list"
+        : routerDecision.response_mode,
+    };
   }
 
   routerDecision = inferFollowUpAction({
