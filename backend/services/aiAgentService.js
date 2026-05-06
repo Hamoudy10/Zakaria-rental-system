@@ -198,7 +198,49 @@ const extractJsonObject = (text) => {
     try {
       return JSON.parse(maybe);
     } catch (err) {
-      return null;
+  if (label === "Properties List Route" && wantsList) {
+    const payload = rows[0] || {};
+    const property = payload.property || {};
+    const vacantUnits = Array.isArray(payload.vacant_units) ? payload.vacant_units : [];
+    const properties = Array.isArray(payload.properties) ? payload.properties : [];
+    const count = Number(payload.count || 0);
+
+    if (vacantUnits.length > 0) {
+      const propLabel = property.name
+        ? ` in ${property.name}`
+        : "";
+      const lines = vacantUnits.map((unit, index) => {
+        const code = unit.unit_code || "N/A";
+        const rent = unit.rent_amount ? ` - KES ${Number(unit.rent_amount).toLocaleString()}` : "";
+        const type = unit.unit_type ? ` (${unit.unit_type})` : "";
+        return `${index + 1}. ${code}${type}${rent}`;
+      });
+      return {
+        answer: `Vacant units${propLabel} (${vacantUnits.length}):\n${lines.join("\n")}`,
+        displayContext: {
+          displayed_count: vacantUnits.length,
+          unit_codes: vacantUnits.map((u) => String(u.unit_code || "").trim().toUpperCase()).filter((c) => /^[A-Z0-9-]{2,25}$/.test(c)),
+        },
+      };
+    }
+
+    if (properties.length > 0) {
+      const lines = properties.map((prop, index) => {
+        return `${index + 1}. ${prop.name || prop.property_name || "Unknown"} - ${Number(prop.available_units_count || 0)} units available`;
+      });
+      return {
+        answer: `Property overview:\n${lines.join("\n")}`,
+        displayContext: { displayed_count: properties.length },
+      };
+    }
+
+    return {
+      answer: `No matching data was found for your request.`,
+      displayContext: { displayed_count: 0 },
+    };
+  }
+
+  return null;
     }
   }
 
@@ -1281,6 +1323,12 @@ const chooseTool = (question) => {
   }
   if (/\b(tenant|tenants|occupant|occupiers|renter)\b/.test(q) && /\b(list|all|show|find|search|who|how many|count)\b/.test(q)) {
     return "route_tenants";
+  }
+  if (/\b(unit.?codes?|which units?|what units?|name (the |those )?(units?|codes?))\b/.test(q) && !/\b(tenant|renter|occupant)\b/.test(q)) {
+    return "route_properties";
+  }
+  if (/\b(vacant|available\s+units?|empty\s+units?|free\s+units?|unoccupied)\b/.test(q) && !/\b(water|complaint|tenant)\b/.test(q)) {
+    return "route_properties";
   }
   if (/\b(property|properties|building|vacant|occupancy|unit|units|rooms?|apartments?)\b/.test(q) && !/\b(not paid|unpaid|owe|balance)\b/.test(q) && !/\b(tenant|tenants|renter)\b/.test(q)) {
     return "route_properties";
@@ -2420,7 +2468,67 @@ const getRoutePaymentsList = async ({ user, question }) => {
   };
 };
 
-const getRoutePropertiesList = async ({ user }) => {
+const getRoutePropertiesList = async ({ user, question }) => {
+  const property = await resolvePropertyFromQuestion({ user, question });
+  const search = extractSearchPhrase(question);
+  const lower = String(question || "").toLowerCase();
+  const wantsUnitCodes = /\b(unit.?codes?|which units?|what units?|name them|list (the |all )?(units?|codes?)|available units?|vacant units?|empty units?)\b/i.test(lower);
+  const wantsVacant = /\b(vacant|available|empty|free|unoccupied)\b/i.test(lower);
+
+  if (property && (wantsUnitCodes || wantsVacant)) {
+    const unitQuery = `
+      SELECT
+        pu.id, pu.unit_code, pu.unit_type, pu.rent_amount, pu.is_occupied,
+        pu.floor, pu.square_feet, pu.bedrooms, pu.description,
+        p.name AS property_name, p.property_code
+      FROM property_units pu
+      JOIN properties p ON p.id = pu.property_id
+      WHERE pu.property_id = $1
+        AND pu.is_active = true
+        AND pu.is_occupied = false
+      ORDER BY pu.unit_code ASC
+      LIMIT 200
+    `;
+    const unitResult = await db.query(unitQuery, [property.id]);
+    return {
+      label: "Properties List Route",
+      rows: [
+        {
+          route: "/api/properties",
+          count: unitResult.rows.length,
+          property: { id: property.id, name: property.name, code: property.property_code },
+          vacant_units: unitResult.rows,
+        },
+      ],
+    };
+  }
+
+  if (search && (wantsUnitCodes || wantsVacant)) {
+    const globalUnitQuery = `
+      SELECT
+        pu.id, pu.unit_code, pu.unit_type, pu.rent_amount, pu.is_occupied,
+        p.name AS property_name, p.property_code
+      FROM property_units pu
+      JOIN properties p ON p.id = pu.property_id
+      WHERE pu.is_active = true
+        AND pu.is_occupied = false
+        AND (pu.unit_code ILIKE $1 OR p.name ILIKE $1 OR p.property_code ILIKE $1)
+      ORDER BY p.name ASC, pu.unit_code ASC
+      LIMIT 200
+    `;
+    const unitResult = await db.query(globalUnitQuery, [`%${search}%`]);
+    return {
+      label: "Properties List Route",
+      rows: [
+        {
+          route: "/api/properties",
+          count: unitResult.rows.length,
+          vacant_units: unitResult.rows,
+        },
+      ],
+    };
+  }
+
   let query = "";
   let params = [];
 
@@ -3204,6 +3312,17 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
 
   if (toolLabel === "Open Complaints") {
     return `There are ${rows.length} open/in-progress complaints in scope right now.`;
+  }
+
+  if (toolLabel === "Properties List Route") {
+    const payload = rows[0] || {};
+    const vacantUnits = Array.isArray(payload.vacant_units) ? payload.vacant_units : [];
+    if (vacantUnits.length > 0) {
+      const codes = vacantUnits.map((u) => u.unit_code).join(", ");
+      return `Found ${vacantUnits.length} vacant unit(s): ${codes}.`;
+    }
+    const count = Number(payload.count || 0);
+    return `I used /api/properties and found ${count} property/unit record(s).`;
   }
 
   if (toolLabel === "Property Summary") {
