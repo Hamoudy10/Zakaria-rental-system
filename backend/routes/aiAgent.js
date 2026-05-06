@@ -24,8 +24,8 @@ router.get("/health", (req, res) => {
   res.json({
     success: true,
     message: "AI agent route is available",
-    mode: "phase_1_read_only",
-    autonomousWritesEnabled: false,
+    mode: "phase_2_write_enabled",
+    autonomousWritesEnabled: true,
     availableActions: availableActions.length,
     timestamp: new Date().toISOString(),
   });
@@ -35,8 +35,8 @@ router.get("/actions", (req, res) => {
   const includeDisabled = String(req.query?.includeDisabled || "true") !== "false";
   res.json({
     success: true,
-    mode: "phase_1_read_only",
-    autonomousWritesEnabled: false,
+    mode: "phase_2_write_enabled",
+    autonomousWritesEnabled: true,
     data: {
       actions: aiAgentService.getAvailableActions({
         user: req.user,
@@ -90,6 +90,72 @@ router.post("/query", async (req, res) => {
       success: false,
       message:
         "The AI assistant could not process your request right now. Please try again.",
+    });
+  }
+});
+
+router.post("/confirm", async (req, res) => {
+  try {
+    const { conversationId } = req.body || {};
+    const result = await aiAgentService.confirmPendingAction({
+      user: req.user,
+      conversationId,
+    });
+
+    if (!result.success) {
+      return res.status(result.status || 400).json(result);
+    }
+
+    return res.json(result);
+  } catch (error) {
+    console.error("AI confirm action failed:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to confirm the pending action.",
+    });
+  }
+});
+
+router.post("/reject", async (req, res) => {
+  try {
+    const { conversationId } = req.body || {};
+    const result = await aiAgentService.rejectPendingAction({
+      user: req.user,
+      conversationId,
+    });
+
+    if (!result.success) {
+      return res.status(result.status || 400).json(result);
+    }
+
+    return res.json(result);
+  } catch (error) {
+    console.error("AI reject action failed:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to reject the pending action.",
+    });
+  }
+});
+
+router.get("/pending", async (req, res) => {
+  try {
+    const { conversationId } = req.query || {};
+    const result = await aiAgentService.getPendingAction({
+      user: req.user,
+      conversationId,
+    });
+
+    if (!result.success) {
+      return res.status(result.status || 400).json(result);
+    }
+
+    return res.json(result);
+  } catch (error) {
+    console.error("AI pending action fetch failed:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch pending action.",
     });
   }
 });

@@ -1,5 +1,6 @@
 const axios = require("axios");
 const db = require("../config/database");
+const messagingService = require("./messagingService");
 
 const MAX_QUESTION_LENGTH = 600;
 const MAX_HISTORY_ITEMS = 20;
@@ -50,7 +51,7 @@ const DEFAULT_ANALYST_TABLES = [
   "chat_participants",
 ];
 
-const AI_AGENT_PHASE = "phase_1_read_only";
+const AI_AGENT_PHASE = "phase_2_write_enabled";
 
 const MUTATION_KEYWORDS = [
   "update",
@@ -61,13 +62,13 @@ const MUTATION_KEYWORDS = [
   "edit",
   "fix",
   "reconcile",
-  "create",
   "insert",
   "approve",
   "reject",
-  "assign",
   "deactivate",
   "activate",
+  "drop",
+  "truncate",
 ];
 
 const SEARCH_STOPWORDS = new Set([
@@ -733,56 +734,57 @@ const ROUTER_ACTIONS = [
   "tenant_or_payments",
   "tenant",
   "dynamic_sql",
+  "draft_sms_reminder",
+  "draft_water_bill",
+  "draft_complaint_assignment",
+  "web_search",
+  "web_fetch",
 ];
 
 const ROUTER_DECISION_GUIDE = `
 DECISION PRIORITY (pick the BEST match, not just any match):
-1. "who owes/paid/unpaid" or "balance" or "rent due" for specific tenants → route_tenant_payment_status
-2. "payments list" / "receipt" / "M-Pesa" / "payment history" / "transactions" → route_payments
-3. "tenant list" / "all tenants" / search by name or property → route_tenants
-4. "properties" / "units" / "vacancy" / "occupancy" → route_properties
-5. "complaints" / "issues" / "problems" → route_complaints
-6. "water bill" / "water billing" → route_water_bills
-7. "water profit" / "water loss" / "water profitability" → route_water_profitability
-8. "dashboard" / "overview" / "stats" / "KPIs" (admin) → route_dashboard_comprehensive
-9. "unpaid in Building X this month" → unpaid_tenants_property_month
-10. "arrears by property" / "monthly arrears" → monthly_property_arrears
-11. "total outstanding" / "global arrears" → outstanding_rent
-12. "all data" / "everything" / "overview" → global_data_pack
-13. Find a specific tenant by name/phone/unit → tenant
-14. If nothing fits but needs data → dynamic_sql (LAST RESORT)
+WRITE ACTIONS (always need confirmation — draft first, then confirm):
+1. "send SMS/reminder/message to X" → draft_sms_reminder
+2. "create/record water bill for X" → draft_water_bill
+3. "assign complaint X to Y" → draft_complaint_assignment
 
-DANGER — DO NOT confuse these:
+READ ACTIONS:
+4. "who owes/paid/unpaid" or "balance" or "rent due" → route_tenant_payment_status
+5. "payments list" / "receipt" / "M-Pesa" → route_payments
+6. "tenant list" / search by name or property → route_tenants
+7. "properties" / "vacancy" / "occupancy" → route_properties
+8. "complaints" / "issues" → route_complaints
+9. "water bill" / "water billing" → route_water_bills
+10. "water profit" / "water loss" → route_water_profitability
+11. "dashboard" / "overview" / "stats" / "KPIs" (admin) → route_dashboard_comprehensive
+12. "unpaid in Building X this month" → unpaid_tenants_property_month
+13. "arrears by property" → monthly_property_arrears
+14. "total outstanding" → outstanding_rent
+15. "all data" / "everything" → global_data_pack
+16. Find specific tenant by name/phone/unit → tenant
+
+WEB ACTIONS:
+17. "search the web for X" / "look up X online" / "what does google say about X" → web_search
+18. "fetch URL X" / "get content from X" with a URL → web_fetch
+
+LAST RESORT:
+19. If nothing fits but needs data → dynamic_sql
+
+DANGER — DO NOT confuse:
+- "send reminder" is draft_sms_reminder, NOT route_tenant_payment_status
+- "create water bill" is draft_water_bill, NOT route_water_bills
 - "who has not paid" is route_tenant_payment_status, NOT route_payments
-- "payment records for this month" is route_payments, NOT route_tenant_payment_status
-- "list all tenants" is route_tenants, NOT tenant (tenant = single lookup)
-- "show unpaid" without property = route_tenant_payment_status (system-wide)
-- "show unpaid in Building A" = unpaid_tenants_property_month (scoped)
+- "list tenants" is route_tenants, NOT tenant (tenant = single lookup)
 
-FEW-SHOT EXAMPLES:
-| Question | Action | confidence | response_mode | hints |
-|----------|--------|------------|---------------|-------|
-| "who has not paid this month" | route_tenant_payment_status | 0.95 | list | {"unpaid_only":true} |
-| "show me abdallah's balance" | route_tenant_payment_status | 0.90 | summary | {"tenant":"abdallah"} |
-| "list tenants with outstanding rent" | route_tenant_payment_status | 0.93 | list | {"unpaid_only":true} |
-| "payment records for March 2026" | route_payments | 0.92 | list | {"month":"2026-03"} |
-| "mpesa receipt number ABC123" | route_payments | 0.88 | summary | {} |
-| "show all tenants in Sunset Plaza" | route_tenants | 0.94 | list | {"property":"Sunset Plaza"} |
-| "how many vacant units do we have" | route_properties | 0.90 | summary | {} |
-| "any open complaints" | route_complaints | 0.88 | list | {"status":"open"} |
-| "water bill for unit MJ-4" | route_water_bills | 0.87 | summary | {"unit":"MJ-4"} |
-| "are we making profit on water" | route_water_profitability | 0.93 | summary | {} |
-| "dashboard overview" | route_dashboard_comprehensive | 0.90 | summary | {} |
-| "unpaid tenants in Blue Heights" | unpaid_tenants_property_month | 0.91 | list | {"property":"Blue Heights"} |
-| "total outstanding rent" | outstanding_rent | 0.90 | summary | {} |
-| "find tenant called Abdallah" | tenant | 0.85 | summary | {"tenant":"Abdallah"} |
-| "hello" / "hi" | tenant | 0.40 | summary | {} |
-| "how many tenants have arrears" | monthly_property_arrears | 0.88 | summary | {} |
+WRITE WORKFLOW: draft_sms_reminder/draft_water_bill/draft_complaint_assignment → AI asks for confirmation → user says "yes" to execute.
 `;
 
 const buildRouterMessages = ({ user, question, history }) => {
   const routeCatalog = `
 Available actions:
+- draft_sms_reminder: draft and queue an SMS reminder to a tenant (needs confirmation).
+- draft_water_bill: draft a water bill entry (needs confirmation).
+- draft_complaint_assignment: draft a complaint assignment (needs confirmation).
 - route_tenant_payment_status: who owes/paid, balances, dues per tenant.
 - route_payments: payment records, receipts, transactions.
 - route_tenants: tenant lists and searches.
@@ -796,7 +798,8 @@ Available actions:
 - outstanding_rent: global arrears summary.
 - global_data_pack: compact operational overview of everything.
 - tenant: single tenant lookup by name/phone/unit.
-- tenant_or_payments: tenant search with fallback to recent payments.
+- web_search: search the internet for facts or information.
+- web_fetch: fetch and read content from a specific URL.
 - dynamic_sql: LAST RESORT read-only SQL when no tool can answer.
 `;
 
@@ -3312,6 +3315,200 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
   return `I found ${rows.length} matching records for your request.`;
 };
 
+const handleDraftSmsReminder = async ({ user, question }) => {
+  const tenantSnapshot = await getTenantSnapshot({ user, question });
+  if (!tenantSnapshot.rows || tenantSnapshot.rows.length === 0) {
+    return {
+      label: "Draft SMS Reminder",
+      rows: [{ message: "No tenant found. Try with a tenant name, phone number, or unit code." }],
+    };
+  }
+
+  const tenant = tenantSnapshot.rows[0];
+  const balance = Number(tenant.total_due || 0);
+  const phone = tenant.phone_number;
+
+  if (!phone) {
+    return {
+      label: "Draft SMS Reminder",
+      rows: [{ message: `${tenant.tenant_name} has no phone number on file. Cannot send SMS.` }],
+    };
+  }
+
+  const message = balance > 0
+    ? `Dear ${tenant.tenant_name}, your outstanding balance is KES ${balance.toLocaleString()} for ${tenant.property_name} (${tenant.unit_code}). Please pay to avoid inconvenience.`
+    : `Dear ${tenant.tenant_name}, your rent for ${tenant.property_name} (${tenant.unit_code}) is fully paid. Thank you.`;
+
+  return {
+    label: "Draft SMS Reminder",
+    rows: [{
+      action: "draft_sms_reminder",
+      tenant_name: tenant.tenant_name,
+      phone_number: phone,
+      property_name: tenant.property_name,
+      unit_code: tenant.unit_code,
+      total_due: tenant.total_due,
+      draft_message: message,
+      needs_confirmation: true,
+    }],
+  };
+};
+
+const handleDraftWaterBill = async ({ user, question }) => {
+  const month = extractMonthFromQuestion(question) || new Date().toISOString().slice(0, 7);
+  const tenantSnapshot = await getTenantSnapshot({ user, question });
+  if (!tenantSnapshot.rows || tenantSnapshot.rows.length === 0) {
+    return {
+      label: "Draft Water Bill",
+      rows: [{ message: "No tenant found. Please specify the tenant name or unit code." }],
+    };
+  }
+
+  const tenant = tenantSnapshot.rows[0];
+  const amountMatch = String(question).match(/\b(?:KES\s*)?(\d[\d,]{1,9})\b/);
+  const amount = amountMatch ? Number(amountMatch[1].replace(/,/g, "")) : 0;
+
+  if (!amount || amount <= 0) {
+    return {
+      label: "Draft Water Bill",
+      rows: [{
+        message: `I found ${tenant.tenant_name} at ${tenant.property_name} (${tenant.unit_code}). Please specify the water bill amount, e.g. "create water bill of KES 500 for ${tenant.tenant_name}".`,
+      }],
+    };
+  }
+
+  return {
+    label: "Draft Water Bill",
+    rows: [{
+      action: "draft_water_bill",
+      tenant_id: tenant.tenant_id,
+      tenant_name: tenant.tenant_name,
+      unit_id: tenant.unit_id,
+      unit_code: tenant.unit_code,
+      property_name: tenant.property_name,
+      amount,
+      bill_month: month,
+      needs_confirmation: true,
+    }],
+  };
+};
+
+const handleDraftComplaintAssignment = async ({ user, question }) => {
+  const complaintMatch = String(question).match(/\b(?:complaint\s+)?#?\s*([a-f0-9-]{8,36})\b/i);
+  const patterns = extractSearchPatterns(question);
+
+  let complaintRows = [];
+  if (complaintMatch?.[1]) {
+    const res = await db.query(
+      `SELECT c.id, c.title, c.status, c.priority, t.first_name, t.last_name,
+              pu.unit_code, p.name AS property_name
+       FROM complaints c
+       LEFT JOIN tenants t ON t.id = c.tenant_id
+       LEFT JOIN property_units pu ON pu.id = c.unit_id
+       LEFT JOIN properties p ON p.id = pu.property_id
+       WHERE c.id = $1::uuid`,
+      [complaintMatch[1]]
+    );
+    complaintRows = res.rows;
+  } else {
+    const res = await db.query(
+      `SELECT c.id, c.title, c.status, c.priority, t.first_name, t.last_name,
+              pu.unit_code, p.name AS property_name
+       FROM complaints c
+       LEFT JOIN tenants t ON t.id = c.tenant_id
+       LEFT JOIN property_units pu ON pu.id = c.unit_id
+       LEFT JOIN properties p ON p.id = pu.property_id
+       WHERE c.status IN ('open', 'in_progress')
+       ORDER BY c.raised_at DESC
+       LIMIT 5`,
+    );
+    complaintRows = res.rows;
+  }
+
+  if (complaintRows.length === 0) {
+    return {
+      label: "Draft Complaint Assignment",
+      rows: [{ message: "No matching complaints found." }],
+    };
+  }
+
+  return {
+    label: "Draft Complaint Assignment",
+    rows: complaintRows.map((c) => ({
+      action: "draft_complaint_assignment",
+      complaint_id: c.id,
+      complaint_title: c.title,
+      tenant_name: `${c.first_name || ""} ${c.last_name || ""}`.trim(),
+      unit_code: c.unit_code,
+      property_name: c.property_name,
+      status: c.status,
+      priority: c.priority,
+      needs_confirmation: true,
+    })),
+  };
+};
+
+const handleWebSearch = async ({ question }) => {
+  const q = String(question || "").trim().replace(/\bsearch|find|lookup|web|online|internet\b/gi, "").trim().slice(0, 200) || "rental property management kenya";
+  try {
+    const response = await axios.get(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
+      { timeout: 8000 },
+    );
+    const data = response.data;
+    const results = [];
+    if (data.AbstractText) {
+      results.push({
+        title: data.Heading || q,
+        snippet: data.AbstractText.slice(0, 500),
+        source: data.AbstractURL || "",
+      });
+    }
+    const related = Array.isArray(data.RelatedTopics) ? data.RelatedTopics : [];
+    for (const topic of related.slice(0, 4)) {
+      if (topic.Text) {
+        results.push({
+          title: topic.FirstURL || "",
+          snippet: topic.Text.slice(0, 300),
+          source: topic.FirstURL || "",
+        });
+      }
+    }
+    if (results.length === 0) {
+      results.push({ message: `No results found for "${q}". Please try a different search term.` });
+    }
+    return { label: "Web Search", rows: results };
+  } catch (error) {
+    return { label: "Web Search", rows: [{ message: `Web search is currently unavailable: ${error.message}` }] };
+  }
+};
+
+const handleWebFetch = async ({ question }) => {
+  const urlMatch = String(question || "").match(/https?:\/\/[^\s`"'>]{6,300}/i);
+  if (!urlMatch) {
+    return { label: "Web Fetch", rows: [{ message: "No URL found. Please include a full URL (e.g., https://example.com)." }] };
+  }
+  const url = urlMatch[0];
+  try {
+    const response = await axios.get(url, {
+      timeout: 10000,
+      maxRedirects: 3,
+      headers: { "User-Agent": "ZakariaRentalAIAgent/1.0" },
+    });
+    const text = String(response.data || "")
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&[a-z]+;/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 3000);
+    return { label: "Web Fetch", rows: [{ url, content: text || "No readable content could be extracted from this page." }] };
+  } catch (error) {
+    return { label: "Web Fetch", rows: [{ url, message: `Failed to fetch: ${error.message}` }] };
+  }
+};
+
 const createAction = ({
   id,
   label,
@@ -3468,40 +3665,46 @@ const AI_ACTION_REGISTRY = [
   createAction({
     id: "draft_sms_reminder",
     label: "Draft SMS Reminder",
-    description: "Phase 2 placeholder: drafts tenant reminders without sending.",
-    phase: "phase_2_approval_required",
-    enabled: false,
-  }),
-  createAction({
-    id: "send_sms_after_approval",
-    label: "Send SMS After Approval",
-    description: "Phase 2 placeholder: sends SMS only after explicit user confirmation.",
+    description: "Drafts an SMS reminder for a tenant. Saves as pending and asks for confirmation before sending.",
     mode: "write",
-    risk: "high",
+    risk: "medium",
     requiresConfirmation: true,
-    phase: "phase_2_approval_required",
-    enabled: false,
+    handler: handleDraftSmsReminder,
   }),
   createAction({
-    id: "create_water_bill_after_approval",
-    label: "Create Water Bill After Approval",
-    description: "Phase 2 placeholder: creates a water bill only after explicit user confirmation.",
+    id: "draft_water_bill",
+    label: "Draft Water Bill",
+    description: "Drafts a water bill for a tenant. Saves as pending and asks for confirmation before creating.",
     mode: "write",
-    risk: "high",
+    risk: "medium",
     requiresConfirmation: true,
-    phase: "phase_2_approval_required",
-    enabled: false,
+    handler: handleDraftWaterBill,
   }),
   createAction({
-    id: "assign_complaint_after_approval",
-    label: "Assign Complaint After Approval",
-    description: "Phase 2 placeholder: assigns complaints only after explicit user confirmation.",
+    id: "draft_complaint_assignment",
+    label: "Draft Complaint Assignment",
+    description: "Drafts a complaint assignment. Saves as pending and asks for confirmation before applying.",
     mode: "write",
-    risk: "high",
+    risk: "medium",
     requiresConfirmation: true,
     roles: ["admin"],
-    phase: "phase_2_approval_required",
-    enabled: false,
+    handler: handleDraftComplaintAssignment,
+  }),
+  createAction({
+    id: "web_search",
+    label: "Web Search",
+    description: "Searches the internet for facts, news, or information using DuckDuckGo.",
+    mode: "read_only",
+    risk: "low",
+    handler: handleWebSearch,
+  }),
+  createAction({
+    id: "web_fetch",
+    label: "Web Fetch",
+    description: "Fetches and reads content from a specific URL.",
+    mode: "read_only",
+    risk: "low",
+    handler: handleWebFetch,
   }),
 ];
 
@@ -3641,6 +3844,258 @@ const getConversationHistory = async ({ user, conversationId, limit = 80 }) => {
   };
 };
 
+const getLastPendingAction = async (userId, conversationId) => {
+  if (!conversationId) return null;
+  try {
+    const result = await db.query(
+      `SELECT * FROM ai_pending_actions
+       WHERE conversation_id = $1 AND user_id = $2 AND status = 'pending'
+       ORDER BY created_at DESC LIMIT 1`,
+      [conversationId, userId],
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    return null;
+  }
+};
+
+const savePendingAction = async ({
+  conversationId,
+  userId,
+  actionType,
+  actionTarget,
+  actionParams,
+  confirmationMessage,
+}) => {
+  const result = await db.query(
+    `INSERT INTO ai_pending_actions
+       (conversation_id, user_id, action_type, action_target, action_params, confirmation_message)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+     RETURNING id`,
+    [
+      conversationId,
+      userId,
+      actionType,
+      JSON.stringify(actionTarget || {}),
+      JSON.stringify(actionParams || {}),
+      confirmationMessage || "",
+    ],
+  );
+  return result.rows[0];
+};
+
+const executeConfirmedAction = async (pending, user) => {
+  const target = typeof pending.action_target === "object" ? pending.action_target : {};
+  const params = typeof pending.action_params === "object" ? pending.action_params : {};
+
+  switch (pending.action_type) {
+    case "draft_sms_reminder": {
+      const phone = target.phone_number;
+      const message = params.message;
+      if (!phone || !message) throw new Error("Missing phone number or message.");
+      await messagingService.sendRawMessage(phone, message, "announcement");
+      return { channel: "sms", phone, message: message.slice(0, 200) };
+    }
+    case "draft_water_bill": {
+      const { tenant_id, unit_id, amount, bill_month } = target;
+      if (!tenant_id || !amount || !bill_month) throw new Error("Missing water bill data.");
+      const result = await db.query(
+        `INSERT INTO water_bills (tenant_id, unit_id, amount, bill_month, created_at)
+         VALUES ($1, $2, $3, $4::date, NOW())
+         ON CONFLICT (tenant_id, COALESCE(unit_id, '00000000-0000-0000-0000-000000000000'), bill_month)
+         DO UPDATE SET amount = $3, unit_id = COALESCE($2, water_bills.unit_id)
+         RETURNING id`,
+        [tenant_id, unit_id || null, amount, `${bill_month}-01`],
+      );
+      return { table: "water_bills", id: result.rows[0]?.id, tenant_id, amount, bill_month };
+    }
+    case "draft_complaint_assignment": {
+      const { complaint_id, assignee_id } = target;
+      if (!complaint_id) throw new Error("Missing complaint ID.");
+      const updates = [];
+      const vals = [];
+      let idx = 1;
+      if (assignee_id) {
+        updates.push(`assigned_to = $${idx++}::uuid`);
+        vals.push(assignee_id);
+      }
+      if (updates.length === 0) throw new Error("No changes to apply.");
+      vals.push(complaint_id);
+      await db.query(
+        `UPDATE complaints SET ${updates.join(", ")} WHERE id = $${idx}::uuid`,
+        vals,
+      );
+      return { table: "complaints", complaint_id, assignee_id };
+    }
+    default:
+      throw new Error(`Unknown action type: ${pending.action_type}`);
+  }
+};
+
+const confirmPendingAction = async ({ user, conversationId }) => {
+  const safeConversationId = normalizeConversationId(conversationId);
+  if (!safeConversationId) {
+    return { success: false, status: 400, message: "Invalid conversation ID." };
+  }
+
+  const pending = await getLastPendingAction(user.id, safeConversationId);
+  if (!pending) {
+    return { success: false, status: 404, message: "No pending action to confirm." };
+  }
+
+  await db.query(
+    `UPDATE ai_pending_actions SET status = 'confirmed', confirmed_at = NOW()
+     WHERE id = $1`,
+    [pending.id],
+  );
+
+  try {
+    const result = await executeConfirmedAction(pending, user);
+    await db.query(
+      `UPDATE ai_pending_actions SET status = 'executed', executed_at = NOW(), result = $1::jsonb
+       WHERE id = $2`,
+      [JSON.stringify(result), pending.id],
+    );
+    return {
+      success: true,
+      data: {
+        action: pending.action_type,
+        confirmed: true,
+        executed: true,
+        result,
+        message: `${pending.action_type.replace("draft_", "").replace(/_/g, " ")} was executed successfully.`,
+      },
+    };
+  } catch (error) {
+    await db.query(
+      `UPDATE ai_pending_actions SET status = 'failed', error_message = $1
+       WHERE id = $2`,
+      [error.message, pending.id],
+    );
+    return {
+      success: false,
+      status: 500,
+      message: `Failed to execute: ${error.message}`,
+    };
+  }
+};
+
+const rejectPendingAction = async ({ user, conversationId }) => {
+  const safeConversationId = normalizeConversationId(conversationId);
+  if (!safeConversationId) {
+    return { success: false, status: 400, message: "Invalid conversation ID." };
+  }
+
+  const pending = await getLastPendingAction(user.id, safeConversationId);
+  if (!pending) {
+    return { success: false, status: 404, message: "No pending action to reject." };
+  }
+
+  await db.query(
+    `UPDATE ai_pending_actions SET status = 'rejected', confirmed_at = NOW()
+     WHERE id = $1`,
+    [pending.id],
+  );
+  return {
+    success: true,
+    data: { rejected: true, message: "Action was cancelled." },
+  };
+};
+
+const getPendingAction = async ({ user, conversationId }) => {
+  const safeConversationId = normalizeConversationId(conversationId);
+  if (!safeConversationId) {
+    return { success: false, status: 400, message: "Invalid conversation ID." };
+  }
+  const pending = await getLastPendingAction(user.id, safeConversationId);
+  return { success: true, data: { pending: pending || null } };
+};
+
+const checkPendingActionResolution = async ({ user, question, conversationId }) => {
+  if (!conversationId) return { handled: false };
+
+  const q = String(question).toLowerCase().trim();
+  const isConfirm =
+    q.length < 50 &&
+    (/^(yes|yeah|yep|confirm|approved|go ahead|proceed|execute|ok|okay|sure|do it|send it|go on)$/.test(q) ||
+      /\b(confirm|approve|go ahead|proceed)\b/i.test(q));
+  const isReject =
+    q.length < 50 &&
+    (/^(no|nope|nah|cancel|reject|stop|abort|never mind|don't|do not)$/.test(q) ||
+      /\b(cancel|reject|abort)\b/i.test(q));
+
+  if (!isConfirm && !isReject) return { handled: false };
+
+  const pending = await getLastPendingAction(user.id, conversationId);
+  if (!pending) return { handled: false };
+
+  await saveHistoryMessage({
+    conversationId,
+    userId: user.id,
+    role: "user",
+    messageText: question,
+    metadata: { intent: isConfirm ? "confirm_pending" : "reject_pending" },
+  });
+
+  let result;
+  if (isReject) {
+    result = await rejectPendingAction({ user, conversationId });
+    await saveHistoryMessage({
+      conversationId,
+      userId: user.id,
+      role: "assistant",
+      messageText: result.message || "Action cancelled.",
+      toolUsed: "Reject Pending Action",
+    });
+    return {
+      handled: true,
+      result: {
+        success: result.success,
+        data: {
+          mode: "write",
+          blocked: false,
+          answer: result.success
+            ? "Action cancelled. How else can I help?"
+            : `Could not cancel: ${result.message}`,
+          tool: "reject_pending_action",
+        },
+        ...(result.status ? { status: result.status } : {}),
+        message: result.message,
+      },
+    };
+  }
+
+  if (isConfirm) {
+    result = await confirmPendingAction({ user, conversationId });
+    await saveHistoryMessage({
+      conversationId,
+      userId: user.id,
+      role: "assistant",
+      messageText: result.data?.message || result.message || "Action completed.",
+      toolUsed: "Confirm Pending Action",
+    });
+    return {
+      handled: true,
+      result: {
+        success: result.success,
+        data: {
+          mode: "write",
+          blocked: false,
+          answer: result.success
+            ? `Done. ${result.data?.message || "Action executed successfully."}`
+            : `Action failed: ${result.message}`,
+          tool: "confirm_pending_action",
+          executionResult: result.data,
+        },
+        ...(result.status ? { status: result.status } : {}),
+        message: result.data?.message || result.message,
+      },
+    };
+  }
+
+  return { handled: false };
+};
+
 const answerQuestion = async ({ user, question, history, conversationId }) => {
   const safeQuestion = ensureSafeQuestion(question);
   const safeConversationId = normalizeConversationId(conversationId);
@@ -3652,9 +4107,18 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     };
   }
 
+  const pendingCheck = await checkPendingActionResolution({
+    user,
+    question: safeQuestion,
+    conversationId: safeConversationId,
+  });
+  if (pendingCheck.handled) {
+    return pendingCheck.result;
+  }
+
   if (isMutationIntent(safeQuestion)) {
     const blockedAnswer =
-      "Phase 1 is read-only. I can check and explain data, but I cannot make changes yet. Please ask for the current state, balances, or diagnostics.";
+      "This action is not supported. Operations like delete/drop/deactivate must be done from the admin dashboard. For sending reminders, creating water bills, or assigning complaints, just ask directly and I'll confirm before executing.";
     if (safeConversationId) {
       await saveHistoryMessage({
         conversationId: safeConversationId,
@@ -3834,6 +4298,82 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     : narration.answer || fallbackAnswer;
   const answer = normalizeCurrencyText(rawAnswer);
 
+  const firstRow = (toolResult?.rows && toolResult.rows.length > 0) ? toolResult.rows[0] : null;
+  if (firstRow?.needs_confirmation && firstRow.action && safeConversationId) {
+    const pendingTarget = {};
+    const pendingParams = {};
+    for (const [key, value] of Object.entries(firstRow)) {
+      if (["action", "needs_confirmation", "tenant_name", "property_name", "status", "priority", "complaint_title", "message"].includes(key)) continue;
+      if (value !== undefined && value !== null) pendingTarget[key] = value;
+    }
+    pendingParams.message = firstRow.draft_message || firstRow.message || "";
+
+    const confirmationMessage = firstRow.action === "draft_sms_reminder"
+      ? `I'll send this SMS to ${firstRow.tenant_name} (${firstRow.phone_number}): "${firstRow.draft_message}". Confirm?`
+      : firstRow.action === "draft_water_bill"
+        ? `I'll create a water bill of KES ${(firstRow.amount || 0).toLocaleString()} for ${firstRow.tenant_name} (${firstRow.unit_code}) for ${firstRow.bill_month}. Confirm?`
+        : `I'll assign complaint "${firstRow.complaint_title}" to ${firstRow.assignee_name || "the selected agent"}. Confirm?`;
+
+    await savePendingAction({
+      conversationId: safeConversationId,
+      userId: user.id,
+      actionType: firstRow.action,
+      actionTarget: pendingTarget,
+      actionParams: pendingParams,
+      confirmationMessage,
+    });
+
+    const pendingAnswer = `${confirmationMessage}\n\nReply "yes" to confirm or "no" to cancel.`;
+
+    if (safeConversationId) {
+      await saveHistoryMessage({
+        conversationId: safeConversationId,
+        userId: user.id,
+        role: "user",
+        messageText: safeQuestion,
+        metadata: { source: "prompt", contextual_question: contextualQuestion },
+      });
+      await saveHistoryMessage({
+        conversationId: safeConversationId,
+        userId: user.id,
+        role: "assistant",
+        messageText: pendingAnswer,
+        toolUsed: toolResult.label,
+        recordsCount: toolResult.rows.length,
+        usage: narration.usage,
+        metadata: {
+          sample: toolResult.rows.slice(0, 3),
+          display_context: displayContext,
+          generated_sql: dynamicSqlInfo?.sql || null,
+          router_action: routerDecision.action,
+          router_confidence: routerDecision.confidence,
+          router_mode: routerDecision.response_mode,
+          router_hints: routerDecision.hints || {},
+          context_compacted: workingHistory.compacted,
+          context_source: workingHistory.source,
+          context_source_count: workingHistory.sourceCount,
+          pending_action: true,
+        },
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        mode: "write",
+        blocked: false,
+        tool: toolResult.label,
+        answer: pendingAnswer,
+        needsConfirmation: true,
+        pendingAction: firstRow.action,
+        usage: narration.usage,
+        records: toolResult.rows.length,
+        context_compacted: workingHistory.compacted,
+        context_source: workingHistory.source,
+      },
+    };
+  }
+
   if (safeConversationId) {
     await saveHistoryMessage({
       conversationId: safeConversationId,
@@ -3902,4 +4442,7 @@ module.exports = {
   answerQuestion,
   getConversationHistory,
   getAvailableActions,
+  confirmPendingAction,
+  rejectPendingAction,
+  getPendingAction,
 };
