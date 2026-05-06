@@ -1279,68 +1279,15 @@ const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) =>
 const chooseTool = (question) => {
   const q = question.toLowerCase();
 
-  if (/\b(not paid|unpaid|owe|balance|outstanding|rent due|payment status|who.*paid)\b/.test(q) ||
-      /\b(who (has|have) (not |n't )?(paid|owe|outstand))\b/.test(q) ||
-      /\b(collect(ed|ion)?\s+rate|how much.*(collect|paid|owe|due)|total.*due)\b/.test(q)) {
-    return "route_tenant_payment_status";
-  }
-  if (/\b(payment|receipt|mpesa|transaction|paybill|paid.*how much)\b/.test(q) && !q.includes("tenant status")) {
-    return "route_payments";
-  }
-  if (/\b(tenant|tenants|occupant|occupiers|renter)\b/.test(q) && /\b(list|all|show|find|search|who|how many|count)\b/.test(q)) {
-    return "route_tenants";
-  }
-  if (/\b(unit.?codes?|which units?|what units?|name (the |those )?(units?|codes?))\b/.test(q) && !/\b(tenant|renter|occupant)\b/.test(q)) {
-    return "route_properties";
-  }
-  if (/\b(vacant|available\s+units?|empty\s+units?|free\s+units?|unoccupied)\b/.test(q) && !/\b(water|complaint|tenant)\b/.test(q)) {
-    return "route_properties";
-  }
   if (/\b(search|web|internet|google|look up|lookup|news|trends? in|market rate)\b/.test(q)) {
     return "web_search";
-  }
-  if (/\b(property|properties|building|vacant|occupancy|unit|units|rooms?|apartments?)\b/.test(q) && !/\b(not paid|unpaid|owe|balance)\b/.test(q) && !/\b(tenant|tenants|renter)\b/.test(q)) {
-    return "route_properties";
-  }
-  if (/\b(complaint|issue|problem|fault|defect|broken|repair|maintenance)\b/.test(q)) {
-    return "route_complaints";
-  }
-  if (/\bwater.*(bill|billing|usage|charge|cost)|(bill|billing).*water\b/.test(q)) {
-    return "route_water_bills";
-  }
-  if (/\bwater.*(profit|loss|net|margin|collected|expense|revenue|analysis)\b/.test(q) ||
-      /\bhow (much|profitable).*water\b/.test(q)) {
-    return "route_water_profitability";
   }
   if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
     return "draft_sms_reminder";
   }
-  if (/\b(dashboard|stats|kpi|overview|summary|snapshot|at a glance)\b/.test(q)) {
-    return "route_dashboard_comprehensive";
+  if (/\bwater.*bill\b/i.test(q) || /\b(create|add|record).*(water.*bill)\b/i.test(q)) {
+    return "draft_water_bill";
   }
-  if (/\b(all data|everything|whole system|database dump|full picture)\b/.test(q)) {
-    return "global_data_pack";
-  }
-  if (/\b(expense|spending|spent|cost|overhead|outgoing)\b/.test(q) && !q.includes("water") && !q.includes("rent")) {
-    return "route_tenant_payment_status";
-  }
-  if (/\b(profit|net income|revenue|earning|income|gross)\b/.test(q)) {
-    return "route_tenant_payment_status";
-  }
-  if (/\b(arrear|debt|default|behind)\b/.test(q)) {
-    return "outstanding_rent";
-  }
-  if (/\b(compare|vs|versus|month over month|year over year|m-o-m|y-o-y|trend)\b/.test(q)) {
-    return "route_tenant_payment_status";
-  }
-  if (/\b(agent|agents|collector|caretaker|manager)\b/.test(q) && /\b(which|who|most|best|top|active|performance)\b/.test(q)) {
-    return "route_tenant_payment_status";
-  }
-  if (/\b(how much|what is|tell me|give me).*(balance|rent|bill|pay|charge|fee)\b/.test(q) ||
-      /\bwhat('s|s| is) (the |my |their )?(balance|rent|bill|total)\b/.test(q)) {
-    return "route_tenant_payment_status";
-  }
-
   if (/\b(how are you|what('?s| is) up|who are you|what can you do|help|capabilit|introduce|yourself|about you)\b/.test(q)) {
     return "general";
   }
@@ -4341,31 +4288,13 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       pendingActionContext: pendingCtx,
     });
     if (routed.success && routed.data) {
-      const groqAction = routed.data.action;
-      const groqConfidence = Number(routed.data.confidence || 0);
       routerUsage = routed.data.usage || null;
-
-      const DEFAULT_ACTION = "dynamic_sql";
-      const heuristicIsSpecific = heuristicAction !== DEFAULT_ACTION && heuristicAction !== "tenant" && heuristicAction !== "general";
-      const groqAgrees = groqAction === heuristicAction;
-
-      if (heuristicIsSpecific) {
-        routerDecision = {
-          action: heuristicAction,
-          confidence: groqAgrees ? groqConfidence : routerDecision.confidence,
-          response_mode: routed.data.response_mode || routerDecision.response_mode,
-          hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
-        };
-      } else if (groqConfidence >= 0.85) {
-        routerDecision = routed.data;
-      } else {
-        routerDecision = {
-          action: heuristicAction,
-          confidence: routerDecision.confidence,
-          response_mode: routed.data.response_mode || routerDecision.response_mode,
-          hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
-        };
-      }
+      routerDecision = {
+        action: heuristicAction,
+        confidence: Number(routed.data.confidence || routerDecision.confidence),
+        response_mode: routed.data.response_mode || routerDecision.response_mode,
+        hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
+      };
     }
   } catch (error) {
     // LLM router failed — heuristic fallback remains active
@@ -4376,6 +4305,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     lastContexts: lastAssistantContexts,
     routerDecision,
   });
+  routerDecision.action = heuristicAction;
 
   const correctionTarget = extractCorrectionTargetCount(contextualQuestion);
   if (correctionTarget) {
