@@ -1050,7 +1050,7 @@ export const chatAPI = {
   },
 };
 
-// AI Agent API (Phase 1: read-only)
+// AI Agent API (Phase 2: read + write with confirmation)
 export const aiAgentAPI = {
   ask: (question, history = [], conversationId = null) =>
     api.post("/ai-agent/query", {
@@ -1063,6 +1063,12 @@ export const aiAgentAPI = {
   getActions: (includeDisabled = true) =>
     api.get("/ai-agent/actions", { params: { includeDisabled } }),
   health: () => api.get("/ai-agent/health"),
+  confirmAction: (conversationId) =>
+    api.post("/ai-agent/confirm", { conversationId }),
+  rejectAction: (conversationId) =>
+    api.post("/ai-agent/reject", { conversationId }),
+  getPendingAction: (conversationId) =>
+    api.get("/ai-agent/pending", { params: { conversationId } }),
 };
 
 // ==================== EXPENSE API ====================

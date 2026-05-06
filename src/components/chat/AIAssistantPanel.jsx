@@ -1,7 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aiAgentAPI } from "../../services/api";
 
 const MAX_LOCAL_HISTORY = 6;
+
+const SUGGESTED_PROMPTS = [
+  { label: "Tenants owing rent", text: "who has not paid this month" },
+  { label: "Payment overview", text: "show recent payments" },
+  { label: "Vacant units", text: "how many vacant units do we have" },
+  { label: "Open complaints", text: "list open complaints" },
+  { label: "Search the web", text: "search the web for latest property market trends in Kenya" },
+];
 
 const formatTime = (dateStr) => {
   try {
@@ -14,38 +22,69 @@ const formatTime = (dateStr) => {
   }
 };
 
-const buildHistoryPayload = (messages) => {
-  return messages
+const buildHistoryPayload = (messages) =>
+  messages
     .filter((m) => m.role === "user" || m.role === "assistant")
     .slice(-MAX_LOCAL_HISTORY)
-    .map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-};
+    .map((m) => ({ role: m.role, content: m.content }));
 
 const getLocalConversationId = (currentUserId) => {
   const key = `ai_assistant_conversation_${currentUserId}`;
   const existing = localStorage.getItem(key);
   if (existing) return existing;
-
-  let nextId = null;
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    nextId = crypto.randomUUID();
-  } else {
-    const fallbackUuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
-      /[xy]/g,
-      (c) => {
-        const r = Math.floor(Math.random() * 16);
-        const v = c === "x" ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-      },
-    );
-    nextId = fallbackUuid;
-  }
-
+  const nextId =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+          const r = Math.floor(Math.random() * 16);
+          const v = c === "x" ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
   localStorage.setItem(key, nextId);
   return nextId;
+};
+
+const LoadingDots = () => (
+  <div className="flex gap-1 px-1 py-2">
+    <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+    <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+    <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+  </div>
+);
+
+const renderMessageContent = (text) => {
+  if (!text) return null;
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    let processed = line;
+    const boldParts = [];
+    let lastIndex = 0;
+    const boldRegex = /\*\*(.+?)\*\*/g;
+    let match;
+    while ((match = boldRegex.exec(line)) !== null) {
+      boldParts.push({ text: line.slice(lastIndex, match.index), bold: false });
+      boldParts.push({ text: match[1], bold: true });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < line.length) {
+      boldParts.push({ text: line.slice(lastIndex), bold: false });
+    }
+    return (
+      <span key={i} className="block leading-relaxed">
+        {boldParts.length > 0
+          ? boldParts.map((part, j) =>
+              part.bold ? (
+                <strong key={j} className="font-semibold text-slate-900">
+                  {part.text}
+                </strong>
+              ) : (
+                <span key={j}>{part.text}</span>
+              ),
+            )
+          : line || "\u00A0"}
+      </span>
+    );
+  });
 };
 
 const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
@@ -55,14 +94,16 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const messagesRef = useRef(null);
+  const textareaRef = useRef(null);
 
   const welcomeMessage = useMemo(
     () => ({
       id: "welcome-ai",
       role: "assistant",
       content:
-        "AI Operations Assistant is ready. Ask about tenants, balances, payments, complaints, or dashboard summaries. Phase 1 is read-only.",
+        "Hello! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, water bills, dashboard stats, and more. I can also send SMS reminders, create water bills, and search the web. Just ask!",
       created_at: new Date().toISOString(),
       meta: { tool: "system" },
     }),
@@ -77,7 +118,6 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
 
   useEffect(() => {
     if (!canUseAI || !conversationId) return;
-
     const loadHistory = async () => {
       setHistoryLoading(true);
       setError("");
@@ -88,7 +128,6 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
           setMessages([welcomeMessage]);
           return;
         }
-
         const mapped = items.map((row) => ({
           id: row.id,
           role: row.role,
@@ -112,7 +151,6 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
         setHistoryLoading(false);
       }
     };
-
     loadHistory();
   }, [canUseAI, conversationId, welcomeMessage]);
 
@@ -122,21 +160,26 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages.length, loading]);
 
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  }, []);
+
+  useEffect(() => {
+    autoResize();
+  }, [input, autoResize]);
+
   const canSend = useMemo(
     () =>
-      canUseAI &&
-      !loading &&
-      !historyLoading &&
-      input.trim().length > 0 &&
-      Boolean(conversationId),
+      canUseAI && !loading && !historyLoading && input.trim().length > 0 && Boolean(conversationId),
     [canUseAI, input, loading, historyLoading, conversationId],
   );
 
-  const sendMessage = async () => {
+  const sendMessage = useCallback(async () => {
     const question = input.trim();
-    if (!question || !canUseAI || loading || historyLoading || !conversationId) {
-      return;
-    }
+    if (!question || !canUseAI || loading || historyLoading || !conversationId) return;
 
     const userMessage = {
       id: `user-${Date.now()}`,
@@ -150,6 +193,12 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
     setInput("");
     setLoading(true);
     setError("");
+    setShowSuggestions(false);
+
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.focus();
+    }
 
     try {
       const history = buildHistoryPayload(nextMessages);
@@ -168,6 +217,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
           fallback: Boolean(payload.fallback),
           blocked: Boolean(payload.blocked),
           records: Number(payload.records || 0),
+          needsConfirmation: Boolean(payload.needsConfirmation),
         },
       };
 
@@ -190,157 +240,191 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [input, canUseAI, loading, historyLoading, conversationId, messages]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    sendMessage();
-  };
+  const handleKeyDown = useCallback(
+    (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    },
+    [sendMessage],
+  );
+
+  const clearConversation = useCallback(() => {
+    if (currentUserId) {
+      localStorage.removeItem(`ai_assistant_conversation_${currentUserId}`);
+      setConversationId(getLocalConversationId(currentUserId));
+    }
+    setMessages([welcomeMessage]);
+    setError("");
+  }, [currentUserId, welcomeMessage]);
+
+  const pickSuggestion = useCallback((text) => {
+    setInput(text);
+    setShowSuggestions(false);
+    setTimeout(() => {
+      textareaRef.current?.focus();
+      autoResize();
+    }, 50);
+  }, [autoResize]);
 
   if (!canUseAI) {
     return (
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-amber-50">
-        <div className="h-16 border-b border-amber-200 bg-amber-100 px-4 flex items-center justify-between">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-slate-50">
+        <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="md:hidden w-10 h-10 rounded-full hover:bg-amber-200 flex items-center justify-center"
+              className="md:hidden w-9 h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center"
             >
-              <svg
-                className="w-5 h-5 text-amber-800"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 19l-7-7 7-7"
-                />
+              <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <h3 className="font-semibold text-amber-900">AI Assistant</h3>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-600 to-slate-800 text-white flex items-center justify-center text-sm font-bold">
+              AI
+            </div>
+            <h3 className="font-semibold text-slate-800">AI Assistant</h3>
           </div>
           <button
             onClick={onClose}
-            className="w-10 h-10 rounded-full hover:bg-amber-200 flex items-center justify-center"
+            className="w-9 h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center"
           >
-            <svg
-              className="w-5 h-5 text-amber-800"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
+            <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
         <div className="flex-1 min-h-0 flex items-center justify-center px-6 text-center">
-          <p className="text-amber-900">
-            AI Assistant is available for Admin and Agent roles only.
-          </p>
+          <p className="text-slate-500 text-sm">AI Assistant is available for Admin and Agent roles only.</p>
         </div>
       </div>
     );
   }
 
+  const isEmpty = messages.length === 1 && messages[0].id === "welcome-ai";
+
   return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-amber-50">
-      <div className="h-16 border-b border-amber-200 bg-amber-100 px-4 flex items-center justify-between">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-slate-50">
+      {/* Header */}
+      <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={onBack}
-            className="md:hidden w-10 h-10 rounded-full hover:bg-amber-200 flex items-center justify-center"
+            className="md:hidden w-9 h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center"
           >
-            <svg
-              className="w-5 h-5 text-amber-800"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
+            <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <div className="w-10 h-10 rounded-full bg-amber-600 text-white flex items-center justify-center font-bold">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-700 text-white flex items-center justify-center text-sm font-bold">
             AI
           </div>
           <div className="min-w-0">
-            <h3 className="font-semibold text-amber-900 truncate">
-              AI Operations Assistant
-            </h3>
-            <p className="text-xs text-amber-800 truncate">
-              Separate from team chats - Read-only mode
-            </p>
+            <h3 className="font-semibold text-slate-800 truncate text-sm">AI Operations Assistant</h3>
+            <p className="text-[11px] text-slate-500 truncate">Read + Write — confirmation required for actions</p>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="w-10 h-10 rounded-full hover:bg-amber-200 flex items-center justify-center"
-        >
-          <svg
-            className="w-5 h-5 text-amber-800"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        <div className="flex items-center gap-1">
+          <button
+            onClick={clearConversation}
+            title="New conversation"
+            className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
+            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center"
+          >
+            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <div
-        ref={messagesRef}
-        className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3"
-      >
+      {/* Messages */}
+      <div ref={messagesRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
         {historyLoading && (
           <div className="flex justify-start">
-            <div className="bg-white border border-amber-200 text-slate-700 rounded-2xl rounded-bl-md px-4 py-2">
-              <p className="text-sm">Loading previous AI conversation...</p>
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-3 shadow-sm">
+              <p className="text-sm text-slate-500">Loading conversation...</p>
+            </div>
+          </div>
+        )}
+
+        {isEmpty && !historyLoading && (
+          <div className="flex flex-col items-center justify-center h-full text-center px-4 space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg">
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
+              </svg>
+            </div>
+            <p className="text-slate-700 font-semibold">AI Operations Assistant</p>
+            <p className="text-slate-500 text-sm max-w-xs">
+              Ask about tenants, payments, complaints, properties, or water bills. Send SMS reminders, create water bills, or search the web.
+            </p>
+            <div className="grid grid-cols-1 gap-2 w-full max-w-xs">
+              {SUGGESTED_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt.label}
+                  onClick={() => pickSuggestion(prompt.text)}
+                  className="text-left px-4 py-2.5 text-sm text-slate-700 bg-white border border-slate-200 rounded-xl hover:border-amber-300 hover:bg-amber-50 transition-colors shadow-sm"
+                >
+                  {prompt.label}
+                </button>
+              ))}
             </div>
           </div>
         )}
 
         {messages.map((message) => {
           const isUser = message.role === "user";
+          const isError = message.meta?.tool === "error";
+          const needsConfirm = message.meta?.needsConfirmation;
           return (
-            <div
-              key={message.id}
-              className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-            >
+            <div key={message.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+              {!isUser && (
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0 mr-2 mt-0.5">
+                  AI
+                </div>
+              )}
               <div
-                className={`max-w-[85%] rounded-2xl px-4 py-2 shadow-sm ${
+                className={`max-w-[80%] rounded-2xl px-4 py-2.5 shadow-sm ${
                   isUser
-                    ? "bg-slate-700 text-white rounded-br-md"
-                    : "bg-white border border-amber-200 text-slate-800 rounded-bl-md"
+                    ? "bg-slate-800 text-white rounded-br-md"
+                    : isError
+                      ? "bg-red-50 border border-red-200 text-red-800 rounded-bl-md"
+                      : needsConfirm
+                        ? "bg-amber-50 border-2 border-amber-300 text-slate-800 rounded-bl-md"
+                        : "bg-white border border-slate-200 text-slate-800 rounded-bl-md"
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                <div className="mt-1 flex items-center justify-between gap-2">
-                  <span
-                    className={`text-[11px] ${isUser ? "text-slate-200" : "text-slate-500"}`}
-                  >
-                    {formatTime(message.created_at)}
-                  </span>
-                  {!isUser && message.meta?.tool && (
-                    <span className="text-[11px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                <div className="text-sm">{renderMessageContent(message.content)}</div>
+                <div className={`mt-1.5 flex items-center justify-between gap-2 text-[10px] ${isUser ? "text-slate-400" : "text-slate-400"}`}>
+                  <span>{formatTime(message.created_at)}</span>
+                  {!isUser && message.meta?.tool && message.meta.tool !== "error" && (
+                    <span className={`px-2 py-0.5 rounded-full font-medium ${
+                      message.meta.blocked
+                        ? "bg-red-100 text-red-700"
+                        : message.meta.fallback
+                          ? "bg-orange-100 text-orange-700"
+                          : needsConfirm
+                            ? "bg-amber-200 text-amber-800"
+                            : "bg-slate-100 text-slate-600"
+                    }`}>
                       {message.meta.tool}
                     </span>
+                  )}
+                  {isUser && (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
                   )}
                 </div>
               </div>
@@ -350,42 +434,83 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
 
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-white border border-amber-200 text-slate-700 rounded-2xl rounded-bl-md px-4 py-2">
-              <p className="text-sm">Analyzing your request...</p>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0 mr-2 mt-0.5">
+              AI
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 shadow-sm">
+              <LoadingDots />
             </div>
           </div>
         )}
       </div>
 
+      {/* Error banner */}
       {error && (
-        <div className="px-4 pb-2 shrink-0">
-          <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
-            {error}
+        <div className="px-4 pb-1 shrink-0">
+          <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-center justify-between">
+            <span className="truncate">{error}</span>
+            <button onClick={() => setError("")} className="ml-2 text-red-400 hover:text-red-600 shrink-0">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
 
-      <form
-        onSubmit={handleSubmit}
-        className="border-t border-amber-200 bg-amber-100 px-3 py-3 shrink-0"
-      >
-        <div className="flex gap-2 items-end">
+      {/* Input area */}
+      <div className="border-t border-slate-200 bg-white px-3 py-3 shrink-0">
+        <div className="flex gap-2 items-end max-w-3xl mx-auto">
+          <button
+            type="button"
+            onClick={() => setShowSuggestions(!showSuggestions)}
+            className="h-10 w-10 rounded-xl hover:bg-slate-100 flex items-center justify-center shrink-0 transition-colors"
+            title="Quick prompts"
+          >
+            <svg className={`w-5 h-5 transition-colors ${showSuggestions ? "text-amber-600" : "text-slate-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </button>
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask AI about tenants, balances, payments, complaints..."
+            onKeyDown={handleKeyDown}
+            placeholder="Ask anything about your rental operations..."
             rows={1}
-            className="flex-1 resize-none rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            disabled={loading}
+            className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 focus:bg-white disabled:opacity-60 placeholder-slate-400 transition-colors"
+            style={{ maxHeight: 160 }}
           />
           <button
-            type="submit"
+            type="button"
+            onClick={sendMessage}
             disabled={!canSend}
-            className="h-10 px-4 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-10 w-10 rounded-xl bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center shrink-0 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Send message"
           >
-            Send
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
           </button>
         </div>
-      </form>
+        {showSuggestions && (
+          <div className="flex flex-wrap gap-1.5 mt-2 max-w-3xl mx-auto">
+            {SUGGESTED_PROMPTS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => pickSuggestion(p.text)}
+                className="text-xs px-3 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="text-[10px] text-slate-400 text-center mt-1.5">
+          Enter to send · Shift+Enter for new line · Write actions require confirmation
+        </p>
+      </div>
     </div>
   );
 };
