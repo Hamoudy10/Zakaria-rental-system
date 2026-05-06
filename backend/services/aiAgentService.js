@@ -3041,15 +3041,15 @@ SQL: SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE status = 'appr
 };
 
 const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError = null }) => {
-  const apiKey = process.env.GROQ_API_KEY;
+  const apiKey = process.env.AI_SQL_API_KEY || process.env.GROQ_API_KEY;
   if (!apiKey) {
-    return { success: false, error: "GROQ_API_KEY is not configured." };
+    return { success: false, error: "AI_SQL_API_KEY or GROQ_API_KEY is not configured." };
   }
 
   const model =
     process.env.GROQ_SQL_PLANNER_MODEL ||
     "llama-3.3-70b-versatile";
-  const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+  const baseURL = process.env.AI_SQL_BASE_URL || process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 
   const response = await axios.post(
     `${baseURL}/chat/completions`,
