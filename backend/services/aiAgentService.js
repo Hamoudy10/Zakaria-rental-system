@@ -666,22 +666,69 @@ const ROUTER_ACTIONS = [
   "dynamic_sql",
 ];
 
+const ROUTER_DECISION_GUIDE = `
+DECISION PRIORITY (pick the BEST match, not just any match):
+1. "who owes/paid/unpaid" or "balance" or "rent due" for specific tenants → route_tenant_payment_status
+2. "payments list" / "receipt" / "M-Pesa" / "payment history" / "transactions" → route_payments
+3. "tenant list" / "all tenants" / search by name or property → route_tenants
+4. "properties" / "units" / "vacancy" / "occupancy" → route_properties
+5. "complaints" / "issues" / "problems" → route_complaints
+6. "water bill" / "water billing" → route_water_bills
+7. "water profit" / "water loss" / "water profitability" → route_water_profitability
+8. "dashboard" / "overview" / "stats" / "KPIs" (admin) → route_dashboard_comprehensive
+9. "unpaid in Building X this month" → unpaid_tenants_property_month
+10. "arrears by property" / "monthly arrears" → monthly_property_arrears
+11. "total outstanding" / "global arrears" → outstanding_rent
+12. "all data" / "everything" / "overview" → global_data_pack
+13. Find a specific tenant by name/phone/unit → tenant
+14. If nothing fits but needs data → dynamic_sql (LAST RESORT)
+
+DANGER — DO NOT confuse these:
+- "who has not paid" is route_tenant_payment_status, NOT route_payments
+- "payment records for this month" is route_payments, NOT route_tenant_payment_status
+- "list all tenants" is route_tenants, NOT tenant (tenant = single lookup)
+- "show unpaid" without property = route_tenant_payment_status (system-wide)
+- "show unpaid in Building A" = unpaid_tenants_property_month (scoped)
+
+FEW-SHOT EXAMPLES:
+| Question | Action | confidence | response_mode | hints |
+|----------|--------|------------|---------------|-------|
+| "who has not paid this month" | route_tenant_payment_status | 0.95 | list | {"unpaid_only":true} |
+| "show me abdallah's balance" | route_tenant_payment_status | 0.90 | summary | {"tenant":"abdallah"} |
+| "list tenants with outstanding rent" | route_tenant_payment_status | 0.93 | list | {"unpaid_only":true} |
+| "payment records for March 2026" | route_payments | 0.92 | list | {"month":"2026-03"} |
+| "mpesa receipt number ABC123" | route_payments | 0.88 | summary | {} |
+| "show all tenants in Sunset Plaza" | route_tenants | 0.94 | list | {"property":"Sunset Plaza"} |
+| "how many vacant units do we have" | route_properties | 0.90 | summary | {} |
+| "any open complaints" | route_complaints | 0.88 | list | {"status":"open"} |
+| "water bill for unit MJ-4" | route_water_bills | 0.87 | summary | {"unit":"MJ-4"} |
+| "are we making profit on water" | route_water_profitability | 0.93 | summary | {} |
+| "dashboard overview" | route_dashboard_comprehensive | 0.90 | summary | {} |
+| "unpaid tenants in Blue Heights" | unpaid_tenants_property_month | 0.91 | list | {"property":"Blue Heights"} |
+| "total outstanding rent" | outstanding_rent | 0.90 | summary | {} |
+| "find tenant called Abdallah" | tenant | 0.85 | summary | {"tenant":"Abdallah"} |
+| "hello" / "hi" | tenant | 0.40 | summary | {} |
+| "how many tenants have arrears" | monthly_property_arrears | 0.88 | summary | {} |
+`;
+
 const buildRouterMessages = ({ user, question, history }) => {
   const routeCatalog = `
 Available actions:
-- route_tenant_payment_status: mirrors /api/payments/tenant-status for who owes/paid/dues per tenant.
-- route_payments: mirrors /api/payments for payment records and filters.
-- route_tenants: mirrors /api/tenants for tenant lists/search by tenant or property context.
-- route_properties: mirrors /api/properties for property/unit occupancy overviews.
-- route_complaints: mirrors /api/complaints for complaint status/priority tracking.
-- route_water_bills: mirrors /api/water-bills for billed water records.
-- route_water_profitability: mirrors /api/water-bills/profitability for billed vs collected vs expense.
-- route_dashboard_comprehensive: mirrors /api/admin/dashboard/comprehensive-stats for broad dashboard KPIs.
-- unpaid_tenants_property_month: focused list of unpaid tenants in a property this month.
-- monthly_property_arrears: arrears by property.
+- route_tenant_payment_status: who owes/paid, balances, dues per tenant.
+- route_payments: payment records, receipts, transactions.
+- route_tenants: tenant lists and searches.
+- route_properties: property/unit occupancy overviews.
+- route_complaints: complaint status and priority tracking.
+- route_water_bills: water billing records.
+- route_water_profitability: water billed vs collected vs expenses.
+- route_dashboard_comprehensive: broad dashboard KPIs (admin only).
+- unpaid_tenants_property_month: unpaid tenants in a specific property this month.
+- monthly_property_arrears: arrears summarized by property.
 - outstanding_rent: global arrears summary.
-- complaints/properties/dashboard/tenant_or_payments/tenant: legacy focused tools.
-- dynamic_sql: only when no route/tool can answer accurately.
+- global_data_pack: compact operational overview of everything.
+- tenant: single tenant lookup by name/phone/unit.
+- tenant_or_payments: tenant search with fallback to recent payments.
+- dynamic_sql: LAST RESORT read-only SQL when no tool can answer.
 `;
 
   const historySnippet = history
@@ -694,17 +741,19 @@ Available actions:
     {
       role: "system",
       content:
-        "You are a routing planner for a rental ops AI assistant. Pick ONE best action. Prefer route_* actions when possible. Use dynamic_sql only as last resort.",
+        `You are a routing planner for a rental management AI assistant.\n` +
+        `Pick ONE best action from the catalog below.\n` +
+        `Default to route_* actions. Only use dynamic_sql as a last resort when NO route/tool can answer the question.\n` +
+        ROUTER_DECISION_GUIDE,
     },
     {
       role: "system",
       content:
         `Return STRICT JSON only with keys: action, confidence, rationale, response_mode, hints.\n` +
         `action must be one of: ${ROUTER_ACTIONS.join(", ")}\n` +
-        `confidence must be 0..1.\n` +
-        `response_mode: \"summary\" or \"list\".\n` +
-        `hints: object with optional fields property, tenant, month, status, priority, limit.\n` +
-        `Never ask for all data unless explicitly requested.\n` +
+        `confidence must be a float in range 0..1.\n` +
+        `response_mode must be "summary" or "list" (use list for "show all"/"list"/"who" questions, summary for single-fact questions).\n` +
+        `hints: optional object with fields: property, tenant, month, status, priority, limit, unpaid_only, unit_codes.\n` +
         routeCatalog,
     },
     {
@@ -1689,84 +1738,167 @@ const getOutstandingRentSummary = async ({ user }) => {
 
 const getTenantSnapshot = async ({ user, question }) => {
   const patterns = extractSearchPatterns(question);
+  const monthStart = new Date().toISOString().slice(0, 7) + "-01";
 
   let query = `
     SELECT
-      t.id,
+      t.id AS tenant_id,
       t.first_name,
       t.last_name,
+      CONCAT(t.first_name, ' ', t.last_name) AS tenant_name,
       t.phone_number,
+      p.id AS property_id,
       p.name AS property_name,
+      pu.id AS unit_id,
       pu.unit_code,
       COALESCE(ta.monthly_rent, pu.rent_amount, 0) AS monthly_rent,
-      GREATEST(0, COALESCE(ta.arrears_balance, 0)) AS arrears_balance,
-      COALESCE(pm.rent_paid, 0) AS rent_paid,
-      COALESCE(wp.water_bill, 0) AS water_bill,
-      COALESCE(wp.water_paid, 0) AS water_paid,
-      (
-        GREATEST(0, COALESCE(ta.monthly_rent, pu.rent_amount, 0) - COALESCE(pm.rent_paid, 0)) +
-        GREATEST(0, COALESCE(wp.water_bill, 0) - COALESCE(wp.water_paid, 0)) +
-        GREATEST(0, COALESCE(ta.arrears_balance, 0))
-      ) AS total_due
-    FROM tenants t
-    JOIN tenant_allocations ta ON ta.tenant_id = t.id AND ta.is_active = true
-    JOIN property_units pu ON pu.id = ta.unit_id
-    JOIN properties p ON p.id = pu.property_id
-    LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(
-        CASE
-          WHEN (
-            COALESCE(rp.allocated_to_rent, 0) +
-            COALESCE(rp.allocated_to_water, 0) +
-            COALESCE(rp.allocated_to_arrears, 0)
-          ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
-          ELSE COALESCE(rp.amount, 0)
-        END
-      ), 0) AS rent_paid
-      FROM rent_payments rp
-      WHERE rp.tenant_id = t.id
-        AND rp.unit_id = pu.id
-        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+      GREATEST(0, COALESCE(ta.arrears_balance, 0)) AS arrears,
+      COALESCE(ta.expected_amount, 0) AS expected_amount,
+      COALESCE((
+        SELECT SUM(
+          CASE
+            WHEN (
+              COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(rp.allocated_to_rent, 0) + COALESCE(rp.allocated_to_arrears, 0)
+            ELSE COALESCE(rp.amount, 0)
+          END
+        ) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
         AND rp.status = 'completed'
-    ) pm ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT
-        COALESCE((
-          SELECT wb.amount
-          FROM water_bills wb
-          WHERE wb.tenant_id = t.id
-            AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
-            AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', CURRENT_DATE)
-          ORDER BY CASE WHEN wb.unit_id = pu.id THEN 0 ELSE 1 END
-          LIMIT 1
-        ), 0) AS water_bill,
-        COALESCE((
-          SELECT SUM(COALESCE(rp.allocated_to_water, 0))
-          FROM rent_payments rp
-          WHERE rp.tenant_id = t.id
-            AND rp.unit_id = pu.id
-            AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', CURRENT_DATE)
-            AND rp.status = 'completed'
-        ), 0) AS water_paid
-    ) wp ON TRUE
+      ), 0) AS rent_paid,
+      COALESCE((
+        SELECT wb.amount FROM water_bills wb
+        WHERE wb.tenant_id = t.id
+        AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
+        AND DATE_TRUNC('month', wb.bill_month) = DATE_TRUNC('month', $1::date)
+        ORDER BY CASE WHEN wb.unit_id = pu.id THEN 0 ELSE 1 END
+        LIMIT 1
+      ), 0) AS water_bill,
+      COALESCE((
+        SELECT SUM(rp.allocated_to_water) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id
+        AND rp.unit_id = pu.id
+        AND DATE_TRUNC('month', rp.payment_month) = DATE_TRUNC('month', $1::date)
+        AND rp.status = 'completed'
+      ), 0) AS water_paid,
+      COALESCE((
+        SELECT SUM(wb.amount) FROM water_bills wb
+        WHERE wb.tenant_id = t.id
+        AND (wb.unit_id = pu.id OR wb.unit_id IS NULL)
+        AND DATE_TRUNC('month', wb.bill_month) < DATE_TRUNC('month', $1::date)
+      ), 0) - COALESCE((
+        SELECT SUM(rp.allocated_to_water) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id
+        AND rp.unit_id = pu.id
+        AND rp.status = 'completed'
+        AND DATE_TRUNC('month', rp.payment_month) < DATE_TRUNC('month', $1::date)
+      ), 0) AS water_arrears,
+      COALESCE((
+        SELECT SUM(COALESCE(rp.allocated_to_arrears, 0))
+        FROM rent_payments rp
+        WHERE rp.tenant_id = t.id
+        AND rp.unit_id = pu.id
+        AND rp.status = 'completed'
+      ), 0) AS arrears_paid,
+      COALESCE((
+        SELECT SUM(
+          CASE
+            WHEN (
+              COALESCE(rp.allocated_to_rent, 0) +
+              COALESCE(rp.allocated_to_water, 0) +
+              COALESCE(rp.allocated_to_arrears, 0)
+            ) > 0 THEN COALESCE(rp.allocated_to_rent, 0)
+            ELSE COALESCE(rp.amount, 0)
+          END
+        ) FROM rent_payments rp
+        WHERE rp.tenant_id = t.id AND rp.unit_id = pu.id
+        AND DATE_TRUNC('month', rp.payment_month) > DATE_TRUNC('month', $1::date)
+        AND rp.status = 'completed'
+        AND (
+          rp.is_advance_payment = true
+          OR rp.payment_method IN ('carry_forward', 'carry_forward_fix')
+        )
+      ), 0) AS advance_amount
+    FROM tenants t
+    INNER JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
+    INNER JOIN property_units pu ON ta.unit_id = pu.id AND pu.is_active = true
+    INNER JOIN properties p ON pu.property_id = p.id
     WHERE (
-      (t.first_name || ' ' || t.last_name) ILIKE ANY($1::text[]) OR
-      t.first_name ILIKE ANY($1::text[]) OR
-      t.last_name ILIKE ANY($1::text[]) OR
-      COALESCE(t.phone_number, '') ILIKE ANY($1::text[]) OR
-      COALESCE(pu.unit_code, '') ILIKE ANY($1::text[])
+      (t.first_name || ' ' || t.last_name) ILIKE ANY($2::text[]) OR
+      t.first_name ILIKE ANY($2::text[]) OR
+      t.last_name ILIKE ANY($2::text[]) OR
+      COALESCE(t.phone_number, '') ILIKE ANY($2::text[]) OR
+      COALESCE(pu.unit_code, '') ILIKE ANY($2::text[])
     )
+    AND (ta.lease_start_date IS NULL OR ta.lease_start_date < ($1::date + INTERVAL '1 month'))
   `;
 
-  let params = [patterns];
+  let params = [monthStart, patterns];
   ({ query, params } = addAgentPropertyScope({ query, params, user, propertyRef: "p.id" }));
-  query += " ORDER BY total_due DESC, t.first_name ASC LIMIT 5";
+  query += " ORDER BY monthly_rent DESC, t.first_name ASC LIMIT 5";
 
   const result = await db.query(query, params);
 
+  const tenants = result.rows.map((row) => {
+    const monthlyRent = parseFloat(row.monthly_rent) || 0;
+    const rentPaid = parseFloat(row.rent_paid) || 0;
+    const waterBill = parseFloat(row.water_bill) || 0;
+    const waterPaid = parseFloat(row.water_paid) || 0;
+    const waterArrears = Math.max(0, parseFloat(row.water_arrears) || 0);
+    const arrears = parseFloat(row.arrears) || 0;
+    const arrearsPaid = parseFloat(row.arrears_paid) || 0;
+    const advanceAmount = Math.max(0, parseFloat(row.advance_amount) || 0);
+    const totalLeaseExpected = parseFloat(row.expected_amount) || 0;
+
+    const rawRentDue = Math.max(0, monthlyRent - rentPaid);
+    const rawWaterDue = Math.max(0, waterBill - waterPaid) + waterArrears;
+    const rawArrearsDue = Math.max(0, arrears - arrearsPaid);
+
+    let remainingAdvance = advanceAmount;
+    const advanceToArrears = Math.min(remainingAdvance, rawArrearsDue);
+    remainingAdvance -= advanceToArrears;
+    const effectiveArrearsDue = rawArrearsDue - advanceToArrears;
+
+    const advanceToWater = Math.min(remainingAdvance, rawWaterDue);
+    remainingAdvance -= advanceToWater;
+    const effectiveWaterDue = rawWaterDue - advanceToWater;
+
+    const advanceToRent = Math.min(remainingAdvance, rawRentDue);
+    remainingAdvance -= advanceToRent;
+    const effectiveRentDue = rawRentDue - advanceToRent;
+
+    const totalDue = effectiveRentDue + effectiveWaterDue + effectiveArrearsDue;
+
+    return {
+      tenant_id: row.tenant_id,
+      tenant_name: row.tenant_name,
+      phone_number: row.phone_number,
+      property_id: row.property_id,
+      property_name: row.property_name,
+      unit_id: row.unit_id,
+      unit_code: row.unit_code,
+      monthly_rent: monthlyRent,
+      total_expected: totalLeaseExpected,
+      rent_paid: rentPaid,
+      rent_due: effectiveRentDue,
+      water_bill: waterBill,
+      water_paid: waterPaid,
+      water_due: effectiveWaterDue,
+      arrears: arrears,
+      arrears_due: effectiveArrearsDue,
+      advance_amount: advanceAmount,
+      advance_credit: remainingAdvance,
+      total_due: totalDue,
+      is_fully_paid: totalDue <= 0,
+    };
+  });
+
   return {
     label: "Tenant Snapshot",
-    rows: result.rows,
+    rows: tenants,
   };
 };
 
