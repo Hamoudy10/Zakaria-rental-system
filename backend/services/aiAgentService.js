@@ -86,16 +86,6 @@ const SEARCH_STOPWORDS = new Set([
   "give",
   "please",
   "kindly",
-  "tenant",
-  "tenants",
-  "property",
-  "properties",
-  "unit",
-  "units",
-  "payment",
-  "payments",
-  "complaint",
-  "complaints",
   "with",
   "from",
   "into",
@@ -114,16 +104,6 @@ const SEARCH_STOPWORDS = new Set([
   "are",
   "was",
   "were",
-  "due",
-  "balance",
-  "rent",
-  "water",
-  "arrears",
-  "paid",
-  "missing",
-  "unpaid",
-  "outstanding",
-  "find",
   "out",
   "far",
 ]);
@@ -578,22 +558,42 @@ const extractPriority = (question) => {
   return null;
 };
 
+const SEARCH_PHRASE_GENERIC = new Set([
+  "all", "any", "are", "can", "did", "does", "each", "every", "far",
+  "for", "get", "got", "has", "had", "have", "how", "into", "just",
+  "list", "most", "much", "need", "not", "now", "out", "row", "see",
+  "show", "some", "tell", "that", "than", "them", "then", "this",
+  "want", "was", "were", "what", "when", "where", "which", "who",
+  "why", "will", "with", "your", "also", "from", "more", "must",
+  "only", "over", "such", "than", "very", "well", "been", "being",
+  "done", "know", "like", "make", "made", "many", "take", "took",
+  "give", "gave", "last", "next", "past", "here", "there", "still",
+]);
+
 const extractSearchPhrase = (question) => {
   const text = String(question || "").trim();
   const quoted = text.match(/"([^"]{2,80})"/);
   if (quoted?.[1]) return quoted[1].trim();
 
-  // Only treat the prompt as search text when user explicitly asks to search/find by a term.
-  const hasExplicitSearchIntent =
-    /\b(search|find|lookup|named|called|phone|id|unit|receipt)\b/i.test(text);
-  if (!hasExplicitSearchIntent) return "";
+  const namedMatch = text.match(/\b(?:named|called)\s+(\w+(?:\s+\w+)?)\b/i);
+  if (namedMatch?.[1]) return namedMatch[1];
 
-  const patterns = extractSearchPatterns(text);
-  if (patterns.length === 1 && patterns[0] === "%%") return "";
-  return patterns
-    .map((pattern) => pattern.replace(/%/g, ""))
-    .join(" ")
-    .trim();
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(
+      (token) =>
+        token.length >= 3 &&
+        !SEARCH_STOPWORDS.has(token) &&
+        !SEARCH_PHRASE_GENERIC.has(token) &&
+        !/^\d{1,2}$/.test(token),
+    )
+    .slice(0, 3);
+
+  if (tokens.length === 0) return "";
+  return tokens.join(" ").trim();
 };
 
 const getMonthRange = (month) => {
