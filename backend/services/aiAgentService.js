@@ -653,15 +653,29 @@ const extractPriority = (question) => {
 };
 
 const SEARCH_PHRASE_GENERIC = new Set([
-  "all", "any", "are", "can", "did", "does", "each", "every", "far",
+  "all", "any", "are", "ask", "can", "did", "does", "each", "every", "far",
   "for", "get", "got", "has", "had", "have", "how", "into", "just",
   "list", "most", "much", "need", "not", "now", "out", "row", "see",
   "show", "some", "tell", "that", "than", "them", "then", "this",
   "want", "was", "were", "what", "when", "where", "which", "who",
   "why", "will", "with", "your", "also", "from", "more", "must",
-  "only", "over", "such", "than", "very", "well", "been", "being",
+  "only", "over", "such", "very", "well", "been", "being", "find",
   "done", "know", "like", "make", "made", "many", "take", "took",
   "give", "gave", "last", "next", "past", "here", "there", "still",
+  "about", "check", "help", "look", "kindly", "please", "search",
+  "using", "would", "could", "should", "doesn", "don't", "isn",
+  "result", "results", "detail", "details", "report", "reports",
+  "info", "information", "provide", "read", "going", "looks",
+  "let", "know", "send", "back", "come", "came", "went", "keep",
+  "tenant", "tenants", "paid", "unpaid", "month", "months",
+  "monthly", "rent", "rental", "payment", "payments", "balance",
+  "balances", "arrears", "water", "unit", "units", "property",
+  "properties", "building", "buildings", "complaint", "complaints",
+  "dashboard", "overview", "stats", "status", "statuses",
+  "bill", "bills", "billing", "total", "totals", "count",
+  "amount", "amounts", "record", "records", "data", "database",
+  "current", "previous", "latest", "recent", "today", "week",
+  "these", "those", "their", "other", "another", "more",
 ]);
 
 const extractSearchPhrase = (question) => {
@@ -2900,7 +2914,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     {
       role: "system",
       content:
-        "You are a rental operations assistant. Use only provided facts. Be concise. If data is insufficient, say what is missing. Explain errors in simple language and give one practical next step. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
+        "You are a rental operations assistant. Use ONLY the facts provided below. Be concise. If the facts array is empty or shows zero results, simply state that no matching data was found — do NOT ask the user for more information or invent requirements. Explain errors in simple language. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
     },
     ...history,
     {
@@ -4194,20 +4208,30 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
         answer: deterministicAnswer,
         usage: null,
       }
-    : await callGroqForNarrative({
-        question: contextualQuestion,
-        history: safeHistory,
-        toolLabel: toolResult.label,
-        toolRows: toolResult.rows,
-        user,
-      }).catch(() => ({
-        usedFallback: true,
-        answer: formatFallbackResponse({
+    : (!toolResult?.rows || toolResult.rows.length === 0)
+      ? {
+          usedFallback: true,
+          answer: formatFallbackResponse({
+            question: contextualQuestion,
+            toolLabel: toolResult.label,
+            rows: toolResult.rows,
+          }),
+          usage: null,
+        }
+      : await callGroqForNarrative({
           question: contextualQuestion,
+          history: safeHistory,
           toolLabel: toolResult.label,
-          rows: toolResult.rows,
-        }),
-        usage: null,
+          toolRows: toolResult.rows,
+          user,
+        }).catch(() => ({
+          usedFallback: true,
+          answer: formatFallbackResponse({
+            question: contextualQuestion,
+            toolLabel: toolResult.label,
+            rows: toolResult.rows,
+          }),
+          usage: null,
       }));
 
   const fallbackAnswer = deterministicAnswer || formatFallbackResponse({
