@@ -741,66 +741,53 @@ const ROUTER_ACTIONS = [
   "web_fetch",
 ];
 
-const ROUTER_DECISION_GUIDE = `
-DECISION PRIORITY (pick the BEST match, not just any match):
-WRITE ACTIONS (always need confirmation — draft first, then confirm):
-1. "send SMS/reminder/message to X" → draft_sms_reminder
-2. "create/record water bill for X" → draft_water_bill
-3. "assign complaint X to Y" → draft_complaint_assignment
+const buildRouterMessages = ({ user, question, history, pendingActionContext }) => {
+  const systemOverview = `
+You are the routing brain of an AI operations assistant for a rental property management system in Kenya.
 
-READ ACTIONS:
-4. "who owes/paid/unpaid" or "balance" or "rent due" → route_tenant_payment_status
-5. "payments list" / "receipt" / "M-Pesa" → route_payments
-6. "tenant list" / search by name or property → route_tenants
-7. "properties" / "vacancy" / "occupancy" → route_properties
-8. "complaints" / "issues" → route_complaints
-9. "water bill" / "water billing" → route_water_bills
-10. "water profit" / "water loss" → route_water_profitability
-11. "dashboard" / "overview" / "stats" / "KPIs" (admin) → route_dashboard_comprehensive
-12. "unpaid in Building X this month" → unpaid_tenants_property_month
-13. "arrears by property" → monthly_property_arrears
-14. "total outstanding" → outstanding_rent
-15. "all data" / "everything" → global_data_pack
-16. Find specific tenant by name/phone/unit → tenant
+SYSTEM ENTITIES:
+- Tenants: renters with names, phone numbers, units they occupy
+- Properties: buildings with addresses, towns, counties
+- Units: individual rooms/apartments within properties, each with a unit code (e.g., MJ-4)
+- Allocations: links tenants to units, stores monthly rent amount and arrears
+- Payments: M-Pesa or manual payments, allocated to arrears→water→rent→advance
+- Water Bills: monthly water charges per tenant
+- Complaints: maintenance issues with status (open/in_progress/resolved/closed) and priority
+- Expenses: operational costs tracked by agents
 
-WEB ACTIONS:
-17. "search the web for X" / "look up X online" / "what does google say about X" → web_search
-18. "fetch URL X" / "get content from X" with a URL → web_fetch
+CURRENT USER: ${user.role} (${user.role === 'admin' ? 'can see all data' : 'can only see assigned properties'})
+${pendingActionContext || ''}
 
-LAST RESORT:
-19. If nothing fits but needs data → dynamic_sql
-
-DANGER — DO NOT confuse:
-- "send reminder" is draft_sms_reminder, NOT route_tenant_payment_status
-- "create water bill" is draft_water_bill, NOT route_water_bills
-- "who has not paid" is route_tenant_payment_status, NOT route_payments
-- "list tenants" is route_tenants, NOT tenant (tenant = single lookup)
-
-WRITE WORKFLOW: draft_sms_reminder/draft_water_bill/draft_complaint_assignment → AI asks for confirmation → user says "yes" to execute.
+ROUTING RULES:
+- Understand the user's INTENT, not just keywords
+- A question like "find tenants who have not paid" means they want payment status → route_tenant_payment_status
+- "Show me the tenants" means a list → route_tenants (use list response_mode)
+- "What is John's balance" means a single lookup → use summary mode
+- If the user references earlier data (e.g., "the third one", "those tenants"), keep the same tool context
+- If nothing in the catalog matches, use dynamic_sql as absolute last resort
 `;
 
-const buildRouterMessages = ({ user, question, history }) => {
   const routeCatalog = `
 Available actions:
 - draft_sms_reminder: draft and queue an SMS reminder to a tenant (needs confirmation).
 - draft_water_bill: draft a water bill entry (needs confirmation).
 - draft_complaint_assignment: draft a complaint assignment (needs confirmation).
-- route_tenant_payment_status: who owes/paid, balances, dues per tenant.
-- route_payments: payment records, receipts, transactions.
-- route_tenants: tenant lists and searches.
-- route_properties: property/unit occupancy overviews.
-- route_complaints: complaint status and priority tracking.
-- route_water_bills: water billing records.
-- route_water_profitability: water billed vs collected vs expenses.
+- route_tenant_payment_status: who owes/paid, balances, dues per tenant with advance allocation.
+- route_payments: payment records, receipts, M-Pesa transactions.
+- route_tenants: tenant lists and searches by name, property, phone, or unit code.
+- route_properties: property/unit occupancy overviews, vacant/occupied counts.
+- route_complaints: complaint status and priority tracking with tenant context.
+- route_water_bills: water billing records for current or past months.
+- route_water_profitability: water billed vs collected vs expenses analysis.
 - route_dashboard_comprehensive: broad dashboard KPIs (admin only).
-- unpaid_tenants_property_month: unpaid tenants in a specific property this month.
+- unpaid_tenants_property_month: unpaid tenants in a specific property/building this month.
 - monthly_property_arrears: arrears summarized by property.
-- outstanding_rent: global arrears summary.
-- global_data_pack: compact operational overview of everything.
-- tenant: single tenant lookup by name/phone/unit.
-- web_search: search the internet for facts or information.
+- outstanding_rent: global arrears summary across all properties.
+- global_data_pack: compact operational overview of everything in the system.
+- tenant: single tenant snapshot lookup by name, phone, or unit code.
+- web_search: search the internet for facts, news, or external information.
 - web_fetch: fetch and read content from a specific URL.
-- dynamic_sql: LAST RESORT read-only SQL when no tool can answer.
+- dynamic_sql: LAST RESORT read-only SQL query when no tool can answer.
 `;
 
   const historySnippet = history
@@ -812,11 +799,7 @@ Available actions:
   return [
     {
       role: "system",
-      content:
-        `You are a routing planner for a rental management AI assistant.\n` +
-        `Pick ONE best action from the catalog below.\n` +
-        `Default to route_* actions. Only use dynamic_sql as a last resort when NO route/tool can answer the question.\n` +
-        ROUTER_DECISION_GUIDE,
+      content: systemOverview,
     },
     {
       role: "system",
@@ -824,7 +807,7 @@ Available actions:
         `Return STRICT JSON only with keys: action, confidence, rationale, response_mode, hints.\n` +
         `action must be one of: ${ROUTER_ACTIONS.join(", ")}\n` +
         `confidence must be a float in range 0..1.\n` +
-        `response_mode must be "summary" or "list" (use list for "show all"/"list"/"who" questions, summary for single-fact questions).\n` +
+        `response_mode must be "summary" or "list" (list for "show all/list/who/find", summary for single facts).\n` +
         `hints: optional object with fields: property, tenant, month, status, priority, limit, unpaid_only, unit_codes.\n` +
         routeCatalog,
     },
@@ -838,7 +821,7 @@ Available actions:
   ];
 };
 
-const callGroqToolRouter = async ({ user, question, history }) => {
+const callGroqToolRouter = async ({ user, question, history, pendingActionContext }) => {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return { success: false, error: "GROQ_API_KEY is not configured." };
@@ -855,7 +838,7 @@ const callGroqToolRouter = async ({ user, question, history }) => {
       model,
       temperature: 0.0,
       max_tokens: 260,
-      messages: buildRouterMessages({ user, question, history }),
+      messages: buildRouterMessages({ user, question, history, pendingActionContext }),
     },
     {
       headers: {
@@ -908,23 +891,6 @@ const heuristicRouter = (question) => {
       : "summary",
     hints: correctionTarget ? { limit: correctionTarget } : {},
   };
-};
-
-const isExplicitActionQuestion = (question, action) => {
-  const q = String(question || "").toLowerCase();
-  const explicitMap = {
-    route_tenant_payment_status:
-      /\b(tenant payment status|who paid|who (?:has|have) not paid|who (?:has|have) paid|who (?:still )?owe(?:s)?|not (?:yet )?paid|unpaid|rent due|outstanding (?:rent|balance)|payment due)\b/,
-    route_payments: /\b(payment records|payments list|payment list|mpesa receipt|receipt|rent payments)\b/,
-    route_tenants: /\b(tenant list|tenants list|list tenants|show tenants|all tenants)\b/,
-    route_properties: /\b(property stats|properties list|property list|show properties|all properties|occupancy)\b/,
-    route_complaints: /\b(open complaints|complaints list|complaint list|list complaints|show complaints|complaints|complaint)\b/,
-    route_water_bills: /\b(water bill|water bills|water billing)\b/,
-    route_water_profitability: /\b(water profitability|water profit|water loss)\b/,
-    route_dashboard_comprehensive: /\b(comprehensive stats|dashboard comprehensive|dashboard summary)\b/,
-  };
-
-  return Boolean(explicitMap[action]?.test(q));
 };
 
 const isCorrectionFollowUp = (question) => {
@@ -1060,24 +1026,6 @@ const inferFollowUpAction = ({ question, lastContexts, routerDecision }) => {
     q.includes("outstanding") ||
     q.includes("owe");
   const routerAction = String(routerDecision.action || "");
-  const explicitNewAction =
-    isExplicitActionQuestion(question, routerAction) && routerAction !== "tenant";
-
-  if (explicitNewAction) {
-    const explicitNext = {
-      ...next,
-      confidence: Math.max(Number(next.confidence || 0), 0.82),
-    };
-    if (routerAction === "route_tenant_payment_status" && questionAboutPaymentState) {
-      explicitNext.response_mode = "list";
-      explicitNext.hints = {
-        ...explicitNext.hints,
-        unpaid_only: true,
-        limit: Number(explicitNext.hints.limit || 200),
-      };
-    }
-    return explicitNext;
-  }
 
   if (isCorrectionFollowUp(question) && (lastWasTenantStatus || anyTenantStatus)) {
     next.action = "route_tenant_payment_status";
@@ -1104,7 +1052,7 @@ const inferFollowUpAction = ({ question, lastContexts, routerDecision }) => {
   if (questionAboutPaymentState && (lastWasTenantsList || anyTenantsList)) {
     next.action = "route_tenant_payment_status";
     next.response_mode = "list";
-    if (!isExplicitActionQuestion(question, "route_tenant_payment_status") && Number.isFinite(lastLimit) && lastLimit > 0) {
+    if (routerAction !== "route_tenant_payment_status" && Number.isFinite(lastLimit) && lastLimit > 0) {
       next.hints.limit = Math.min(lastLimit, 200);
     }
     next.hints.unpaid_only = true;
@@ -1283,138 +1231,35 @@ const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) =>
 const chooseTool = (question) => {
   const q = question.toLowerCase();
 
-  if (
-    q.includes("tenant status") ||
-    q.includes("payment status") ||
-    q.includes("who paid") ||
-    q.includes("who has paid") ||
-    q.includes("who has not paid") ||
-    q.includes("who have not paid") ||
-    q.includes("who have paid") ||
-    q.includes("which tenants have not paid") ||
-    q.includes("tenants have not paid") ||
-    q.includes("tenant has not paid") ||
-    q.includes("not paid this month") ||
-    q.includes("not yet paid") ||
-    q.includes("who still owe") ||
-    q.includes("who owe") ||
-    q.includes("unpaid this month") ||
-    q.includes("unpaid tenants") ||
-    q.includes("not paid") ||
-    q.includes("rent due") ||
-    q.includes("outstanding rent") ||
-    q.includes("outstanding balance") ||
-    q.includes("payments/tenant-status")
-  ) {
+  if (/\b(not paid|unpaid|owe|balance|outstanding|rent due|payment status|who.*paid)\b/.test(q)) {
     return "route_tenant_payment_status";
   }
-
-  if (
-    (q.includes("payments list") || q.includes("payment list") || q.includes("payment records")) &&
-    !q.includes("tenant status")
-  ) {
+  if (/\b(payment|receipt|mpesa|transaction|paybill)\b/.test(q) && !q.includes("tenant status")) {
     return "route_payments";
   }
-
-  if (
-    q.includes("complaints list") ||
-    q.includes("complaint list") ||
-    q.includes("open complaints") ||
-    q.includes("list complaints") ||
-    q.includes("show complaints")
-  ) {
-    return "route_complaints";
+  if (/\b(tenant|tenants)\b/.test(q) && /\b(list|all|show|find|search)\b/.test(q)) {
+    return "route_tenants";
   }
-
-  if (
-    q.includes("properties list") ||
-    q.includes("properties data") ||
-    q.includes("property stats")
-  ) {
+  if (/\b(property|properties|vacant|occupancy|unit|units)\b/.test(q) && !/\b(not paid|unpaid|owe)\b/.test(q)) {
     return "route_properties";
   }
-
-  if (
-    q.includes("water bill list") ||
-    q.includes("water bills list") ||
-    q.includes("water profitability")
-  ) {
-    return q.includes("profitability")
-      ? "route_water_profitability"
-      : "route_water_bills";
+  if (/\b(complaint|issue|problem)\b/.test(q)) {
+    return "route_complaints";
   }
-
-  if (q.includes("tenants list") || q.includes("tenant list")) {
-    return "route_tenants";
+  if (/\bwater.*(bill|billing)\b/.test(q)) {
+    return "route_water_bills";
   }
-
-  if (
-    q.includes("tenant") &&
-    (q.includes("list") || q.includes("all"))
-  ) {
-    return "route_tenants";
+  if (/\b(send|sms|remind|message|notify)\b/.test(q)) {
+    return "draft_sms_reminder";
   }
-
-  if (
-    q.includes("comprehensive stats") ||
-    q.includes("dashboard comprehensive")
-  ) {
+  if (/\b(search|web|internet|google|look up|lookup)\b/.test(q)) {
+    return "web_search";
+  }
+  if (/\b(dashboard|stats|kpi|overview)\b/.test(q)) {
     return "route_dashboard_comprehensive";
   }
-
-  if (
-    (q.includes("not paid") || q.includes("unpaid")) &&
-    (q.includes("this month") || q.includes("current month")) &&
-    (q.includes("building") || q.includes("property") || q.includes("in "))
-  ) {
-    return "unpaid_tenants_property_month";
-  }
-
-  if (
-    q.includes("arrears") &&
-    (q.includes("this month") || q.includes("current month") || q.includes("month")) &&
-    (q.includes("all properties") || q.includes("properties") || q.includes("property"))
-  ) {
-    return "monthly_property_arrears";
-  }
-
-  if (
-    q.includes("all data") ||
-    q.includes("everything") ||
-    q.includes("database") ||
-    q.includes("system data") ||
-    q.includes("full data")
-  ) {
+  if (/\b(all data|everything|system|database)\b/.test(q)) {
     return "global_data_pack";
-  }
-
-  if (
-    (q.includes("missing rent") ||
-      q.includes("unpaid rent") ||
-      q.includes("outstanding rent") ||
-      q.includes("rent not paid")) &&
-    (q.includes("so far") ||
-      q.includes("overall") ||
-      q.includes("total") ||
-      q.includes("all") ||
-      q.includes("current"))
-  ) {
-    return "outstanding_rent";
-  }
-
-  if (q.includes("complaint") || q.includes("maintenance")) return "complaints";
-  if (q.includes("dashboard") || q.includes("overview") || q.includes("stat"))
-    return "dashboard";
-  if (q.includes("property") || q.includes("vacant") || q.includes("occupied"))
-    return "properties";
-  if (
-    q.includes("payment") ||
-    q.includes("mpesa") ||
-    q.includes("arrears") ||
-    q.includes("balance") ||
-    q.includes("owe")
-  ) {
-    return "tenant_or_payments";
   }
 
   return "tenant";
@@ -4198,36 +4043,30 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   });
   let routerDecision = heuristicRouter(contextualQuestion);
   let routerUsage = null;
+
+  let pendingCtx = "";
+  if (safeConversationId) {
+    try {
+      const pa = await getLastPendingAction(user.id, safeConversationId);
+      if (pa) {
+        pendingCtx = `PENDING ACTION: ${pa.action_type} awaits confirmation. User may respond "yes" or "no".`;
+      }
+    } catch (e) { /* non-critical */ }
+  }
+
   try {
     const routed = await callGroqToolRouter({
       user,
       question: contextualQuestion,
       history: safeHistory,
+      pendingActionContext: pendingCtx,
     });
     if (routed.success) {
       routerDecision = routed.data;
       routerUsage = routed.data.usage || null;
     }
   } catch (error) {
-    // Fallback to heuristic router
-  }
-
-  const explicitHeuristicAction = chooseTool(contextualQuestion);
-  const llmConfidence = Number(routerDecision.confidence || 0);
-  if (
-    explicitHeuristicAction &&
-    explicitHeuristicAction !== "tenant" &&
-    isExplicitActionQuestion(contextualQuestion, explicitHeuristicAction) &&
-    llmConfidence < 0.4
-  ) {
-    routerDecision = {
-      ...routerDecision,
-      action: explicitHeuristicAction,
-      confidence: 0.55,
-      response_mode: /\b(list|all|show|which|who)\b/i.test(contextualQuestion)
-        ? "list"
-        : routerDecision.response_mode,
-    };
+    // LLM router failed — use heuristic fallback
   }
 
   routerDecision = inferFollowUpAction({
