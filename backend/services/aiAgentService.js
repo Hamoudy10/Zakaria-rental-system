@@ -268,6 +268,25 @@ WHERE status='approved' AND DATE_TRUNC('month',expense_date)=DATE_TRUNC('month',
 
 Q: how many open complaints
 SELECT COUNT(*)::int FROM complaints WHERE status IN ('open','in_progress')
+
+Q: find receipt UE6PZ3GR2A / lookup payment by mpesa code / where is this receipt
+SELECT rp.mpesa_receipt_number,rp.amount,rp.payment_date,rp.status,
+  t.first_name,t.last_name,pu.unit_code,p.name AS property_name
+FROM rent_payments rp
+LEFT JOIN tenants t ON t.id=rp.tenant_id
+LEFT JOIN property_units pu ON pu.id=rp.unit_id
+LEFT JOIN properties p ON p.id=rp.property_id
+WHERE rp.mpesa_receipt_number ILIKE '%UE6PZ3GR2A%' LIMIT 50
+
+Q: payments made today / all payments today with tenants
+SELECT rp.mpesa_receipt_number,rp.amount,rp.payment_date,rp.status,
+  t.first_name,t.last_name,pu.unit_code,p.name AS property_name
+FROM rent_payments rp
+LEFT JOIN tenants t ON t.id=rp.tenant_id
+LEFT JOIN property_units pu ON pu.id=rp.unit_id
+LEFT JOIN properties p ON p.id=rp.property_id
+WHERE rp.payment_date::date = CURRENT_DATE
+ORDER BY rp.amount DESC LIMIT 100
 `.trim();
 };
 
