@@ -271,6 +271,17 @@ SELECT COUNT(*)::int FROM complaints WHERE status IN ('open','in_progress')
 `.trim();
 };
 
+const normalizeHistory = (history) => {
+  if (!Array.isArray(history)) return [];
+  return history
+    .slice(-MAX_HISTORY_ITEMS)
+    .map((item) => ({
+      role: item?.role === "assistant" ? "assistant" : "user",
+      content: String(item?.content || "").slice(0, MAX_HISTORY_ITEM_LENGTH),
+    }))
+    .filter((item) => item.content.trim().length > 0);
+};
+
 const normalizeHistoryText = (value, max = MAX_HISTORY_ITEM_LENGTH) =>
   String(value || "")
     .replace(/\s+/g, " ")
