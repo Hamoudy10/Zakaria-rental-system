@@ -2959,13 +2959,13 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     process.env.GROQ_NARRATIVE_MODEL ||
     "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
-  const compactFacts = JSON.stringify(toolRows).slice(0, 5000);
+  const compactFacts = JSON.stringify(toolRows).slice(0, 12000);
 
   const messages = [
     {
       role: "system",
       content:
-        "You are a rental operations assistant. Use ONLY the facts provided below. Be concise. If the facts array is empty or shows zero results, simply state that no matching data was found — do NOT ask the user for more information or invent requirements. Explain errors in simple language. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
+        "You are a rental operations assistant. Use ONLY the facts provided below. List ALL items when the user asks for a list — do not truncate or summarize lists. Be concise. If the facts array is empty or shows zero results, simply state that no matching data was found — do NOT ask the user for more information or invent requirements. Explain errors in simple language. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
     },
     ...history,
     {
@@ -2979,7 +2979,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     {
       model,
       temperature: 0.1,
-      max_tokens: 350,
+      max_tokens: 2000,
       messages,
     },
     {
