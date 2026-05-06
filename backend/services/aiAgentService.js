@@ -846,7 +846,6 @@ const callGroqToolRouter = async ({ user, question, history }) => {
 
   const model =
     process.env.GROQ_ROUTER_MODEL ||
-    process.env.GROQ_MODEL ||
     "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 
@@ -915,7 +914,7 @@ const isExplicitActionQuestion = (question, action) => {
   const q = String(question || "").toLowerCase();
   const explicitMap = {
     route_tenant_payment_status:
-      /\b(tenant payment status|who paid|who has paid|who has not paid|not paid|unpaid|rent due|outstanding rent|owe|owes)\b/,
+      /\b(tenant payment status|who paid|who (?:has|have) not paid|who (?:has|have) paid|who (?:still )?owe(?:s)?|not (?:yet )?paid|unpaid|rent due|outstanding (?:rent|balance)|payment due)\b/,
     route_payments: /\b(payment records|payments list|payment list|mpesa receipt|receipt|rent payments)\b/,
     route_tenants: /\b(tenant list|tenants list|list tenants|show tenants|all tenants)\b/,
     route_properties: /\b(property stats|properties list|property list|show properties|all properties|occupancy)\b/,
@@ -1290,12 +1289,21 @@ const chooseTool = (question) => {
     q.includes("who paid") ||
     q.includes("who has paid") ||
     q.includes("who has not paid") ||
+    q.includes("who have not paid") ||
+    q.includes("who have paid") ||
     q.includes("which tenants have not paid") ||
     q.includes("tenants have not paid") ||
     q.includes("tenant has not paid") ||
+    q.includes("not paid this month") ||
+    q.includes("not yet paid") ||
+    q.includes("who still owe") ||
+    q.includes("who owe") ||
     q.includes("unpaid this month") ||
     q.includes("unpaid tenants") ||
+    q.includes("not paid") ||
     q.includes("rent due") ||
+    q.includes("outstanding rent") ||
+    q.includes("outstanding balance") ||
     q.includes("payments/tenant-status")
   ) {
     return "route_tenant_payment_status";
@@ -3015,7 +3023,6 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
 
   const model =
     process.env.GROQ_NARRATIVE_MODEL ||
-    process.env.GROQ_MODEL ||
     "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
   const compactFacts = JSON.stringify(toolRows).slice(0, 5000);
@@ -3095,7 +3102,6 @@ const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError
 
   const model =
     process.env.GROQ_SQL_PLANNER_MODEL ||
-    process.env.GROQ_MODEL ||
     "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 
@@ -4114,6 +4120,37 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   });
   if (pendingCheck.handled) {
     return pendingCheck.result;
+  }
+
+  const qLower = safeQuestion.toLowerCase().trim();
+  const isClearCommand =
+    /^(clear|clear context|reset|start over|new conversation|new chat|restart|begin again|forget everything)$/i.test(qLower) ||
+    /\b(clear|reset|start over|new conversation)\b/i.test(qLower) && qLower.length < 30;
+  if (isClearCommand && safeConversationId) {
+    try {
+      await db.query(
+        `DELETE FROM ai_chat_history WHERE conversation_id = $1 AND user_id = $2`,
+        [safeConversationId, user.id],
+      );
+      await db.query(
+        `DELETE FROM ai_pending_actions WHERE conversation_id = $1 AND user_id = $2 AND status = 'pending'`,
+        [safeConversationId, user.id],
+      );
+    } catch (err) {
+      // Non-critical — continue even if cleanup fails
+    }
+
+    return {
+      success: true,
+      data: {
+        mode: "read_only",
+        blocked: false,
+        answer:
+          "I've cleared our conversation context. How can I help you?",
+        tool: "system",
+        contextCleared: true,
+      },
+    };
   }
 
   if (isMutationIntent(safeQuestion)) {
