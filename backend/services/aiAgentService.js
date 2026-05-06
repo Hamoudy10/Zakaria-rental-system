@@ -291,6 +291,44 @@ const buildContextSummary = (rows) => {
     .filter(Boolean)
     .slice(-8);
 
+  const dataPoints = rows
+    .filter((row) => row.role === "assistant")
+    .flatMap((row) => {
+      try {
+        const meta =
+          typeof row.metadata === "object"
+            ? row.metadata
+            : typeof row.metadata === "string"
+              ? JSON.parse(row.metadata)
+              : {};
+        const sample = meta?.sample;
+        if (!Array.isArray(sample) || sample.length === 0) return [];
+        return sample
+          .filter((item) => item && typeof item === "object")
+          .map((item) => {
+            const parts = [];
+            if (item.tenant_name) parts.push(item.tenant_name);
+            else if (item.first_name || item.last_name) {
+              parts.push(`${item.first_name || ""} ${item.last_name || ""}`.trim());
+            }
+            if (item.property_name) parts.push(item.property_name);
+            if (item.unit_code) parts.push(`(${item.unit_code})`);
+            if (item.total_due !== undefined && item.total_due !== null) {
+              parts.push(`KES ${Number(item.total_due).toLocaleString()} due`);
+            } else if (item.amount !== undefined && item.amount !== null && !parts.some((p) => p.includes("due"))) {
+              parts.push(`KES ${Number(item.amount).toLocaleString()}`);
+            }
+            if (item.status) parts.push(item.status);
+            if (item.priority) parts.push(item.priority);
+            return parts.length > 0 ? parts.join(" - ") : null;
+          })
+          .filter(Boolean);
+      } catch (e) {
+        return [];
+      }
+    })
+    .slice(0, 20);
+
   const lastAssistant = [...rows]
     .reverse()
     .find((row) => row.role === "assistant");
@@ -311,6 +349,12 @@ const buildContextSummary = (rows) => {
     lines.push("Verified tool actions:");
     actionLines.forEach((action, index) => {
       lines.push(`${index + 1}. ${action}`);
+    });
+  }
+  if (dataPoints.length > 0) {
+    lines.push("Key data discussed (sample):");
+    dataPoints.forEach((dp, index) => {
+      lines.push(`  ${index + 1}. ${dp}`);
     });
   }
   if (displayLine) lines.push(displayLine);
