@@ -10,7 +10,7 @@ const MAX_CONTEXT_RECENT_ITEMS = 14;
 const MAX_CONTEXT_SUMMARY_CHARS = 2400;
 const MAX_ROUTER_HISTORY_ITEMS = 10;
 const MAX_ROUTER_HISTORY_CHARS = 2200;
-const MAX_DYNAMIC_ROWS = 200;
+const MAX_DYNAMIC_ROWS = 500;
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DANGEROUS_SQL_KEYWORDS = [
@@ -1174,8 +1174,11 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
       const due = Number(tenant.total_due || 0).toLocaleString();
       return `${index + 1}. ${name} - ${property} (${unit}) - KES ${due}`;
     });
+    const totalCount = Number(payload.tenants_count || 0);
+    const shownCount = Number(payload.display_tenants_count || 0);
+    const moreInfo = shownCount < totalCount ? `\n(Showing ${shownCount} of ${totalCount} tenants. Ask for more if needed.)` : "";
     return {
-      answer: `Here is the list (${filtered.length}):\n${lines.join("\n")}`,
+      answer: `Here is the list (${filtered.length})${shownCount < totalCount ? `, showing ${filtered.length} of ${totalCount} total` : ""}:\n${lines.join("\n")}${moreInfo}`,
       displayContext: {
         displayed_count: filtered.length,
         unpaid_only: wantsUnpaid || payload?.filters?.unpaid_only === true,
@@ -1198,14 +1201,17 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
         },
       };
     }
+    const totalCount = Number(payload.total_count || tenants.length);
+    const shownCount = tenants.length;
     const lines = tenants.map((tenant, index) => {
       const name = `${tenant.first_name || ""} ${tenant.last_name || ""}`.trim();
       const property = tenant.property_name || "Unknown property";
       const unit = tenant.unit_code || "N/A";
       return `${index + 1}. ${name} - ${property} (${unit})`;
     });
+    const moreInfo = shownCount < totalCount ? `\n(Showing ${shownCount} of ${totalCount} tenants. Ask for more if needed.)` : "";
     return {
-      answer: `Here is the tenant list (${tenants.length}):\n${lines.join("\n")}`,
+      answer: `Here is the tenant list (${tenants.length})${shownCount < totalCount ? ` of ${totalCount} total` : ""}:\n${lines.join("\n")}${moreInfo}`,
       displayContext: {
         displayed_count: tenants.length,
         unit_codes: tenants
@@ -1227,6 +1233,8 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
       };
     }
 
+    const totalCount = Number(payload.total_count || complaints.length);
+    const shownCount = complaints.length;
     const lines = complaints.map((complaint, index) => {
       const tenant =
         `${complaint.tenant_first_name || ""} ${complaint.tenant_last_name || ""}`.trim() ||
@@ -1237,9 +1245,10 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
       const priority = complaint.priority || "normal";
       return `${index + 1}. ${complaint.title || "Untitled complaint"} - ${tenant} - ${property} (${unit}) - ${status}, ${priority}`;
     });
+    const moreInfo = shownCount < totalCount ? `\n(Showing ${shownCount} of ${totalCount} complaints. Ask for more if needed.)` : "";
 
     return {
-      answer: `Here is the complaint list (${complaints.length}):\n${lines.join("\n")}`,
+      answer: `Here is the complaint list (${complaints.length})${shownCount < totalCount ? ` of ${totalCount} total` : ""}:\n${lines.join("\n")}${moreInfo}`,
       displayContext: {
         displayed_count: complaints.length,
       },
@@ -2694,6 +2703,7 @@ const getRouteTenantsList = async ({ user, question }) => {
           limit,
         },
         count: Number(countResult.rows[0]?.count || 0),
+        total_count: Number(countResult.rows[0]?.count || 0),
         tenants: rowsResult.rows,
       },
     ],
@@ -3091,7 +3101,7 @@ const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError
     {
       model,
       temperature: 0.0,
-      max_tokens: 450,
+      max_tokens: 800,
       messages: buildPlannerMessages({ user, question, schemaContext, previousError }),
     },
     {
@@ -3132,7 +3142,7 @@ const executeReadOnlySql = async (sql) => {
   try {
     await client.query("BEGIN");
     await client.query("SET LOCAL TRANSACTION READ ONLY");
-    await client.query("SET LOCAL statement_timeout = '12000ms'");
+    await client.query("SET LOCAL statement_timeout = '20000ms'");
     const result = await client.query(safeSql);
     await client.query("COMMIT");
     return {
