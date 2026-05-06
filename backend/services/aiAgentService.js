@@ -1,6 +1,7 @@
 const axios = require("axios");
 const db = require("../config/database");
 const messagingService = require("./messagingService");
+const { logActivity } = require("./activityLogService");
 
 const MAX_QUESTION_LENGTH = 600;
 const MAX_HISTORY_ITEMS = 20;
@@ -112,10 +113,33 @@ const MONTH_REGEX = /\b(20\d{2})[-\/](0[1-9]|1[0-2])\b/;
 const PAYMENT_STATUS_KEYWORDS = ["pending", "completed", "failed", "overdue"];
 const COMPLAINT_STATUS_KEYWORDS = ["open", "in_progress", "resolved", "closed"];
 
+const PROMPT_INJECTION_PATTERNS = [
+  /\b(ignore|forget|disregard|override)\s+(all\s+)?(previous|above|prior|earlier|your)\s+(instructions?|prompts?|rules?|guidelines?)/i,
+  /\byou are now\b/i,
+  /\bpretend (you are|to be)\b/i,
+  /\bact as (if|though) (you are|you're)\b/i,
+  /\b(system prompt|system message|your prompt):/i,
+  /\b\[system\]/i,
+  /\b<\|im_start\|>/i,
+  /\b<\|im_end\|>/i,
+  /\b(DAN|jailbreak|developer mode)\b/i,
+  /\bignore all (constraints|limitations|restrictions|rules)\b/i,
+  /\bbypass (the |your )?(filters?|safety|restrictions?)\b/i,
+  /\bdo not (follow|obey|listen to) (your |the )?(instructions?|rules?)\b/i,
+];
+
+const sanitizePromptInjection = (text) => {
+  let sanitized = String(text || "").trim();
+  for (const pattern of PROMPT_INJECTION_PATTERNS) {
+    sanitized = sanitized.replace(pattern, "[blocked]");
+  }
+  return sanitized;
+};
+
 const ensureSafeQuestion = (question) => {
   const normalized = String(question || "").trim();
   if (!normalized) return "";
-  return normalized.slice(0, MAX_QUESTION_LENGTH);
+  return sanitizePromptInjection(normalized).slice(0, MAX_QUESTION_LENGTH);
 };
 
 const normalizeConversationId = (conversationId) => {
@@ -3738,6 +3762,7 @@ const savePendingAction = async ({
 const executeConfirmedAction = async (pending, user) => {
   const target = typeof pending.action_target === "object" ? pending.action_target : {};
   const params = typeof pending.action_params === "object" ? pending.action_params : {};
+  let result;
 
   switch (pending.action_type) {
     case "draft_sms_reminder": {
@@ -3745,12 +3770,13 @@ const executeConfirmedAction = async (pending, user) => {
       const message = params.message;
       if (!phone || !message) throw new Error("Missing phone number or message.");
       await messagingService.sendRawMessage(phone, message, "announcement");
-      return { channel: "sms", phone, message: message.slice(0, 200) };
+      result = { channel: "sms", phone, message: message.slice(0, 200) };
+      break;
     }
     case "draft_water_bill": {
       const { tenant_id, unit_id, amount, bill_month } = target;
       if (!tenant_id || !amount || !bill_month) throw new Error("Missing water bill data.");
-      const result = await db.query(
+      const dbResult = await db.query(
         `INSERT INTO water_bills (tenant_id, unit_id, amount, bill_month, created_at)
          VALUES ($1, $2, $3, $4::date, NOW())
          ON CONFLICT (tenant_id, COALESCE(unit_id, '00000000-0000-0000-0000-000000000000'), bill_month)
@@ -3758,7 +3784,8 @@ const executeConfirmedAction = async (pending, user) => {
          RETURNING id`,
         [tenant_id, unit_id || null, amount, `${bill_month}-01`],
       );
-      return { table: "water_bills", id: result.rows[0]?.id, tenant_id, amount, bill_month };
+      result = { table: "water_bills", id: dbResult.rows[0]?.id, tenant_id, amount, bill_month };
+      break;
     }
     case "draft_complaint_assignment": {
       const { complaint_id, assignee_id } = target;
@@ -3776,11 +3803,30 @@ const executeConfirmedAction = async (pending, user) => {
         `UPDATE complaints SET ${updates.join(", ")} WHERE id = $${idx}::uuid`,
         vals,
       );
-      return { table: "complaints", complaint_id, assignee_id };
+      result = { table: "complaints", complaint_id, assignee_id };
+      break;
     }
     default:
       throw new Error(`Unknown action type: ${pending.action_type}`);
   }
+
+  logActivity({
+    actorUserId: user.id,
+    module: "ai_agent",
+    action: pending.action_type,
+    entityType: target.tenant_id ? "tenant" : target.complaint_id ? "complaint" : "system",
+    entityId: target.tenant_id || target.complaint_id || null,
+    requestPath: "/api/ai-agent/confirm",
+    responseStatus: 200,
+    metadata: {
+      action_type: pending.action_type,
+      target_summary: target.tenant_name || target.unit_code || target.complaint_title || "",
+      result,
+      confirmed_by: `${user.first_name || ""} ${user.last_name || ""}`.trim(),
+    },
+  }).catch(() => {});
+
+  return result;
 };
 
 const confirmPendingAction = async ({ user, conversationId }) => {
