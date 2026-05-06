@@ -1283,6 +1283,9 @@ const chooseTool = (question) => {
   if (/\b(vacant|available\s+units?|empty\s+units?|free\s+units?|unoccupied)\b/.test(q) && !/\b(water|complaint|tenant)\b/.test(q)) {
     return "route_properties";
   }
+  if (/\b(search|web|internet|google|look up|lookup|news|trends? in|market rate)\b/.test(q)) {
+    return "web_search";
+  }
   if (/\b(property|properties|building|vacant|occupancy|unit|units|rooms?|apartments?)\b/.test(q) && !/\b(not paid|unpaid|owe|balance)\b/.test(q) && !/\b(tenant|tenants|renter)\b/.test(q)) {
     return "route_properties";
   }
@@ -1298,9 +1301,6 @@ const chooseTool = (question) => {
   }
   if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
     return "draft_sms_reminder";
-  }
-  if (/\b(search|web|internet|google|look up|lookup|news|trends? in|market rate)\b/.test(q)) {
-    return "web_search";
   }
   if (/\b(dashboard|stats|kpi|overview|summary|snapshot|at a glance)\b/.test(q)) {
     return "route_dashboard_comprehensive";
@@ -3469,7 +3469,7 @@ const handleWebSearch = async ({ question }) => {
   try {
     const response = await axios.get(
       `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
-      { timeout: 8000 },
+      { timeout: 15000 },
     );
     const data = response.data;
     const results = [];
