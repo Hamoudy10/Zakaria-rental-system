@@ -180,49 +180,7 @@ const extractJsonObject = (text) => {
     try {
       return JSON.parse(maybe);
     } catch (err) {
-  if (label === "Properties List Route" && wantsList) {
-    const payload = rows[0] || {};
-    const property = payload.property || {};
-    const vacantUnits = Array.isArray(payload.vacant_units) ? payload.vacant_units : [];
-    const properties = Array.isArray(payload.properties) ? payload.properties : [];
-    const count = Number(payload.count || 0);
-
-    if (vacantUnits.length > 0) {
-      const propLabel = property.name
-        ? ` in ${property.name}`
-        : "";
-      const lines = vacantUnits.map((unit, index) => {
-        const code = unit.unit_code || "N/A";
-        const rent = unit.rent_amount ? ` - KES ${Number(unit.rent_amount).toLocaleString()}` : "";
-        const type = unit.unit_type ? ` (${unit.unit_type})` : "";
-        return `${index + 1}. ${code}${type}${rent}`;
-      });
-      return {
-        answer: `Vacant units${propLabel} (${vacantUnits.length}):\n${lines.join("\n")}`,
-        displayContext: {
-          displayed_count: vacantUnits.length,
-          unit_codes: vacantUnits.map((u) => String(u.unit_code || "").trim().toUpperCase()).filter((c) => /^[A-Z0-9-]{2,25}$/.test(c)),
-        },
-      };
-    }
-
-    if (properties.length > 0) {
-      const lines = properties.map((prop, index) => {
-        return `${index + 1}. ${prop.name || prop.property_name || "Unknown"} - ${Number(prop.available_units_count || 0)} units available`;
-      });
-      return {
-        answer: `Property overview:\n${lines.join("\n")}`,
-        displayContext: { displayed_count: properties.length },
-      };
-    }
-
-    return {
-      answer: `No matching data was found for your request.`,
-      displayContext: { displayed_count: 0 },
-    };
-  }
-
-  return null;
+      return null;
     }
   }
 
