@@ -529,7 +529,7 @@ const resolveQuestionContext = (question, history) => {
     .find((item) => item.role === "user" && item.content?.trim() && item.content.trim().toLowerCase() !== lower);
   if (!previousUser) return q;
 
-  return `${previousUser.content.trim()} ${q}`.trim();
+  return `[context: "${previousUser.content.trim().slice(0, 120)}"] ${q}`.trim();
 };
 
 const MUTATION_INQUIRY_EXCLUSIONS = [
@@ -4281,18 +4281,22 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       routerUsage = routed.data.usage || null;
 
       const DEFAULT_ACTION = "route_tenant_payment_status";
-      const heuristicIsSpecific = heuristicAction !== DEFAULT_ACTION && heuristicAction !== "tenant";
+      const heuristicIsSpecific = heuristicAction !== DEFAULT_ACTION && heuristicAction !== "tenant" && heuristicAction !== "general";
       const groqIsDefault = groqAction === DEFAULT_ACTION;
-      const heuristicIsDefault = heuristicAction === DEFAULT_ACTION;
+      const bothSpecific = heuristicIsSpecific && groqAction !== DEFAULT_ACTION && groqAction !== "tenant" && groqAction !== "general";
 
-      if (heuristicIsSpecific && groqIsDefault && groqConfidence < 0.95) {
+      if (heuristicIsSpecific && groqIsDefault) {
         routerDecision = {
           action: heuristicAction,
           confidence: routerDecision.confidence,
           response_mode: routed.data.response_mode || routerDecision.response_mode,
           hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
         };
-      } else if (groqConfidence >= 0.85 || (groqAction === heuristicAction && groqConfidence >= 0.5)) {
+      } else if (bothSpecific && groqAction !== heuristicAction && groqConfidence >= 0.85) {
+        routerDecision = routed.data;
+      } else if (groqAction === heuristicAction && groqConfidence >= 0.5) {
+        routerDecision = routed.data;
+      } else if (groqConfidence >= 0.85) {
         routerDecision = routed.data;
       } else {
         routerDecision = {
