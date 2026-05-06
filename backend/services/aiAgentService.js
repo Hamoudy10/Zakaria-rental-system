@@ -2959,7 +2959,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     process.env.GROQ_NARRATIVE_MODEL ||
     "llama-3.3-70b-versatile";
   const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
-  const compactFacts = JSON.stringify(toolRows).slice(0, 12000);
+  const compactFacts = JSON.stringify(toolRows).slice(0, 20000);
 
   const messages = [
     {
@@ -2979,7 +2979,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     {
       model,
       temperature: 0.1,
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages,
     },
     {

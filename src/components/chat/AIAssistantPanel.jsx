@@ -169,7 +169,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    el.style.height = Math.min(el.scrollHeight, 300) + "px";
   }, []);
 
   useEffect(() => {
@@ -280,6 +280,9 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
       ]);
     } finally {
       setLoading(false);
+      setTimeout(() => {
+        if (textareaRef.current) textareaRef.current.focus();
+      }, 100);
     }
   }, [input, canSend, messages, conversationId]);
 
@@ -495,15 +498,15 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Ask anything about your rental operations..."
-              rows={1}
+              rows={3}
               disabled={loading}
-              className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 focus:bg-white disabled:opacity-60 placeholder-slate-400 transition-colors"
-              style={{ maxHeight: 160 }}
+              className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 focus:bg-white disabled:opacity-60 placeholder-slate-400 transition-colors"
+              style={{ maxHeight: 300, minHeight: 60 }}
             />
             <button
               onClick={sendMessage}
               disabled={!canSend}
-              className="h-10 w-10 rounded-xl bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center shrink-0 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="h-12 w-12 rounded-xl bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center shrink-0 disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end mb-0.5"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
             </button>
