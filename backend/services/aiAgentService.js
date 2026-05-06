@@ -519,6 +519,10 @@ const resolveQuestionContext = (question, history) => {
     return q;
   }
 
+  if (isNegationRef || isLimitRef) {
+    return q;
+  }
+
   const previousUser = [...history]
     .reverse()
     .find((item) => item.role === "user" && item.content?.trim() && item.content.trim().toLowerCase() !== lower);
@@ -1206,13 +1210,13 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
     };
   }
 
-  if (label === "Web Search" && wantsList) {
+  if (label === "Web Search") {
     const valid = (rows || []).filter((r) => r.snippet);
     if (valid.length === 0) {
-      return { answer: (rows[0]?.snippet || rows[0]?.message || "Web search returned no results.") };
+      return { answer: "No search results were found for that query." };
     }
-    const lines = valid.map((r, i) => `${i + 1}. ${r.title ? `**${r.title}**\n` : ""}${r.snippet}${r.source ? `\n   ${r.source}` : ""}`);
-    return { answer: `Search results for your query:\n${lines.join("\n\n")}` };
+    const lines = valid.map((r, i) => `${r.title && r.title !== q ? `**${r.title}**\n` : ""}${r.snippet}${r.source ? `\n   ${r.source}` : ""}`);
+    return { answer: `${lines.join("\n\n")}` };
   }
 
   if (label === "Complaints List Route" && wantsList) {
@@ -3468,63 +3472,55 @@ const handleDraftComplaintAssignment = async ({ user, question }) => {
 };
 
 const handleWebSearch = async ({ question }) => {
-  const q = String(question || "").trim().replace(/\bsearch|find|lookup|web|online|internet\b/gi, "").trim().slice(0, 200) || "rental property management kenya";
+  const q = String(question || "").trim().replace(/\b(search|find|lookup|web|online|internet|for me|for|the|a|an)\b/gi, " ").replace(/\s+/g, " ").trim().slice(0, 200) || "rental market trends kenya";
   const results = [];
-  const seen = new Set();
+
+  const apiKey = process.env.GROQ_API_KEY;
+  if (apiKey) {
+    try {
+      const baseURL = process.env.AI_SQL_BASE_URL || process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+      const model = process.env.GROQ_SQL_PLANNER_MODEL || "llama-3.3-70b-versatile";
+      const response = await axios.post(
+        `${baseURL}/chat/completions`,
+        {
+          model,
+          temperature: 0.3,
+          max_tokens: 600,
+          messages: [
+            { role: "system", content: "You are a helpful research assistant. Answer the user's query with factual information, recent data if you have it, and cite approximate dates. Be concise — 2-3 paragraphs max. If you don't know, say so honestly." },
+            { role: "user", content: q },
+          ],
+        },
+        { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 20000 },
+      );
+      const answer = response.data?.choices?.[0]?.message?.content?.trim();
+      if (answer) {
+        results.push({ title: q, snippet: answer, source: "" });
+      }
+    } catch (llmErr) {
+      // LLM-based search failed
+    }
+  }
 
   try {
     const ddg = await axios.get(
       `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
-      {
-        timeout: 12000,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; ZakariaRentalBot/1.0)",
-          "Accept": "application/json",
-        },
-      },
+      { timeout: 8000, headers: { "User-Agent": "Mozilla/5.0 (compatible; Bot/1.0)" } },
     );
     const data = ddg.data;
-    if (data.AbstractText) {
-      results.push({ title: data.Heading || q, snippet: data.AbstractText.slice(0, 500), source: data.AbstractURL || "" });
-      seen.add(data.AbstractURL);
+    if (data.AbstractText && !results.some((r) => r.snippet.includes(data.AbstractText.slice(0, 50)))) {
+      results.push({ title: data.Heading || q, snippet: data.AbstractText.slice(0, 400), source: data.AbstractURL || "" });
     }
-    const related = Array.isArray(data.RelatedTopics) ? data.RelatedTopics : [];
-    for (const topic of related.slice(0, 5)) {
-      if (topic.Text && !seen.has(topic.FirstURL)) {
-        results.push({ title: topic.FirstURL || "", snippet: topic.Text.slice(0, 300), source: topic.FirstURL || "" });
-        seen.add(topic.FirstURL);
+    const related = Array.isArray(data.RelatedTopics) ? data.RelatedTopics.slice(0, 3) : [];
+    for (const topic of related) {
+      if (topic.Text) {
+        results.push({ title: "", snippet: topic.Text.slice(0, 250), source: topic.FirstURL || "" });
       }
     }
-  } catch (ddgErr) {
-    try {
-      const bing = await axios.get(
-        `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
-        {
-          timeout: 12000,
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-        },
-      );
-      const data = bing.data;
-      if (data.AbstractText) {
-        results.push({ title: data.Heading || q, snippet: data.AbstractText.slice(0, 500), source: data.AbstractURL || "" });
-      }
-      const related = Array.isArray(data.RelatedTopics) ? data.RelatedTopics : [];
-      for (const topic of related.slice(0, 5)) {
-        if (topic.Text) {
-          results.push({ title: topic.FirstURL || "", snippet: topic.Text.slice(0, 300), source: topic.FirstURL || "" });
-        }
-      }
-    } catch (retryErr) {
-      // both failed
-    }
-  }
+  } catch (ddgErr) {}
 
   if (results.length === 0) {
-    results.push({
-      title: q,
-      snippet: "Web search is unavailable right now. Try a more specific search or ask me about your rental data instead.",
-      source: "",
-    });
+    results.push({ title: q, snippet: "I couldn't find information on that topic. Try rephrasing or ask me about your rental data instead.", source: "" });
   }
   return { label: "Web Search", rows: results };
 };
