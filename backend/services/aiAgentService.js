@@ -1206,6 +1206,15 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
     };
   }
 
+  if (label === "Web Search" && wantsList) {
+    const valid = (rows || []).filter((r) => r.snippet);
+    if (valid.length === 0) {
+      return { answer: (rows[0]?.snippet || rows[0]?.message || "Web search returned no results.") };
+    }
+    const lines = valid.map((r, i) => `${i + 1}. ${r.title ? `**${r.title}**\n` : ""}${r.snippet}${r.source ? `\n   ${r.source}` : ""}`);
+    return { answer: `Search results for your query:\n${lines.join("\n\n")}` };
+  }
+
   if (label === "Complaints List Route" && wantsList) {
     const payload = rows[0] || {};
     const complaints = Array.isArray(payload.complaints) ? payload.complaints : [];
@@ -3221,6 +3230,11 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     return `I searched the database but could not find matching records. Try being more specific — include a tenant name, unit code (e.g. MJ-4), property name, or phone number.`;
   }
 
+  if (toolLabel === "Web Search") {
+    const first = rows[0] || {};
+    return first.snippet || first.message || "Web search found no results.";
+  }
+
   if (toolLabel === "Tenant Snapshot") {
     const first = rows[0];
     return `${first.first_name} ${first.last_name} (${first.unit_code}) has an estimated total due of KES ${Number(first.total_due || 0).toLocaleString()}.`;
@@ -3232,17 +3246,6 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
 
   if (toolLabel === "Open Complaints") {
     return `There are ${rows.length} open/in-progress complaints in scope right now.`;
-  }
-
-  if (toolLabel === "Properties List Route") {
-    const payload = rows[0] || {};
-    const vacantUnits = Array.isArray(payload.vacant_units) ? payload.vacant_units : [];
-    if (vacantUnits.length > 0) {
-      const codes = vacantUnits.map((u) => u.unit_code).join(", ");
-      return `Found ${vacantUnits.length} vacant unit(s): ${codes}.`;
-    }
-    const count = Number(payload.count || 0);
-    return `I used /api/properties and found ${count} property/unit record(s).`;
   }
 
   if (toolLabel === "Property Summary") {
@@ -3466,37 +3469,64 @@ const handleDraftComplaintAssignment = async ({ user, question }) => {
 
 const handleWebSearch = async ({ question }) => {
   const q = String(question || "").trim().replace(/\bsearch|find|lookup|web|online|internet\b/gi, "").trim().slice(0, 200) || "rental property management kenya";
+  const results = [];
+  const seen = new Set();
+
   try {
-    const response = await axios.get(
+    const ddg = await axios.get(
       `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
-      { timeout: 15000 },
+      {
+        timeout: 12000,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; ZakariaRentalBot/1.0)",
+          "Accept": "application/json",
+        },
+      },
     );
-    const data = response.data;
-    const results = [];
+    const data = ddg.data;
     if (data.AbstractText) {
-      results.push({
-        title: data.Heading || q,
-        snippet: data.AbstractText.slice(0, 500),
-        source: data.AbstractURL || "",
-      });
+      results.push({ title: data.Heading || q, snippet: data.AbstractText.slice(0, 500), source: data.AbstractURL || "" });
+      seen.add(data.AbstractURL);
     }
     const related = Array.isArray(data.RelatedTopics) ? data.RelatedTopics : [];
-    for (const topic of related.slice(0, 4)) {
-      if (topic.Text) {
-        results.push({
-          title: topic.FirstURL || "",
-          snippet: topic.Text.slice(0, 300),
-          source: topic.FirstURL || "",
-        });
+    for (const topic of related.slice(0, 5)) {
+      if (topic.Text && !seen.has(topic.FirstURL)) {
+        results.push({ title: topic.FirstURL || "", snippet: topic.Text.slice(0, 300), source: topic.FirstURL || "" });
+        seen.add(topic.FirstURL);
       }
     }
-    if (results.length === 0) {
-      results.push({ message: `No results found for "${q}". Please try a different search term.` });
+  } catch (ddgErr) {
+    try {
+      const bing = await axios.get(
+        `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
+        {
+          timeout: 12000,
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        },
+      );
+      const data = bing.data;
+      if (data.AbstractText) {
+        results.push({ title: data.Heading || q, snippet: data.AbstractText.slice(0, 500), source: data.AbstractURL || "" });
+      }
+      const related = Array.isArray(data.RelatedTopics) ? data.RelatedTopics : [];
+      for (const topic of related.slice(0, 5)) {
+        if (topic.Text) {
+          results.push({ title: topic.FirstURL || "", snippet: topic.Text.slice(0, 300), source: topic.FirstURL || "" });
+        }
+      }
+    } catch (retryErr) {
+      // both failed
     }
-    return { label: "Web Search", rows: results };
-  } catch (error) {
-    return { label: "Web Search", rows: [{ message: `Web search is currently unavailable: ${error.message}` }] };
   }
+
+  if (results.length === 0) {
+    results.push({
+      title: q,
+      snippet: "Web search is unavailable right now. Try a more specific search or ask me about your rental data instead.",
+      source: "",
+    });
+  }
+  return { label: "Web Search", rows: results };
 };
 
 const handleWebFetch = async ({ question }) => {
