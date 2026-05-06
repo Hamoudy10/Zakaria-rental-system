@@ -463,9 +463,34 @@ const resolveQuestionContext = (question, history) => {
   return `${previousUser.content.trim()} ${q}`.trim();
 };
 
+const MUTATION_INQUIRY_EXCLUSIONS = [
+  /\btell me about\b/,
+  /\bexplain (to me )?how\b/,
+  /\bwhat (is|are|does|do|changed|happened|were|would|could|should)\b/,
+  /\bhow (do|does|can|was|were|to|did|would|should|many)\b/,
+  /\bdescribe\b/,
+  /\bmeaning of\b/,
+  /\bdefinition of\b/,
+  /\bwhy (is|are|do|does|was|were|did|would|should)\b/,
+  /\bwhen (is|are|do|does|was|were|did|will|would|should)\b/,
+  /\bwhere (is|are|do|does|was|were|can|could)\b/,
+  /\bwho (is|are|was|were|can|could|should)\b/,
+  /\bshow (me|us)\b/,
+  /\blist (all|the|down|out)?\b/,
+  /\bcheck (if|whether|for|the)\b/,
+  /\bfind (out|the|if|any)\b/,
+  /\banaly(sis|ze|se)\b/,
+  /\bhistory of\b/,
+  /\boverview of\b/,
+  /\bstatus of\b/,
+  /\bplease (?:can|could|would|may) (?:you|i|we)\b/,
+];
+
 const isMutationIntent = (question) => {
   const q = question.toLowerCase();
-  return MUTATION_KEYWORDS.some((word) => q.includes(word));
+  if (!MUTATION_KEYWORDS.some((word) => q.includes(word))) return false;
+  if (MUTATION_INQUIRY_EXCLUSIONS.some((regex) => regex.test(q))) return false;
+  return true;
 };
 
 const extractSearchPatterns = (question) => {
@@ -902,7 +927,7 @@ const extractHintBooleanFromQuestion = (question, key) => {
 
 const getLastAssistantContext = async ({ user, conversationId }) => {
   const safeConversationId = normalizeConversationId(conversationId);
-  if (!safeConversationId) return null;
+  if (!safeConversationId) return [];
 
   try {
     const result = await db.query(
@@ -913,14 +938,13 @@ const getLastAssistantContext = async ({ user, conversationId }) => {
           AND user_id = $2
           AND role = 'assistant'
         ORDER BY created_at DESC
-        LIMIT 1
+        LIMIT 3
       `,
       [safeConversationId, user.id],
     );
-    if (!result.rows?.length) return null;
-    return result.rows[0];
+    return result.rows || [];
   } catch (error) {
-    return null;
+    return [];
   }
 };
 
@@ -956,8 +980,11 @@ const isAmountEnhancementFollowUp = (question) => {
   );
 };
 
-const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
-  if (!lastContext?.tool_used) return routerDecision;
+const inferFollowUpAction = ({ question, lastContexts, routerDecision }) => {
+  const recentContexts = Array.isArray(lastContexts) ? lastContexts : (lastContexts ? [lastContexts] : []);
+  if (recentContexts.length === 0) return routerDecision;
+
+  const lastContext = recentContexts[0];
   const lastTool = String(lastContext.tool_used || "");
   const q = String(question || "").toLowerCase();
   const next = { ...routerDecision, hints: { ...(routerDecision.hints || {}) } };
@@ -967,6 +994,15 @@ const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
       lastContext?.metadata?.router_hints?.limit ||
       lastContext?.records_count ||
       0,
+  );
+
+  const anyTenantStatus = recentContexts.some(
+    (ctx) => String(ctx.tool_used || "") === "Tenant Payment Status Route",
+  );
+  const anyTenantsList = recentContexts.some(
+    (ctx) =>
+      String(ctx.tool_used || "") === "Tenants List Route" ||
+      String(ctx.tool_used || "") === "Tenant Snapshot",
   );
 
   const lastWasTenantStatus = lastTool === "Tenant Payment Status Route";
@@ -997,7 +1033,7 @@ const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
     return explicitNext;
   }
 
-  if (isCorrectionFollowUp(question) && lastWasTenantStatus) {
+  if (isCorrectionFollowUp(question) && (lastWasTenantStatus || anyTenantStatus)) {
     next.action = "route_tenant_payment_status";
     next.response_mode = "list";
     next.hints = {
@@ -1008,19 +1044,18 @@ const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
     return next;
   }
 
-  // Keep context for follow-up operations instead of switching tools.
-  if ((isListFollowUp(question) || isDataAccessFollowUp(question)) && lastWasTenantStatus) {
+  if ((isListFollowUp(question) || isDataAccessFollowUp(question)) && (lastWasTenantStatus || anyTenantStatus)) {
     next.action = "route_tenant_payment_status";
     next.response_mode = "list";
     next.confidence = Math.max(Number(next.confidence || 0), 0.72);
   }
 
-  if (questionAboutPaymentState && lastWasTenantStatus) {
+  if (questionAboutPaymentState && (lastWasTenantStatus || anyTenantStatus)) {
     next.action = "route_tenant_payment_status";
     next.confidence = Math.max(Number(next.confidence || 0), 0.72);
   }
 
-  if (questionAboutPaymentState && lastWasTenantsList) {
+  if (questionAboutPaymentState && (lastWasTenantsList || anyTenantsList)) {
     next.action = "route_tenant_payment_status";
     next.response_mode = "list";
     if (!isExplicitActionQuestion(question, "route_tenant_payment_status") && Number.isFinite(lastLimit) && lastLimit > 0) {
@@ -1031,7 +1066,7 @@ const inferFollowUpAction = ({ question, lastContext, routerDecision }) => {
     next.confidence = Math.max(Number(next.confidence || 0), 0.74);
   }
 
-  if (isAmountEnhancementFollowUp(question) && (lastWasTenantsList || lastWasTenantStatus)) {
+  if (isAmountEnhancementFollowUp(question) && (lastWasTenantsList || lastWasTenantStatus || anyTenantsList || anyTenantStatus)) {
     next.action = "route_tenant_payment_status";
     next.response_mode = "list";
     if (Number.isFinite(lastLimit) && lastLimit > 0) {
@@ -3602,7 +3637,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   });
   const safeHistory = workingHistory.history;
   const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
-  const lastAssistantContext = await getLastAssistantContext({
+  const lastAssistantContexts = await getLastAssistantContext({
     user,
     conversationId: safeConversationId,
   });
@@ -3623,15 +3658,17 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   }
 
   const explicitHeuristicAction = chooseTool(contextualQuestion);
+  const llmConfidence = Number(routerDecision.confidence || 0);
   if (
     explicitHeuristicAction &&
     explicitHeuristicAction !== "tenant" &&
-    isExplicitActionQuestion(contextualQuestion, explicitHeuristicAction)
+    isExplicitActionQuestion(contextualQuestion, explicitHeuristicAction) &&
+    llmConfidence < 0.4
   ) {
     routerDecision = {
       ...routerDecision,
       action: explicitHeuristicAction,
-      confidence: Math.max(Number(routerDecision.confidence || 0), 0.86),
+      confidence: 0.55,
       response_mode: /\b(list|all|show|which|who)\b/i.test(contextualQuestion)
         ? "list"
         : routerDecision.response_mode,
@@ -3640,7 +3677,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
 
   routerDecision = inferFollowUpAction({
     question: contextualQuestion,
-    lastContext: lastAssistantContext,
+    lastContexts: lastAssistantContexts,
     routerDecision,
   });
 
@@ -3649,8 +3686,9 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     const actionIsListCapable =
       String(routerDecision.action || "").startsWith("route_") ||
       routerDecision.action === "unpaid_tenants_property_month";
-    const keepTenantStatus =
-      String(lastAssistantContext?.tool_used || "") === "Tenant Payment Status Route";
+    const keepTenantStatus = lastAssistantContexts.some(
+      (ctx) => String(ctx?.tool_used || "") === "Tenant Payment Status Route",
+    );
     if ((!actionIsListCapable || routerDecision.action === "tenant") && !keepTenantStatus) {
       routerDecision.action = "route_tenants";
       routerDecision.confidence = Math.max(Number(routerDecision.confidence || 0), 0.6);
