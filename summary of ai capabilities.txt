@@ -1,0 +1,199 @@
+ZAKARIA RENTAL SYSTEM - AI AGENT CAPABILITIES SUMMARY
+======================================================
+
+This document outlines all capabilities, features, and automated processes
+implemented in the Zakaria Rental Management System.
+
+1. AUTOMATED BILLING SYSTEM
+---------------------------
+- Monthly automated billing (configurable day 1-28)
+- SMS notifications via Celcom Africa
+- Payment allocation in strict order: Arrears -> Water -> Rent -> Advance
+- Lease-based expected rent calculations with month_count, expected_amount,
+  and current_month_expected fields
+
+2. PROFILE IMAGE UPLOAD
+-----------------------
+- Drag & drop upload functionality
+- Cloudinary storage integration (folder: zakaria_rental/profile_images)
+- File validation: JPEG, PNG, WebP only, max 5MB
+- API endpoints: PUT /api/auth/profile, DELETE /api/auth/profile/image
+
+3. PDF & EXCEL EXPORTS WITH COMPANY BRANDING
+---------------------------------------------
+- Company logo from Cloudinary
+- Company name, address, phone, email in header
+- API endpoint: GET /api/admin/company-info (5-minute caching)
+- Exports: Tenant statements, reports, complaint documents
+- Files: src/utils/pdfExport.js, src/utils/excelExport.js
+
+4. COMPLAINT MANAGEMENT SYSTEM
+-------------------------------
+- Multi-category complaints (JSONB storage)
+- Step-based servicing workflow with progress tracking
+- PDF export with company branding
+- Database tables: complaints, complaint_steps
+
+5. ADMIN DASHBOARD (COMPREHENSIVE STATS)
+----------------------------------------
+- Endpoint: GET /api/admin/dashboard/comprehensive-stats
+- Properties, complaints, tenant allocations tracking
+- Payment status tracking: pending, completed, failed, overdue
+- Real-time statistics aggregation
+
+6. PROPERTY & UNIT IMAGE MANAGEMENT (Option A)
+------------------------------------------------
+- Single property_images table for property and unit images
+- Differentiation: unit_id = NULL = property image, unit_id = UUID = unit image
+- Cloudinary folders: zakaria_rental/property_images/, zakaria_rental/unit_images/
+
+7. AGENT PROPERTY SHOWCASE
+---------------------------
+- Agents can access any property for marketing purposes
+- Endpoint: GET /api/properties/showcase (bypasses assignment checks)
+- Route specificity: /showcase/* routes before /:id routes
+
+8. EXPENSE TRACKING MODULE
+--------------------------
+- 13 Categories: Maintenance, Repairs, Utilities, Security, Cleaning,
+  Supplies, Professional Services, Insurance, Taxes, Marketing, Salaries,
+  Transportation, Miscellaneous
+- Approval workflow: pending -> approved/rejected -> reimbursed
+- Stats endpoint returns byStatus for ALL-TIME counts and totals for monthly
+
+9. WHATSAPP-STYLE CHAT SYSTEM
+-----------------------------
+- User-specific conversation isolation
+- Features: Direct messaging, group chats, online status, typing indicators,
+  read receipts, image messages
+- Socket.io events: new_message, user_typing, messages_read, user_online_status
+- Database: chat_conversations, chat_messages, chat_participants,
+  chat_message_reads
+- Real-time message delivery and read tracking
+
+10. NOTIFICATION SYSTEM
+-----------------------
+- Types: payment_success/failed/pending, tenant_created/allocated/deallocated,
+  complaint_created/updated/resolved, water_bill_created, expense_created/
+  approved/rejected, lease_expiring, rent_overdue, announcement, maintenance,
+  emergency, system_alert, broadcast
+- Polling with exponential backoff (30s - 5min)
+- In-app notifications + SMS with polling
+- Scheduled jobs: 8AM (expiring leases), 10AM (overdue rent), 9AM billing day
+
+11. TENANT ALLOCATION SYSTEM
+---------------------------
+- Soft delete pattern with is_active flag
+- Auto-cleanup via AllocationIntegrityService
+- Property count sync using subquery for accurate available_units count
+- Multi-unit tenancy support (one tenant can hold multiple active allocations)
+- Deallocate-specific-unit flow
+
+12. WHATSAPP BUSINESS API INTEGRATION
+-------------------------------------
+- Meta Cloud API integration for parallel SMS + WhatsApp sending
+- 11 Meta-approved templates: rental_welcome, payment_confirmation,
+  payment_confirmation_detailed, bill_notification, balance_reminder,
+  admin_payment_alert, admin_payment_alert_detailed, advance_payment,
+  maintenance_update, general_announcement, monthly_bill_cron
+- Parallel sending: SMS + WhatsApp via Promise.all
+- SMS always sends regardless of WhatsApp result
+- WhatsApp failure never blocks SMS
+- Database: whatsapp_queue, whatsapp_notifications
+
+13. PAYMENT STATEMENT MODAL EXPORTS
+-----------------------------------
+- Export actions inside Payment Statement modal
+- Export formats: PDF, Excel
+- Statement rows: payment date, amount, reference code, payment month,
+  method, status
+- Statement summary exports via totals override
+
+14. M-PESA INTEGRATION
+----------------------
+- Phone format conversion (07xx -> 2547xx)
+- C2B (Customer to Business) payment handling
+- Account reference validation
+- Unmatched callback handling
+- Manual payment recovery with tenant prefetch
+
+15. PASSWORD RESET SYSTEM
+-------------------------
+- Secure password reset foundation
+- password_reset_tokens table
+- Backend reset-flow integration
+- JWT-based authentication
+
+16. TENANT AGREEMENT DOCUMENTS
+------------------------------
+- Cloudinary upload (PDF/DOC/DOCX)
+- API endpoints: POST/GET/DELETE /tenants/:id/agreements
+- Database: tenant_documents table
+- Frontend integration for upload and download
+
+17. DATA REPAIR & MAINTENANCE
+-----------------------------
+- Overpaid month carry-forward repair procedures
+- Allocation integrity service auto-cleanup
+- Tenant allocation updated_at timestamp management
+- Expected rent field backfill migrations
+
+18. ROLE-BASED ACCESS CONTROL
+-----------------------------
+- Admin: Full system access
+- Agent: Filtered data via agent_property_assignments table
+- Agent isolation: Only see assigned properties
+- Secure route protection
+
+19. REAL-TIME FEATURES
+---------------------
+- Socket.io for chat and notifications
+- Online status tracking (is_online, last_seen)
+- Typing indicators
+- Message read receipts
+
+20. SCHEDULED AUTOMATED TASKS (CRON JOBS)
+-----------------------------------------
+- Monthly billing at 9AM
+- Expiring lease notifications at 8AM
+- Overdue rent reminders at 10AM
+- SMS queue processing every 5 minutes
+- WhatsApp queue processing every 5 minutes
+
+21. REPORTING & ANALYTICS
+-------------------------
+- Comprehensive dashboard stats
+- Agent reports with property scope
+- Water-bill reports with expanded columns
+- Payment history and expected rent tracking
+- Expense tracking and approval workflow stats
+
+================================================================================
+TECHNOLOGY STACK
+================================================================================
+
+Frontend: React 18.2, React Router 6, Axios, Tailwind CSS, Socket.io-client,
+         Lucide React, jsPDF, ExcelJS
+
+Backend: Express 4.22, PostgreSQL (pg), JWT, bcryptjs, Socket.io, node-cron,
+         Celcom SMS API, Meta WhatsApp Cloud API
+
+Database: PostgreSQL on Supabase
+Storage: Cloudinary (profile images, property images, documents)
+Auth: JWT (Header: Authorization: Bearer <token>)
+
+================================================================================
+API RESPONSE FORMAT
+================================================================================
+All API responses follow this structure:
+{ "success": boolean, "data": any, "message?": string }
+
+================================================================================
+KEY PATTERNS & CONVENTIONS
+================================================================================
+1. Database uses UUIDs, soft deletes (is_active)
+2. All agent queries join agent_property_assignments
+3. Phone number flow: Input 0712345678 -> Storage 254712345678 -> Display 0712345678
+4. Unit features stored as JSON Object (not Array)
+5. Route order: Specific routes (/balance/:id) MUST come before generic (/:id)
+6. Boolean coercion: is_active = is_active === true || is_active === 'true' || is_active === 1
