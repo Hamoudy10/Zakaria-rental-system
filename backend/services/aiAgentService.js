@@ -249,7 +249,7 @@ ORDER BY rent_due DESC LIMIT 200
 Q: vacant units in property X
 SELECT pu.unit_code,pu.unit_type,pu.rent_amount FROM property_units pu
 JOIN properties p ON p.id=pu.property_id
-WHERE p.name ILIKE '%X%' AND pu.is_active=true AND pu.is_occupied=false
+WHERE p.name ILIKE '%X%' AND COALESCE(pu.is_active, true) = true AND pu.is_occupied=false
 ORDER BY pu.unit_code LIMIT 200
 
 Q: total rent collected this month
@@ -1851,7 +1851,7 @@ const getTenantSnapshot = async ({ user, question }) => {
       ), 0) AS advance_amount
     FROM tenants t
     INNER JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-    INNER JOIN property_units pu ON ta.unit_id = pu.id AND pu.is_active = true
+    INNER JOIN property_units pu ON ta.unit_id = pu.id AND COALESCE(pu.is_active, true) = true
     INNER JOIN properties p ON pu.property_id = p.id
     WHERE (
       (t.first_name || ' ' || t.last_name) ILIKE ANY($2::text[]) OR
@@ -2000,7 +2000,7 @@ const getPropertySummary = async ({ user }) => {
       COUNT(CASE WHEN pu.is_occupied = true THEN 1 END)::int AS occupied_units,
       COUNT(CASE WHEN pu.is_occupied = false THEN 1 END)::int AS vacant_units
     FROM properties p
-    LEFT JOIN property_units pu ON pu.property_id = p.id AND pu.is_active = true
+    LEFT JOIN property_units pu ON pu.property_id = p.id AND COALESCE(pu.is_active, true) = true
     WHERE 1 = 1
   `;
 
@@ -2175,7 +2175,7 @@ const getRouteTenantPaymentStatus = async ({ user, question }) => {
       ), 0) as advance_amount
     FROM tenants t
     INNER JOIN tenant_allocations ta ON t.id = ta.tenant_id AND ta.is_active = true
-    INNER JOIN property_units pu ON ta.unit_id = pu.id AND pu.is_active = true
+    INNER JOIN property_units pu ON ta.unit_id = pu.id AND COALESCE(pu.is_active, true) = true
     INNER JOIN properties p ON pu.property_id = p.id
     WHERE (ta.lease_start_date IS NULL OR ta.lease_start_date < ($1::date + INTERVAL '1 month'))
   `;
@@ -2449,7 +2449,7 @@ const getRoutePropertiesList = async ({ user, question }) => {
       FROM property_units pu
       JOIN properties p ON p.id = pu.property_id
       WHERE pu.property_id = $1
-        AND pu.is_active = true
+        AND COALESCE(pu.is_active, true) = true
         AND pu.is_occupied = false
       ORDER BY pu.unit_code ASC
       LIMIT 200
@@ -2475,7 +2475,7 @@ const getRoutePropertiesList = async ({ user, question }) => {
         p.name AS property_name, p.property_code
       FROM property_units pu
       JOIN properties p ON p.id = pu.property_id
-      WHERE pu.is_active = true
+      WHERE COALESCE(pu.is_active, true) = true
         AND pu.is_occupied = false
         AND (pu.unit_code ILIKE $1 OR p.name ILIKE $1 OR p.property_code ILIKE $1)
       ORDER BY p.name ASC, pu.unit_code ASC
@@ -2966,8 +2966,8 @@ const getRouteDashboardComprehensive = async () => {
     SELECT
       COUNT(DISTINCT p.id) as total_properties,
       COUNT(DISTINCT pu.id) as total_units,
-      COUNT(DISTINCT CASE WHEN pu.is_occupied = true AND pu.is_active = true THEN pu.id END) as occupied_units,
-      COUNT(DISTINCT CASE WHEN pu.is_occupied = false AND pu.is_active = true THEN pu.id END) as vacant_units
+      COUNT(DISTINCT CASE WHEN pu.is_occupied = true AND COALESCE(pu.is_active, true) = true THEN pu.id END) as occupied_units,
+      COUNT(DISTINCT CASE WHEN pu.is_occupied = false AND COALESCE(pu.is_active, true) = true THEN pu.id END) as vacant_units
     FROM properties p
     LEFT JOIN property_units pu ON p.id = pu.property_id
   `);
