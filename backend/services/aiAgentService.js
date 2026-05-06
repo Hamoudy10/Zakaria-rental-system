@@ -509,16 +509,16 @@ const resolveQuestionContext = (question, history) => {
     /\bnot\s+\d{1,3}\b/i.test(q) ||
     /\bonly\s+\d{1,3}\b/i.test(q) ||
     /\b(?:you gave|you gave me|you gave us|got|received)\s+\d{1,3}\b/i.test(q);
+  const isShortRef = q.length < 40 || /^(yes|no|ok|okay|sure|nah|nope|maybe|idk|help)$/i.test(q);
+  const isExplicitRef = /\b(the same|same as above|same thing|like that|like above|like before|similar(ly)?)\b/i.test(q);
+  const isVagueRef = isShortRef && /\b(this|that|it|them|those|these|here|there|find it)\b/i.test(q);
+  const isNegationRef = /\b(no[,.\s]|not (that|this|it|them|those|these|the one|the correct|the right|here|there))\b/i.test(q);
+  const isLimitRef = /\b(only (that|this|it|them|those|these|the |one|two|three|four|five))\b/i.test(q);
+  const isFollowUp = lower.includes("continue") || lower.includes("find it");
+
   const isVagueFollowUp =
     q.length < 70 &&
-    (lower.includes("find it") ||
-      lower.includes("that") ||
-      lower.includes("this") ||
-      lower.includes("it") ||
-      lower.includes("same") ||
-      lower.includes("continue") ||
-      lower.includes("not ") ||
-      lower.includes("only "));
+    (isShortRef || isExplicitRef || isVagueRef || isNegationRef || isLimitRef || isFollowUp);
 
   if (!(isVagueFollowUp || isCountCorrection) || !Array.isArray(history) || history.length === 0) {
     return q;
@@ -526,7 +526,7 @@ const resolveQuestionContext = (question, history) => {
 
   const previousUser = [...history]
     .reverse()
-    .find((item) => item.role === "user" && item.content?.trim());
+    .find((item) => item.role === "user" && item.content?.trim() && item.content.trim().toLowerCase() !== lower);
   if (!previousUser) return q;
 
   return `${previousUser.content.trim()} ${q}`.trim();
@@ -777,6 +777,7 @@ const ROUTER_ACTIONS = [
   "draft_complaint_assignment",
   "web_search",
   "web_fetch",
+  "general",
 ];
 
 const buildRouterMessages = ({ user, question, history, pendingActionContext }) => {
@@ -826,6 +827,7 @@ Available actions:
 - web_search: search the internet for facts, news, or external information.
 - web_fetch: fetch and read content from a specific URL.
 - dynamic_sql: LAST RESORT read-only SQL query when no tool can answer.
+- general: for greetings, introductions, "how are you", "what can you do", or any non-system chit-chat.
 `;
 
   const historySnippet = history
@@ -1269,38 +1271,67 @@ const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) =>
 const chooseTool = (question) => {
   const q = question.toLowerCase();
 
-  if (/\b(not paid|unpaid|owe|balance|outstanding|rent due|payment status|who.*paid)\b/.test(q)) {
+  if (/\b(not paid|unpaid|owe|balance|outstanding|rent due|payment status|who.*paid)\b/.test(q) ||
+      /\b(who (has|have) (not |n't )?(paid|owe|outstand))\b/.test(q) ||
+      /\b(collect(ed|ion)?\s+rate|how much.*(collect|paid|owe|due)|total.*due)\b/.test(q)) {
     return "route_tenant_payment_status";
   }
-  if (/\b(payment|receipt|mpesa|transaction|paybill)\b/.test(q) && !q.includes("tenant status")) {
+  if (/\b(payment|receipt|mpesa|transaction|paybill|paid.*how much)\b/.test(q) && !q.includes("tenant status")) {
     return "route_payments";
   }
-  if (/\b(tenant|tenants)\b/.test(q) && /\b(list|all|show|find|search)\b/.test(q)) {
+  if (/\b(tenant|tenants|occupant|occupiers|renter)\b/.test(q) && /\b(list|all|show|find|search|who|how many|count)\b/.test(q)) {
     return "route_tenants";
   }
-  if (/\b(property|properties|vacant|occupancy|unit|units)\b/.test(q) && !/\b(not paid|unpaid|owe)\b/.test(q)) {
+  if (/\b(property|properties|building|vacant|occupancy|unit|units|rooms?|apartments?)\b/.test(q) && !/\b(not paid|unpaid|owe|balance)\b/.test(q) && !/\b(tenant|tenants|renter)\b/.test(q)) {
     return "route_properties";
   }
-  if (/\b(complaint|issue|problem)\b/.test(q)) {
+  if (/\b(complaint|issue|problem|fault|defect|broken|repair|maintenance)\b/.test(q)) {
     return "route_complaints";
   }
-  if (/\bwater.*(bill|billing)\b/.test(q)) {
+  if (/\bwater.*(bill|billing|usage|charge|cost)|(bill|billing).*water\b/.test(q)) {
     return "route_water_bills";
   }
-  if (/\b(send|sms|remind|message|notify)\b/.test(q)) {
+  if (/\bwater.*(profit|loss|net|margin|collected|expense|revenue|analysis)\b/.test(q) ||
+      /\bhow (much|profitable).*water\b/.test(q)) {
+    return "route_water_profitability";
+  }
+  if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
     return "draft_sms_reminder";
   }
-  if (/\b(search|web|internet|google|look up|lookup)\b/.test(q)) {
+  if (/\b(search|web|internet|google|look up|lookup|news|trends? in|market rate)\b/.test(q)) {
     return "web_search";
   }
-  if (/\b(dashboard|stats|kpi|overview)\b/.test(q)) {
+  if (/\b(dashboard|stats|kpi|overview|summary|snapshot|at a glance)\b/.test(q)) {
     return "route_dashboard_comprehensive";
   }
-  if (/\b(all data|everything|system|database)\b/.test(q)) {
+  if (/\b(all data|everything|whole system|database dump|full picture)\b/.test(q)) {
     return "global_data_pack";
   }
+  if (/\b(expense|spending|spent|cost|overhead|outgoing)\b/.test(q) && !q.includes("water") && !q.includes("rent")) {
+    return "route_tenant_payment_status";
+  }
+  if (/\b(profit|net income|revenue|earning|income|gross)\b/.test(q)) {
+    return "route_tenant_payment_status";
+  }
+  if (/\b(arrear|debt|default|behind)\b/.test(q)) {
+    return "outstanding_rent";
+  }
+  if (/\b(compare|vs|versus|month over month|year over year|m-o-m|y-o-y|trend)\b/.test(q)) {
+    return "route_tenant_payment_status";
+  }
+  if (/\b(agent|agents|collector|caretaker|manager)\b/.test(q) && /\b(which|who|most|best|top|active|performance)\b/.test(q)) {
+    return "route_tenant_payment_status";
+  }
+  if (/\b(how much|what is|tell me|give me).*(balance|rent|bill|pay|charge|fee)\b/.test(q) ||
+      /\bwhat('s|s| is) (the |my |their )?(balance|rent|bill|total)\b/.test(q)) {
+    return "route_tenant_payment_status";
+  }
 
-  return "tenant";
+  if (/\b(how are you|what('?s| is) up|who are you|what can you do|help|capabilit|introduce|yourself|about you)\b/.test(q)) {
+    return "general";
+  }
+
+  return "route_tenant_payment_status";
 };
 
 const getUnpaidTenantsForPropertyThisMonth = async ({ user, question }) => {
@@ -2960,6 +2991,38 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
     ? `Previous SQL failed with error: ${previousError}. Fix the SQL accordingly.`
     : "No previous SQL error.";
 
+  const businessRules = `
+BUSINESS RULES (CRITICAL — follow these for correct results):
+1. Rent due = monthly_rent (from tenant_allocations) minus rent paid this month (from rent_payments WHERE status='completed' AND DATE_TRUNC('month', payment_month) = CURRENT_DATE month).
+2. Arrears = arrears_balance column in tenant_allocations. This is cumulative unpaid from all prior months.
+3. Total owed = rent_due + water_due + arrears_due (advance applied to arrears first, then water, then rent).
+4. Water bills = water_bills table. One per tenant per month (UNIQUE on tenant_id, unit_id, bill_month).
+5. Active tenants = tenant_allocations WHERE is_active=true. Join through property_units to properties.
+6. Rent payments allocation order: allocated_to_arrears → allocated_to_water → allocated_to_rent → carry_forward.
+7. When computing how much was collected/paid, always filter payments by status='completed'.
+8. Agent scope: agent_property_assignments links agent_id to property_id. Filter by agent_id when role=agent.
+
+COMMON JOIN PATHS:
+- tenants → tenant_allocations → property_units → properties
+- rent_payments → tenants (tenant_id), property_units (unit_id), properties (property_id)
+- water_bills → tenants (tenant_id), property_units (unit_id)
+- complaints → tenants (tenant_id), property_units (unit_id) → properties
+- expenses → properties (property_id), users (created_by → agent)
+
+FEW-SHOT EXAMPLES:
+Q: "how much rent have we collected this month"
+SQL: SELECT COALESCE(SUM(allocated_to_rent), 0) as rent_collected FROM rent_payments WHERE status='completed' AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', CURRENT_DATE)
+
+Q: "top 5 tenants with highest arrears"
+SQL: SELECT t.first_name, t.last_name, ta.arrears_balance as arrears, pu.unit_code, p.name as property FROM tenant_allocations ta JOIN tenants t ON t.id=ta.tenant_id JOIN property_units pu ON pu.id=ta.unit_id JOIN properties p ON p.id=pu.property_id WHERE ta.is_active=true ORDER BY ta.arrears_balance DESC LIMIT 5
+
+Q: "how many complaints are still open"
+SQL: SELECT COUNT(*)::int as open_complaints FROM complaints WHERE status IN ('open','in_progress')
+
+Q: "total expenses approved this month"
+SQL: SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE status = 'approved' AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
+`;
+
   return [
     {
       role: "system",
@@ -2968,7 +3031,7 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
     },
     {
       role: "system",
-      content: `${roleScopeInstruction}\n${errorHint}\nAlways prefer meaningful aggregations when the user asks broad questions.\nWhen user asks who has not paid this month in a property/building, compute unpaid rent from tenant_allocations + rent_payments for CURRENT_DATE month and return tenant-level rows with unpaid amount.`,
+      content: `${roleScopeInstruction}\n${errorHint}\n${businessRules}\nAlways prefer meaningful aggregations when the user asks broad questions.\nUse ILIKE for text searches with % wildcards.\nAlways include a LIMIT clause (max 500).\nWhen joining for payment status, always filter by status='completed'.\nNever query by first_name or last_name for numeric/financial questions.`,
     },
     {
       role: "user",
@@ -3104,9 +3167,30 @@ const normalizeCurrencyText = (text) => {
     .replace(/\bdollars?\b/gi, "Kenyan shillings");
 };
 
+const deduplicateQuestionText = (text) => {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return "";
+  const half = Math.floor(trimmed.length / 2);
+  if (half < 3) return trimmed;
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length < 4) return trimmed;
+  const mid = Math.floor(tokens.length / 2);
+  const firstHalf = tokens.slice(0, mid).join(" ");
+  const secondHalf = tokens.slice(mid).join(" ");
+  if (firstHalf.toLowerCase() === secondHalf.toLowerCase()) {
+    return firstHalf;
+  }
+  return trimmed;
+};
+
 const formatFallbackResponse = ({ question, toolLabel, rows }) => {
+  const displayQuestion = deduplicateQuestionText(String(question || ""));
+
   if (!rows || rows.length === 0) {
-    return `I could not find matching records for "${question}". Try including a tenant name, phone number, or unit code.`;
+    if (toolLabel === "General Conversation") {
+      return "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system.";
+    }
+    return `I searched the database but could not find matching records. Try being more specific — include a tenant name, unit code (e.g. MJ-4), property name, or phone number.`;
   }
 
   if (toolLabel === "Tenant Snapshot") {
@@ -3199,6 +3283,10 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
     const property = rows[0]?.data?.property || {};
     const tenant = rows[0]?.data?.tenant || {};
     return `I used /api/admin/dashboard/comprehensive-stats and found ${Number(property.total_properties || 0)} properties and ${Number(tenant.active_tenants || 0)} active tenants.`;
+  }
+
+  if (toolLabel === "General Conversation") {
+    return "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system.";
   }
 
   return `I found ${rows.length} matching records for your request.`;
@@ -3594,6 +3682,14 @@ const AI_ACTION_REGISTRY = [
     mode: "read_only",
     risk: "low",
     handler: handleWebFetch,
+  }),
+  createAction({
+    id: "general",
+    label: "General Conversation",
+    description: "Handles greetings, help requests, and non-system questions.",
+    mode: "read_only",
+    risk: "low",
+    handler: async () => ({ label: "General Conversation", rows: [] }),
   }),
 ];
 
@@ -4103,6 +4199,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   });
   let routerDecision = heuristicRouter(contextualQuestion);
   let routerUsage = null;
+  const heuristicAction = routerDecision.action;
 
   let pendingCtx = "";
   if (safeConversationId) {
@@ -4121,12 +4218,23 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       history: safeHistory,
       pendingActionContext: pendingCtx,
     });
-    if (routed.success) {
-      routerDecision = routed.data;
+    if (routed.success && routed.data) {
+      const groqAction = routed.data.action;
+      const groqConfidence = Number(routed.data.confidence || 0);
       routerUsage = routed.data.usage || null;
+      if (groqConfidence >= 0.85 || (groqAction === heuristicAction && groqConfidence >= 0.5)) {
+        routerDecision = routed.data;
+      } else {
+        routerDecision = {
+          action: heuristicAction,
+          confidence: routerDecision.confidence,
+          response_mode: routed.data.response_mode || routerDecision.response_mode,
+          hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
+        };
+      }
     }
   } catch (error) {
-    // LLM router failed — use heuristic fallback
+    // LLM router failed — heuristic fallback remains active
   }
 
   routerDecision = inferFollowUpAction({
@@ -4169,8 +4277,24 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   let dynamicSqlInfo = null;
   const dynamicEnabled = String(process.env.AI_DYNAMIC_SQL_ENABLED || "true").toLowerCase() !== "false";
 
+  const wasEmpty = !toolResult || !toolResult.rows || toolResult.rows.length === 0;
+  const isNarrowAction = ["tenant", "tenant_or_payments", "unpaid_tenants_property_month", "dynamic_sql"].includes(routerDecision.action);
+  if (wasEmpty && isNarrowAction && routerDecision.action !== "dynamic_sql") {
+    const broadResult = await runReadOnlyToolByAction({
+      user,
+      question: safeQuestion,
+      selected: "route_tenant_payment_status",
+    });
+    if (broadResult && broadResult.rows && broadResult.rows.length > 0) {
+      toolResult = broadResult;
+      routerDecision.action = "route_tenant_payment_status";
+      routerDecision.response_mode = "list";
+    }
+  }
+
   const shouldTryDynamicSql =
     dynamicEnabled &&
+    routerDecision.action !== "general" &&
     (routerDecision.action === "dynamic_sql" ||
       !toolResult ||
       !toolResult.rows ||
