@@ -4347,20 +4347,15 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
 
       const DEFAULT_ACTION = "dynamic_sql";
       const heuristicIsSpecific = heuristicAction !== DEFAULT_ACTION && heuristicAction !== "tenant" && heuristicAction !== "general";
-      const groqIsDefault = groqAction === DEFAULT_ACTION;
-      const bothSpecific = heuristicIsSpecific && groqAction !== DEFAULT_ACTION && groqAction !== "tenant" && groqAction !== "general";
+      const groqAgrees = groqAction === heuristicAction;
 
-      if (heuristicIsSpecific && groqIsDefault) {
+      if (heuristicIsSpecific) {
         routerDecision = {
           action: heuristicAction,
-          confidence: routerDecision.confidence,
+          confidence: groqAgrees ? groqConfidence : routerDecision.confidence,
           response_mode: routed.data.response_mode || routerDecision.response_mode,
           hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
         };
-      } else if (bothSpecific && groqAction !== heuristicAction && groqConfidence >= 0.85) {
-        routerDecision = routed.data;
-      } else if (groqAction === heuristicAction && groqConfidence >= 0.5) {
-        routerDecision = routed.data;
       } else if (groqConfidence >= 0.85) {
         routerDecision = routed.data;
       } else {
