@@ -187,134 +187,54 @@ const extractJsonObject = (text) => {
   return null;
 };
 
-const getSchemaContext = () => `
-=== ZAKARIA RENTAL SYSTEM — COMPLETE DATABASE SCHEMA ===
+const getSchemaContext = async () => {
+  const keyTables = [
+    "users","tenants","properties","property_units","tenant_allocations",
+    "rent_payments","water_bills","water_delivery_expenses","complaints",
+    "expenses","notifications","agent_property_assignments","admin_settings"
+  ];
+  let columnsText = "";
+  try {
+    const cols = await db.query(
+      `SELECT table_name, column_name, data_type
+       FROM information_schema.columns
+       WHERE table_schema='public' AND table_name=ANY($1::text[])
+       ORDER BY table_name, ordinal_position`,
+      [keyTables]
+    );
+    const grouped = {};
+    for (const r of cols.rows) {
+      if (!grouped[r.table_name]) grouped[r.table_name] = [];
+      grouped[r.table_name].push(`${r.column_name}:${r.data_type}`);
+    }
+    columnsText = Object.entries(grouped).map(([t,c]) => `${t}(${c.slice(0,40).join(", ")})`).join("\n");
+  } catch (e) { columnsText = ""; }
 
---- CORE BUSINESS TABLES ---
+  return `
+=== DATABASE COLUMNS (live from information_schema) ===
+${columnsText}
 
-users: id(UUID PK), national_id, first_name, last_name, email, phone_number, role(admin|agent|tenant), password_hash, profile_image, is_online, last_seen, created_at, updated_at
-  → System users. Admins see all data. Agents restricted via agent_property_assignments.
-
-tenants: id(UUID PK), national_id, first_name, last_name, email, phone_number, id_front_image, id_back_image, profile_image, emergency_contact_name, emergency_contact_phone, is_active(BOOL), is_archived(BOOL), archived_at, archived_by(UUID→users), archive_reason, created_by(UUID→users), created_at, updated_at
-  → Renters. Separate from users table. Soft-delete via is_active. UNIQUE on national_id, phone_number, email.
-
-properties: id(UUID PK), name, property_code, address, town, county, total_units(INT), available_units(INT), created_at, updated_at
-  → Buildings. available_units = COUNT of property_units WHERE is_occupied=false AND is_active=true.
-
-property_units: id(UUID PK), property_id(UUID→properties), unit_code, unit_type, rent_amount(NUMERIC), is_active(BOOL DEFAULT true), is_occupied(BOOL DEFAULT false), floor, square_feet, bedrooms, description, features(JSONB), created_at, updated_at
-  → Individual rooms/apartments. Linked to properties via property_id. TRIGGER: auto-sets is_active=true, is_occupied=false on insert. TRIGGER: on UPDATE of rent_amount/unit_code, propagates to active tenant_allocations.
-
-tenant_allocations: id(UUID PK), tenant_id(UUID→tenants CASCADE), unit_id(UUID→property_units), monthly_rent(NUMERIC), arrears_balance(NUMERIC), security_deposit, allocation_date, lease_start_date, lease_end_date, rent_due_day(INT 1-28), is_active(BOOL), month_count(INT), expected_amount(NUMERIC), current_month_expected(NUMERIC), updated_at
-  → Links tenants to units. Stores cumulative arrears_balance. UNIQUE constraint: one active tenant per unit (uq_tenant_allocations_active_unit). TRIGGER: auto-updates updated_at on modification.
-
-rent_payments: id(UUID PK), tenant_id(UUID→tenants CASCADE), unit_id(UUID→property_units), property_id(UUID→properties), amount(NUMERIC), payment_date(DATE), payment_month(DATE), payment_method(cash|mpesa|bank|carry_forward), status(pending|completed|failed|overdue), mpesa_receipt_number, phone_number, allocated_to_rent(NUMERIC), allocated_to_water(NUMERIC), allocated_to_arrears(NUMERIC), is_advance_payment(BOOL), original_payment_id(UUID self-ref), notes, created_at, updated_at
-  → Payment records. Allocation order: arrears→water→rent→advance. For carry_forward payments, original_payment_id links to parent payment.
-
-water_bills: id(UUID PK), tenant_id(UUID→tenants), unit_id(UUID→property_units nullable), amount(NUMERIC), bill_month(DATE), created_by(UUID→users), created_at
-  → Monthly water charges. UNIQUE per tenant_id + COALESCE(unit_id) + bill_month.
-
-water_delivery_expenses: id(UUID PK), property_id(UUID→properties CASCADE), recorded_by(UUID→users), vendor_name, supplier_organization, amount(NUMERIC>0), expense_date(DATE), bill_month(DATE TRUNC to month), payment_method(cash|mpesa), payment_reference, mpesa_reference, liters_delivered, notes, is_active(BOOL), created_at, updated_at
-  → Vendor water delivery costs. Used for water profitability analysis.
-
-complaints: id(UUID PK), tenant_id(UUID→tenants SET NULL), unit_id(UUID→property_units), title, description, categories(JSONB), status(open|in_progress|resolved|closed), priority(low|medium|high), assigned_to(UUID→users), raised_at(TIMESTAMP), resolved_at, created_at, updated_at
-  → Maintenance issues. Use raised_at for date queries, NOT created_at. Multi-category via JSONB.
-
-complaint_steps: id(UUID PK), complaint_id(UUID→complaints CASCADE), step_number, description, status, assigned_to(UUID→users), completed_at, created_at
-  → Step-by-step resolution workflow for complaints.
-
-expenses: id(UUID PK), property_id(UUID→properties), category_id(UUID→expense_categories), amount(NUMERIC), description, expense_date(DATE), status(pending|approved|rejected|reimbursed), created_by(UUID→users), approved_by(UUID→users), approved_at, created_at, updated_at
-  → Operational costs. Approval workflow: pending → approved/rejected → reimbursed.
-
-expense_categories: id(UUID PK), name, description, is_active(BOOL), created_at
-  → Dynamic expense category list (Maintenance, Repairs, Utilities, Security, Cleaning, etc.)
-
---- SECURITY & ACCESS ---
-
-agent_property_assignments: id(UUID PK), agent_id(UUID→users), property_id(UUID→properties), is_active(BOOL), assigned_at, created_at
-  → Agent isolation. Agents can ONLY see properties assigned here. Admin sees all.
-
---- NOTIFICATIONS & MESSAGING ---
-
-notifications: id(UUID PK), user_id(UUID→users), title, message, type(payment_success|payment_failed|tenant_created|complaint_created|expense_created|lease_expiring|rent_overdue|announcement|broadcast etc.), related_entity_type, related_entity_id(UUID), is_read(BOOL DEFAULT false), created_at
-  → User notifications. REFERENCES users.id, NOT tenants.id.
-
-sms_queue: id(UUID PK), tenant_id, phone_number, message, status(pending|sent|failed), attempts(INT), message_id, delivery_status, delivered_at, scheduled_at, batch_id(UUID), created_at, updated_at
-  → SMS retry queue. Max 3 attempts. batch_id groups same-trigger messages.
-
-whatsapp_queue: id(UUID PK), tenant_id, phone_number, message, template_name, status(pending|sent|failed|skipped), attempts(INT), created_at, updated_at
-  → WhatsApp message queue with retry.
-
-sms_notifications: id(UUID PK), log of sent SMS messages with delivery status.
-whatsapp_notifications: id(UUID PK), log of sent WhatsApp messages with delivery status.
-
---- CHAT SYSTEM ---
-
-chat_conversations: id(UUID PK), conversation_type(direct|group), title, created_at, updated_at
-chat_messages: id(UUID PK), conversation_id(UUID→chat_conversations), sender_id(UUID→users), message_text, message_type(text|image), image_url, deleted_at, deleted_by(UUID→users), created_at
-chat_participants: id(UUID PK), conversation_id, user_id(UUID→users), cleared_at, joined_at
-chat_message_reads: id(UUID PK), message_id, user_id(UUID), read_at
-
---- OTHER TABLES ---
-
-property_images: id(UUID PK), property_id(UUID→properties nullable), unit_id(UUID→property_units nullable), image_url(Cloudinary), is_active(BOOL)
-  → Unified image table. unit_id=NULL means property image; unit_id set means unit image.
-
-admin_settings: id(UUID PK), key(VARCHAR UNIQUE), value(TEXT), description, updated_at
-  → Key-value system settings: company_name, company_phone, billing_day, sms_billing_template, etc.
-
-tenant_documents: id(UUID PK), tenant_id(UUID→tenants CASCADE), file_name, file_url(Cloudinary raw), file_type(PDF/DOC/DOCX), file_size(BIGINT), uploaded_by(UUID→users), is_active(BOOL)
-  → Tenant agreement/lease documents stored on Cloudinary.
-
-unit_code_aliases: id(UUID PK), unit_id(UUID→property_units CASCADE), alias_code(VARCHAR UNIQUE uppercase), is_active(BOOL)
-  → Alternate unit codes for M-Pesa reference matching.
-
-tenant_deposit_transactions: id(UUID PK), tenant_id(UUID→tenants CASCADE), unit_id(UUID→property_units CASCADE), allocation_id(UUID→tenant_allocations SET NULL), transaction_type(deposit_charge|deposit_payment|deposit_adjustment|deposit_refund), amount(NUMERIC>0), status(pending|completed|failed|cancelled), payment_method, mpesa_receipt_number, transaction_date, notes, created_by(UUID→users)
-  → Deposit ledger for security deposits.
-
-mpesa_callback_inbox: id(UUID PK), trans_id(VARCHAR UNIQUE), bill_ref_number, msisdn(phone), trans_amount, payer_first_name/middle_name/last_name, raw_payload(JSONB), process_status(pending|matched|failed), matched_payment_id(UUID→rent_payments SET NULL), received_at, processed_at, retry_count(INT)
-  → Raw M-Pesa callbacks. Matched to rent_payments by receipt number.
-
---- SYSTEM TABLES ---
-
-message_templates: id(UUID PK), template_key(VARCHAR UNIQUE), name, description, category, channel(sms|whatsapp|both), sms_body, whatsapp_template_name, whatsapp_fallback_body, variables(JSONB), is_active, is_archived, created_by(UUID→users), created_at
-message_template_bindings: id(UUID PK), event_key(VARCHAR UNIQUE), event_name, default_template_id(UUID→message_templates SET NULL), allow_agent_override(BOOL), is_active(BOOL)
-password_reset_tokens: id(UUID PK), user_id(UUID→users CASCADE), token_hash(VARCHAR UNIQUE), expires_at, used_at
-system_activity_logs: id(UUID PK), actor_user_id(UUID→users), module, action, entity_type, entity_id(UUID), request_method, request_path, response_status, ip_address, metadata(JSONB), created_at
-deleted_records_archive: id(UUID PK), table_name, record_id(UUID), record_data(JSONB), deleted_by(UUID→users), deleted_at, restored_at, restored_by
-ai_chat_history: id(UUID PK), conversation_id(UUID), user_id(UUID→users), role(user|assistant|system), message_text, tool_used, blocked(BOOL), fallback(BOOL), records_count(INT), usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, metadata(JSONB), created_at
-ai_pending_actions: id(UUID PK), conversation_id(UUID), user_id(UUID→users), action_type, action_target(JSONB), action_params(JSONB), confirmation_message, status(pending|confirmed|rejected|executed|failed), result(JSONB), created_at
-
-=== CRITICAL BUSINESS RULES ===
-
-1. Payment Allocation Order: paid amount is allocated to arrears FIRST, then water, then rent, any remainder = advance.
-2. Arrears: tenant_allocations.arrears_balance is cumulative unpaid from ALL prior months.
-3. Rent Due This Month: monthly_rent from tenant_allocations MINUS SUM of allocated_to_rent for CURRENT_DATE month where status='completed'.
-4. Total Owed: rent_due + water_due + arrears_due, with advance_amount applied to arrears→water→rent order.
-5. Agent Scope: if role='agent', ALL queries MUST filter through agent_property_assignments WHERE agent_id=<id> AND is_active=true.
-6. Active Tenants: tenant_allocations WHERE is_active=true. Join through property_units to properties.
-7. Water Bills: water_bills.amount for CURRENT month. UNIQUE constraint on (tenant_id, COALESCE(unit_id, uuid), bill_month).
-8. Complaints: use raised_at for date queries (NOT created_at). Status: open, in_progress, resolved, closed.
-9. Expenses: approval workflow: pending → approved/rejected → reimbursed. Use expense_date for date queries.
-10. Soft Delete: most tables use is_active=true/false. Always filter is_active=true for live data.
-11. Phone Format: stored as 2547XXXXXXXX (12 digits starting with 254). Display as 07xxxxxxxx.
-12. Unit Code: stored in property_units.unit_code (e.g. MJ-4, KBA1). Aliases in unit_code_aliases.
-13. Monthly Billing: billing_day (1-28) from admin_settings. Bills due on that day each month.
-14. Rent Payments: always filter status='completed' for financial calculations.
-
-=== COMMON JOIN PATHS ===
-tenants → tenant_allocations(tenant_id) → property_units(unit_id) → properties(property_id)
-rent_payments → tenants(tenant_id) → property_units(unit_id) → properties(property_id)
-water_bills → tenants(tenant_id) → property_units(unit_id nullable)
-complaints → tenants(tenant_id) → property_units(unit_id) → properties
-expenses → properties(property_id) → users(created_by)
-notifications → users(user_id)
-agent_property_assignments: users(id=agent_id) → properties(property_id)
+=== BUSINESS RULES ===
+1. Payment Allocation Order: arrears→water→rent→advance (strict).
+2. Arrears: tenant_allocations.arrears_balance = cumulative unpaid from all prior months.
+3. Rent Due This Month: monthly_rent MINUS SUM(allocated_to_rent) for CURRENT_DATE month WHERE status='completed'.
+4. Total Owed: rent_due + water_due + arrears_due. Advance applied arrears→water→rent order.
+5. Agent Scope: if role=agent, filter via agent_property_assignments WHERE agent_id=<id> AND is_active=true.
+6. Active Tenants: tenant_allocations WHERE is_active=true. Join: tenants→tenant_allocations→property_units→properties.
+7. Water Bills: water_bills UNIQUE(tenant_id, COALESCE(unit_id), bill_month).
+8. Complaints: use raised_at for date queries (NOT created_at). Status: open|in_progress|resolved|closed.
+9. Expenses: approval workflow: pending→approved→rejected→reimbursed. Use expense_date.
+10. Soft Delete: always filter is_active=true for live data.
+11. Phone Format: stored as 2547XXXXXXXX. Display as 07xxxxxxxx.
+12. Rent Payments: always filter status='completed' for financial calculations.
+13. Use DATE_TRUNC('month', col) = DATE_TRUNC('month', CURRENT_DATE) for current-month filters.
+14. Always add LIMIT clause (max 500).
 
 === FEW-SHOT EXAMPLES ===
 Q: who has not paid this month
-SELECT t.first_name, t.last_name, pu.unit_code, p.name AS property_name,
-  ta.monthly_rent, COALESCE(SUM(rp.allocated_to_rent),0) AS rent_paid,
-  ta.monthly_rent - COALESCE(SUM(rp.allocated_to_rent),0) AS rent_due
+SELECT t.first_name,t.last_name,pu.unit_code,p.name AS property,
+  ta.monthly_rent,COALESCE(SUM(rp.allocated_to_rent),0) AS rent_paid,
+  ta.monthly_rent-COALESCE(SUM(rp.allocated_to_rent),0) AS rent_due
 FROM tenant_allocations ta
 JOIN tenants t ON t.id=ta.tenant_id
 JOIN property_units pu ON pu.id=ta.unit_id
@@ -322,13 +242,13 @@ JOIN properties p ON p.id=pu.property_id
 LEFT JOIN rent_payments rp ON rp.tenant_id=ta.tenant_id AND rp.unit_id=ta.unit_id
   AND DATE_TRUNC('month',rp.payment_month)=DATE_TRUNC('month',CURRENT_DATE) AND rp.status='completed'
 WHERE ta.is_active=true
-GROUP BY t.id, t.first_name, t.last_name, pu.unit_code, p.name, ta.monthly_rent
-HAVING ta.monthly_rent - COALESCE(SUM(rp.allocated_to_rent),0) > 0
+GROUP BY t.id,t.first_name,t.last_name,pu.unit_code,p.name,ta.monthly_rent
+HAVING ta.monthly_rent-COALESCE(SUM(rp.allocated_to_rent),0)>0
 ORDER BY rent_due DESC LIMIT 200
 
-Q: how many vacant units in property X
-SELECT pu.unit_code, pu.unit_type, pu.rent_amount
-FROM property_units pu JOIN properties p ON p.id=pu.property_id
+Q: vacant units in property X
+SELECT pu.unit_code,pu.unit_type,pu.rent_amount FROM property_units pu
+JOIN properties p ON p.id=pu.property_id
 WHERE p.name ILIKE '%X%' AND pu.is_active=true AND pu.is_occupied=false
 ORDER BY pu.unit_code LIMIT 200
 
@@ -337,7 +257,7 @@ SELECT COALESCE(SUM(allocated_to_rent),0) FROM rent_payments
 WHERE status='completed' AND DATE_TRUNC('month',payment_month)=DATE_TRUNC('month',CURRENT_DATE)
 
 Q: top 5 tenants by arrears
-SELECT t.first_name,t.last_name,ta.arrears_balance,pu.unit_code,p.name AS property
+SELECT t.first_name,t.last_name,ta.arrears_balance,pu.unit_code,p.name
 FROM tenant_allocations ta JOIN tenants t ON t.id=ta.tenant_id
 JOIN property_units pu ON pu.id=ta.unit_id JOIN properties p ON p.id=pu.property_id
 WHERE ta.is_active=true ORDER BY ta.arrears_balance DESC LIMIT 5
@@ -349,16 +269,6 @@ WHERE status='approved' AND DATE_TRUNC('month',expense_date)=DATE_TRUNC('month',
 Q: how many open complaints
 SELECT COUNT(*)::int FROM complaints WHERE status IN ('open','in_progress')
 `.trim();
-
-const normalizeHistory = (history) => {
-  if (!Array.isArray(history)) return [];
-  return history
-    .slice(-MAX_HISTORY_ITEMS)
-    .map((item) => ({
-      role: item?.role === "assistant" ? "assistant" : "user",
-      content: String(item?.content || "").slice(0, MAX_HISTORY_ITEM_LENGTH),
-    }))
-    .filter((item) => item.content.trim().length > 0);
 };
 
 const normalizeHistoryText = (value, max = MAX_HISTORY_ITEM_LENGTH) =>
@@ -2511,7 +2421,6 @@ const getRoutePropertiesList = async ({ user, question }) => {
     const unitQuery = `
       SELECT
         pu.id, pu.unit_code, pu.unit_type, pu.rent_amount, pu.is_occupied,
-        pu.floor, pu.square_feet, pu.bedrooms, pu.description,
         p.name AS property_name, p.property_code
       FROM property_units pu
       JOIN properties p ON p.id = pu.property_id
@@ -3129,39 +3038,7 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
 
   const errorHint = previousError
     ? `Previous SQL failed with error: ${previousError}. Fix the SQL accordingly.`
-    : "No previous SQL error.";
-
-  const businessRules = `
-BUSINESS RULES (CRITICAL — follow these for correct results):
-1. Rent due = monthly_rent (from tenant_allocations) minus rent paid this month (from rent_payments WHERE status='completed' AND DATE_TRUNC('month', payment_month) = CURRENT_DATE month).
-2. Arrears = arrears_balance column in tenant_allocations. This is cumulative unpaid from all prior months.
-3. Total owed = rent_due + water_due + arrears_due (advance applied to arrears first, then water, then rent).
-4. Water bills = water_bills table. One per tenant per month (UNIQUE on tenant_id, unit_id, bill_month).
-5. Active tenants = tenant_allocations WHERE is_active=true. Join through property_units to properties.
-6. Rent payments allocation order: allocated_to_arrears → allocated_to_water → allocated_to_rent → carry_forward.
-7. When computing how much was collected/paid, always filter payments by status='completed'.
-8. Agent scope: agent_property_assignments links agent_id to property_id. Filter by agent_id when role=agent.
-
-COMMON JOIN PATHS:
-- tenants → tenant_allocations → property_units → properties
-- rent_payments → tenants (tenant_id), property_units (unit_id), properties (property_id)
-- water_bills → tenants (tenant_id), property_units (unit_id)
-- complaints → tenants (tenant_id), property_units (unit_id) → properties
-- expenses → properties (property_id), users (created_by → agent)
-
-FEW-SHOT EXAMPLES:
-Q: "how much rent have we collected this month"
-SQL: SELECT COALESCE(SUM(allocated_to_rent), 0) as rent_collected FROM rent_payments WHERE status='completed' AND DATE_TRUNC('month', payment_month) = DATE_TRUNC('month', CURRENT_DATE)
-
-Q: "top 5 tenants with highest arrears"
-SQL: SELECT t.first_name, t.last_name, ta.arrears_balance as arrears, pu.unit_code, p.name as property FROM tenant_allocations ta JOIN tenants t ON t.id=ta.tenant_id JOIN property_units pu ON pu.id=ta.unit_id JOIN properties p ON p.id=pu.property_id WHERE ta.is_active=true ORDER BY ta.arrears_balance DESC LIMIT 5
-
-Q: "how many complaints are still open"
-SQL: SELECT COUNT(*)::int as open_complaints FROM complaints WHERE status IN ('open','in_progress')
-
-Q: "total expenses approved this month"
-SQL: SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE status = 'approved' AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
-`;
+    : "";
 
   return [
     {
@@ -3171,11 +3048,11 @@ SQL: SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE status = 'appr
     },
     {
       role: "system",
-      content: `${roleScopeInstruction}\n${errorHint}\n${businessRules}\nAlways prefer meaningful aggregations when the user asks broad questions.\nUse ILIKE for text searches with % wildcards.\nAlways include a LIMIT clause (max 500).\nWhen joining for payment status, always filter by status='completed'.\nNever query by first_name or last_name for numeric/financial questions.`,
+      content: `${roleScopeInstruction}\n${errorHint}\nUse ILIKE for text searches with % wildcards. Always include LIMIT (max 500). Only select columns that actually exist in the schema below. Never query by first_name or last_name for numeric/financial questions.`,
     },
     {
       role: "user",
-      content: `Schema:\n${schemaContext}\n\nQuestion:\n${question}`,
+      content: `${schemaContext}\n\nQuestion:\n${question}`,
     },
   ];
 };
@@ -3256,7 +3133,7 @@ const executeReadOnlySql = async (sql) => {
 };
 
 const runSchemaAwareDynamicQuery = async ({ user, question }) => {
-  const schemaContext = getSchemaContext();
+  const schemaContext = await getSchemaContext();
   let plannerError = null;
   let plannerUsage = null;
 
