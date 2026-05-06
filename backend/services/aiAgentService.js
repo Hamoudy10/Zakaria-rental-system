@@ -4186,6 +4186,63 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     };
   }
 
+  const isVagueQuery = (() => {
+    const q = safeQuestion.toLowerCase().trim();
+    const matched = chooseTool(safeQuestion);
+    const isDefaultMatch = matched === "route_tenant_payment_status" || matched === "tenant";
+    if (!isDefaultMatch) return false;
+    const vaguePatterns = [
+      /\bwhat('s| is|s) wrong\b/, /\btell me what('s| is|s) wrong\b/,
+      /\bidentify (the |any )?(problem|issue|error|fault)\b/,
+      /\b(is anything|something|what is) (wrong|broken|bad)\b/,
+      /\b(check|diagnose) (the |any )?(system|database|data|problem)\b/,
+      /\bwhy (is it|are they|am i|are we) (getting|seeing|not|failing)\b/,
+      /\b(what|anything) (should|can|must|need to) (i|we) (do|fix|change)\b/,
+      /\b(is )?(there|anything) (wrong|broken|a problem|an issue)\b/,
+      /\b(find|spot|detect) (the |any )?(error|issue|bug|problem)\b/,
+      /\bhelp me (understand|figure out|diagnose|fix|resolve|check)\b/,
+    ];
+    return q.length < 80 && vaguePatterns.some((p) => p.test(q));
+  })();
+
+  if (isVagueQuery) {
+    const clarificationAnswer =
+      "I'd be happy to help diagnose issues. Could you be more specific? For example:\n" +
+      "• 'Show me tenants with overdue payments'\n" +
+      "• 'List properties with zero payments this month'\n" +
+      "• 'Find units that have been vacant for over 30 days'\n" +
+      "• 'Show complaints that are still open'\n" +
+      "• 'Compare this month's rent collection to last month'";
+
+    if (safeConversationId) {
+      await saveHistoryMessage({
+        conversationId: safeConversationId,
+        userId: user.id,
+        role: "user",
+        messageText: safeQuestion,
+        metadata: { intent: "vague_query" },
+      });
+      await saveHistoryMessage({
+        conversationId: safeConversationId,
+        userId: user.id,
+        role: "assistant",
+        messageText: clarificationAnswer,
+        toolUsed: "general",
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        mode: "read_only",
+        blocked: false,
+        tool: "general",
+        answer: clarificationAnswer,
+        needsClarification: true,
+      },
+    };
+  }
+
   const workingHistory = await buildWorkingHistory({
     user,
     conversationId: safeConversationId,
@@ -4222,7 +4279,20 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       const groqAction = routed.data.action;
       const groqConfidence = Number(routed.data.confidence || 0);
       routerUsage = routed.data.usage || null;
-      if (groqConfidence >= 0.85 || (groqAction === heuristicAction && groqConfidence >= 0.5)) {
+
+      const DEFAULT_ACTION = "route_tenant_payment_status";
+      const heuristicIsSpecific = heuristicAction !== DEFAULT_ACTION && heuristicAction !== "tenant";
+      const groqIsDefault = groqAction === DEFAULT_ACTION;
+      const heuristicIsDefault = heuristicAction === DEFAULT_ACTION;
+
+      if (heuristicIsSpecific && groqIsDefault && groqConfidence < 0.95) {
+        routerDecision = {
+          action: heuristicAction,
+          confidence: routerDecision.confidence,
+          response_mode: routed.data.response_mode || routerDecision.response_mode,
+          hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
+        };
+      } else if (groqConfidence >= 0.85 || (groqAction === heuristicAction && groqConfidence >= 0.5)) {
         routerDecision = routed.data;
       } else {
         routerDecision = {
