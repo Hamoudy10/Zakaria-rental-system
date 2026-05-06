@@ -4360,6 +4360,72 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   };
 };
 
+const listConversations = async ({ user, limit = 30 }) => {
+  try {
+    const result = await db.query(
+      `SELECT
+         conversation_id,
+         MIN(created_at) AS started_at,
+         MAX(created_at) AS last_active_at,
+         COUNT(*)::int AS message_count,
+         (SELECT message_text FROM ai_chat_history
+          WHERE conversation_id = ach.conversation_id AND user_id = $1 AND role = 'user'
+          ORDER BY created_at ASC LIMIT 1) AS first_message,
+         EXISTS(
+           SELECT 1 FROM ai_pending_actions
+           WHERE conversation_id = ach.conversation_id AND user_id = $1 AND status = 'pending'
+         ) AS has_pending
+       FROM ai_chat_history ach
+       WHERE user_id = $1
+       GROUP BY conversation_id
+       ORDER BY last_active_at DESC
+       LIMIT $2`,
+      [user.id, Math.min(limit, 50)],
+    );
+
+    return {
+      success: true,
+      data: {
+        conversations: result.rows.map((row) => ({
+          conversationId: row.conversation_id,
+          startedAt: row.started_at,
+          lastActiveAt: row.last_active_at,
+          messageCount: row.message_count,
+          title: (row.first_message || "New conversation").slice(0, 80),
+          hasPending: Boolean(row.has_pending),
+        })),
+      },
+    };
+  } catch (error) {
+    return { success: false, status: 500, message: "Failed to list conversations." };
+  }
+};
+
+const deleteConversation = async ({ user, conversationId }) => {
+  const safeConversationId = normalizeConversationId(conversationId);
+  if (!safeConversationId) {
+    return { success: false, status: 400, message: "Invalid conversation ID." };
+  }
+
+  try {
+    await db.query(
+      `DELETE FROM ai_chat_history WHERE conversation_id = $1 AND user_id = $2`,
+      [safeConversationId, user.id],
+    );
+    await db.query(
+      `DELETE FROM ai_pending_actions WHERE conversation_id = $1 AND user_id = $2`,
+      [safeConversationId, user.id],
+    );
+    return {
+      success: true,
+      data: { deleted: true, conversationId: safeConversationId },
+      message: "Conversation deleted.",
+    };
+  } catch (error) {
+    return { success: false, status: 500, message: "Failed to delete conversation." };
+  }
+};
+
 module.exports = {
   answerQuestion,
   getConversationHistory,
@@ -4367,4 +4433,6 @@ module.exports = {
   confirmPendingAction,
   rejectPendingAction,
   getPendingAction,
+  listConversations,
+  deleteConversation,
 };

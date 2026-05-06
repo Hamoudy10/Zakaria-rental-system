@@ -1069,6 +1069,10 @@ export const aiAgentAPI = {
     api.post("/ai-agent/reject", { conversationId }),
   getPendingAction: (conversationId) =>
     api.get("/ai-agent/pending", { params: { conversationId } }),
+  getConversations: (limit = 30) =>
+    api.get("/ai-agent/conversations", { params: { limit } }),
+  deleteConversation: (conversationId) =>
+    api.delete(`/ai-agent/conversations/${conversationId}`),
 };
 
 // ==================== EXPENSE API ====================

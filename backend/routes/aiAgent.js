@@ -160,4 +160,41 @@ router.get("/pending", async (req, res) => {
   }
 });
 
+router.get("/conversations", async (req, res) => {
+  try {
+    const limit = parseInt(req.query?.limit || "30", 10);
+    const result = await aiAgentService.listConversations({ user: req.user, limit });
+    if (!result.success) {
+      return res.status(result.status || 500).json(result);
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error("AI conversation list failed:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to list conversations.",
+    });
+  }
+});
+
+router.delete("/conversations/:conversationId", async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const result = await aiAgentService.deleteConversation({
+      user: req.user,
+      conversationId,
+    });
+    if (!result.success) {
+      return res.status(result.status || 500).json(result);
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error("AI conversation delete failed:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete conversation.",
+    });
+  }
+});
+
 module.exports = router;
