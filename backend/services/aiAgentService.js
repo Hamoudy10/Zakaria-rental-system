@@ -504,9 +504,9 @@ const resolveQuestionContext = (question, history) => {
     /\bnot\s+\d{1,3}\b/i.test(q) ||
     /\bonly\s+\d{1,3}\b/i.test(q) ||
     /\b(?:you gave|you gave me|you gave us|got|received)\s+\d{1,3}\b/i.test(q);
-  const isShortRef = q.length < 40 || /^(yes|no|ok|okay|sure|nah|nope|maybe|idk|help)$/i.test(q);
+  const isShortRef = /^(yes|no|ok|okay|sure|nah|nope|maybe|idk|help|what about|try again|go on|more|again|please|explain|why|when|where|who)$/i.test(q);
   const isExplicitRef = /\b(the same|same as above|same thing|like that|like above|like before|similar(ly)?)\b/i.test(q);
-  const isVagueRef = isShortRef && /\b(this|that|it|them|those|these|here|there|find it)\b/i.test(q);
+  const isVagueRef = q.length < 30 && /\b(this|that|it|them|those|these|here|there|find it)\b/i.test(q);
   const isNegationRef = /\b(no[,.\s]|not (that|this|it|them|those|these|the one|the correct|the right|here|there))\b/i.test(q);
   const isLimitRef = /\b(only (that|this|it|them|those|these|the |one|two|three|four|five))\b/i.test(q);
   const isFollowUp = lower.includes("continue") || lower.includes("find it");
