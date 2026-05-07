@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import ReactDOM from "react-dom";
 import { aiAgentAPI } from "../services/api";
 
 const MAX_LOCAL_HISTORY = 6;
@@ -94,7 +95,7 @@ const AIFloatingButton = ({ user }) => {
     setMessages([{
       id: "welcome",
       role: "assistant",
-      content: "Hi! I'm your AI assistant. Ask me about tenants, payments, complaints, water bills, or anything about your rental system.",
+      content: "Hi! I'm ZakariaAI, your rental operations assistant. Ask me about tenants, payments, complaints, water bills, or anything about your system.",
       created_at: new Date().toISOString(),
       meta: { tool: "system" },
     }]);
@@ -174,7 +175,7 @@ const AIFloatingButton = ({ user }) => {
         },
       });
     } catch (err) {
-      setError("AI assistant is temporarily unavailable.");
+      setError("ZakariaAI is temporarily unavailable.");
       setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: "AI assistant is temporarily unavailable.", meta: { tool: "error", streaming: false } } : m)));
       setLoading(false);
     }
@@ -225,15 +226,15 @@ const AIFloatingButton = ({ user }) => {
   const hasStreaming = messages.some((m) => m.meta?.streaming);
   const isEmpty = messages.length === 1 && messages[0].id === "welcome";
 
-  return (
+  return ReactDOM.createPortal(
     <>
       {/* Floating Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-6 right-6 z-50 w-14 h-14 rounded-2xl shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95 ${
+        className={`fixed bottom-6 right-6 z-[9999] w-14 h-14 rounded-2xl shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95 ${
           isOpen ? "bg-slate-800 rotate-45 scale-90" : "bg-gradient-to-br from-amber-500 to-amber-700 animate-pulse"
         }`}
-        title={isOpen ? "Close AI Assistant" : "Ask AI"}
+        title={isOpen ? "Close" : "ZakariaAI"}
       >
         {isOpen ? (
           <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -249,12 +250,12 @@ const AIFloatingButton = ({ user }) => {
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 to-amber-700 text-white flex items-center justify-center text-[10px] font-bold">AI</div>
             <div>
-              <h3 className="font-semibold text-slate-800 text-sm">AI Assistant</h3>
+              <h3 className="font-semibold text-slate-800 text-sm">ZakariaAI</h3>
               <p className="text-[10px] text-slate-400">Powered by DeepSeek</p>
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => { setMessages([{ id: "welcome", role: "assistant", content: "Hi! I'm your AI assistant.", created_at: new Date().toISOString(), meta: { tool: "system" } }]); setShowSuggestions(true); setError(""); }} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center" title="New chat">
+            <button onClick={() => { setMessages([{ id: "welcome", role: "assistant", content: "Hi! I'm ZakariaAI.", created_at: new Date().toISOString(), meta: { tool: "system" } }]); setShowSuggestions(true); setError(""); }} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center" title="New chat">
               <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
             </button>
             <button onClick={() => setIsOpen(false)} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center">
@@ -270,7 +271,7 @@ const AIFloatingButton = ({ user }) => {
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg">
                 <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" /></svg>
               </div>
-              <p className="text-slate-700 font-semibold text-sm">Ask me anything</p>
+              <p className="text-slate-700 font-semibold text-sm">Ask ZakariaAI anything</p>
               <p className="text-slate-500 text-xs max-w-xs">Tenants, payments, complaints, properties, water bills, arrears, or search the web.</p>
               <div className="grid grid-cols-1 gap-1.5 w-full max-w-xs">
                 {SUGGESTED_PROMPTS.map((p) => (
@@ -341,7 +342,7 @@ const AIFloatingButton = ({ user }) => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={isListening ? "Listening..." : "Ask anything about your rentals..."}
+              placeholder={isListening ? "Listening..." : "Ask ZakariaAI anything..."}
               rows={2}
               disabled={loading}
               className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 focus:bg-white disabled:opacity-60 placeholder-slate-400 transition-colors"
@@ -368,7 +369,8 @@ const AIFloatingButton = ({ user }) => {
 
       {/* Backdrop */}
       {isOpen && <div className="fixed inset-0 z-30 bg-black/30 sm:hidden" onClick={() => setIsOpen(false)} />}
-    </>
+    </>,
+    document.body,
   );
 };
 
