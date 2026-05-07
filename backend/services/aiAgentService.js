@@ -3020,7 +3020,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
   };
 };
 
-const buildPlannerMessages = ({ user, question, schemaContext, previousError = null }) => {
+const buildPlannerMessages = ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null }) => {
   const roleScopeInstruction =
     user.role === "agent"
       ? `You MUST enforce agent scope by filtering properties through active assignments for agent_id='${user.id}' (table: agent_property_assignments).`
@@ -3028,6 +3028,10 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
 
   const errorHint = previousError
     ? `Previous SQL failed with error: ${previousError}. Fix the SQL accordingly.`
+    : "";
+
+  const priorContext = lastSql
+    ? `The LAST query this user ran returned ${lastRowCount != null ? lastRowCount : 'some'} rows with this SQL:\n${lastSql}\nIf the user asks for a refinement (more columns, receipts, breakdowns), MODIFY that query instead of starting over. If the user corrects the total, fix the calculation.`
     : "";
 
   return [
@@ -3038,7 +3042,7 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
     },
     {
       role: "system",
-      content: `${roleScopeInstruction}\n${errorHint}\nUse ILIKE for text searches with % wildcards. Always include LIMIT (max 500). Only select columns that actually exist in the schema below. Never query by first_name or last_name for numeric/financial questions.`,
+      content: `${roleScopeInstruction}\n${errorHint}\n${priorContext}\nUse ILIKE for text searches with % wildcards. Always include LIMIT (max 500). Only select columns that actually exist in the schema below. Never query by first_name or last_name for numeric/financial questions.`,
     },
     {
       role: "user",
@@ -3047,7 +3051,7 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
   ];
 };
 
-const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError = null }) => {
+const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null }) => {
   const apiKey = process.env.AI_SQL_API_KEY || process.env.GROQ_API_KEY;
   if (!apiKey) {
     return { success: false, error: "AI_SQL_API_KEY or GROQ_API_KEY is not configured." };
@@ -3064,7 +3068,7 @@ const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError
       model,
       temperature: 0.0,
       max_tokens: 800,
-      messages: buildPlannerMessages({ user, question, schemaContext, previousError }),
+      messages: buildPlannerMessages({ user, question, schemaContext, previousError, lastSql, lastRowCount }),
     },
     {
       headers: {
@@ -3122,7 +3126,7 @@ const executeReadOnlySql = async (sql) => {
   }
 };
 
-const runSchemaAwareDynamicQuery = async ({ user, question }) => {
+const runSchemaAwareDynamicQuery = async ({ user, question, lastSql = null, lastRowCount = null }) => {
   const schemaContext = await getSchemaContext();
   let plannerError = null;
   let plannerUsage = null;
@@ -3133,6 +3137,8 @@ const runSchemaAwareDynamicQuery = async ({ user, question }) => {
       question,
       schemaContext,
       previousError: plannerError,
+      lastSql: attempt === 0 ? lastSql : null,
+      lastRowCount: attempt === 0 ? lastRowCount : null,
     });
 
     if (!planned.success) {
@@ -4384,9 +4390,19 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       toolResult.rows.length === 0);
 
   if (shouldTryDynamicSql) {
+    let lastSql = null;
+    let lastRowCount = null;
+    if (lastAssistantContexts.length > 0) {
+      const lastMeta = lastAssistantContexts[0].metadata || {};
+      lastSql = lastMeta.generated_sql || null;
+      lastRowCount = lastAssistantContexts[0].records_count || null;
+    }
+
     const dynamicResult = await runSchemaAwareDynamicQuery({
       user,
       question: routedQuestion,
+      lastSql,
+      lastRowCount,
     });
     if (dynamicResult.success) {
       toolResult = {
