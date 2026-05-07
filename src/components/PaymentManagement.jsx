@@ -1159,6 +1159,7 @@ const PaymentManagement = () => {
         "Total Paid (Month)": formatCurrency(summary.totalPaidThisMonth || summary.totalPaid || 0),
         "Outstanding (Month)": formatCurrency(summary.outstandingThisMonth || summary.balance || 0),
         "Accrued Balance": formatCurrency(summary.accruedBalance || 0),
+        "Advance Credit (Month)": formatCurrency(summary.totalAdvanceThisMonth || 0),
         "Payment Records": `${tenantHistory.payments.length}`,
       },
     };
@@ -2196,7 +2197,7 @@ const TenantHistoryModal = ({
             <div className="text-center py-10 text-red-500">{error}</div>
           ) : (
             <div className="space-y-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
                 <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl">
                   <p className="text-xs font-bold text-indigo-400 uppercase mb-1">
                     Expected Rent (Month)
@@ -2235,6 +2236,14 @@ const TenantHistoryModal = ({
                         history.summary?.balance ??
                         0,
                     )}
+                  </p>
+                </div>
+                <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl">
+                  <p className="text-xs font-bold text-blue-400 uppercase mb-1">
+                    Advance Credit
+                  </p>
+                  <p className="text-xl font-black text-blue-700">
+                    {formatCurrency(history.summary?.totalAdvanceThisMonth || 0)}
                   </p>
                 </div>
               </div>
@@ -2320,7 +2329,7 @@ const TenantHistoryModal = ({
                       </div>
 
                       <div className="border-t">
-                        <table className="w-full text-xs md:text-sm">
+                    <table className="w-full text-xs md:text-sm">
                           <thead className="bg-gray-50 border-b">
                             <tr>
                               <th className="p-2 text-left">Date</th>
@@ -2329,6 +2338,7 @@ const TenantHistoryModal = ({
                               <th className="p-2 text-right">Rent</th>
                               <th className="p-2 text-right">Water</th>
                               <th className="p-2 text-right">Arrears</th>
+                              <th className="p-2 text-right">Advance</th>
                               <th className="p-2 text-right">Balance After</th>
                               <th className="p-2 text-left">Status</th>
                             </tr>
@@ -2336,7 +2346,7 @@ const TenantHistoryModal = ({
                           <tbody>
                             {!m.payments?.length ? (
                               <tr>
-                                <td colSpan={8} className="p-3 text-center text-gray-500">
+                                <td colSpan={9} className="p-3 text-center text-gray-500">
                                   No transactions posted for this month.
                                 </td>
                               </tr>
@@ -2353,6 +2363,9 @@ const TenantHistoryModal = ({
                                   <td className="p-2 text-right">{formatCurrency(p.allocated_to_rent)}</td>
                                   <td className="p-2 text-right">{formatCurrency(p.allocated_to_water)}</td>
                                   <td className="p-2 text-right">{formatCurrency(p.allocated_to_arrears)}</td>
+                                  <td className="p-2 text-right text-blue-600 font-medium">
+                                    {Number(p.carry_forward_amount) > 0 ? formatCurrency(p.carry_forward_amount) : "-"}
+                                  </td>
                                   <td className="p-2 text-right font-semibold">
                                     {formatCurrency(p.running_balance_after)}
                                   </td>
@@ -2384,6 +2397,10 @@ const TenantHistoryModal = ({
                         ) : Number(m.carry_forward_credit) > 0 ? (
                           <p className="text-green-700 font-semibold">
                             Carry forward credit to next month: {formatCurrency(m.carry_forward_credit)}.
+                          </p>
+                        ) : Number(m.total_advance_this_month) > 0 ? (
+                          <p className="text-blue-700 font-semibold">
+                            Month closed. {formatCurrency(m.total_advance_this_month)} advanced to future months.
                           </p>
                         ) : (
                           <p className="text-green-700 font-semibold">

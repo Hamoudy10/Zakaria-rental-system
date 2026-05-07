@@ -2238,6 +2238,11 @@ const getTenantPaymentHistory = async (req, res) => {
         0,
       );
 
+      const totalAdvanceThisMonth = monthPayments.reduce(
+        (sum, p) => sum + (parseFloat(p.carry_forward_amount) || 0),
+        0,
+      );
+
       const monthExpectedTotal = rentExpected + waterBill;
       const monthOutstanding = Math.max(0, monthExpectedTotal - totalPaidThisMonth);
       const accruedBeforeMonth = Math.max(0, openingBalance);
@@ -2261,6 +2266,7 @@ const getTenantPaymentHistory = async (req, res) => {
         closing_balance: closingBalance,
         carry_forward_due: carryForwardDue,
         carry_forward_credit: carryForwardCredit,
+        total_advance_this_month: totalAdvanceThisMonth,
         status: isCompleted ? "completed" : "incomplete",
         payments: monthPayments,
       });
@@ -2301,6 +2307,8 @@ const getTenantPaymentHistory = async (req, res) => {
           outstandingThisMonth: Math.max(0, statementMonth?.month_outstanding || 0),
           accruedBalance: Math.max(0, statementMonth?.accrued_before_month || 0),
           totalDueAtMonthEnd: Math.max(0, statementMonth?.closing_balance || 0),
+          totalAdvanceThisMonth: statementMonth?.total_advance_this_month || 0,
+          carryForwardCredit: statementMonth?.carry_forward_credit || 0,
           status: statementMonth?.status || "incomplete",
 
           // Backward-compatible fields still used by existing export/UI paths.
