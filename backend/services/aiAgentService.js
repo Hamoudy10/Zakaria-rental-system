@@ -4567,34 +4567,44 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
         : "The user is challenging the accuracy of your previous answer. Re-examine the query and data carefully. If an error was made, correct it and explain what was wrong.";
     }
 
-    const dynamicResult = await runSchemaAwareDynamicQuery({
-      user,
-      question: routedQuestion,
-      lastSql,
-      lastRowCount,
-      correctionHint,
-    });
-    if (dynamicResult.success) {
-      toolResult = {
-        label: dynamicResult.data.label,
-        rows: dynamicResult.data.rows,
-      };
-      dynamicSqlInfo = {
-        sql: dynamicResult.data.sql,
-        planner_reason: dynamicResult.data.planner_reason,
-        planner_usage: dynamicResult.data.planner_usage,
-      };
-    } else if (routerDecision.action === "dynamic_sql") {
-      const fallbackActions = ["route_tenant_payment_status", "properties", "global_data_pack"];
-      for (const fallbackAction of fallbackActions) {
-        const fallbackResult = await runReadOnlyToolByAction({
-          user,
-          question: safeQuestion,
-          selected: fallbackAction,
-        });
-        if (fallbackResult && fallbackResult.rows && fallbackResult.rows.length > 0) {
-          toolResult = fallbackResult;
-          break;
+    const isReformatting = /\b(arrange|format|organi[sz]e|make (it |this )?(readable|understandable|clear|pretty|nice|better)|display (it |this )?(differently|better|nicely|properly|clearly)|show (it |this )?(differently|better|nicely|properly)|i (can't|cannot|don't) understand|what does (this|that|it) mean|make sense of)\b/i.test(safeQuestion);
+
+    if (isReformatting && lastSql && lastRowCount > 0) {
+      const reExec = await executeReadOnlySql(lastSql);
+      if (reExec.success && reExec.data.rows.length > 0) {
+        toolResult = { label: "Dynamic Database Query", rows: reExec.data.rows };
+        dynamicSqlInfo = { sql: lastSql, planner_reason: "Reformat request", planner_usage: null };
+      }
+    } else {
+      const dynamicResult = await runSchemaAwareDynamicQuery({
+        user,
+        question: routedQuestion,
+        lastSql,
+        lastRowCount,
+        correctionHint,
+      });
+      if (dynamicResult.success) {
+        toolResult = {
+          label: dynamicResult.data.label,
+          rows: dynamicResult.data.rows,
+        };
+        dynamicSqlInfo = {
+          sql: dynamicResult.data.sql,
+          planner_reason: dynamicResult.data.planner_reason,
+          planner_usage: dynamicResult.data.planner_usage,
+        };
+      } else if (routerDecision.action === "dynamic_sql") {
+        const fallbackActions = ["route_tenant_payment_status", "properties", "global_data_pack"];
+        for (const fallbackAction of fallbackActions) {
+          const fallbackResult = await runReadOnlyToolByAction({
+            user,
+            question: safeQuestion,
+            selected: fallbackAction,
+          });
+          if (fallbackResult && fallbackResult.rows && fallbackResult.rows.length > 0) {
+            toolResult = fallbackResult;
+            break;
+          }
         }
       }
     }
@@ -4920,11 +4930,21 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
       lastRowCount = lastAssistantContexts[0].records_count || null;
     }
 
-    onProgress("querying");
-    const dynamicResult = await runSchemaAwareDynamicQuery({ user, question: routedQuestion, lastSql, lastRowCount });
-    if (dynamicResult.success) {
-      toolResult = { label: dynamicResult.data.label, rows: dynamicResult.data.rows };
+    const isReformatting = /\b(arrange|format|organi[sz]e|make (it |this )?(readable|understandable|clear|pretty|nice|better)|display (it |this )?(differently|better|nicely|properly|clearly)|show (it |this )?(differently|better|nicely|properly)|i (can't|cannot|don't) understand|what does (this|that|it) mean|make sense of)\b/i.test(safeQuestion);
+
+    if (isReformatting && lastSql && lastRowCount > 0) {
+      const reExec = await executeReadOnlySql(lastSql);
+      if (reExec.success && reExec.data.rows.length > 0) {
+        toolResult = { label: "Dynamic Database Query", rows: reExec.data.rows };
+      }
+    } else {
+      onProgress("querying");
+      const dynamicResult = await runSchemaAwareDynamicQuery({ user, question: routedQuestion, lastSql, lastRowCount });
+      if (dynamicResult.success) {
+        toolResult = { label: dynamicResult.data.label, rows: dynamicResult.data.rows };
+      }
     }
+
   }
 
   const deterministicResult = buildDeterministicRouteAnswer({ question: contextualQuestion, toolResult, routerMode: routerDecision.response_mode });
