@@ -1260,6 +1260,17 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
       return String(v);
     };
 
+    const humanize = (k) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+    if (allRows.length === 1 && keys.length > 3) {
+      const lines = keys.map((k) => {
+        const v = sample[k];
+        const isMoney = /\b(amount|rent|paid|due|arrear|balance|total|sum|collected|expected|income|revenue|expense|cost)\b/i.test(k);
+        return `${humanize(k)}: ${isMoney && typeof v === "number" ? `KES ${formatValue(v)}` : formatValue(v)}`;
+      });
+      return { answer: `System overview:\n${lines.join("\n")}` };
+    }
+
     const isFinancial = keys.some((k) => /\b(amount|rent|paid|due|arrear|balance|total|sum|collected)\b/i.test(k));
     const hasNames = keys.some((k) => /\b(first_name|last_name|tenant_name|name)\b/i.test(k));
 

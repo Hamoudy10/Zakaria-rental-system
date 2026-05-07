@@ -228,24 +228,25 @@ const AIFloatingButton = ({ user }) => {
 
   return ReactDOM.createPortal(
     <>
-      {/* Floating Button */}
+      {/* Floating Button — no transform on the fixed element itself */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`z-[9999] w-14 h-14 rounded-2xl shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95 ${
-          isOpen ? "bg-slate-800 rotate-45 scale-90" : "bg-gradient-to-br from-amber-500 to-amber-700 animate-pulse"
-        }`}
-        style={{ position: "fixed", bottom: "24px", right: "24px" }}
+        className="z-[9999] w-14 h-14 rounded-2xl shadow-xl flex items-center justify-center transition-colors duration-300 hover:scale-105 active:scale-95"
+        style={{ position: "fixed", bottom: "24px", right: "24px", background: isOpen ? "#1e293b" : "linear-gradient(135deg, #f59e0b, #b45309)" }}
         title={isOpen ? "Close" : "ZakariaAI"}
       >
-        {isOpen ? (
-          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
-        ) : (
-          <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" /></svg>
-        )}
+        <span className={`transition-transform duration-300 ${isOpen ? "rotate-45 scale-90" : ""}`}>
+          {isOpen ? (
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+          ) : (
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" /></svg>
+          )}
+        </span>
       </button>
 
-      {/* Slide-out Panel */}
-      <div className={`fixed top-0 bottom-0 right-0 z-40 w-full sm:w-[420px] h-screen max-h-screen bg-white shadow-2xl transform transition-transform duration-300 flex flex-col ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
+      {/* Slide-out Panel — fixed outer, transform inner */}
+      <div style={{ position: "fixed", top: 0, bottom: 0, right: 0, zIndex: 40 }} className="pointer-events-none">
+        <div className={`w-full sm:w-[420px] h-full bg-white shadow-2xl transform transition-transform duration-300 flex flex-col pointer-events-auto ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
         {/* Header */}
         <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
@@ -365,6 +366,7 @@ const AIFloatingButton = ({ user }) => {
             </div>
           )}
           <p className="text-[10px] text-slate-400 text-center mt-1">Enter to send · Shift+Enter new line · 🎤 Voice</p>
+        </div>
         </div>
       </div>
 
