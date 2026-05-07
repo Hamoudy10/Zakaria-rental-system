@@ -3066,6 +3066,60 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
   };
 };
 
+const callGroqForNarrativeStream = async ({ question, history, toolLabel, toolRows, user, onToken }) => {
+  const apiKey = process.env.GROQ_API_KEY || process.env.AI_SQL_API_KEY;
+  if (!apiKey) throw new Error("API key not configured");
+
+  const model = process.env.GROQ_NARRATIVE_MODEL || "llama-3.3-70b-versatile";
+  const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+  const compactFacts = JSON.stringify(toolRows).slice(0, 20000);
+
+  const response = await axios.post(
+    `${baseURL}/chat/completions`,
+    {
+      model,
+      temperature: 0.1,
+      max_tokens: 4000,
+      messages: [
+        { role: "system", content: "You are a rental operations assistant. Use ONLY the facts provided below. List ALL items. Be concise. Always present money in Kenyan shillings as KES." },
+        ...history,
+        { role: "user", content: `Role: ${user.role}\nQuestion: ${question}\nData Source: ${toolLabel}\nFacts: ${compactFacts}` },
+      ],
+      stream: true,
+    },
+    {
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      timeout: 30000,
+      responseType: "stream",
+    },
+  );
+
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    let fullAnswer = "";
+    response.data.on("data", (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(data);
+          const token = parsed.choices?.[0]?.delta?.content;
+          if (token) {
+            fullAnswer += token;
+            onToken(token);
+          }
+        } catch (e) { /* skip malformed chunks */ }
+      }
+    });
+    response.data.on("end", () => resolve({ usedFallback: false, answer: fullAnswer, usage: null }));
+    response.data.on("error", (err) => reject(err));
+  });
+};
+
 const buildPlannerMessages = ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null, correctionHint = null }) => {
   const roleScopeInstruction =
     user.role === "agent"
@@ -4791,8 +4845,131 @@ const deleteConversation = async ({ user, conversationId }) => {
   }
 };
 
+const answerQuestionStream = async ({ user, question, history, conversationId, onProgress, onToken }) => {
+  const safeQuestion = ensureSafeQuestion(question);
+  if (!safeQuestion) return { success: false, message: "Question is required." };
+
+  onProgress("understanding");
+  await new Promise((r) => setTimeout(r, 300));
+
+  const safeConversationId = normalizeConversationId(conversationId);
+  const qLower = safeQuestion.toLowerCase().trim();
+
+  if (isMutationIntent(safeQuestion)) {
+    return { success: false, message: "This action is not supported." };
+  }
+
+  const isAmbiguousCheck = (() => {
+    const hasTimeRef = /\b(this|current|last|previous|past)\s*(month|week|year|day)|today|yesterday|20\d{2}\b/i.test(qLower);
+    const hasFilterRef = /\b(in|at|from|for|by|with|named|called|code|phone|email)\b/i.test(qLower) || qLower.length > 40;
+    if (hasTimeRef || hasFilterRef) return false;
+    return /\b(show|get|list) (the |me )?(payments?|rents?|bills?|tenants?|complaints?|expenses?)\b/i.test(qLower) && qLower.length < 50;
+  })();
+  if (isAmbiguousCheck) {
+    return { success: false, message: "Please add more context — for example 'payments this month' or 'tenants in Majengo Building'." };
+  }
+
+  onProgress("routing");
+  await new Promise((r) => setTimeout(r, 200));
+
+  const workingHistory = await buildWorkingHistory({ user, conversationId: safeConversationId, providedHistory: history });
+  const safeHistory = workingHistory.history;
+  const contextualQuestion = resolveQuestionContext(safeQuestion, safeHistory);
+  const lastAssistantContexts = await getLastAssistantContext({ user, conversationId: safeConversationId });
+  let routerDecision = heuristicRouter(contextualQuestion);
+  const heuristicAction = routerDecision.action;
+
+  try {
+    const routed = await callGroqToolRouter({ user, question: contextualQuestion, history: safeHistory, pendingActionContext: "" });
+    if (routed.success && routed.data) {
+      routerDecision = {
+        action: heuristicAction,
+        confidence: Number(routed.data.confidence || routerDecision.confidence),
+        response_mode: routed.data.response_mode || routerDecision.response_mode,
+        hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
+      };
+    }
+  } catch (e) { /* use heuristic */ }
+
+  const routedQuestion = buildQuestionWithHints(contextualQuestion, routerDecision.hints || {});
+  let toolResult = await runReadOnlyToolByAction({ user, question: routedQuestion, selected: routerDecision.action });
+
+  const wasEmpty = !toolResult || !toolResult.rows || toolResult.rows.length === 0;
+  if (wasEmpty && routerDecision.action !== "dynamic_sql") {
+    const broadResult = await runReadOnlyToolByAction({ user, question: safeQuestion, selected: "route_tenant_payment_status" });
+    if (broadResult && broadResult.rows && broadResult.rows.length > 0) toolResult = broadResult;
+  }
+
+  const shouldTryDynamic = routerDecision.action === "dynamic_sql" || !toolResult || !toolResult.rows || toolResult.rows.length === 0;
+  if (shouldTryDynamic && routerDecision.action !== "general") {
+    let lastSql = null;
+    let lastRowCount = null;
+    if (lastAssistantContexts.length > 0) {
+      lastSql = lastAssistantContexts[0].metadata?.generated_sql || null;
+      lastRowCount = lastAssistantContexts[0].records_count || null;
+    }
+
+    onProgress("querying");
+    const dynamicResult = await runSchemaAwareDynamicQuery({ user, question: routedQuestion, lastSql, lastRowCount });
+    if (dynamicResult.success) {
+      toolResult = { label: dynamicResult.data.label, rows: dynamicResult.data.rows };
+    }
+  }
+
+  const deterministicResult = buildDeterministicRouteAnswer({ question: contextualQuestion, toolResult, routerMode: routerDecision.response_mode });
+  if (deterministicResult?.answer) {
+    const fullAnswer = deterministicResult.answer;
+    for (let i = 0; i < fullAnswer.length; i += 3) {
+      onToken(fullAnswer.slice(i, i + 3));
+      await new Promise((r) => setTimeout(r, 8));
+    }
+    if (safeConversationId) {
+      await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "user", messageText: safeQuestion });
+      await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: fullAnswer, toolUsed: toolResult.label, recordsCount: toolResult.rows.length });
+    }
+    return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: fullAnswer, records: toolResult.rows.length } };
+  }
+
+  if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
+    const fallback = formatFallbackResponse({ question: contextualQuestion, toolLabel: toolResult?.label, rows: toolResult?.rows });
+    for (let i = 0; i < fallback.length; i += 3) {
+      onToken(fallback.slice(i, i + 3));
+      await new Promise((r) => setTimeout(r, 8));
+    }
+    return { success: true, data: { mode: "read_only", tool: toolResult?.label, answer: fallback } };
+  }
+
+  onProgress("formatting");
+  await new Promise((r) => setTimeout(r, 200));
+
+  try {
+    const result = await callGroqForNarrativeStream({
+      question: contextualQuestion,
+      history: safeHistory,
+      toolLabel: toolResult.label,
+      toolRows: toolResult.rows,
+      user,
+      onToken,
+    });
+    const finalAnswer = result.answer || "";
+    if (safeConversationId) {
+      await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "user", messageText: safeQuestion });
+      await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: finalAnswer, toolUsed: toolResult.label, recordsCount: toolResult.rows.length });
+    }
+    return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: finalAnswer, records: toolResult.rows.length } };
+  } catch (streamErr) {
+    const fallback = formatFallbackResponse({ question: contextualQuestion, toolLabel: toolResult.label, rows: toolResult.rows });
+    for (let i = 0; i < fallback.length; i += 3) {
+      onToken(fallback.slice(i, i + 3));
+      await new Promise((r) => setTimeout(r, 8));
+    }
+    return { success: true, data: { mode: "read_only", tool: toolResult?.label, answer: fallback } };
+  }
+};
+
 module.exports = {
   answerQuestion,
+  answerQuestionStream,
   getConversationHistory,
   getAvailableActions,
   confirmPendingAction,

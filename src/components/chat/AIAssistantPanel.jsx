@@ -263,6 +263,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
     const question = input.trim();
     if (!question || !canSend) return;
 
+    const msgId = `assistant-${Date.now()}`;
     const userMsg = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -270,11 +271,15 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
       created_at: new Date().toISOString(),
     };
 
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
+    setMessages((prev) => [
+      ...prev,
+      userMsg,
+      { id: msgId, role: "assistant", content: "", created_at: new Date().toISOString(), meta: { tool: "streaming", streaming: true } },
+    ]);
     setInput("");
     setLoading(true);
     setError("");
+    setLoadingStep(0);
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -282,38 +287,38 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
     }
 
     try {
-      const history = buildHistoryPayload(nextMessages);
-      const res = await aiAgentAPI.ask(question, history, conversationId);
-      const payload = res?.data?.data || {};
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `assistant-${Date.now()}`,
-          role: "assistant",
-          content: payload.answer || "I processed your request, but could not generate a response.",
-          created_at: new Date().toISOString(),
-          meta: {
-            tool: payload.tool || "unknown",
-            fallback: Boolean(payload.fallback),
-            blocked: Boolean(payload.blocked),
-            records: Number(payload.records || 0),
-            needsConfirmation: Boolean(payload.needsConfirmation),
-          },
+      const history = buildHistoryPayload(messages);
+      await aiAgentAPI.askStream(question, history, conversationId, {
+        onProgress: (step) => {
+          if (step === "understanding") setLoadingStep(0);
+          else if (step === "routing") setLoadingStep(1);
+          else if (step === "querying" || step === "formatting") setLoadingStep(2);
         },
-      ]);
+        onToken: (token) => {
+          setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: m.content + token } : m)));
+        },
+        onDone: (data) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === msgId
+                ? { ...m, meta: { tool: data.tool || "dynamic_sql", records: data.records || 0, streaming: false }, content: m.content || data.answer || "Done." }
+                : m,
+            ),
+          );
+          setLoading(false);
+          setTimeout(() => { if (textareaRef.current) textareaRef.current.focus(); }, 100);
+        },
+        onError: (msg) => {
+          setError(msg || "Stream failed.");
+          setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: msg || "Error", meta: { tool: "error", streaming: false } } : m)));
+          setLoading(false);
+          setTimeout(() => { if (textareaRef.current) textareaRef.current.focus(); }, 100);
+        },
+      });
     } catch (err) {
-      const msg = err?.response?.data?.message || "AI assistant is temporarily unavailable.";
-      setError(msg);
-      setMessages((prev) => [
-        ...prev,
-        { id: `err-${Date.now()}`, role: "assistant", content: msg, created_at: new Date().toISOString(), meta: { tool: "error" } },
-      ]);
-    } finally {
+      setError("AI assistant is temporarily unavailable.");
+      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: "AI assistant is temporarily unavailable.", meta: { tool: "error", streaming: false } } : m)));
       setLoading(false);
-      setTimeout(() => {
-        if (textareaRef.current) textareaRef.current.focus();
-      }, 100);
     }
   }, [input, canSend, messages, conversationId]);
 
@@ -483,11 +488,17 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
             const isUser = msg.role === "user";
             const isError = msg.meta?.tool === "error";
             const needsConfirm = msg.meta?.needsConfirmation;
+            const isStreaming = msg.meta?.streaming;
             return (
               <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                 {!isUser && <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0 mr-2 mt-0.5">AI</div>}
-                <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 shadow-sm ${isUser ? "bg-slate-800 text-white rounded-br-md" : isError ? "bg-red-50 border border-red-200 text-red-800 rounded-bl-md" : needsConfirm ? "bg-amber-50 border-2 border-amber-300 text-slate-800 rounded-bl-md" : "bg-white border border-slate-200 text-slate-800 rounded-bl-md"}`}>
+                <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 shadow-sm ${isUser ? "bg-slate-800 text-white rounded-br-md" : isError ? "bg-red-50 border border-red-200 text-red-800 rounded-bl-md" : needsConfirm ? "bg-amber-50 border-2 border-amber-300 text-slate-800 rounded-bl-md" : isStreaming ? "bg-white border border-amber-300 text-slate-800 rounded-bl-md shadow-md shadow-amber-100" : "bg-white border border-slate-200 text-slate-800 rounded-bl-md"}`}>
                   <div className="text-sm">{renderMessageContent(msg.content)}</div>
+                  {isStreaming && !msg.content && (
+                    <div className="flex items-center gap-1 text-amber-400 text-sm">
+                      <span className="animate-pulse">...</span>
+                    </div>
+                  )}
                   <div className={`mt-1.5 flex items-center justify-between gap-2 text-[10px] text-slate-400`}>
                     <span>{formatTime(msg.created_at)}</span>
                     {!isUser && msg.meta?.tool && msg.meta.tool !== "error" && (
@@ -502,7 +513,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
             );
           })}
 
-          {loading && (
+          {loading && !messages.some((m) => m.meta?.streaming) && (
             <div className="flex justify-start">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0 mr-2 mt-0.5">AI</div>
               <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 shadow-sm min-w-[220px]"><LoadingStep step={loadingStep} /></div>

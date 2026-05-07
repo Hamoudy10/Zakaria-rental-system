@@ -94,6 +94,43 @@ router.post("/query", async (req, res) => {
   }
 });
 
+router.post("/stream", async (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const send = (event, data) => {
+    if (res.writableEnded) return;
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const { question, history, conversationId } = req.body || {};
+    const result = await aiAgentService.answerQuestionStream({
+      user: req.user,
+      question,
+      history,
+      conversationId,
+      onProgress: (step) => send("progress", { step }),
+      onToken: (token) => send("token", { token }),
+    });
+
+    if (result.success) {
+      send("done", result.data);
+    } else {
+      send("error", { message: result.message || "Failed" });
+    }
+  } catch (error) {
+    console.error("AI agent stream failed:", error.message);
+    send("error", { message: "The AI assistant could not process your request right now. Please try again." });
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
+});
+
 router.post("/confirm", async (req, res) => {
   try {
     const { conversationId } = req.body || {};

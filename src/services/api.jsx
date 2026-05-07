@@ -1073,6 +1073,41 @@ export const aiAgentAPI = {
     api.get("/ai-agent/conversations", { params: { limit } }),
   deleteConversation: (conversationId) =>
     api.delete(`/ai-agent/conversations/${conversationId}`),
+  askStream: async (question, history = [], conversationId = null, { onProgress, onToken, onDone, onError } = {}) => {
+    const baseURL = import.meta.env.VITE_API_URL || "https://zakaria-rental-system.onrender.com";
+    const token = localStorage.getItem("token");
+    const response = await fetch(`${baseURL}/api/ai-agent/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ question, history, conversationId }),
+    });
+    if (!response.ok) throw new Error("Stream connection failed");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          const eventType = line.slice(7).trim();
+          const dataLine = lines[lines.indexOf(line) + 1];
+          if (dataLine && dataLine.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(dataLine.slice(6));
+              if (eventType === "progress") onProgress?.(data.step);
+              else if (eventType === "token") onToken?.(data.token);
+              else if (eventType === "done") onDone?.(data);
+              else if (eventType === "error") onError?.(data.message);
+            } catch (e) { /* skip */ }
+          }
+        }
+      }
+    }
+  },
 };
 
 // ==================== EXPENSE API ====================
