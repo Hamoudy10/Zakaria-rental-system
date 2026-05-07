@@ -3,6 +3,7 @@ import React, { useEffect, useState, Suspense, lazy } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { PropertyProvider } from './context/PropertyContext'
+import AIFloatingButton from './components/AIFloatingButton'
 import { AllocationProvider } from './context/TenantAllocationContext'
 import { PaymentProvider } from './context/PaymentContext'
 import { ReportProvider } from './context/ReportContext'
@@ -494,6 +495,7 @@ const Layout = ({ children }) => {
           </Suspense>
         </div>
       </main>
+      <AIFloatingButton user={user} />
     </div>
   )
 }
