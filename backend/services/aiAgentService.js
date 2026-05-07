@@ -1238,6 +1238,52 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
     return { answer: `${lines.join("\n\n")}` };
   }
 
+  if (label === "Dynamic Database Query" || (label === "Web Search" && rows.length > 0 && !rows[0].snippet)) {
+    if (!rows || rows.length === 0) {
+      return { answer: "No matching data was found for that query." };
+    }
+    if (rows.length === 1 && Object.keys(rows[0] || {}).length <= 3) {
+      return null;
+    }
+    const allRows = rows.filter((r) => r && typeof r === "object" && !Array.isArray(r));
+    if (allRows.length === 0) return { answer: "No matching data was found for that query." };
+
+    const sample = allRows[0];
+    const skipKeys = new Set(["route", "filters", "count", "total_count", "summary", "display_context", "metadata", "property", "vacant_units", "properties", "tenants", "tenants_preview", "month", "complaints"]);
+    const keys = Object.keys(sample).filter((k) => !skipKeys.has(k) && sample[k] !== null && sample[k] !== undefined);
+
+    if (keys.length === 0) return null;
+
+    const formatValue = (v) => {
+      if (v === null || v === undefined) return "-";
+      if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return String(v);
+    };
+
+    const isFinancial = keys.some((k) => /\b(amount|rent|paid|due|arrear|balance|total|sum|collected)\b/i.test(k));
+    const hasNames = keys.some((k) => /\b(first_name|last_name|tenant_name|name)\b/i.test(k));
+
+    const lines = allRows.map((r, i) => {
+      if (hasNames && keys.length <= 6) {
+        const name = r.first_name && r.last_name ? `${r.first_name} ${r.last_name}` : r.tenant_name || r.name || "";
+        const parts = [];
+        if (name) parts.push(name.trim());
+        for (const k of keys) {
+          const v = r[k];
+          if (v != null && !/\b(first_name|last_name|tenant_name|id)\b/i.test(k)) {
+            const label = k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+            parts.push(`${label}: ${isFinancial && typeof v === "number" ? `KES ${formatValue(v)}` : formatValue(v)}`);
+          }
+        }
+        return `${i + 1}. ${parts.join(" | ")}`;
+      }
+      return `${i + 1}. ${keys.map((k) => `${k}: ${isFinancial && typeof r[k] === "number" ? `KES ${formatValue(r[k])}` : formatValue(r[k])}`).join(" | ")}`;
+    });
+
+    const total = rows.length > allRows.length ? `(${allRows.length} of ${rows.length} total)` : `(${allRows.length})`;
+    return { answer: `${lines.join("\n")}`, displayContext: { displayed_count: allRows.length } };
+  }
+
   if (label === "Complaints List Route" && wantsList) {
     const payload = rows[0] || {};
     const complaints = Array.isArray(payload.complaints) ? payload.complaints : [];

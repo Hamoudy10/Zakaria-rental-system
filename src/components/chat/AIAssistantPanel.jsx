@@ -43,11 +43,25 @@ const newConversationId = () =>
         return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
       });
 
+const LOADING_STEPS = [
+  { label: "Understanding your question...", icon: "🧠" },
+  { label: "Querying database...", icon: "🔍" },
+  { label: "Formatting results...", icon: "📊" },
+];
+
 const LoadingDots = () => (
   <div className="flex gap-1 px-1 py-2">
     <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce" style={{ animationDelay: "0ms" }} />
     <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce" style={{ animationDelay: "150ms" }} />
     <span className="w-2 h-2 rounded-full bg-amber-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+  </div>
+);
+
+const LoadingStep = ({ step }) => (
+  <div className="flex items-center gap-2 px-1 py-2">
+    <span className="text-sm">{LOADING_STEPS[step]?.icon}</span>
+    <span className="text-xs text-slate-500 animate-pulse">{LOADING_STEPS[step]?.label}</span>
+    <span className="text-[10px] text-slate-400">{step + 1}/{LOADING_STEPS.length}</span>
   </div>
 );
 
@@ -83,8 +97,25 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
   const [error, setError] = useState("");
   const [conversations, setConversations] = useState([]);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
   const messagesRef = useRef(null);
   const textareaRef = useRef(null);
+  const stepTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (loading) {
+      setLoadingStep(0);
+      let step = 0;
+      stepTimerRef.current = setInterval(() => {
+        step = (step + 1) % LOADING_STEPS.length;
+        setLoadingStep(step);
+      }, 2500);
+    } else {
+      if (stepTimerRef.current) clearInterval(stepTimerRef.current);
+      setLoadingStep(0);
+    }
+    return () => { if (stepTimerRef.current) clearInterval(stepTimerRef.current); };
+  }, [loading]);
 
   const welcomeMessage = useMemo(
     () => ({
@@ -474,7 +505,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
           {loading && (
             <div className="flex justify-start">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0 mr-2 mt-0.5">AI</div>
-              <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 shadow-sm"><LoadingDots /></div>
+              <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 shadow-sm min-w-[220px]"><LoadingStep step={loadingStep} /></div>
             </div>
           )}
         </div>
