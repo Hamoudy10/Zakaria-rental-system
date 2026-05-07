@@ -4895,7 +4895,7 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
   let toolResult = await runReadOnlyToolByAction({ user, question: routedQuestion, selected: routerDecision.action });
 
   const wasEmpty = !toolResult || !toolResult.rows || toolResult.rows.length === 0;
-  if (wasEmpty && routerDecision.action !== "dynamic_sql") {
+  if (wasEmpty && routerDecision.action !== "dynamic_sql" && routerDecision.action !== "general") {
     const broadResult = await runReadOnlyToolByAction({ user, question: safeQuestion, selected: "route_tenant_payment_status" });
     if (broadResult && broadResult.rows && broadResult.rows.length > 0) toolResult = broadResult;
   }

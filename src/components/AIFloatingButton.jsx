@@ -231,9 +231,10 @@ const AIFloatingButton = ({ user }) => {
       {/* Floating Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-6 right-6 z-[9999] w-14 h-14 rounded-2xl shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95 ${
+        className={`z-[9999] w-14 h-14 rounded-2xl shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95 ${
           isOpen ? "bg-slate-800 rotate-45 scale-90" : "bg-gradient-to-br from-amber-500 to-amber-700 animate-pulse"
         }`}
+        style={{ position: "fixed", bottom: "24px", right: "24px" }}
         title={isOpen ? "Close" : "ZakariaAI"}
       >
         {isOpen ? (

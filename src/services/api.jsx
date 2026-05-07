@@ -1091,11 +1091,13 @@ export const aiAgentAPI = {
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         if (line.startsWith("event: ")) {
           const eventType = line.slice(7).trim();
-          const dataLine = lines[lines.indexOf(line) + 1];
+          const dataLine = i + 1 < lines.length ? lines[i + 1] : null;
           if (dataLine && dataLine.startsWith("data: ")) {
+            i++;
             try {
               const data = JSON.parse(dataLine.slice(6));
               if (eventType === "progress") onProgress?.(data.step);
@@ -1103,6 +1105,11 @@ export const aiAgentAPI = {
               else if (eventType === "done") onDone?.(data);
               else if (eventType === "error") onError?.(data.message);
             } catch (e) { /* skip */ }
+          }
+        }
+      }
+    }
+  },
           }
         }
       }
