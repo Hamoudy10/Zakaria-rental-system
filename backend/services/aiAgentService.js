@@ -3066,7 +3066,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
   };
 };
 
-const buildPlannerMessages = ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null }) => {
+const buildPlannerMessages = ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null, correctionHint = null }) => {
   const roleScopeInstruction =
     user.role === "agent"
       ? `You MUST enforce agent scope by filtering properties through active assignments for agent_id='${user.id}' (table: agent_property_assignments).`
@@ -3077,7 +3077,11 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
     : "";
 
   const priorContext = lastSql
-    ? `The LAST query this user ran returned ${lastRowCount != null ? lastRowCount : 'some'} rows with this SQL:\n${lastSql}\nIf the user asks for a refinement (more columns, receipts, breakdowns), MODIFY that query instead of starting over. If the user corrects the total, fix the calculation.`
+    ? `The LAST query this user ran returned ${lastRowCount != null ? lastRowCount : 'some'} rows with this SQL:\n${lastSql}\nIf the user asks for a refinement (more columns, receipts, breakdowns), MODIFY that query instead of starting over.`
+    : "";
+
+  const correctionContext = correctionHint
+    ? `CRITICAL: ${correctionHint}\nThe user is correcting your previous answer. Re-examine the data carefully. If the user is right, acknowledge the error and provide the corrected result with the fix. If the data actually supports your original answer, explain why with evidence.`
     : "";
 
   return [
@@ -3088,7 +3092,7 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
     },
     {
       role: "system",
-      content: `${roleScopeInstruction}\n${errorHint}\n${priorContext}\nUse ILIKE for text searches with % wildcards. Always include LIMIT (max 500). Only select columns that actually exist in the schema below. Never query by first_name or last_name for numeric/financial questions.`,
+      content: `${roleScopeInstruction}\n${errorHint}\n${priorContext}\n${correctionContext}\nUse ILIKE for text searches with % wildcards. Always include LIMIT (max 500). Only select columns that actually exist in the schema below.`,
     },
     {
       role: "user",
@@ -3097,7 +3101,7 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
   ];
 };
 
-const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null }) => {
+const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null, correctionHint = null }) => {
   const apiKey = process.env.AI_SQL_API_KEY || process.env.GROQ_API_KEY;
   if (!apiKey) {
     return { success: false, error: "AI_SQL_API_KEY or GROQ_API_KEY is not configured." };
@@ -3114,7 +3118,7 @@ const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError
       model,
       temperature: 0.0,
       max_tokens: 800,
-      messages: buildPlannerMessages({ user, question, schemaContext, previousError, lastSql, lastRowCount }),
+      messages: buildPlannerMessages({ user, question, schemaContext, previousError, lastSql, lastRowCount, correctionHint }),
     },
     {
       headers: {
@@ -3172,7 +3176,7 @@ const executeReadOnlySql = async (sql) => {
   }
 };
 
-const runSchemaAwareDynamicQuery = async ({ user, question, lastSql = null, lastRowCount = null }) => {
+const runSchemaAwareDynamicQuery = async ({ user, question, lastSql = null, lastRowCount = null, correctionHint = null }) => {
   const schemaContext = await getSchemaContext();
   let plannerError = null;
   let plannerUsage = null;
@@ -3185,6 +3189,7 @@ const runSchemaAwareDynamicQuery = async ({ user, question, lastSql = null, last
       previousError: plannerError,
       lastSql: attempt === 0 ? lastSql : null,
       lastRowCount: attempt === 0 ? lastRowCount : null,
+      correctionHint: attempt === 0 ? correctionHint : null,
     });
 
     if (!planned.success) {
@@ -4326,6 +4331,47 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     };
   }
 
+  const isAmbiguousQuery = (() => {
+    const q = safeQuestion.toLowerCase().trim();
+    const hasTimeRef = /\b(this|current|last|previous|past)\s*(month|week|year|day)|today|yesterday|this month|last month|current month|20\d{2}\b/i.test(q);
+    const hasEntityRef = /\b(tenant|property|unit|building|complaint|receipt|mpesa|payment|water|bill|expense)\b/i.test(q);
+    const hasFilterRef = /\b(in|at|from|for|by|with|named|called|code|phone|email)\b/i.test(q) || q.length > 40;
+    const isExplicitlyComplete = /\b(how many|who|which|what are|list all|show all|give me all|all the|everything about|total)\b/i.test(q);
+
+    if (!hasEntityRef || isExplicitlyComplete || hasFilterRef) return false;
+    if (hasTimeRef) return false;
+    if (q.length > 50) return false;
+
+    const ambiguousPatterns = [
+      /\bshow (the |me )?(payments?|rents?|bills?|tenants?|complaints?|expenses?)\b/i,
+      /\bget (the |me )?(payments?|rents?|bills?|tenants?|complaints?|expenses?)\b/i,
+      /\blist (payments?|rents?|bills?|tenants?|complaints?|expenses?)\b/i,
+      /\bhow much (was |were |is |are )?(paid|collected|received|spent|due)\b/i,
+      /\bwhat (was |were |is |are )?(paid|collected|received|spent|due)\b/i,
+    ];
+    return ambiguousPatterns.some((p) => p.test(q));
+  })();
+
+  if (isAmbiguousQuery) {
+    const examples = safeQuestion.toLowerCase().includes("payment") || safeQuestion.toLowerCase().includes("paid") || safeQuestion.toLowerCase().includes("collected")
+      ? "For payments: try 'show payments this month', 'payments today', or 'payments for [property name]'."
+      : safeQuestion.toLowerCase().includes("tenant")
+        ? "For tenants: try 'list all tenants', 'tenants in [property name]', or 'find tenant [name]'."
+        : "Add a time period (this month, today, this week) or a property/tenant name to narrow it down.";
+
+    const clarificationAnswer = `I'd like to help, but I need a bit more context. What specifically are you looking for?\n\n${examples}`;
+
+    if (safeConversationId) {
+      await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "user", messageText: safeQuestion, metadata: { intent: "ambiguous_query" } });
+      await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: clarificationAnswer, toolUsed: "general" });
+    }
+
+    return {
+      success: true,
+      data: { mode: "read_only", blocked: false, tool: "general", answer: clarificationAnswer, needsClarification: true },
+    };
+  }
+
   const workingHistory = await buildWorkingHistory({
     user,
     conversationId: safeConversationId,
@@ -4438,10 +4484,22 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
   if (shouldTryDynamicSql) {
     let lastSql = null;
     let lastRowCount = null;
+    let correctionHint = null;
     if (lastAssistantContexts.length > 0) {
       const lastMeta = lastAssistantContexts[0].metadata || {};
       lastSql = lastMeta.generated_sql || null;
       lastRowCount = lastAssistantContexts[0].records_count || null;
+    }
+
+    const cq = safeQuestion.toLowerCase();
+    if (lastSql && (/\b(why|how come).*(different|wrong|off|incorrect)|(that|this|it|your|the).*(wrong|incorrect|not right|not correct)\b/i.test(cq) ||
+        /\b(the |a )?(correct|right|actual|real|exact) (amount|total|value|sum|figure|number) (is|should be|needs to be) (\d[\d,]*)\b/i.test(cq) ||
+        /\b(total|amount|sum|figure) (needs to be|should be|is) (\d[\d,]*)\b/i.test(cq))) {
+      const numMatch = cq.match(/\b(\d[\d,]*)\b/g);
+      const userExpected = numMatch ? numMatch[numMatch.length - 1] : null;
+      correctionHint = userExpected
+        ? `The user says the correct total/amount should be ${userExpected}. Your previous answer differed from this. Re-run and compare. If the user is right, explain what the previous query missed and show the corrected result. If your data matches ${userExpected}, confirm and explain why.`
+        : "The user is challenging the accuracy of your previous answer. Re-examine the query and data carefully. If an error was made, correct it and explain what was wrong.";
     }
 
     const dynamicResult = await runSchemaAwareDynamicQuery({
@@ -4449,6 +4507,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       question: routedQuestion,
       lastSql,
       lastRowCount,
+      correctionHint,
     });
     if (dynamicResult.success) {
       toolResult = {
