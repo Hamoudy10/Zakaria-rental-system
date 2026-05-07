@@ -243,7 +243,7 @@ const AIFloatingButton = ({ user }) => {
       </button>
 
       {/* Slide-out Panel */}
-      <div className={`fixed inset-y-0 right-0 z-40 w-full sm:w-[420px] bg-white shadow-2xl transform transition-transform duration-300 flex flex-col ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
+      <div className={`fixed top-0 bottom-0 right-0 z-40 w-full sm:w-[420px] h-screen max-h-screen bg-white shadow-2xl transform transition-transform duration-300 flex flex-col ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
         {/* Header */}
         <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">

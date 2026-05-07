@@ -183,7 +183,8 @@ const Layout = ({ children }) => {
   }, [location.pathname])
 
   return (
-    <div className="min-h-screen bg-gray-50 mobile-optimized no-horizontal-scroll">
+    <>
+      <div className="min-h-screen bg-gray-50 mobile-optimized no-horizontal-scroll">
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50 safe-area-top">
         <div className="responsive-container">
@@ -495,8 +496,9 @@ const Layout = ({ children }) => {
           </Suspense>
         </div>
       </main>
-      <AIFloatingButton user={user} />
     </div>
+    <AIFloatingButton user={user} />
+  </>
   )
 }
 
