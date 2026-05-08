@@ -1296,18 +1296,24 @@ const buildDeterministicRouteAnswer = ({ question, toolResult, routerMode }) => 
     const hasNames = keys.some((k) => /\b(first_name|last_name|tenant_name|name)\b/i.test(k));
 
     const lines = allRows.map((r, i) => {
-      if (hasNames && keys.length <= 6) {
-        const name = r.first_name && r.last_name ? `${r.first_name} ${r.last_name}` : r.tenant_name || r.name || "";
-        const parts = [];
-        if (name) parts.push(name.trim());
-        for (const k of keys) {
-          const v = r[k];
-          if (v != null && !/\b(first_name|last_name|tenant_name|id)\b/i.test(k)) {
-            const label = k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-            parts.push(`${label}: ${isFinancial && typeof v === "number" ? `KES ${formatValue(v)}` : formatValue(v)}`);
-          }
-        }
-        return `${i + 1}. ${parts.join(" | ")}`;
+      if (hasNames) {
+        const name = r.first_name && r.last_name
+          ? `${String(r.first_name).trim()} ${String(r.last_name).trim()}`
+          : r.tenant_name || r.name || "";
+        const unit = r.unit_code ? `(${r.unit_code})` : r.unit ? `(${r.unit})` : "";
+        const header = [name.trim(), unit].filter(Boolean).join(" ");
+
+        const moneyKeys = keys.filter((k) =>
+          /\b(amount|rent.*due|total_due|total_owed|balance|arrears.*due|water.*due|monthly_rent)\b/i.test(k) && !/\b(rent_paid|paid|water_paid|advance)\b/i.test(k),
+        );
+        const primaryMoneyKey = moneyKeys[0];
+        const primaryMoney = primaryMoneyKey && typeof r[primaryMoneyKey] === "number"
+          ? `KES ${Number(r[primaryMoneyKey]).toLocaleString()}`
+          : "";
+
+        const status = r.status || r.payment_status || "";
+        const extra = [primaryMoney, status].filter(Boolean).join(" — ");
+        return `${i + 1}. ${header}${extra ? ` — ${extra}` : ""}`;
       }
       return `${i + 1}. ${keys.map((k) => `${k}: ${isFinancial && typeof r[k] === "number" ? `KES ${formatValue(r[k])}` : formatValue(r[k])}`).join(" | ")}`;
     });
@@ -4932,7 +4938,7 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
     const routed = await callGroqToolRouter({ user, question: contextualQuestion, history: safeHistory, pendingActionContext: "" });
     if (routed.success && routed.data) {
       routerDecision = {
-        action: heuristicAction,
+        action: routed.data.action || heuristicAction,
         confidence: Number(routed.data.confidence || routerDecision.confidence),
         response_mode: routed.data.response_mode || routerDecision.response_mode,
         hints: { ...(routerDecision.hints || {}), ...(routed.data.hints || {}) },
