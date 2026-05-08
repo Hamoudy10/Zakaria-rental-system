@@ -103,7 +103,7 @@ const AIFloatingButton = ({ user }) => {
   const panel = (
     <>
       <div onClick={() => setIsOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.3)", opacity: visible ? 1 : 0, transition: "opacity 250ms", pointerEvents: visible ? "auto" : "none" }} />
-      <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 9999, width: "100%", maxWidth: "420px", transform: visible ? "translateX(0)" : "translateX(100%)", transition: "transform 250ms ease-out", display: "flex", flexDirection: "column", background: "#fff", boxShadow: "-4px 0 24px rgba(0,0,0,0.12)" }}>
+      <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 9999, pointerEvents: "auto", width: "100%", maxWidth: "420px", transform: visible ? "translateX(0)" : "translateX(100%)", transition: "transform 250ms ease-out", display: "flex", flexDirection: "column", background: "#fff", boxShadow: "-4px 0 24px rgba(0,0,0,0.12)" }}>
         <div style={{ height: 56, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg,#f59e0b,#b45309)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700 }}>AI</div>
@@ -174,7 +174,7 @@ const AIFloatingButton = ({ user }) => {
   return ReactDOM.createPortal(
     <>
       <style>{`@keyframes ai-bounce{0%,80%,to{transform:scale(.4);opacity:.4}40%{transform:scale(1);opacity:1}}`}</style>
-      <button onClick={() => setIsOpen(true)} style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9997, width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg,#f59e0b,#b45309)", border: "2px solid rgba(255,255,255,0.2)", boxShadow: "0 4px 20px rgba(245,158,11,0.35)", cursor: "pointer", display: isOpen ? "none" : "flex", alignItems: "center", justifyContent: "center" }} title="ZakariaAI">
+      <button onClick={() => setIsOpen(true)} style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9997, pointerEvents: "auto", width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg,#f59e0b,#b45309)", border: "2px solid rgba(255,255,255,0.2)", boxShadow: "0 4px 20px rgba(245,158,11,0.35)", cursor: "pointer", display: isOpen ? "none" : "flex", alignItems: "center", justifyContent: "center" }} title="ZakariaAI">
         <svg width={24} height={24} fill="none" stroke="#fff" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" /></svg>
       </button>
       {isOpen && panel}
