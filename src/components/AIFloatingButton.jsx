@@ -111,6 +111,28 @@ const AIFloatingButton = ({ user }) => {
 
   const handleKeyDown = useCallback((e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }, [sendMessage]);
 
+  const [autoSpeak, setAutoSpeak] = useState(false);
+  const [speakingId, setSpeakingId] = useState(null);
+
+  const speakMessage = useCallback((text, msgId) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    if (speakingId === msgId) { setSpeakingId(null); return; }
+    const utterance = new SpeechSynthesisUtterance(text.replace(/\*\*/g, "").replace(/KES/g, "Kenyan shillings").slice(0, 1000));
+    utterance.rate = 1.0; utterance.pitch = 1.0;
+    utterance.onend = () => setSpeakingId(null);
+    utterance.onerror = () => setSpeakingId(null);
+    setSpeakingId(msgId);
+    window.speechSynthesis.speak(utterance);
+  }, [speakingId]);
+
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (autoSpeak && lastMsg?.role === "assistant" && !lastMsg.meta?.streaming && lastMsg.content && lastMsg.id !== "w") {
+      speakMessage(lastMsg.content, lastMsg.id);
+    }
+  }, [messages, autoSpeak, speakMessage]);
+
   if (!canUse || !portalTgt.current) return null;
 
   const isEmpty = messages.length === 1 && messages[0].id === "w";
@@ -126,6 +148,9 @@ const AIFloatingButton = ({ user }) => {
             <div><div style={{ fontWeight: 600, fontSize: 14, color: "#1e293b" }}>ZakariaAI</div><div style={{ fontSize: 10, color: "#94a3b8" }}>Powered by DeepSeek</div></div>
           </div>
           <div style={{ display: "flex", gap: 4 }}>
+            <button onClick={() => setAutoSpeak(!autoSpeak)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: autoSpeak ? "#fef3c7" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title={autoSpeak ? "Auto-speak ON" : "Auto-speak OFF"}>
+              <svg width={16} height={16} fill="none" stroke={autoSpeak ? "#d97706" : "#94a3b8"} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M6.5 8.5H3a1 1 0 00-1 1v5a1 1 0 001 1h3.5l4.5 4V4.5l-4.5 4z" /></svg>
+            </button>
             <button onClick={() => { const nid = newId(); localStorage.setItem(`ai_fcb_${user?.id}`, nid); setConvId(nid); setShowSuggestions(true); setError(""); }} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={16} height={16} fill="none" stroke="#94a3b8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg></button>
             <button onClick={() => setIsOpen(false)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={16} height={16} fill="none" stroke="#64748b" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
           </div>
@@ -150,9 +175,16 @@ const AIFloatingButton = ({ user }) => {
                 <div style={{ maxWidth: "85%", borderRadius: 16, padding: "10px 14px", fontSize: 13, lineHeight: 1.5, background: u ? "#1e293b" : "#fff", color: u ? "#fff" : "#334155", border: u ? "none" : "1px solid #e2e8f0", borderBottomRightRadius: u ? 6 : 16, borderBottomLeftRadius: u ? 16 : 6, boxShadow: u ? "0 1px 3px rgba(0,0,0,0.1)" : "0 1px 2px rgba(0,0,0,0.04)" }}>
                   <div>{renderContent(msg.content)}</div>
                   {s && !msg.content && <span style={{ color: "#f59e0b" }}>...</span>}
-                  <div style={{ marginTop: 4, fontSize: 10, color: u ? "rgba(255,255,255,0.6)" : "#94a3b8", display: "flex", justifyContent: "space-between" }}>
+                  <div style={{ marginTop: 4, fontSize: 10, color: u ? "rgba(255,255,255,0.6)" : "#94a3b8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4 }}>
                     <span>{formatTime(msg.created_at)}</span>
-                    {!u && msg.meta?.tool && msg.meta.tool !== "system" && !s && <span style={{ padding: "2px 6px", borderRadius: 99, fontSize: 9, background: "#f1f5f9", color: "#64748b" }}>{msg.meta.tool}</span>}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      {!u && !s && msg.content && (
+                        <button onClick={() => speakMessage(msg.content, msg.id)} style={{ width: 20, height: 20, borderRadius: 4, border: "none", background: speakingId === msg.id ? "#fef3c7" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+                          <svg width={12} height={12} fill="none" stroke={speakingId === msg.id ? "#d97706" : "#94a3b8"} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M11 5L6 9H2v6h4l5 4V5z" /></svg>
+                        </button>
+                      )}
+                      {!u && msg.meta?.tool && msg.meta.tool !== "system" && !s && <span style={{ padding: "2px 6px", borderRadius: 99, fontSize: 9, background: "#f1f5f9", color: "#64748b" }}>{msg.meta.tool}</span>}
+                    </div>
                   </div>
                 </div>
               </div>
