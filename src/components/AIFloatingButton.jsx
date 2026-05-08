@@ -74,10 +74,24 @@ const AIFloatingButton = ({ user }) => {
   const recognitionRef = useRef(null);
   const stepTimerRef = useRef(null);
   const messagesSnapRef = useRef(messages);
+  const portalRootRef = useRef(null);
 
   useEffect(() => { messagesSnapRef.current = messages; });
 
   const canUseAI = user?.role === "admin" || user?.role === "agent";
+
+  useEffect(() => {
+    if (!canUseAI) return;
+    const el = document.createElement("div");
+    el.id = "ai-floating-root";
+    el.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:99999";
+    document.body.appendChild(el);
+    portalRootRef.current = el;
+    return () => {
+      if (el.parentNode) el.parentNode.removeChild(el);
+      document.body.style.overflow = "";
+    };
+  }, [canUseAI]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -219,14 +233,16 @@ const AIFloatingButton = ({ user }) => {
   const hasStreaming = messages.some((m) => m.meta?.streaming);
   const isEmpty = messages.length === 1 && messages[0].id === "welcome";
 
+  if (!portalRootRef.current) return null;
+
   return ReactDOM.createPortal(
     <>
-      {/* Floating button — always visible, fixed bottom-right */}
+      {/* Floating button — absolute within fixed root, always bottom-right of screen */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="z-[99999] w-14 h-14 rounded-2xl shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95 border-2 border-white/20"
+        className="w-14 h-14 rounded-2xl shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95 border-2 border-white/20"
         style={{
-          position: "fixed",
+          position: "absolute",
           bottom: "24px",
           right: "24px",
           background: isOpen ? "#1e293b" : "linear-gradient(135deg, #f59e0b, #b45309)",
@@ -241,17 +257,17 @@ const AIFloatingButton = ({ user }) => {
         </svg>
       </button>
 
-      {/* Fullscreen overlay when open */}
+      {/* Chat panel when open */}
       {isOpen && (
         <>
-          {/* Backdrop */}
           <div
-            className="fixed inset-0 z-[99998] bg-black/40 backdrop-blur-sm"
+            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", pointerEvents: "auto" }}
             onClick={() => setIsOpen(false)}
           />
-
-          {/* Chat panel — fixed right side, screen height, slide-in width */}
-          <div className="fixed top-0 bottom-0 right-0 z-[99999] w-full sm:w-[420px] flex flex-col bg-white shadow-2xl transform transition-transform duration-300">
+          <div
+            className="flex flex-col bg-white shadow-2xl"
+            style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: "100%", maxWidth: "420px", pointerEvents: "auto" }}
+          >
             {/* Header */}
             <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
@@ -381,7 +397,7 @@ const AIFloatingButton = ({ user }) => {
         </>
       )}
     </>,
-    document.body,
+    portalRootRef.current,
   );
 };
 
