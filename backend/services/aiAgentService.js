@@ -817,11 +817,16 @@ ${pendingActionContext || ''}
 
 ROUTING RULES:
 - Understand the user's INTENT, not just keywords
-- A question like "find tenants who have not paid" means they want payment status → route_tenant_payment_status
-- "Show me the tenants" means a list → route_tenants (use list response_mode)
-- "What is John's balance" means a single lookup → use summary mode
-- If the user references earlier data (e.g., "the third one", "those tenants"), keep the same tool context
-- If nothing in the catalog matches, use dynamic_sql as absolute last resort
+- "find tenants who have not paid" → route_tenant_payment_status
+- "show me the tenants" → route_tenants (list response_mode)
+- "What is John's balance" → summary mode
+- WEB vs DB: "search the web for property trends in Kenya" → web_search
+- WEB vs DB: "search for tenant John" → route_tenants (it's about system tenants)
+- WEB vs DB: "look up the latest interest rates" → web_search (no system table matches)
+- WEB vs DB: "search for payment ABC123" → route_payments (it's about system data)
+- WEB vs DB rule: use web_search ONLY when the question is clearly about external/online information, not about system tenants/payments/properties
+- If the user references earlier data, keep the same tool context
+- Use dynamic_sql only as absolute last resort
 `;
 
   const routeCatalog = `
@@ -880,15 +885,16 @@ Available actions:
 };
 
 const callGroqToolRouter = async ({ user, question, history, pendingActionContext }) => {
-  const apiKey = process.env.GROQ_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.GROQ_API_KEY;
   if (!apiKey) {
-    return { success: false, error: "GROQ_API_KEY is not configured." };
+    return { success: false, error: "DEEPSEEK_API_KEY is not configured." };
   }
 
   const model =
-    process.env.GROQ_ROUTER_MODEL ||
-    "llama-3.3-70b-versatile";
-  const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+    process.env.DEEPSEEK_ROUTER_MODEL ||
+    process.env.DEEPSEEK_MODEL ||
+    "deepseek-chat";
+  const baseURL = process.env.DEEPSEEK_BASE_URL || process.env.GROQ_BASE_URL || "https://api.deepseek.com/v1";
 
   const response = await axios.post(
     `${baseURL}/chat/completions`,
@@ -1356,7 +1362,8 @@ const chooseTool = (question) => {
   const q = question.toLowerCase();
 
   if (/\b(search|web|internet|google|look up|lookup|news|trends? in|market rate)\b/.test(q)) {
-    return "web_search";
+    const isDbQuery = /\b(tenant|payment|rent|property|complaint|water|unit|building|arrears|balance|receipt|mpesa|dashboard|allocation)\b/i.test(q);
+    if (!isDbQuery) return "web_search";
   }
   if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
     return "draft_sms_reminder";
@@ -3021,20 +3028,21 @@ const getRouteDashboardComprehensive = async () => {
 };
 
 const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, user }) => {
-  const apiKey = process.env.GROQ_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.GROQ_API_KEY;
   if (!apiKey) {
     return {
       usedFallback: true,
       answer:
-        "I processed your request, but AI narration is unavailable because GROQ_API_KEY is not configured.",
+        "I processed your request, but AI narration is unavailable because DEEPSEEK_API_KEY is not configured.",
       usage: null,
     };
   }
 
   const model =
-    process.env.GROQ_NARRATIVE_MODEL ||
-    "llama-3.3-70b-versatile";
-  const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+    process.env.DEEPSEEK_NARRATIVE_MODEL ||
+    process.env.DEEPSEEK_MODEL ||
+    "deepseek-chat";
+  const baseURL = process.env.DEEPSEEK_BASE_URL || process.env.GROQ_BASE_URL || "https://api.deepseek.com/v1";
   const compactFacts = JSON.stringify(toolRows).slice(0, 20000);
 
   const messages = [
@@ -3167,15 +3175,16 @@ const buildPlannerMessages = ({ user, question, schemaContext, previousError = n
 };
 
 const callGroqSqlPlanner = async ({ user, question, schemaContext, previousError = null, lastSql = null, lastRowCount = null, correctionHint = null }) => {
-  const apiKey = process.env.AI_SQL_API_KEY || process.env.GROQ_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.AI_SQL_API_KEY || process.env.GROQ_API_KEY;
   if (!apiKey) {
-    return { success: false, error: "AI_SQL_API_KEY or GROQ_API_KEY is not configured." };
+    return { success: false, error: "DEEPSEEK_API_KEY is not configured." };
   }
 
   const model =
-    process.env.GROQ_SQL_PLANNER_MODEL ||
-    "llama-3.3-70b-versatile";
-  const baseURL = process.env.AI_SQL_BASE_URL || process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+    process.env.DEEPSEEK_SQL_MODEL ||
+    process.env.DEEPSEEK_MODEL ||
+    "deepseek-chat";
+  const baseURL = process.env.DEEPSEEK_BASE_URL || process.env.AI_SQL_BASE_URL || process.env.GROQ_BASE_URL || "https://api.deepseek.com/v1";
 
   const response = await axios.post(
     `${baseURL}/chat/completions`,
@@ -3563,11 +3572,11 @@ const handleWebSearch = async ({ question }) => {
   const q = String(question || "").trim().replace(/\b(search|find|lookup|web|online|internet|for me|for|the|a|an)\b/gi, " ").replace(/\s+/g, " ").trim().slice(0, 200) || "rental market trends kenya";
   const results = [];
 
-  const apiKey = process.env.GROQ_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.GROQ_API_KEY;
   if (apiKey) {
     try {
-      const baseURL = process.env.AI_SQL_BASE_URL || process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
-      const model = process.env.GROQ_SQL_PLANNER_MODEL || "llama-3.3-70b-versatile";
+      const baseURL = process.env.DEEPSEEK_BASE_URL || process.env.GROQ_BASE_URL || "https://api.deepseek.com/v1";
+      const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
       const response = await axios.post(
         `${baseURL}/chat/completions`,
         {

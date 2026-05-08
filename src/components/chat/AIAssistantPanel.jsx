@@ -101,6 +101,11 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
   const messagesRef = useRef(null);
   const textareaRef = useRef(null);
   const stepTimerRef = useRef(null);
+  const messagesSnapshotRef = useRef(messages);
+
+  useEffect(() => {
+    messagesSnapshotRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     if (loading) {
@@ -188,7 +193,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
 
   useEffect(() => {
     if (canUseAI) loadConversations();
-  }, [canUseAI, loadConversations, conversationId, messages.length]);
+  }, [canUseAI, loadConversations, conversationId]);
 
   useEffect(() => {
     const el = messagesRef.current;
@@ -287,7 +292,7 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
     }
 
     try {
-      const history = buildHistoryPayload(messages);
+      const history = buildHistoryPayload(messagesSnapshotRef.current);
       await aiAgentAPI.askStream(question, history, conversationId, {
         onProgress: (step) => {
           if (step === "understanding") setLoadingStep(0);
@@ -306,21 +311,24 @@ const AIAssistantPanel = ({ onBack, onClose, canUseAI, currentUserId }) => {
             ),
           );
           setLoading(false);
-          setTimeout(() => { if (textareaRef.current) textareaRef.current.focus(); }, 100);
+          loadConversations();
+          textareaRef.current?.focus();
         },
         onError: (msg) => {
           setError(msg || "Stream failed.");
           setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: msg || "Error", meta: { tool: "error", streaming: false } } : m)));
           setLoading(false);
-          setTimeout(() => { if (textareaRef.current) textareaRef.current.focus(); }, 100);
+          loadConversations();
+          textareaRef.current?.focus();
         },
       });
     } catch (err) {
       setError("AI assistant is temporarily unavailable.");
       setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: "AI assistant is temporarily unavailable.", meta: { tool: "error", streaming: false } } : m)));
       setLoading(false);
+      loadConversations();
     }
-  }, [input, canSend, messages, conversationId]);
+  }, [input, canSend, conversationId, loadConversations]);
 
   const handleKeyDown = useCallback(
     (e) => {
