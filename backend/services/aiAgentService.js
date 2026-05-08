@@ -3961,7 +3961,20 @@ const AI_ACTION_REGISTRY = [
     description: "Handles greetings, help requests, and non-system questions.",
     mode: "read_only",
     risk: "low",
-    handler: async () => ({ label: "General Conversation", rows: [] }),
+    handler: async ({ question }) => {
+      const q = String(question || "").toLowerCase().trim();
+      const now = new Date();
+      if (/\b(when is today|what day is|current date|today'?s date|what date)\b/i.test(q)) {
+        return { label: "General Conversation", rows: [{ message: `Today is ${now.toLocaleDateString("en-KE", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.` }] };
+      }
+      if (/\b(what time|current time|time now|time is it)\b/i.test(q)) {
+        return { label: "General Conversation", rows: [{ message: `The current time is ${now.toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.` }] };
+      }
+      if (/\b(what can you do|help me|capabilities|what do you know|how can you help)\b/i.test(q)) {
+        return { label: "General Conversation", rows: [{ message: "I can help with: checking tenant payment status, listing tenants/properties, viewing complaints and water bills, checking dashboard stats, searching the web, sending SMS reminders, creating water bills, viewing expenses and notifications, and providing vacancy reports. Just ask!" }] };
+      }
+      return { label: "General Conversation", rows: [{ message: "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system." }] };
+    },
   }),
   createAction({
     id: "route_expenses",
@@ -5107,7 +5120,7 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
 
   if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
     const looksExternal = !/\b(my|our|this system|the system|tenant|property|payment|receipt|mpesa|complaint|water bill|unit code|arrears|balance)\b/i.test(safeQuestion) &&
-      (/\b(ai|artificial intelligence|technology|trends?|latest|world|global|industry|news|market|price|how (to|do)|implement|setup|guide|tutorial|best practice|use case|deployment|improvement|innovation)\b/i.test(safeQuestion) ||
+      (/\b(ai|artificial intelligence|technology|trends?|latest|world|global|industry|news|market|price|how (to|do)|implement|setup|guide|tutorial|best practice|use case|deployment|improvement|innovation|when is|what day|what time|today|current date|who is|where is|meaning of|definition of)\b/i.test(safeQuestion) ||
        safeQuestion.length > 60);
 
     if (looksExternal && routerDecision.action !== "web_search") {
