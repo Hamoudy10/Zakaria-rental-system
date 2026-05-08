@@ -790,7 +790,10 @@ const ROUTER_ACTIONS = [
   "draft_complaint_assignment",
   "web_search",
   "web_fetch",
-  "general",
+  "route_expenses",
+  "route_notifications",
+  "route_users",
+  "system_info",
 ];
 
 const buildRouterMessages = ({ user, question, history, pendingActionContext }) => {
@@ -850,6 +853,10 @@ Available actions:
 - tenant: single tenant snapshot lookup by name, phone, or unit code.
 - web_search: search the internet for facts, news, or external information.
 - web_fetch: fetch and read content from a specific URL.
+- route_expenses: expense records, categories, approval status, spending summaries.
+- route_notifications: recent user notifications and alerts.
+- route_users: list system users and agents (admin only).
+- system_info: company settings, billing config, system overview.
 - dynamic_sql: LAST RESORT read-only SQL query when no tool can answer.
 - general: for greetings, introductions, "how are you", "what can you do", or any non-system chit-chat.
 `;
@@ -3673,6 +3680,81 @@ const handleWebFetch = async ({ question }) => {
   }
 };
 
+const getRouteExpensesList = async ({ user, question }) => {
+  const status = extractKeywordStatus(question, ["pending", "approved", "rejected", "reimbursed"]);
+  const category = extractSearchPhrase(question);
+  const limit = extractTopLimit(question, 20, 100);
+
+  let query = `
+    SELECT e.id, e.amount, e.description, e.status, e.expense_date,
+           ec.name AS category, p.name AS property_name,
+           u.first_name AS recorded_by_first, u.last_name AS recorded_by_last
+    FROM expenses e
+    LEFT JOIN expense_categories ec ON ec.id = e.category_id
+    LEFT JOIN properties p ON p.id = e.property_id
+    LEFT JOIN users u ON u.id = e.recorded_by
+    WHERE 1=1
+  `;
+  const params = [];
+  let pi = 1;
+
+  if (user.role === "agent") {
+    query += ` AND (e.recorded_by = $${pi++}::uuid OR p.id IN (SELECT property_id FROM agent_property_assignments WHERE agent_id = $${pi++}::uuid AND is_active = true))`;
+    params.push(user.id, user.id);
+  }
+
+  if (status) { query += ` AND e.status = $${pi++}`; params.push(status); }
+  if (category) { query += ` AND ec.name ILIKE $${pi++}`; params.push(`%${category}%`); }
+
+  const countQ = `SELECT COUNT(*)::int AS count FROM (${query}) sub`;
+  const countR = await db.query(countQ, params);
+  query += ` ORDER BY e.expense_date DESC NULLS LAST LIMIT $${pi}`;
+  params.push(limit);
+  const result = await db.query(query, params);
+
+  return {
+    label: "Expenses List Route",
+    rows: [{ route: "/api/expenses", filters: { status: status || null, category: category || null }, count: Number(countR.rows[0]?.count || 0), total_count: Number(countR.rows[0]?.count || 0), expenses: result.rows }],
+  };
+};
+
+const getRouteNotificationsList = async ({ user }) => {
+  const result = await db.query(
+    `SELECT n.id, n.title, n.message, n.type, n.is_read, n.created_at
+     FROM notifications n WHERE n.user_id = $1 ORDER BY n.created_at DESC LIMIT 20`,
+    [user.id],
+  );
+  return {
+    label: "Notifications List Route",
+    rows: [{ route: "/api/notifications", count: result.rows.length, notifications: result.rows }],
+  };
+};
+
+const getRouteUsersList = async ({ user }) => {
+  if (user.role !== "admin") return { label: "Users List Route", rows: [{ message: "Only admins can view user lists." }] };
+  const result = await db.query(
+    `SELECT id, first_name, last_name, email, phone_number, role, is_online, last_seen, created_at
+     FROM users WHERE is_active = true ORDER BY role, first_name LIMIT 50`,
+  );
+  return { label: "Users List Route", rows: [{ route: "/api/users", count: result.rows.length, total_count: result.rows.length, users: result.rows }] };
+};
+
+const getSystemInfo = async ({ user }) => {
+  const [company, billing, stats] = await Promise.all([
+    db.query(`SELECT key, value FROM admin_settings WHERE key IN ('company_name','company_address','company_phone','company_email','company_logo_url')`),
+    db.query(`SELECT key, value FROM admin_settings WHERE key IN ('billing_day','paybill_number','sms_billing_template')`),
+    db.query(`SELECT COUNT(*)::int AS total_tenants FROM tenant_allocations WHERE is_active = true`),
+  ]);
+  const settings = {};
+  for (const r of company.rows) settings[r.key] = r.value;
+  for (const r of billing.rows) settings[r.key] = r.value;
+  settings.total_active_tenants = stats.rows[0]?.total_tenants || 0;
+  return {
+    label: "System Information",
+    rows: [{ route: "/api/admin/company-info", settings }],
+  };
+};
+
 const createAction = ({
   id,
   label,
@@ -3877,6 +3959,31 @@ const AI_ACTION_REGISTRY = [
     mode: "read_only",
     risk: "low",
     handler: async () => ({ label: "General Conversation", rows: [] }),
+  }),
+  createAction({
+    id: "route_expenses",
+    label: "Expenses List Route",
+    description: "Lists expenses with status, category, and property filters.",
+    handler: getRouteExpensesList,
+  }),
+  createAction({
+    id: "route_notifications",
+    label: "Notifications List Route",
+    description: "Shows recent notifications for the current user.",
+    handler: getRouteNotificationsList,
+  }),
+  createAction({
+    id: "route_users",
+    label: "Users List Route",
+    description: "Lists system users and agents (admin only).",
+    roles: ["admin"],
+    handler: getRouteUsersList,
+  }),
+  createAction({
+    id: "system_info",
+    label: "System Information",
+    description: "Shows company settings, billing config, and system overview.",
+    handler: getSystemInfo,
   }),
 ];
 
