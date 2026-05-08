@@ -830,7 +830,7 @@ INTERNET questions (use web_search):
 
 CONTINUATION: If previous answer came from web_search and user follows up, keep web_search.
 
-DYNAMIC SQL: Only use as LAST RESORT for complex database analysis. NEVER use dynamic_sql for general knowledge or external questions.
+DYNAMIC SQL: Only use as LAST RESORT for complex database analysis. NEVER use dynamic_sql for greetings, general knowledge, or external questions. Use "general" for greetings, introductions, chit-chat, and anything that is NOT a database query or web search.
 `;
 
   const routeCatalog = `
@@ -1406,8 +1406,11 @@ const chooseTool = (question) => {
   if (/\b(how are you|what('?s| is) up|who are you|what can you do|help|capabilit|introduce|yourself|about you)\b/.test(q)) {
     return "general";
   }
+  if (/^(hello|hi|hey|good morning|good afternoon|good evening|greetings|yo|sup|hola)[\s,!.]*$/i.test(q) || (q.length < 15 && /^(hello|hi|hey|good morning|good afternoon|good evening)\b/i.test(q))) {
+    return "general";
+  }
 
-  return "dynamic_sql";
+  return "general";
 };
 
 const getUnpaidTenantsForPropertyThisMonth = async ({ user, question }) => {
