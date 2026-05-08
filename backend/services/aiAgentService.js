@@ -824,21 +824,24 @@ SYSTEM ENTITIES:
 CURRENT USER: ${user.role} (${user.role === 'admin' ? 'can see all data' : 'can only see assigned properties'})
 ${pendingActionContext || ''}
 
-ROUTING RULES:
-- Understand the user's INTENT, not just keywords
-- "find tenants who have not paid" → route_tenant_payment_status
-- "show me the tenants" → route_tenants (list response_mode)
-- "What is John's balance" → summary mode
-- WEB vs DB: "search the web for property trends in Kenya" → web_search (external market data)
-- WEB vs DB: "search for tenant John" → route_tenants (it's about system tenants)
-- WEB vs DB: "look up the latest interest rates" → web_search (no system table matches)
-- WEB vs DB: "search for payment ABC123" → route_payments (it's about system data)
-- WEB vs DB: "rent trends for 2 bedroom houses in mombasa" → web_search (external location + market data, NOT about system tenants)
-- WEB vs DB: "show current rent balances" → route_tenant_payment_status (it's about system data)
-- WEB vs DB RULE: if the question mentions external locations, market trends, prices, or current/real-world information → use web_search even if domain words like "rent" appear. Only use DB tools when the question is clearly about YOUR system's data (specific tenants, your properties, your payments).
-- CONTINUATION RULE: if the previous answer was from Web Search and the user follows up with "how", "what about", "tell me more", or references "these"/"this"/"that"/"it" — continue using web_search. Do NOT switch to database tools.
-- If the user references earlier data, keep the same tool context
-- Use dynamic_sql only as absolute last resort
+ROUTING RULES — How to choose the right action:
+
+CORE PRINCIPLE: Is the answer in OUR DATABASE or on the INTERNET?
+
+DATABASE questions (use route_* or tenant tools):
+- Questions about THIS system's tenants, properties, payments, complaints, water bills
+- Keywords indicate DB: my tenants, our properties, who paid, unpaid, rent balance, occupancy, complaint status
+- Examples: "who has not paid" → route_tenant_payment_status | "show tenants" → route_tenants | "vacant units" → route_properties
+
+INTERNET questions (use web_search):
+- Questions asking for facts, knowledge, news, technology, trends, industry practices, how-to guides, tutorials
+- Anything about "AI", "technology", "trends", "latest", "world", "global", "industry", "innovation", "market"
+- Phrases like "find for me", "tell me about", "what is", "how to", "latest" + topic
+- Examples: "latest AI trends in rental systems" → web_search | "how to implement IoT metering" → web_search | "rental market trends Kenya" → web_search
+
+CONTINUATION: If previous answer came from web_search and user follows up, keep web_search.
+
+DYNAMIC SQL: Only use as LAST RESORT for complex database analysis. NEVER use dynamic_sql for general knowledge or external questions.
 `;
 
   const routeCatalog = `
@@ -1391,6 +1394,9 @@ const chooseTool = (question) => {
     const hasDbEntity = /\b(my|our|the |this |these|those|tenant|payment|receipt|mpesa|complaint|water bill|unit code|dashboard)\b/i.test(q) || /\b[a-z]{2,}\s+\d+\b/.test(q);
     const hasExternalContext = /\b(mombasa|nairobi|kisumu|kenya|market|trends?|price|cost|rate|currently|latest|apartments?|houses?|bedroom)\b/i.test(q);
     if (!hasDbEntity || hasExternalContext) return "web_search";
+  }
+  if (/\b(ai|artificial intelligence|technology|innovation|industry|global|worldwide|trends?|latest|deployment|use cases?|how to|implement|setup|guide|tutorial)\b/i.test(q) && !/\b(tenant|payment|rent|complaint|property|unit|building|arrears|balance)\b/i.test(q)) {
+    return "web_search";
   }
   if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
     return "draft_sms_reminder";
@@ -4995,6 +5001,21 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
       await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: fullAnswer, toolUsed: toolResult.label, recordsCount: toolResult.rows.length });
     }
     return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: fullAnswer, records: toolResult.rows.length } };
+  }
+
+  if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
+    const stillEmpty = !toolResult || !toolResult.rows || toolResult.rows.length === 0;
+    const looksExternal = !/\b(my|our|this system|the system|tenant|property|payment|receipt|mpesa|complaint|water bill|unit code|arrears|balance)\b/i.test(safeQuestion) &&
+      (/\b(ai|artificial intelligence|technology|trends?|latest|world|global|industry|news|market|price|how (to|do)|implement|setup|guide|tutorial|best practice|use case|deployment|improvement|innovation)\b/i.test(safeQuestion) ||
+       safeQuestion.length > 60);
+
+    if (stillEmpty && looksExternal && routerDecision.action !== "web_search") {
+      onProgress("querying");
+      const webResult = await handleWebSearch({ question: safeQuestion });
+      if (webResult && webResult.rows && webResult.rows.length > 0 && !webResult.rows[0]?.message) {
+        toolResult = webResult;
+      }
+    }
   }
 
   if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
