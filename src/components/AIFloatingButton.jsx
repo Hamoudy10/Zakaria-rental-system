@@ -44,6 +44,8 @@ const AIFloatingButton = ({ user }) => {
 
   useEffect(() => { msgSnap.current = messages; });
   const canUse = user?.role === "admin" || user?.role === "agent";
+  const voiceInputSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const voiceOutputSupported = !!window.speechSynthesis;
 
   useEffect(() => {
     if (!canUse) return;
@@ -111,6 +113,24 @@ const AIFloatingButton = ({ user }) => {
 
   const handleKeyDown = useCallback((e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }, [sendMessage]);
 
+  const [isListening, setIsListening] = useState(false);
+  const recogRef = useRef(null);
+
+  const toggleListening = useCallback(() => {
+    if (!voiceInputSupported) return;
+    if (isListening) { recogRef.current?.stop(); setIsListening(false); return; }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const r = new SpeechRecognition();
+    r.continuous = true; r.interimResults = true; r.lang = "en-KE";
+    r.onresult = (e) => { let t = ""; for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript; setInput(t); };
+    r.onerror = () => setIsListening(false);
+    r.onend = () => setIsListening(false);
+    recogRef.current = r;
+    r.start();
+    setIsListening(true);
+  }, [isListening, voiceInputSupported]);
+  useEffect(() => () => recogRef.current?.stop(), []);
+
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [speakingId, setSpeakingId] = useState(null);
 
@@ -148,9 +168,11 @@ const AIFloatingButton = ({ user }) => {
             <div><div style={{ fontWeight: 600, fontSize: 14, color: "#1e293b" }}>ZakariaAI</div><div style={{ fontSize: 10, color: "#94a3b8" }}>Powered by DeepSeek</div></div>
           </div>
           <div style={{ display: "flex", gap: 4 }}>
-            <button onClick={() => setAutoSpeak(!autoSpeak)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: autoSpeak ? "#fef3c7" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title={autoSpeak ? "Auto-speak ON" : "Auto-speak OFF"}>
-              <svg width={16} height={16} fill="none" stroke={autoSpeak ? "#d97706" : "#94a3b8"} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M6.5 8.5H3a1 1 0 00-1 1v5a1 1 0 001 1h3.5l4.5 4V4.5l-4.5 4z" /></svg>
-            </button>
+            {voiceOutputSupported && (
+              <button onClick={() => setAutoSpeak(!autoSpeak)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: autoSpeak ? "#fef3c7" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title={autoSpeak ? "Auto-speak ON" : "Auto-speak OFF"}>
+                <svg width={16} height={16} fill="none" stroke={autoSpeak ? "#d97706" : "#94a3b8"} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M6.5 8.5H3a1 1 0 00-1 1v5a1 1 0 001 1h3.5l4.5 4V4.5l-4.5 4z" /></svg>
+              </button>
+            )}
             <button onClick={() => { const nid = newId(); localStorage.setItem(`ai_fcb_${user?.id}`, nid); setConvId(nid); setShowSuggestions(true); setError(""); }} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={16} height={16} fill="none" stroke="#94a3b8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg></button>
             <button onClick={() => setIsOpen(false)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={16} height={16} fill="none" stroke="#64748b" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
           </div>
@@ -178,7 +200,7 @@ const AIFloatingButton = ({ user }) => {
                   <div style={{ marginTop: 4, fontSize: 10, color: u ? "rgba(255,255,255,0.6)" : "#94a3b8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4 }}>
                     <span>{formatTime(msg.created_at)}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      {!u && !s && msg.content && (
+                      {!u && !s && msg.content && voiceOutputSupported && (
                         <button onClick={() => speakMessage(msg.content, msg.id)} style={{ width: 20, height: 20, borderRadius: 4, border: "none", background: speakingId === msg.id ? "#fef3c7" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
                           <svg width={12} height={12} fill="none" stroke={speakingId === msg.id ? "#d97706" : "#94a3b8"} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M11 5L6 9H2v6h4l5 4V5z" /></svg>
                         </button>
@@ -203,7 +225,14 @@ const AIFloatingButton = ({ user }) => {
         </div>
         <div style={{ borderTop: "1px solid #e2e8f0", padding: "10px 12px", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-            <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Ask anything..." rows={1} disabled={loading}
+            {voiceInputSupported && (
+              <button onClick={toggleListening} disabled={loading}
+                style={{ width: 42, height: 42, borderRadius: 12, border: "none", cursor: loading ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: isListening ? "#ef4444" : "#f1f5f9", opacity: loading ? 0.4 : 1 }}
+                title={isListening ? "Stop listening" : "Voice input"}>
+                <svg width={16} height={16} fill="none" stroke={isListening ? "#fff" : "#64748b"} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+              </button>
+            )}
+            <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={isListening ? "Listening..." : "Ask anything..."} rows={1} disabled={loading}
               style={{ flex: 1, resize: "none", borderRadius: 12, border: "1px solid #e2e8f0", background: "#f8fafc", padding: "10px 14px", fontSize: 13, lineHeight: 1.4, outline: "none", maxHeight: 100, minHeight: 42, fontFamily: "inherit", opacity: loading ? 0.5 : 1 }} />
             <button onClick={sendMessage} disabled={!canUse || loading || !input.trim()}
               style={{ width: 42, height: 42, borderRadius: 12, border: "none", background: canUse && input.trim() && !loading ? "#1e293b" : "#e2e8f0", color: canUse && input.trim() && !loading ? "#fff" : "#94a3b8", cursor: canUse && input.trim() && !loading ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
