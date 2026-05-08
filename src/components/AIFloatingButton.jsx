@@ -265,11 +265,11 @@ const AIFloatingButton = ({ user }) => {
             onClick={() => setIsOpen(false)}
           />
           <div
-            className="flex flex-col bg-white shadow-2xl"
+            className="bg-white shadow-2xl"
             style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: "100%", maxWidth: "420px", pointerEvents: "auto" }}
           >
-            {/* Header */}
-            <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between shrink-0">
+            {/* Header — fixed top */}
+            <div className="absolute top-0 left-0 right-0 h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between z-10">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 to-amber-700 text-white flex items-center justify-center text-[10px] font-bold">AI</div>
                 <div>
@@ -291,8 +291,8 @@ const AIFloatingButton = ({ user }) => {
               </div>
             </div>
 
-            {/* Messages — scrollable middle */}
-            <div ref={messagesRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
+            {/* Messages — absolutely positioned between header and input */}
+            <div ref={messagesRef} className="absolute left-0 right-0 overflow-y-auto px-4 py-4 space-y-4" style={{ top: 56, bottom: 120 }}>
               {isEmpty && showSuggestions && !loading && (
                 <div className="flex flex-col items-center justify-center h-full text-center px-4 space-y-4">
                   <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg">
@@ -351,7 +351,7 @@ const AIFloatingButton = ({ user }) => {
             )}
 
             {/* Input — fixed at bottom */}
-            <div className="border-t border-slate-200 bg-white px-3 py-2.5 shrink-0">
+            <div className="absolute bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-3 py-2.5">
               <div className="flex gap-2 items-end max-w-3xl mx-auto">
                 <button
                   onClick={toggleListening}
