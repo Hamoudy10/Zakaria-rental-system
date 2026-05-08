@@ -3076,7 +3076,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     {
       role: "system",
       content:
-        "You are a rental operations assistant. Use ONLY the facts provided below. List ALL items when the user asks for a list — do not truncate or summarize lists. Be concise. If the facts array is empty or shows zero results, simply state that no matching data was found — do NOT ask the user for more information or invent requirements. Explain errors in simple language. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
+        "You are a rental operations assistant. Use ONLY the facts provided below. When the user asks for totals, sums, or calculations, COMPUTE the answer from the provided data — add up the amounts, count the items, calculate averages. Do NOT just relist the data. List ALL items when the user asks for a list — do not truncate or summarize lists. Be concise. If the facts array is empty or shows zero results, simply state that no matching data was found — do NOT ask the user for more information or invent requirements. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
     },
     ...history,
     {
@@ -3127,7 +3127,7 @@ const callGroqForNarrativeStream = async ({ question, history, toolLabel, toolRo
       temperature: 0.1,
       max_tokens: 4000,
       messages: [
-        { role: "system", content: "You are a rental operations assistant. Use ONLY the facts provided below. List ALL items. Be concise. Always present money in Kenyan shillings as KES." },
+        { role: "system", content: "You are a rental operations assistant. Use ONLY the facts provided. When asked for totals or sums, COMPUTE the answer from data — do NOT just relist it. List ALL items when asked. Be concise. Use KES for money." },
         ...history,
         { role: "user", content: `Role: ${user.role}\nQuestion: ${question}\nData Source: ${toolLabel}\nFacts: ${compactFacts}` },
       ],
@@ -3356,6 +3356,29 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
       return "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system.";
     }
     return `I searched the database but could not find matching records. Try being more specific — include a tenant name, unit code (e.g. MJ-4), property name, or phone number.`;
+  }
+
+  const qLower = displayQuestion.toLowerCase();
+  if (/\b(total|sum|add\s*(it|them)?\s*up|calculate|compute|how much (is|are)|overall)\b/i.test(qLower)) {
+    const amounts = rows.flatMap((r) => {
+      if (typeof r === "object" && r !== null) {
+        const vals = [];
+        for (const [k, v] of Object.entries(r)) {
+          if (/\b(amount|rent|paid|due|balance|arrears|total|sum|collected|cost|price|monthly_rent|total_due|total_owed)\b/i.test(k) && typeof v === "number") {
+            vals.push(v);
+          }
+        }
+        return vals.length > 0 ? [Math.max(...vals)] : [];
+      }
+      return [];
+    });
+    if (amounts.length > 0) {
+      const total = amounts.reduce((a, b) => a + b, 0);
+      if (rows.every((r) => typeof r === "object" && r !== null && (r.first_name || r.tenant_name))) {
+        return `There are ${rows.length} payment records with a total of KES ${total.toLocaleString()}.`;
+      }
+      return `The total across ${rows.length} records is KES ${total.toLocaleString()}.`;
+    }
   }
 
   if (toolLabel === "Web Search") {
