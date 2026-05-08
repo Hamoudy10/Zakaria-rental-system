@@ -3119,11 +3119,11 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
 };
 
 const callGroqForNarrativeStream = async ({ question, history, toolLabel, toolRows, user, onToken }) => {
-  const apiKey = process.env.GROQ_API_KEY || process.env.AI_SQL_API_KEY;
-  if (!apiKey) throw new Error("API key not configured");
+  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.GROQ_API_KEY || process.env.AI_SQL_API_KEY;
+  if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
 
-  const model = process.env.GROQ_NARRATIVE_MODEL || "llama-3.3-70b-versatile";
-  const baseURL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+  const model = process.env.DEEPSEEK_NARRATIVE_MODEL || process.env.DEEPSEEK_MODEL || "deepseek-chat";
+  const baseURL = process.env.DEEPSEEK_BASE_URL || process.env.GROQ_BASE_URL || "https://api.deepseek.com/v1";
   const compactFacts = JSON.stringify(toolRows).slice(0, 20000);
 
   const response = await axios.post(
@@ -5004,17 +5004,18 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
   }
 
   if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
-    const stillEmpty = !toolResult || !toolResult.rows || toolResult.rows.length === 0;
     const looksExternal = !/\b(my|our|this system|the system|tenant|property|payment|receipt|mpesa|complaint|water bill|unit code|arrears|balance)\b/i.test(safeQuestion) &&
       (/\b(ai|artificial intelligence|technology|trends?|latest|world|global|industry|news|market|price|how (to|do)|implement|setup|guide|tutorial|best practice|use case|deployment|improvement|innovation)\b/i.test(safeQuestion) ||
        safeQuestion.length > 60);
 
-    if (stillEmpty && looksExternal && routerDecision.action !== "web_search") {
+    if (looksExternal && routerDecision.action !== "web_search") {
       onProgress("querying");
-      const webResult = await handleWebSearch({ question: safeQuestion });
-      if (webResult && webResult.rows && webResult.rows.length > 0 && !webResult.rows[0]?.message) {
-        toolResult = webResult;
-      }
+      try {
+        const webResult = await handleWebSearch({ question: safeQuestion });
+        if (webResult && webResult.rows && webResult.rows.length > 0 && !webResult.rows[0]?.message) {
+          toolResult = webResult;
+        }
+      } catch (e) { /* web search fallback failed, continue to fallback response */ }
     }
   }
 
