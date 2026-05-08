@@ -8,93 +8,38 @@ const aiRateLimiter = createRateLimiter({
   windowMs: 60 * 1000,
   max: 30,
   keyGenerator: (req) => req.user?.id || getClientIp(req),
-  message: "Too many AI requests. Please wait a moment and try again.",
+  message: "Too many requests. Please wait a moment.",
+});
+
+const strictRateLimiter = createRateLimiter({
+  windowMs: 10 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.user?.id || getClientIp(req),
+  message: "Request limit exceeded. Slow down.",
 });
 
 router.use(authMiddleware);
 router.use(requireRole(["admin", "agent"]));
 router.use(aiRateLimiter);
 
-router.get("/health", (req, res) => {
-  const availableActions = aiAgentService.getAvailableActions({
-    user: req.user,
-    includeDisabled: false,
-  });
-
-  res.json({
-    success: true,
-    message: "AI agent route is available",
-    mode: "phase_2_write_enabled",
-    autonomousWritesEnabled: true,
-    availableActions: availableActions.length,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-router.get("/actions", (req, res) => {
-  const includeDisabled = String(req.query?.includeDisabled || "true") !== "false";
-  res.json({
-    success: true,
-    mode: "phase_2_write_enabled",
-    autonomousWritesEnabled: true,
-    data: {
-      actions: aiAgentService.getAvailableActions({
-        user: req.user,
-        includeDisabled,
-      }),
-    },
-  });
-});
-
-router.get("/history", async (req, res) => {
-  try {
-    const { conversationId, limit } = req.query || {};
-    const result = await aiAgentService.getConversationHistory({
-      user: req.user,
-      conversationId,
-      limit,
-    });
-
-    if (!result.success) {
-      return res.status(result.status || 400).json(result);
+router.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  const body = req.body;
+  if (body && typeof body === "object") {
+    const question = String(body.question || "").trim();
+    if (question.length > 600) {
+      return res.status(400).json({ success: false, message: "Question too long." });
     }
-
-    return res.json(result);
-  } catch (error) {
-    console.error("AI agent history fetch failed:", error.message);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to load AI chat history.",
-    });
   }
+  next();
 });
 
-router.post("/query", async (req, res) => {
-  try {
-    const { question, history, conversationId } = req.body || {};
-    const result = await aiAgentService.answerQuestion({
-      user: req.user,
-      question,
-      history,
-      conversationId,
-    });
-
-    if (!result.success) {
-      return res.status(result.status || 400).json(result);
-    }
-
-    return res.json(result);
-  } catch (error) {
-    console.error("AI agent query failed:", error.message);
-    return res.status(500).json({
-      success: false,
-      message:
-        "The AI assistant could not process your request right now. Please try again.",
-    });
-  }
-});
-
-router.post("/stream", async (req, res) => {
+router.post("/stream", strictRateLimiter, async (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",

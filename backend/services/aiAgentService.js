@@ -95,19 +95,75 @@ const MONTH_REGEX = /\b(20\d{2})[-\/](0[1-9]|1[0-2])\b/;
 const PAYMENT_STATUS_KEYWORDS = ["pending", "completed", "failed", "overdue"];
 const COMPLAINT_STATUS_KEYWORDS = ["open", "in_progress", "resolved", "closed"];
 
+// ================================================================
+// SECURITY LAYER — Cyber Security Hardening
+// ================================================================
+
+const SENSITIVE_DATA_PATTERNS = [
+  { pattern: /(?:password|passwd|pwd|secret|token|api[_-]?key|api[_-]?secret)\s*[:=]\s*\S+/gi, replacement: (m) => m.replace(/\S+$/, "[REDACTED]") },
+  { pattern: /(?:Bearer|Basic)\s+[A-Za-z0-9\-._~+/]+=*/g, replacement: "[REDACTED_TOKEN]" },
+  { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, replacement: "[SSN_REDACTED]" },
+  { pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replacement: (m) => m.slice(0,2) + "***@***" + m.slice(m.lastIndexOf(".")) },
+  { pattern: /eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/g, replacement: "[JWT_REDACTED]" },
+  { pattern: /(?:sk-[A-Za-z0-9]{20,})/g, replacement: "[API_KEY_REDACTED]" },
+  { pattern: /\b(badikuu|njVB6|lqmymPO|kPkNMZ|gsk_jFZ|EAAUqdUGP3okBQ)\w*/g, replacement: "[CREDENTIAL_REDACTED]" },
+];
+
+const redactSensitiveData = (text) => {
+  let sanitized = String(text || "");
+  for (const rule of SENSITIVE_DATA_PATTERNS) {
+    sanitized = sanitized.replace(rule.pattern, rule.replacement);
+  }
+  return sanitized;
+};
+
 const PROMPT_INJECTION_PATTERNS = [
   /\b(ignore|forget|disregard|override)\s+(all\s+)?(previous|above|prior|earlier|your)\s+(instructions?|prompts?|rules?|guidelines?)/i,
   /\byou are now\b/i,
   /\bpretend (you are|to be)\b/i,
   /\bact as (if|though) (you are|you're)\b/i,
-  /\b(system prompt|system message|your prompt):/i,
+  /\b(system prompt|system message|your prompt)\s*:/i,
   /\b\[system\]/i,
-  /\b<\|im_start\|>/i,
-  /\b<\|im_end\|>/i,
+  /<\|im_start\|>/i,
+  /<\|im_end\|>/i,
   /\b(DAN|jailbreak|developer mode)\b/i,
-  /\bignore all (constraints|limitations|restrictions|rules)\b/i,
-  /\bbypass (the |your )?(filters?|safety|restrictions?)\b/i,
+  /\bignore all (constraints|limitations|restrictions|rules|safeguards)\b/i,
+  /\bbypass (the |your )?(filters?|safety|restrictions?|security)\b/i,
   /\bdo not (follow|obey|listen to) (your |the )?(instructions?|rules?)\b/i,
+  /\bnew (set of )?instructions?\s*:/i,
+  /\bhello chatgpt\b/i,
+  /\bfrom now on you are\b/i,
+  /\brespond as\b/i,
+  /\bwithout (any|the) (restrictions|limitations|filters)\b/i,
+  /\boutput (your |the )?(system prompt|instructions?|rules?|configuration)\b/i,
+  /\breveal (your |the )?(system prompt|instructions?|prompt|config)\b/i,
+  /\bshow me (your |the )?(system prompt|instructions?|prompt|config)\b/i,
+  /\bwhat (is|are) your (instructions?|prompts?|rules?)\b/i,
+  /\bexecute\s*[\(\[]/i,
+  /\bDROP\b/i,
+  /\bDELETE\s+FROM\b/i,
+  /\bINSERT\s+INTO\b/i,
+  /\bUPDATE\s+\w+\s+SET\b/i,
+  /\bTRUNCATE\b/i,
+  /\bALTER\s+(TABLE|USER|DATABASE)\b/i,
+  /\bCREATE\s+(TABLE|USER|DATABASE|FUNCTION|PROCEDURE)\b/i,
+  /\bGRANT\b/i,
+  /\bREVOKE\b/i,
+  /<\/?(?:script|iframe|object|embed|form|input|style|link|meta)/i,
+  /\bUNION\s+SELECT\b/i,
+  /\bSLEEP\s*\(/i,
+  /\bBENCHMARK\s*\(/i,
+  /';\s*(?:DROP|DELETE|INSERT|UPDATE)/i,
+];
+
+const HARMFUL_CONTENT_PATTERNS = [
+  /\b(hack|exploit|crack|phish)\s+(the |this |our )?(system|server|database|site)\b/i,
+  /\b(steal|dump|exfiltrate|leak)\s+(data|credentials?|passwords?|secrets?)\b/i,
+  /\b(attack|breach|compromise|penetrate)\b/i,
+  /\b(bomb|weapon|terror|kill|murder|assassinate)\b/i,
+  /\b(child\s*(porn|abuse|exploitation)|CSAM)\b/i,
+  /\b(identity theft|social engineering)\b/i,
+  /\b(launder|fraud|scam)\b/i,
 ];
 
 const sanitizePromptInjection = (text) => {
@@ -116,6 +172,23 @@ const sanitizePromptInjection = (text) => {
     sanitized = sanitized.replace(pattern, "[blocked]");
   }
   return sanitized;
+};
+
+const detectHarmfulContent = (text) => {
+  const q = String(text || "");
+  for (const pattern of HARMFUL_CONTENT_PATTERNS) {
+    if (pattern.test(q)) return { blocked: true, reason: "Content violates safety policy." };
+  }
+  return { blocked: false };
+};
+
+const validateInput = (text) => {
+  const q = String(text || "").trim();
+  if (q.length > MAX_QUESTION_LENGTH) return { valid: false, reason: `Question exceeds ${MAX_QUESTION_LENGTH} characters.` };
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(q.replace(/\n/g, ""))) return { valid: false, reason: "Input contains invalid control characters." };
+  const nullByteIdx = q.indexOf("\0");
+  if (nullByteIdx >= 0) return { valid: false, reason: "Input contains null bytes." };
+  return { valid: true };
 };
 
 const ensureSafeQuestion = (question) => {
@@ -4359,6 +4432,32 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
     };
   }
 
+  const inputCheck = validateInput(safeQuestion);
+  if (!inputCheck.valid) {
+    return { success: false, status: 400, message: inputCheck.reason };
+  }
+
+  const safetyCheck = detectHarmfulContent(safeQuestion);
+  if (safetyCheck.blocked) {
+    return { success: false, status: 403, message: safetyCheck.reason };
+  }
+
+  if (safeConversationId) {
+    const ownershipCheck = await db.query(
+      `SELECT 1 FROM ai_chat_history WHERE conversation_id = $1 AND user_id = $2 LIMIT 1`,
+      [safeConversationId, user.id]
+    );
+    if (ownershipCheck.rows.length > 0) {
+      const crossUserCheck = await db.query(
+        `SELECT 1 FROM ai_chat_history WHERE conversation_id = $1 AND user_id != $2 LIMIT 1`,
+        [safeConversationId, user.id]
+      );
+      if (crossUserCheck.rows.length > 0) {
+        return { success: false, status: 403, message: "Access denied." };
+      }
+    }
+  }
+
   const pendingCheck = await checkPendingActionResolution({
     user,
     question: safeQuestion,
@@ -4875,7 +4974,7 @@ const answerQuestion = async ({ user, question, history, conversationId }) => {
       mode: "read_only",
       blocked: false,
       tool: toolResult.label,
-      answer,
+      answer: redactSensitiveData(answer),
       usage: narration.usage,
       fallback: narration.usedFallback,
       records:
@@ -5050,7 +5149,7 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
       await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "user", messageText: safeQuestion });
       await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: fullAnswer, toolUsed: toolResult.label, recordsCount: toolResult.rows.length });
     }
-    return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: fullAnswer, records: toolResult.rows.length } };
+    return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: redactSensitiveData(fullAnswer), records: toolResult.rows.length } };
   }
 
   if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
@@ -5067,7 +5166,7 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
           await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "user", messageText: safeQuestion });
           await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: narAnswer, toolUsed: "General Conversation" });
         }
-        return { success: true, data: { mode: "read_only", tool: "General Conversation", answer: narAnswer } };
+        return { success: true, data: { mode: "read_only", tool: "General Conversation", answer: redactSensitiveData(narAnswer) } };
       } catch (e) { /* fall through to fallback */ }
     }
 
@@ -5076,7 +5175,7 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
       onToken(fallback.slice(i, i + 3));
       await new Promise((r) => setTimeout(r, 8));
     }
-    return { success: true, data: { mode: "read_only", tool: toolResult?.label, answer: fallback } };
+    return { success: true, data: { mode: "read_only", tool: toolResult?.label, answer: redactSensitiveData(fallback) } };
   }
 
   onProgress("formatting");
@@ -5096,14 +5195,14 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
       await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "user", messageText: safeQuestion });
       await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: finalAnswer, toolUsed: toolResult.label, recordsCount: toolResult.rows.length });
     }
-    return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: finalAnswer, records: toolResult.rows.length } };
+    return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: redactSensitiveData(finalAnswer), records: toolResult.rows.length } };
   } catch (streamErr) {
     const fallback = formatFallbackResponse({ question: contextualQuestion, toolLabel: toolResult.label, rows: toolResult.rows });
     for (let i = 0; i < fallback.length; i += 3) {
       onToken(fallback.slice(i, i + 3));
       await new Promise((r) => setTimeout(r, 8));
     }
-    return { success: true, data: { mode: "read_only", tool: toolResult?.label, answer: fallback } };
+    return { success: true, data: { mode: "read_only", tool: toolResult?.label, answer: redactSensitiveData(fallback) } };
   }
 };
 
