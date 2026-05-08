@@ -188,106 +188,71 @@ const extractJsonObject = (text) => {
 };
 
 const getSchemaContext = async () => {
-  const keyTables = [
-    "users","tenants","properties","property_units","tenant_allocations",
-    "rent_payments","water_bills","water_delivery_expenses","complaints",
-    "expenses","notifications","agent_property_assignments","admin_settings"
-  ];
   let columnsText = "";
   try {
     const cols = await db.query(
       `SELECT table_name, column_name, data_type
        FROM information_schema.columns
-       WHERE table_schema='public' AND table_name=ANY($1::text[])
-       ORDER BY table_name, ordinal_position`,
-      [keyTables]
+       WHERE table_schema = 'public'
+       ORDER BY table_name, ordinal_position`
     );
     const grouped = {};
     for (const r of cols.rows) {
       if (!grouped[r.table_name]) grouped[r.table_name] = [];
       grouped[r.table_name].push(`${r.column_name}:${r.data_type}`);
     }
-    columnsText = Object.entries(grouped).map(([t,c]) => `${t}(${c.slice(0,40).join(", ")})`).join("\n");
+    columnsText = Object.entries(grouped).map(([t,c]) => `${t}(${c.slice(0,50).join(", ")})`).join("\n");
   } catch (e) { columnsText = ""; }
 
   return `
-=== DATABASE COLUMNS (live from information_schema) ===
+=== COMPLETE DATABASE SCHEMA (public) ===
 ${columnsText}
 
-=== BUSINESS RULES ===
-1. Payment Allocation Order: arrears→water→rent→advance (strict).
-2. Arrears: tenant_allocations.arrears_balance = cumulative unpaid from all prior months.
-3. Rent Due This Month: monthly_rent MINUS SUM(allocated_to_rent) for CURRENT_DATE month WHERE status='completed'.
-4. Total Owed: rent_due + water_due + arrears_due. Advance applied arrears→water→rent order.
-5. Agent Scope: if role=agent, filter via agent_property_assignments WHERE agent_id=<id> AND is_active=true.
-6. Active Tenants: tenant_allocations WHERE is_active=true. Join: tenants→tenant_allocations→property_units→properties.
-7. Water Bills: water_bills UNIQUE(tenant_id, COALESCE(unit_id), bill_month).
-8. Complaints: use raised_at for date queries (NOT created_at). Status: open|in_progress|resolved|closed.
-9. Expenses: approval workflow: pending→approved→rejected→reimbursed. Use expense_date.
-10. Soft Delete: always filter is_active=true for live data.
-11. Phone Format: stored as 2547XXXXXXXX. Display as 07xxxxxxxx.
-12. Rent Payments: always filter status='completed' for financial calculations.
-13. Use DATE_TRUNC('month', col) = DATE_TRUNC('month', CURRENT_DATE) for current-month filters.
-14. Always add LIMIT clause (max 500).
+=== KEY RELATIONSHIPS ===
+- tenants.id → tenant_allocations.tenant_id → property_units.id → properties.id
+- rent_payments.tenant_id → tenants.id | rent_payments.unit_id → property_units.id | rent_payments.property_id → properties.id
+- water_bills.tenant_id → tenants.id | water_bills.unit_id → property_units.id | water_bills.property_id → properties.id
+- complaints.tenant_id → tenants.id | complaints.unit_id → property_units.id | complaints.assigned_agent → users.id
+- expenses.property_id → properties.id | expenses.unit_id → property_units.id | expenses.recorded_by → users.id
+- notifications.user_id → users.id (NOT tenants.id)
+- users.id → agent_property_assignments.agent_id → properties.id
+- chat_messages.conversation_id → chat_conversations.id | chat_messages.sender_id → users.id
+- tenant_deposit_transactions.tenant_id → tenants.id | tenant_deposit_transactions.unit_id → property_units.id
+- unit_code_aliases.unit_id → property_units.id
+- ai_chat_history.user_id → users.id | ai_chat_history.conversation_id (groups messages)
 
-=== FEW-SHOT EXAMPLES ===
-Q: who has not paid this month
-SELECT t.first_name,t.last_name,pu.unit_code,p.name AS property,
-  ta.monthly_rent,COALESCE(SUM(rp.allocated_to_rent),0) AS rent_paid,
-  ta.monthly_rent-COALESCE(SUM(rp.allocated_to_rent),0) AS rent_due
-FROM tenant_allocations ta
-JOIN tenants t ON t.id=ta.tenant_id
-JOIN property_units pu ON pu.id=ta.unit_id
-JOIN properties p ON p.id=pu.property_id
-LEFT JOIN rent_payments rp ON rp.tenant_id=ta.tenant_id AND rp.unit_id=ta.unit_id
-  AND DATE_TRUNC('month',rp.payment_month)=DATE_TRUNC('month',CURRENT_DATE) AND rp.status='completed'
-WHERE ta.is_active=true
-GROUP BY t.id,t.first_name,t.last_name,pu.unit_code,p.name,ta.monthly_rent
-HAVING ta.monthly_rent-COALESCE(SUM(rp.allocated_to_rent),0)>0
-ORDER BY rent_due DESC LIMIT 200
+=== PAYMENT ALLOCATION LOGIC (CRITICAL) ===
+1. Payment allocation order: ARREARS → WATER → RENT → ADVANCE (strict).
+2. rent_payments has allocated_to_rent, allocated_to_water, allocated_to_arrears columns.
+3. tenant_allocations.arrears_balance = cumulative unpaid from all prior months.
+4. Rent due this month: monthly_rent - SUM(allocated_to_rent) for CURRENT_DATE month WHERE status='completed'.
+5. Water due this month: water_bills.amount - SUM(allocated_to_water) for CURRENT_DATE month.
+6. Total Owed: rent_due + water_due + arrears_due. Advance applied in arrears→water→rent order.
+7. Always filter rent_payments.status = 'completed' for financial calculations.
+8. is_advance_payment=true or payment_method IN ('carry_forward','carry_forward_fix') = advance.
 
-Q: vacant units in property X
-SELECT pu.unit_code,pu.unit_type,pu.rent_amount FROM property_units pu
-JOIN properties p ON p.id=pu.property_id
-WHERE p.name ILIKE '%X%' AND COALESCE(pu.is_active, true) = true AND pu.is_occupied=false
-ORDER BY pu.unit_code LIMIT 200
+=== AGENT DATA ISOLATION ===
+- If user.role = 'agent', ALL queries MUST filter via:
+  EXISTS (SELECT 1 FROM agent_property_assignments apa WHERE apa.agent_id = <id> AND apa.property_id = <property_ref> AND apa.is_active = true)
+- Agents can also see expenses they recorded (expenses.recorded_by = <id>).
 
-Q: total rent collected this month
-SELECT COALESCE(SUM(allocated_to_rent),0) FROM rent_payments
-WHERE status='completed' AND DATE_TRUNC('month',payment_month)=DATE_TRUNC('month',CURRENT_DATE)
-
-Q: top 5 tenants by arrears
-SELECT t.first_name,t.last_name,ta.arrears_balance,pu.unit_code,p.name
-FROM tenant_allocations ta JOIN tenants t ON t.id=ta.tenant_id
-JOIN property_units pu ON pu.id=ta.unit_id JOIN properties p ON p.id=pu.property_id
-WHERE ta.is_active=true ORDER BY ta.arrears_balance DESC LIMIT 5
-
-Q: total expenses approved this month
-SELECT COALESCE(SUM(amount),0) FROM expenses
-WHERE status='approved' AND DATE_TRUNC('month',expense_date)=DATE_TRUNC('month',CURRENT_DATE)
-
-Q: how many open complaints
-SELECT COUNT(*)::int FROM complaints WHERE status IN ('open','in_progress')
-
-Q: find receipt UE6PZ3GR2A / lookup payment by mpesa code / where is this receipt
-SELECT rp.mpesa_receipt_number,rp.amount,rp.payment_date,rp.status,
-  t.first_name,t.last_name,pu.unit_code,p.name AS property_name
-FROM rent_payments rp
-LEFT JOIN tenants t ON t.id=rp.tenant_id
-LEFT JOIN property_units pu ON pu.id=rp.unit_id
-LEFT JOIN properties p ON p.id=rp.property_id
-WHERE rp.mpesa_receipt_number ILIKE '%UE6PZ3GR2A%' LIMIT 50
-
-Q: payments made today / all payments today with tenants
-SELECT rp.mpesa_receipt_number,rp.amount,rp.payment_date,rp.status,
-  t.first_name,t.last_name,pu.unit_code,p.name AS property_name
-FROM rent_payments rp
-LEFT JOIN tenants t ON t.id=rp.tenant_id
-LEFT JOIN property_units pu ON pu.id=rp.unit_id
-LEFT JOIN properties p ON p.id=rp.property_id
-WHERE rp.payment_date::date = CURRENT_DATE
-ORDER BY rp.amount DESC LIMIT 100
-`.trim();
+=== COMMON QUERY PATTERNS ===
+- Current month: DATE_TRUNC('month', col) = DATE_TRUNC('month', CURRENT_DATE)
+- Active tenants: tenant_allocations WHERE is_active = true
+- Active units: property_units WHERE is_active = true (properties table has NO is_active column)
+- Complaint dates: use raised_at (NOT created_at)
+- Allocation dates: use allocation_date (NOT created_at)
+- Soft delete: always filter is_active = true for live data on tenants, tenant_allocations, property_units
+- Phone format: stored as 2547XXXXXXXX, display as 07XXXXXXXX
+- Money columns: monthly_rent, amount, arrears_balance, security_deposit, allocated_to_rent/water/arrears, expected_amount, current_month_expected
+- Complaint status enum: open, in_progress, resolved, closed
+- Expense status: pending, approved, rejected, reimbursed
+- Payment method values: mpesa, cash, bank, carry_forward, carry_forward_fix
+- Payment status enum: pending, completed, failed, overdue
+- Users.role: admin, agent
+- RLS enabled on most tables — queries should work within user's permission scope
+- Always add LIMIT clause (max 500).
+`;
 };
 
 const normalizeHistory = (history) => {
