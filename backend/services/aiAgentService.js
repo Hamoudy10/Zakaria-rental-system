@@ -525,16 +525,14 @@ const resolveQuestionContext = (question, history) => {
     /\b(?:you gave|you gave me|you gave us|got|received)\s+\d{1,3}\b/i.test(q);
   const isShortRef = /^(yes|no|ok|okay|sure|nah|nope|maybe|idk|help|what about|try again|go on|more|again|please|explain|why|when|where|who)$/i.test(q);
   const isExplicitRef = /\b(the same|same as above|same thing|like that|like above|like before|similar(ly)?)\b/i.test(q);
-  const isVagueRef = q.length < 30 && /\b(this|that|it|them|those|these|here|there|find it)\b/i.test(q);
+  const isVagueRef = /\b(this|that|it|them|those|these|here|there|find it)\b/i.test(q);
   const isNegationRef = /\b(no[,.\s]|not (that|this|it|them|those|these|the one|the correct|the right|here|there))\b/i.test(q);
   const isLimitRef = /\b(only (that|this|it|them|those|these|the |one|two|three|four|five))\b/i.test(q);
   const isFollowUp = lower.includes("continue") || lower.includes("find it");
+  const hasReferenceWord = /\b(this|that|it|them|those|these)\b/i.test(q);
+  const isVagueFollowUp = isShortRef || isExplicitRef || isVagueRef || isNegationRef || isLimitRef || isFollowUp;
 
-  const isVagueFollowUp =
-    q.length < 70 &&
-    (isShortRef || isExplicitRef || isVagueRef || isNegationRef || isLimitRef || isFollowUp);
-
-  if (!(isVagueFollowUp || isCountCorrection) || !Array.isArray(history) || history.length === 0) {
+  if (!(isVagueFollowUp || isCountCorrection || hasReferenceWord) || !Array.isArray(history) || history.length === 0) {
     return q;
   }
 
@@ -547,7 +545,18 @@ const resolveQuestionContext = (question, history) => {
     .find((item) => item.role === "user" && item.content?.trim() && item.content.trim().toLowerCase() !== lower);
   if (!previousUser) return q;
 
-  return `[context: "${previousUser.content.trim().slice(0, 120)}"] ${q}`.trim();
+  const previousAssistant = [...history]
+    .reverse()
+    .find((item) => item.role === "assistant" && item.content?.trim());
+  const assistantContext = previousAssistant
+    ? ` Previous assistant response was about: ${String(previousAssistant.content).slice(0, 200)}.`
+    : "";
+
+  if (hasReferenceWord && q.length >= 30) {
+    return `${previousUser.content.trim()} ${q}${assistantContext}`;
+  }
+
+  return `${previousUser.content.trim()} ${q}`.trim();
 };
 
 const MUTATION_INQUIRY_EXCLUSIONS = [
@@ -827,6 +836,7 @@ ROUTING RULES:
 - WEB vs DB: "rent trends for 2 bedroom houses in mombasa" → web_search (external location + market data, NOT about system tenants)
 - WEB vs DB: "show current rent balances" → route_tenant_payment_status (it's about system data)
 - WEB vs DB RULE: if the question mentions external locations, market trends, prices, or current/real-world information → use web_search even if domain words like "rent" appear. Only use DB tools when the question is clearly about YOUR system's data (specific tenants, your properties, your payments).
+- CONTINUATION RULE: if the previous answer was from Web Search and the user follows up with "how", "what about", "tell me more", or references "these"/"this"/"that"/"it" — continue using web_search. Do NOT switch to database tools.
 - If the user references earlier data, keep the same tool context
 - Use dynamic_sql only as absolute last resort
 `;
@@ -1082,9 +1092,18 @@ const inferFollowUpAction = ({ question, lastContexts, routerDecision }) => {
       String(ctx.tool_used || "") === "Tenants List Route" ||
       String(ctx.tool_used || "") === "Tenant Snapshot",
   );
+  const anyWebSearch = recentContexts.some(
+    (ctx) =>
+      String(ctx.tool_used || "") === "Web Search" ||
+      String(ctx.tool_used || "") === "Web Fetch",
+  );
 
   const lastWasTenantStatus = lastTool === "Tenant Payment Status Route";
   const lastWasTenantsList = lastTool === "Tenants List Route";
+  const lastWasWebSearch = lastTool === "Web Search" || lastTool === "Web Fetch";
+  const isFollowUpQuestion =
+    /\b(how|what about|tell me more|explain|elaborate|go on|continue|these|this|that|it|them|those)\b/i.test(q) &&
+    !/\b(tenant|payment|rent|complaint|property|unit|building)\b/i.test(q);
   const questionAboutPaymentState =
     q.includes("not paid") ||
     q.includes("unpaid") ||
@@ -1140,6 +1159,11 @@ const inferFollowUpAction = ({ question, lastContexts, routerDecision }) => {
       next.hints.unpaid_only = true;
     }
     next.confidence = Math.max(Number(next.confidence || 0), 0.78);
+  }
+
+  if ((lastWasWebSearch || anyWebSearch) && isFollowUpQuestion) {
+    next.action = "web_search";
+    next.confidence = Math.max(Number(next.confidence || 0), 0.82);
   }
 
   return next;
