@@ -60,8 +60,24 @@ const AIFloatingButton = ({ user }) => {
     const id = s || newId();
     if (!s) localStorage.setItem(`ai_fcb_${user.id}`, id);
     setConvId(id);
-    setMessages([{ id: "w", role: "assistant", content: "Hi! I'm ZakariaAI. Ask me about tenants, payments, complaints, properties, or anything about your system.", created_at: new Date().toISOString(), meta: { tool: "system" } }]);
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!convId) return;
+    (async () => {
+      try {
+        const res = await aiAgentAPI.getHistory(convId, 200);
+        const items = res?.data?.data?.items;
+        if (Array.isArray(items) && items.length > 0) {
+          setMessages(items.map((r) => ({ id: r.id, role: r.role, content: r.message_text, created_at: r.created_at, meta: { tool: r.tool_used || "history", blocked: Boolean(r.blocked), fallback: Boolean(r.fallback), records: Number(r.records_count || 0) } })));
+        } else {
+          setMessages([{ id: "w", role: "assistant", content: "Hi! I'm ZakariaAI. Ask me about tenants, payments, complaints, properties, or anything about your system.", created_at: new Date().toISOString(), meta: { tool: "system" } }]);
+        }
+      } catch {
+        setMessages([{ id: "w", role: "assistant", content: "Hi! I'm ZakariaAI.", created_at: new Date().toISOString(), meta: { tool: "system" } }]);
+      }
+    })();
+  }, [convId]);
 
   useEffect(() => {
     if (isOpen) { requestAnimationFrame(() => setVisible(true)); document.body.style.overflow = "hidden"; }
@@ -110,7 +126,7 @@ const AIFloatingButton = ({ user }) => {
             <div><div style={{ fontWeight: 600, fontSize: 14, color: "#1e293b" }}>ZakariaAI</div><div style={{ fontSize: 10, color: "#94a3b8" }}>Powered by DeepSeek</div></div>
           </div>
           <div style={{ display: "flex", gap: 4 }}>
-            <button onClick={() => { setMessages([{ id: "w", role: "assistant", content: "Hi! I'm ZakariaAI.", created_at: new Date().toISOString(), meta: { tool: "system" } }]); setShowSuggestions(true); setError(""); }} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={16} height={16} fill="none" stroke="#94a3b8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg></button>
+            <button onClick={() => { const nid = newId(); localStorage.setItem(`ai_fcb_${user?.id}`, nid); setConvId(nid); setShowSuggestions(true); setError(""); }} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={16} height={16} fill="none" stroke="#94a3b8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg></button>
             <button onClick={() => setIsOpen(false)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={16} height={16} fill="none" stroke="#64748b" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
           </div>
         </div>
