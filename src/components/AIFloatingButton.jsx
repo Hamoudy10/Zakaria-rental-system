@@ -250,8 +250,8 @@ const AIFloatingButton = ({ user }) => {
             onClick={() => setIsOpen(false)}
           />
 
-          {/* Chat panel — fullscreen fixed overlay */}
-          <div className="fixed inset-0 z-[99999] flex flex-col bg-white">
+          {/* Chat panel — fixed right side, screen height, slide-in width */}
+          <div className="fixed top-0 bottom-0 right-0 z-[99999] w-full sm:w-[420px] flex flex-col bg-white shadow-2xl transform transition-transform duration-300">
             {/* Header */}
             <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
