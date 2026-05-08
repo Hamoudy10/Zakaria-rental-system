@@ -1389,25 +1389,14 @@ const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) =>
 const chooseTool = (question) => {
   const q = question.toLowerCase();
 
-  if (/\b(search|web|internet|google|look up|lookup|news|trends? in|market rate)\b/.test(q)) {
-    const hasDbEntity = /\b(my|our|the |this |these|those|tenant|payment|receipt|mpesa|complaint|water bill|unit code|dashboard)\b/i.test(q) || /\b[a-z]{2,}\s+\d+\b/.test(q);
-    const hasExternalContext = /\b(mombasa|nairobi|kisumu|kenya|market|trends?|price|cost|rate|currently|latest|apartments?|houses?|bedroom)\b/i.test(q);
-    if (!hasDbEntity || hasExternalContext) return "web_search";
-  }
-  if (/\b(ai|artificial intelligence|technology|innovation|industry|global|worldwide|trends?|latest|deployment|use cases?|how to|implement|setup|guide|tutorial)\b/i.test(q) && !/\b(tenant|payment|rent|complaint|property|unit|building|arrears|balance)\b/i.test(q)) {
-    return "web_search";
-  }
   if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
     return "draft_sms_reminder";
   }
-  if (/\bwater.*bill\b/i.test(q) || /\b(create|add|record).*(water.*bill)\b/i.test(q)) {
+  if (/\bwater.*bill\b/i.test(q) && /\b(create|add|record)\b/i.test(q)) {
     return "draft_water_bill";
   }
-  if (/\b(how are you|what('?s| is) up|who are you|what can you do|help|capabilit|introduce|yourself|about you)\b/.test(q)) {
-    return "general";
-  }
-  if (/^(hello|hi|hey|good morning|good afternoon|good evening|greetings|yo|sup|hola)[\s,!.]*$/i.test(q) || (q.length < 15 && /^(hello|hi|hey|good morning|good afternoon|good evening)\b/i.test(q))) {
-    return "general";
+  if (/\b(search the web|web search|internet|google|look up online)\b/i.test(q)) {
+    return "web_search";
   }
 
   return "general";
@@ -3973,7 +3962,10 @@ const AI_ACTION_REGISTRY = [
       if (/\b(what can you do|help me|capabilities|what do you know|how can you help)\b/i.test(q)) {
         return { label: "General Conversation", rows: [{ message: "I can help with: checking tenant payment status, listing tenants/properties, viewing complaints and water bills, checking dashboard stats, searching the web, sending SMS reminders, creating water bills, viewing expenses and notifications, and providing vacancy reports. Just ask!" }] };
       }
-      return { label: "General Conversation", rows: [{ message: "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system." }] };
+      if (/^(hello|hi|hey|good morning|good afternoon|good evening|greetings|yo|sup|hola|howdy)[\s,!.]*$/i.test(q) || (q.length < 20 && /\b(hello|hi|hey|good morning|good afternoon)\b/i.test(q))) {
+        return { label: "General Conversation", rows: [{ message: "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system." }] };
+      }
+      return { label: "General Conversation", rows: [] };
     },
   }),
   createAction({
@@ -5135,6 +5127,23 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
   }
 
   if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
+    if (routerDecision.action === "general") {
+      onProgress("formatting");
+      try {
+        const narResult = await callGroqForNarrative({ question: contextualQuestion, history: safeHistory, toolLabel: "General Conversation", toolRows: [{ question: contextualQuestion }], user });
+        const narAnswer = narResult?.answer || formatFallbackResponse({ question: contextualQuestion, toolLabel: "General Conversation", rows: [] });
+        for (let i = 0; i < narAnswer.length; i += 3) {
+          onToken(narAnswer.slice(i, i + 3));
+          await new Promise((r) => setTimeout(r, 8));
+        }
+        if (safeConversationId) {
+          await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "user", messageText: safeQuestion });
+          await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: narAnswer, toolUsed: "General Conversation" });
+        }
+        return { success: true, data: { mode: "read_only", tool: "General Conversation", answer: narAnswer } };
+      } catch (e) { /* fall through to fallback */ }
+    }
+
     const fallback = formatFallbackResponse({ question: contextualQuestion, toolLabel: toolResult?.label, rows: toolResult?.rows });
     for (let i = 0; i < fallback.length; i += 3) {
       onToken(fallback.slice(i, i + 3));
