@@ -2371,7 +2371,10 @@ const getRouteTenantPaymentStatus = async ({ user, question }) => {
 };
 
 const getRoutePaymentsList = async ({ user, question }) => {
-  const month = extractMonthFromQuestion(question);
+  let month = extractMonthFromQuestion(question);
+  if (!month && /\b(today|today'?s)\b/i.test(question)) {
+    month = new Date().toISOString().slice(0, 7);
+  }
   const monthRange = getMonthRange(month);
   const search = extractSearchPhrase(question);
   const status = extractKeywordStatus(question, PAYMENT_STATUS_KEYWORDS);
@@ -3953,7 +3956,7 @@ const AI_ACTION_REGISTRY = [
     handler: async ({ question }) => {
       const q = String(question || "").toLowerCase().trim();
       const now = new Date();
-      if (/\b(when is today|what day is|current date|today'?s date|what date)\b/i.test(q)) {
+      if (/\b(when is today|what (day|date) is|what is (the |today'?s )?(day|date)|today'?s date|current date|day today|date today)\b/i.test(q)) {
         return { label: "General Conversation", rows: [{ message: `Today is ${now.toLocaleDateString("en-KE", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.` }] };
       }
       if (/\b(what time|current time|time now|time is it)\b/i.test(q)) {
