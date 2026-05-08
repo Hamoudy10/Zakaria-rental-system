@@ -252,6 +252,14 @@ ${columnsText}
 - Users.role: admin, agent
 - RLS enabled on most tables — queries should work within user's permission scope
 - Always add LIMIT clause (max 500).
+
+=== DATABASE FUNCTIONS & TRIGGERS ===
+- propagate_unit_changes(): AFTER UPDATE on property_units (rent_amount, unit_code) → auto-updates tenant_allocations.monthly_rent and tenant records for active allocations
+- fix_overpaid_month_carry_forward(tenant_id, unit_id, target_month, monthly_rent): repairs overpaid months by moving overflow into future advance months
+- update_tenant_allocations_timestamp(): BEFORE UPDATE on tenant_allocations → sets updated_at = NOW()
+- update_updated_at_column(): BEFORE UPDATE on rent_payments, tenants → sets updated_at = CURRENT_TIMESTAMP
+- update_conversation_timestamp(): AFTER INSERT on chat_messages → updates chat_conversations.updated_at
+- gen_random_uuid() → uuid_generate_v4() available for generating UUIDs
 `;
 };
 
