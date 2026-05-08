@@ -1388,17 +1388,8 @@ const addAgentPropertyScope = ({ query, params, user, propertyRef = "p.id" }) =>
 
 const chooseTool = (question) => {
   const q = question.toLowerCase();
-
-  if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
-    return "draft_sms_reminder";
-  }
-  if (/\bwater.*bill\b/i.test(q) && /\b(create|add|record)\b/i.test(q)) {
-    return "draft_water_bill";
-  }
-  if (/\b(search the web|web search|internet|google|look up online)\b/i.test(q)) {
-    return "web_search";
-  }
-
+  if (/\b(send|sms|remind)\b/.test(q)) return "draft_sms_reminder";
+  if (/\bwater.*bill\b/i.test(q) && /\b(create|add)\b/i.test(q)) return "draft_water_bill";
   return "general";
 };
 
@@ -3076,7 +3067,7 @@ const callGroqForNarrative = async ({ question, history, toolLabel, toolRows, us
     {
       role: "system",
       content:
-        "You are a rental operations assistant. Use ONLY the facts provided below. When the user asks for totals, sums, or calculations, COMPUTE the answer from the provided data — add up the amounts, count the items, calculate averages. Do NOT just relist the data. List ALL items when the user asks for a list — do not truncate or summarize lists. Be concise. If the facts array is empty or shows zero results, simply state that no matching data was found — do NOT ask the user for more information or invent requirements. Always present money in Kenyan shillings as KES. Never use USD or '$'.",
+        "You are an intelligent rental operations assistant. Use the provided facts to answer naturally. When asked for totals, compute them. When data is empty, say so honestly. Be concise and helpful. Use KES for Kenyan shillings.",
     },
     ...history,
     {
@@ -3127,7 +3118,7 @@ const callGroqForNarrativeStream = async ({ question, history, toolLabel, toolRo
       temperature: 0.1,
       max_tokens: 4000,
       messages: [
-        { role: "system", content: "You are a rental operations assistant. Use ONLY the facts provided. When asked for totals or sums, COMPUTE the answer from data — do NOT just relist it. List ALL items when asked. Be concise. Use KES for money." },
+        { role: "system", content: "You are an intelligent rental operations assistant. Answer naturally from the facts provided. Compute totals when asked. Be concise. Use KES for money." },
         ...history,
         { role: "user", content: `Role: ${user.role}\nQuestion: ${question}\nData Source: ${toolLabel}\nFacts: ${compactFacts}` },
       ],
@@ -3352,38 +3343,7 @@ const formatFallbackResponse = ({ question, toolLabel, rows }) => {
   const displayQuestion = deduplicateQuestionText(String(question || ""));
 
   if (!rows || rows.length === 0) {
-    if (toolLabel === "General Conversation") {
-      return "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system.";
-    }
-    return `I searched the database but could not find matching records. Try being more specific — include a tenant name, unit code (e.g. MJ-4), property name, or phone number.`;
-  }
-
-  const qLower = displayQuestion.toLowerCase();
-  if (/\b(total|sum|add\s*(it|them)?\s*up|calculate|compute|how much (is|are)|overall)\b/i.test(qLower)) {
-    const amounts = rows.flatMap((r) => {
-      if (typeof r === "object" && r !== null) {
-        const vals = [];
-        for (const [k, v] of Object.entries(r)) {
-          if (/\b(amount|rent|paid|due|balance|arrears|total|sum|collected|cost|price|monthly_rent|total_due|total_owed)\b/i.test(k) && typeof v === "number") {
-            vals.push(v);
-          }
-        }
-        return vals.length > 0 ? [Math.max(...vals)] : [];
-      }
-      return [];
-    });
-    if (amounts.length > 0) {
-      const total = amounts.reduce((a, b) => a + b, 0);
-      if (rows.every((r) => typeof r === "object" && r !== null && (r.first_name || r.tenant_name))) {
-        return `There are ${rows.length} payment records with a total of KES ${total.toLocaleString()}.`;
-      }
-      return `The total across ${rows.length} records is KES ${total.toLocaleString()}.`;
-    }
-  }
-
-  if (toolLabel === "Web Search") {
-    const first = rows[0] || {};
-    return first.snippet || first.message || "Web search found no results.";
+    return `I could not find matching records. Try rephrasing or including more details.`;
   }
 
   if (toolLabel === "Tenant Snapshot") {
@@ -3976,23 +3936,7 @@ const AI_ACTION_REGISTRY = [
     description: "Handles greetings, help requests, and non-system questions.",
     mode: "read_only",
     risk: "low",
-    handler: async ({ question }) => {
-      const q = String(question || "").toLowerCase().trim();
-      const now = new Date();
-      if (/\b(when is today|what (day|date) is|what is (the |today'?s )?(day|date)|today'?s date|current date|day today|date today)\b/i.test(q)) {
-        return { label: "General Conversation", rows: [{ message: `Today is ${now.toLocaleDateString("en-KE", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.` }] };
-      }
-      if (/\b(what time|current time|time now|time is it)\b/i.test(q)) {
-        return { label: "General Conversation", rows: [{ message: `The current time is ${now.toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.` }] };
-      }
-      if (/\b(what can you do|help me|capabilities|what do you know|how can you help)\b/i.test(q)) {
-        return { label: "General Conversation", rows: [{ message: "I can help with: checking tenant payment status, listing tenants/properties, viewing complaints and water bills, checking dashboard stats, searching the web, sending SMS reminders, creating water bills, viewing expenses and notifications, and providing vacancy reports. Just ask!" }] };
-      }
-      if (/^(hello|hi|hey|good morning|good afternoon|good evening|greetings|yo|sup|hola|howdy)[\s,!.]*$/i.test(q) || (q.length < 20 && /\b(hello|hi|hey|good morning|good afternoon)\b/i.test(q))) {
-        return { label: "General Conversation", rows: [{ message: "Hi! I'm your AI Operations Assistant. I can help with tenant balances, payments, complaints, properties, water bills, arrears, vacancy reports, and SMS reminders. Just ask me anything about your rental system." }] };
-      }
-      return { label: "General Conversation", rows: [] };
-    },
+    handler: async () => ({ label: "General Conversation", rows: [] }),
   }),
   createAction({
     id: "route_expenses",
@@ -5134,22 +5078,6 @@ const answerQuestionStream = async ({ user, question, history, conversationId, o
       await saveHistoryMessage({ conversationId: safeConversationId, userId: user.id, role: "assistant", messageText: fullAnswer, toolUsed: toolResult.label, recordsCount: toolResult.rows.length });
     }
     return { success: true, data: { mode: "read_only", tool: toolResult.label, answer: fullAnswer, records: toolResult.rows.length } };
-  }
-
-  if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
-    const looksExternal = !/\b(my|our|this system|the system|tenant|property|payment|receipt|mpesa|complaint|water bill|unit code|arrears|balance)\b/i.test(safeQuestion) &&
-      (/\b(ai|artificial intelligence|technology|trends?|latest|world|global|industry|news|market|price|how (to|do)|implement|setup|guide|tutorial|best practice|use case|deployment|improvement|innovation|when is|what day|what time|today|current date|who is|where is|meaning of|definition of)\b/i.test(safeQuestion) ||
-       safeQuestion.length > 60);
-
-    if (looksExternal && routerDecision.action !== "web_search") {
-      onProgress("querying");
-      try {
-        const webResult = await handleWebSearch({ question: safeQuestion });
-        if (webResult && webResult.rows && webResult.rows.length > 0 && !webResult.rows[0]?.message) {
-          toolResult = webResult;
-        }
-      } catch (e) { /* web search fallback failed, continue to fallback response */ }
-    }
   }
 
   if (!toolResult || !toolResult.rows || toolResult.rows.length === 0) {
