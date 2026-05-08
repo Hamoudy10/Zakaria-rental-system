@@ -820,11 +820,13 @@ ROUTING RULES:
 - "find tenants who have not paid" → route_tenant_payment_status
 - "show me the tenants" → route_tenants (list response_mode)
 - "What is John's balance" → summary mode
-- WEB vs DB: "search the web for property trends in Kenya" → web_search
+- WEB vs DB: "search the web for property trends in Kenya" → web_search (external market data)
 - WEB vs DB: "search for tenant John" → route_tenants (it's about system tenants)
 - WEB vs DB: "look up the latest interest rates" → web_search (no system table matches)
 - WEB vs DB: "search for payment ABC123" → route_payments (it's about system data)
-- WEB vs DB rule: use web_search ONLY when the question is clearly about external/online information, not about system tenants/payments/properties
+- WEB vs DB: "rent trends for 2 bedroom houses in mombasa" → web_search (external location + market data, NOT about system tenants)
+- WEB vs DB: "show current rent balances" → route_tenant_payment_status (it's about system data)
+- WEB vs DB RULE: if the question mentions external locations, market trends, prices, or current/real-world information → use web_search even if domain words like "rent" appear. Only use DB tools when the question is clearly about YOUR system's data (specific tenants, your properties, your payments).
 - If the user references earlier data, keep the same tool context
 - Use dynamic_sql only as absolute last resort
 `;
@@ -1362,8 +1364,9 @@ const chooseTool = (question) => {
   const q = question.toLowerCase();
 
   if (/\b(search|web|internet|google|look up|lookup|news|trends? in|market rate)\b/.test(q)) {
-    const isDbQuery = /\b(tenant|payment|rent|property|complaint|water|unit|building|arrears|balance|receipt|mpesa|dashboard|allocation)\b/i.test(q);
-    if (!isDbQuery) return "web_search";
+    const hasDbEntity = /\b(my|our|the |this |these|those|tenant|payment|receipt|mpesa|complaint|water bill|unit code|dashboard)\b/i.test(q) || /\b[a-z]{2,}\s+\d+\b/.test(q);
+    const hasExternalContext = /\b(mombasa|nairobi|kisumu|kenya|market|trends?|price|cost|rate|currently|latest|apartments?|houses?|bedroom)\b/i.test(q);
+    if (!hasDbEntity || hasExternalContext) return "web_search";
   }
   if (/\b(send|sms|remind|message|notify|text)\b/.test(q) && !/\b(how many|list|show|find)\b/.test(q)) {
     return "draft_sms_reminder";
