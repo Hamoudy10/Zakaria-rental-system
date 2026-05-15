@@ -3325,35 +3325,15 @@ const SMSReminderModal = ({
         </div>
       </div>
 
-      {/* Transfer Transactions Modal */}
+      {/* Transfer Transactions Modal - SIMPLE TEST */}
       {showTransferModal && (
-        <TransferModal
-          transferSourceTenant={transferSourceTenant}
-          transferDestTenant={transferDestTenant}
-          transferSourceSearch={transferSourceSearch}
-          transferDestSearch={transferDestSearch}
-          setTransferSourceSearch={setTransferSourceSearch}
-          setTransferDestSearch={setTransferDestSearch}
-          transferSourceResults={transferSourceResults}
-          transferDestResults={transferDestResults}
-          handleTransferTenantSearch={handleTransferTenantSearch}
-          setTransferSourceResults={setTransferSourceResults}
-          setTransferDestResults={setTransferDestResults}
-          handleSelectSourceTenant={handleSelectSourceTenant}
-          handleSelectDestTenant={handleSelectDestTenant}
-          setTransferSourceTenant={setTransferSourceTenant}
-          setTransferDestTenant={setTransferDestTenant}
-          setTransferSourceUnits={setTransferSourceUnits}
-          setTransferDestUnits={setTransferDestUnits}
-          transferData={transferData}
-          setTransferData={setTransferData}
-          transferSourceUnits={transferSourceUnits}
-          transferError={transferError}
-          transferResult={transferResult}
-          transferLoading={transferLoading}
-          handleTransferSubmit={handleTransferSubmit}
-          onClose={() => setShowTransferModal(false)}
-        />
+        <div style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowTransferModal(false)}>
+          <div style={{ background: "white", padding: 40, borderRadius: 16, maxWidth: 500, width: "90%" }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ fontSize: 24, fontWeight: "bold", marginBottom: 8 }}>Transfer Test</h2>
+            <p style={{ color: "#666" }}>If you can see this, the modal rendering works. State: {String(showTransferModal)}</p>
+            <button onClick={() => setShowTransferModal(false)} style={{ marginTop: 20, padding: "10px 24px", background: "#1d4ed8", color: "white", border: "none", borderRadius: 8, cursor: "pointer" }}>Close</button>
+          </div>
+        </div>
       )}
     </div>
   );
