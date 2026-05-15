@@ -1438,6 +1438,7 @@ const TenantHub = () => {
     deallocateTenant, 
     transferAllocation,
     fetchAllocations,
+    fetchAllocationsByTenant,
     clearError: clearAllocationError 
   } = useAllocation();
 
@@ -1688,17 +1689,30 @@ const TenantHub = () => {
 
   // Deallocate tenant
   const handleDeallocate = async () => {
-    if (!selectedTenant?.allocation_id) {
+    let allocationId = selectedTenant?.allocation_id;
+
+    // Fallback: fetch allocation by tenant ID if not in the paginated data
+    if (!allocationId && selectedTenant?.id) {
+      console.log(`⚠️ allocation_id missing from paginated data, fetching directly for tenant ${selectedTenant.id}`);
+      const tenantAllocs = await fetchAllocationsByTenant(selectedTenant.id);
+      const activeAlloc = tenantAllocs.find(a => a.is_active);
+      if (activeAlloc) {
+        allocationId = activeAlloc.id;
+        console.log(`✅ Found active allocation via direct fetch: ${allocationId}`);
+      }
+    }
+
+    if (!allocationId) {
       addToast('No active allocation found for this tenant. Cannot deallocate.', 'error');
-      console.error('❌ Deallocate blocked: allocation_id is null/undefined', selectedTenant);
+      console.error('❌ Deallocate blocked: allocation_id is null/undefined even after direct fetch', selectedTenant);
       return;
     }
 
-    console.log(`🔄 Deallocating tenant ${selectedTenant.first_name} ${selectedTenant.last_name}, allocation_id: ${selectedTenant.allocation_id}`);
+    console.log(`🔄 Deallocating tenant ${selectedTenant.first_name} ${selectedTenant.last_name}, allocation_id: ${allocationId}`);
     
     setActionLoading(true);
     try {
-      await deallocateTenant(selectedTenant.allocation_id);
+      await deallocateTenant(allocationId);
       setShowDeallocateConfirm(false);
       console.log('✅ Deallocate API succeeded, refreshing data...');
       await fetchAllocations();

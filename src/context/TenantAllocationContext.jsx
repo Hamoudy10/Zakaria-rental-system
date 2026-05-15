@@ -23,7 +23,7 @@ export const AllocationProvider = ({ children }) => {
     setError(null);
     try {
       console.log('🔄 Fetching allocations...');
-      const response = await allocationAPI.getAllocations();
+      const response = await allocationAPI.getAllocations({ limit: 10000 });
       
       // Handle different response formats
       const allocationsData = response.data?.data || response.data?.allocations || response.data || [];
@@ -35,6 +35,21 @@ export const AllocationProvider = ({ children }) => {
       setAllocations([]);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // Fetch allocations for a specific tenant (bypasses pagination)
+  const fetchAllocationsByTenant = useCallback(async (tenantId) => {
+    try {
+      console.log(`🔄 Fetching allocations for tenant: ${tenantId}`);
+      const response = await allocationAPI.getAllocationsByTenantId(tenantId);
+      const data = response.data?.data || [];
+      const tenantAllocs = Array.isArray(data) ? data : [];
+      console.log(`✅ Found ${tenantAllocs.length} allocations for tenant ${tenantId}`, tenantAllocs);
+      return tenantAllocs;
+    } catch (err) {
+      console.error('❌ Error fetching tenant allocations:', err);
+      return [];
     }
   }, []);
 
@@ -275,6 +290,7 @@ export const AllocationProvider = ({ children }) => {
     
     // Actions
     fetchAllocations,
+    fetchAllocationsByTenant,
     allocateTenant,
     deallocateTenant,
     transferAllocation,
@@ -292,6 +308,7 @@ export const AllocationProvider = ({ children }) => {
     error,
     selectedAllocation,
     fetchAllocations,
+    fetchAllocationsByTenant,
     allocateTenant,
     deallocateTenant,
     transferAllocation,
