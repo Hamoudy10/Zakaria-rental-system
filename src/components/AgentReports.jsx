@@ -394,12 +394,6 @@ const AgentReports = () => {
   const applyStrictFilters = (rows, reportType) => {
     let filtered = Array.isArray(rows) ? [...rows] : [];
 
-    if (reportType === "revenue") {
-      return filtered.sort((a, b) =>
-        String(a.month || "").localeCompare(String(b.month || "")),
-      );
-    }
-
     const searchText = String(filters.search || "").trim().toLowerCase();
     const startDate = parseFilterDate(filters.startDate);
     const endDate = parseFilterDate(filters.endDate);
@@ -407,7 +401,6 @@ const AgentReports = () => {
     if (filters.propertyId) {
       filtered = filtered.filter((item) => {
         if (reportType === "sms") {
-          // SMS property scoping is enforced by backend lookup using tenant phone mapping.
           return true;
         }
         const itemPropertyId =
@@ -474,9 +467,14 @@ const AgentReports = () => {
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
-
         return haystack.includes(searchText);
       });
+    }
+
+    if (reportType === "revenue") {
+      return filtered.sort((a, b) =>
+        String(a.month || "").localeCompare(String(b.month || "")),
+      );
     }
 
     if (reportType === "sms") {
@@ -966,14 +964,19 @@ const AgentReports = () => {
     fetchReportData();
   }, [activeReport]);
 
-  // Debounced filter change handler
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchReportData();
-    }, 500);
+  // Debounced filter change handler (basic + advanced combined)
+  const filterDebounceRef = useRef(null);
+  const lastDataRef = useRef([]);
 
-    return () => clearTimeout(timer);
-  }, [filters]);
+  useEffect(() => {
+    if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
+    filterDebounceRef.current = setTimeout(() => {
+      fetchReportData();
+    }, 400);
+    return () => {
+      if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
+    };
+  }, [filters, advancedFilters]);
 
   // Fetch when messaging filters change (only for SMS report)
   useEffect(() => {
