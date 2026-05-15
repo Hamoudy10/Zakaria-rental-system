@@ -895,6 +895,14 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
       is_active
     } = req.body;
 
+    // Coerce is_active to proper boolean
+    let coercedIsActive;
+    if (is_active !== undefined && is_active !== null) {
+      coercedIsActive = is_active === true || is_active === 'true' || is_active === 1 || is_active === '1';
+    } else {
+      coercedIsActive = undefined;
+    }
+
     const normalizedMonthlyRent =
       monthly_rent === undefined || monthly_rent === null || monthly_rent === ""
         ? null
@@ -952,7 +960,7 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     const currentAllocation = allocationCheck.rows[0];
     
     // Handle allocation deactivation (ending tenancy)
-    if (is_active === false && currentAllocation.is_active) {
+    if (coercedIsActive === false && currentAllocation.is_active) {
       // Update unit to vacant
       await client.query(
         `UPDATE property_units 
@@ -992,7 +1000,7 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     }
     
     // Handle allocation reactivation
-    if (is_active === true && !currentAllocation.is_active) {
+    if (coercedIsActive === true && !currentAllocation.is_active) {
       // Check if unit is available
       const unitCheck = await client.query(
         'SELECT is_occupied FROM property_units WHERE id = $1',
@@ -1054,7 +1062,8 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
            security_deposit = COALESCE($4, security_deposit),
            rent_due_day = COALESCE($5, rent_due_day),
            grace_period_days = COALESCE($6, grace_period_days),
-           is_active = COALESCE($7, is_active)
+           is_active = COALESCE($7, is_active),
+           updated_at = NOW()
        WHERE id = $8
        RETURNING *`,
       [
@@ -1064,7 +1073,7 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
         normalizedSecurityDeposit,
         rent_due_day,
         grace_period_days,
-        is_active,
+        coercedIsActive,
         id
       ]
     );

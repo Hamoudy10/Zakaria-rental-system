@@ -1688,7 +1688,10 @@ const TenantHub = () => {
 
   // Deallocate tenant
   const handleDeallocate = async () => {
-    if (!selectedTenant?.allocation_id) return;
+    if (!selectedTenant?.allocation_id) {
+      addToast('No active allocation found for this tenant. Cannot deallocate.', 'error');
+      return;
+    }
     
     setActionLoading(true);
     try {

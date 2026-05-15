@@ -275,7 +275,9 @@ const TenantAllocation = () => {
       alert(`${selectedTenantForDeallocation.first_name} ${selectedTenantForDeallocation.last_name} unit deallocated successfully.`)
     } catch (error) {
       console.error('Error deallocating tenant unit:', error)
-      setAllocationError('Failed to deallocate selected unit. Please try again.')
+      const msg = error?.response?.data?.message || error.message || 'Failed to deallocate selected unit. Please try again.'
+      setAllocationError(msg)
+      alert(msg)
     } finally {
       setDeallocating(false)
     }

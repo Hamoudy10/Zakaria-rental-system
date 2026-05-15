@@ -66,7 +66,13 @@ export const AllocationProvider = ({ children }) => {
     setError(null);
     try {
       console.log(`🔄 Deallocating tenant from allocation: ${allocationId}`);
-      await allocationAPI.deallocateTenant(allocationId);
+      const response = await allocationAPI.deallocateTenant(allocationId);
+      
+      if (!response?.data?.success) {
+        const msg = response?.data?.message || 'Deallocation failed on server';
+        setError(msg);
+        throw new Error(msg);
+      }
       
       // Update local state to mark as inactive
       setAllocations(prev => prev.map(allocation => 
