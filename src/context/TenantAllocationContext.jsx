@@ -66,13 +66,26 @@ export const AllocationProvider = ({ children }) => {
     setError(null);
     try {
       console.log(`🔄 Deallocating tenant from allocation: ${allocationId}`);
+      console.log(`📤 Sending PUT /allocations/${allocationId} with { is_active: false }`);
+      
       const response = await allocationAPI.deallocateTenant(allocationId);
+      
+      console.log(`📥 Deallocation API response:`, {
+        status: response.status,
+        statusText: response.statusText,
+        success: response.data?.success,
+        message: response.data?.message,
+        data: response.data?.data
+      });
       
       if (!response?.data?.success) {
         const msg = response?.data?.message || 'Deallocation failed on server';
+        console.error(`❌ Server returned success=false: ${msg}`);
         setError(msg);
         throw new Error(msg);
       }
+      
+      console.log(`✅ Successfully deallocated tenant. Updated allocation:`, response.data?.data);
       
       // Update local state to mark as inactive
       setAllocations(prev => prev.map(allocation => 
@@ -80,9 +93,16 @@ export const AllocationProvider = ({ children }) => {
           ? { ...allocation, is_active: false, lease_end_date: new Date().toISOString() }
           : allocation
       ));
-      console.log('✅ Successfully deallocated tenant');
     } catch (err) {
-      console.error('❌ Error deallocating tenant:', err);
+      console.error('❌ Error deallocating tenant:', {
+        message: err.message,
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+        requestUrl: err.config?.url,
+        requestMethod: err.config?.method?.toUpperCase(),
+        requestData: err.config?.data
+      });
       const errorMessage = err.response?.data?.message || err.message || 'Failed to deallocate tenant';
       setError(errorMessage);
       throw err;

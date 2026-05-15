@@ -1690,20 +1690,28 @@ const TenantHub = () => {
   const handleDeallocate = async () => {
     if (!selectedTenant?.allocation_id) {
       addToast('No active allocation found for this tenant. Cannot deallocate.', 'error');
+      console.error('❌ Deallocate blocked: allocation_id is null/undefined', selectedTenant);
       return;
     }
+
+    console.log(`🔄 Deallocating tenant ${selectedTenant.first_name} ${selectedTenant.last_name}, allocation_id: ${selectedTenant.allocation_id}`);
     
     setActionLoading(true);
     try {
       await deallocateTenant(selectedTenant.allocation_id);
       setShowDeallocateConfirm(false);
+      console.log('✅ Deallocate API succeeded, refreshing data...');
       await fetchAllocations();
       await fetchTenants();
       addToast(`${selectedTenant.first_name} deallocated successfully!`, 'success');
       setSelectedTenant(null);
     } catch (err) {
-      console.error('Deallocation error:', err);
-      addToast('Failed to deallocate tenant', 'error');
+      console.error('Deallocation error:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      });
+      addToast(`Failed to deallocate: ${err.response?.data?.message || err.message}`, 'error');
     } finally {
       setActionLoading(false);
     }

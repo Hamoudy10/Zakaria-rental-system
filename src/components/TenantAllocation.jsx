@@ -252,6 +252,11 @@ const TenantAllocation = () => {
 
   // Handle deallocation - choose specific allocation/unit to deactivate
   const openDeallocateModal = (tenant) => {
+    console.log(`🔍 Opening deallocate modal for ${tenant.first_name} ${tenant.last_name}`, {
+      tenantId: tenant.id,
+      active_allocations: tenant.active_allocations?.length || 0,
+      active_allocations_detail: tenant.active_allocations
+    });
     if (!tenant?.active_allocations || tenant.active_allocations.length === 0) {
       alert('No active allocation found for this tenant.')
       return
@@ -261,12 +266,22 @@ const TenantAllocation = () => {
   }
 
   const handleConfirmDeallocate = async (allocationId) => {
-    if (!allocationId || !selectedTenantForDeallocation) return
+    if (!allocationId) {
+      console.error('❌ Deallocate blocked: allocationId is null/undefined');
+      alert('Error: Missing allocation ID. Please refresh the page and try again.');
+      return;
+    }
+    if (!selectedTenantForDeallocation) {
+      console.error('❌ Deallocate blocked: selectedTenantForDeallocation is null');
+      alert('Error: No tenant selected. Please try again.');
+      return;
+    }
 
     try {
       setDeallocating(true)
       setAllocationError('')
 
+      console.log(`🔄 Sending deallocation for allocation ${allocationId}, tenant: ${selectedTenantForDeallocation.first_name} ${selectedTenantForDeallocation.last_name}`);
       await deallocateTenant(allocationId)
       await fetchAllocations()
       await fetchTenants()
@@ -274,7 +289,11 @@ const TenantAllocation = () => {
       setShowDeallocateModal(false)
       alert(`${selectedTenantForDeallocation.first_name} ${selectedTenantForDeallocation.last_name} unit deallocated successfully.`)
     } catch (error) {
-      console.error('Error deallocating tenant unit:', error)
+      console.error('Error deallocating tenant unit:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      })
       const msg = error?.response?.data?.message || error.message || 'Failed to deallocate selected unit. Please try again.'
       setAllocationError(msg)
       alert(msg)

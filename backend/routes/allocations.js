@@ -959,8 +959,11 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     
     const currentAllocation = allocationCheck.rows[0];
     
+    console.log(`🔄 PUT /allocations/${id} — current is_active: ${currentAllocation.is_active}, requested is_active: ${coercedIsActive}, wasActive=${currentAllocation.is_active}, willBeInactive=${coercedIsActive === false}`);
+    
     // Handle allocation deactivation (ending tenancy)
     if (coercedIsActive === false && currentAllocation.is_active) {
+      console.log(`🔓 Deactivating allocation ${id} — freeing unit ${currentAllocation.unit_id}`);
       // Update unit to vacant
       await client.query(
         `UPDATE property_units 
@@ -1080,10 +1083,13 @@ router.put('/:id', authMiddleware, requireRole(['admin', 'agent']), async (req, 
     
     await client.query('COMMIT');
     
+    const updatedRow = updateResult.rows[0];
+    console.log(`✅ Allocation ${id} updated. New is_active: ${updatedRow?.is_active}, Row found: ${!!updatedRow}`);
+    
     res.json({
       success: true,
       message: 'Allocation updated successfully',
-      data: updateResult.rows[0]
+      data: updatedRow || null
     });
   } catch (error) {
     await client.query('ROLLBACK');
