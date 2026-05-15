@@ -668,6 +668,28 @@ const trackRentPayment = async (
     );
     const waterAmount = parseFloat(waterBillResult.rows[0]?.amount) || 0;
 
+    // Water arrears: unpaid water bills from months BEFORE the payment month
+    const waterArrearsResult = await db.query(
+      `SELECT
+         COALESCE(SUM(wb.amount), 0) AS total_water_billed_prior,
+         COALESCE((
+           SELECT SUM(COALESCE(rp.allocated_to_water, 0))
+           FROM rent_payments rp
+           WHERE rp.tenant_id = $1
+           AND rp.unit_id = $2
+           AND rp.status = 'completed'
+           AND DATE_TRUNC('month', rp.payment_month) < DATE_TRUNC('month', $3::date)
+         ), 0) AS total_water_paid_prior
+       FROM water_bills wb
+       WHERE wb.tenant_id = $1
+       AND (wb.unit_id = $2 OR wb.unit_id IS NULL)
+       AND DATE_TRUNC('month', wb.bill_month) < DATE_TRUNC('month', $3::date)`,
+      [tenantId, unitId, `${paymentMonth}-01`],
+    );
+    const totalWaterBilledPrior = parseFloat(waterArrearsResult.rows[0]?.total_water_billed_prior) || 0;
+    const totalWaterPaidPrior = parseFloat(waterArrearsResult.rows[0]?.total_water_paid_prior) || 0;
+    const remainingWaterArrears = Math.max(0, totalWaterBilledPrior - totalWaterPaidPrior);
+
     // FIX: Calculate accurate remaining balances
     // IMPORTANT: Arrears should only include ACTUAL historical debt, NOT current month rent
     // Recalculate arrears from scratch using payment history
@@ -700,27 +722,32 @@ const trackRentPayment = async (
 
     // CORRECT ALLOCATION PRIORITY (per system design):
     // 1. Arrears (historical unpaid rent)
-    // 2. Water (current month water bill)
-    // 3. Rent (current month rent)
-    // 4. Advance (future months)
+    // 2. Water Arrears (unpaid water from previous months)
+    // 3. Water (current month water bill)
+    // 4. Rent (current month rent)
+    // 5. Advance (future months)
     
-    const totalDueBeforePayment = remainingArrears + remainingRent + remainingWater;
+    const totalDueBeforePayment = remainingArrears + remainingWaterArrears + remainingWater + remainingRent;
     let remainingPayment = paymentAmount;
 
-    // Step 1: Pay arrears first
+    // Step 1: Pay rent arrears first
     const allocatedToArrears = Math.min(remainingPayment, remainingArrears);
     remainingPayment -= allocatedToArrears;
 
-    // Step 2: Pay water second
+    // Step 2: Pay water arrears second
+    const allocatedToWaterArrears = Math.min(remainingPayment, remainingWaterArrears);
+    remainingPayment -= allocatedToWaterArrears;
+
+    // Step 3: Pay current water third
     const allocatedToWater = Math.min(remainingPayment, remainingWater);
     remainingPayment -= allocatedToWater;
 
-    // Step 3: Pay rent third
+    // Step 4: Pay current rent fourth
     const allocatedToRent = Math.min(remainingPayment, remainingRent);
     remainingPayment -= allocatedToRent;
 
-    // Step 4: Remainder goes to advance (carry forward)
-    const allocatedAmount = allocatedToArrears + allocatedToRent + allocatedToWater;
+    // Step 5: Remainder goes to advance (carry forward)
+    const allocatedAmount = allocatedToArrears + allocatedToWaterArrears + allocatedToWater + allocatedToRent;
     const carryForwardAmount = remainingPayment;
     const totalDueAfterPayment = Math.max(0, totalDueBeforePayment - allocatedAmount);
     const isMonthComplete = totalDueAfterPayment <= 0;
@@ -728,16 +755,19 @@ const trackRentPayment = async (
     return {
       allocatedAmount,
       allocatedToArrears,
+      allocatedToWaterArrears,
       allocatedToRent,
       allocatedToWater,
       carryForwardAmount,
       monthlyRent,
       waterAmount,
+      waterArrearsAmount: remainingWaterArrears,
       targetMonthPaid: rentPaidForMonth,
       isMonthComplete,
       remainingForTargetMonth: totalDueBeforePayment,
       rentBalanceAfterPayment: Math.max(0, remainingRent - allocatedToRent),
       waterBalanceAfterPayment: Math.max(0, remainingWater - allocatedToWater),
+      waterArrearsBalanceAfterPayment: Math.max(0, remainingWaterArrears - allocatedToWaterArrears),
       arrearsBalanceAfterPayment: Math.max(0, remainingArrears - allocatedToArrears),
       targetMonth: paymentMonth,
       isFutureMonth,
@@ -1611,7 +1641,7 @@ const handleMpesaCallback = async (req, res) => {
         formattedPaymentMonth,
         trackingResult.carryForwardAmount > 0,
         trackingResult.allocatedToRent || 0,
-        trackingResult.allocatedToWater || 0,
+        (trackingResult.allocatedToWaterArrears || 0) + (trackingResult.allocatedToWater || 0),
         trackingResult.allocatedToArrears || 0,
         paymentAuditNotes.length > 0 ? paymentAuditNotes.join(" | ") : null,
       ],
@@ -2485,7 +2515,7 @@ const processPaybillPayment = async (req, res) => {
           "RECONCILED VIA MANUAL PAYBILL ENTRY",
           `PB_${mpesa_receipt_number}`,
           trackingResult.allocatedToRent || 0,
-          trackingResult.allocatedToWater || 0,
+          (trackingResult.allocatedToWaterArrears || 0) + (trackingResult.allocatedToWater || 0),
           trackingResult.allocatedToArrears || 0,
           existingUnmatchedPayment.id,
         ],
@@ -2510,7 +2540,7 @@ const processPaybillPayment = async (req, res) => {
           "paybill",
           `PB_${mpesa_receipt_number}`,
           trackingResult.allocatedToRent || 0,
-          trackingResult.allocatedToWater || 0,
+          (trackingResult.allocatedToWaterArrears || 0) + (trackingResult.allocatedToWater || 0),
           trackingResult.allocatedToArrears || 0,
         ],
       );
@@ -3051,7 +3081,7 @@ const recordManualPayment = async (req, res) => {
             ? `MANUAL_${normalizedReceipt}`
             : `MANUAL_${Date.now()}`,
           trackingResult.allocatedToRent || 0,
-          trackingResult.allocatedToWater || 0,
+          (trackingResult.allocatedToWaterArrears || 0) + (trackingResult.allocatedToWater || 0),
           trackingResult.allocatedToArrears || 0,
           existingUnmatchedPayment.id,
         ],
@@ -3078,7 +3108,7 @@ const recordManualPayment = async (req, res) => {
             ? `MANUAL_${normalizedReceipt}`
             : `MANUAL_${Date.now()}`,
           trackingResult.allocatedToRent || 0,
-          trackingResult.allocatedToWater || 0,
+          (trackingResult.allocatedToWaterArrears || 0) + (trackingResult.allocatedToWater || 0),
           trackingResult.allocatedToArrears || 0,
         ],
       );

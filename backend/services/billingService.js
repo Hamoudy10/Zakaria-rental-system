@@ -48,6 +48,29 @@ class BillingService {
         ? parseFloat(waterBillResult.rows[0].amount) 
         : 0;
 
+      // Water arrears: unpaid water from previous months
+      const waterArrearsQuery = `
+        SELECT
+          COALESCE(SUM(wb.amount), 0) AS total_water_billed_prior,
+          COALESCE((
+            SELECT SUM(COALESCE(rp.allocated_to_water, 0))
+            FROM rent_payments rp
+            WHERE rp.tenant_id = $1 AND rp.unit_id = $2
+            AND rp.status = 'completed'
+            AND DATE_TRUNC('month', rp.payment_month) < DATE_TRUNC('month', $3::date)
+          ), 0) AS total_water_paid_prior
+        FROM water_bills wb
+        WHERE wb.tenant_id = $1
+        AND (wb.unit_id = $2 OR wb.unit_id IS NULL)
+        AND DATE_TRUNC('month', wb.bill_month) < DATE_TRUNC('month', $3::date)
+      `;
+      const waterArrearsResult = await pool.query(waterArrearsQuery, [
+        tenantId, unitId, `${targetMonth}-01`
+      ]);
+      const totalWaterBilledPrior = parseFloat(waterArrearsResult.rows[0]?.total_water_billed_prior) || 0;
+      const totalWaterPaidPrior = parseFloat(waterArrearsResult.rows[0]?.total_water_paid_prior) || 0;
+      const waterArrearsDue = Math.max(0, totalWaterBilledPrior - totalWaterPaidPrior);
+
       // 3. Get payments already made for this month
       const paymentsQuery = `
         SELECT 
@@ -73,7 +96,8 @@ class BillingService {
 
       // 4. Calculate remaining amounts
       const rentDue = Math.max(0, monthlyRent - rentPaid);
-      const waterDue = Math.max(0, waterAmount - waterPaid);
+      const currentWaterDue = Math.max(0, waterAmount - waterPaid);
+      const waterDue = currentWaterDue + waterArrearsDue;
       const arrearsDue = Math.max(0, arrearsBalance - arrearsPaid);
       
       const totalDue = rentDue + waterDue + arrearsDue;
@@ -108,6 +132,7 @@ class BillingService {
         waterAmount,
         waterPaid,
         waterDue,
+        waterArrearsDue,
         arrearsBalance,
         arrearsPaid,
         arrearsDue,
@@ -116,7 +141,7 @@ class BillingService {
         coveredByAdvance,
         breakdown: {
           rent: { amount: monthlyRent, paid: rentPaid, due: rentDue },
-          water: { amount: waterAmount, paid: waterPaid, due: waterDue },
+          water: { amount: waterAmount, paid: waterPaid, due: waterDue, arrearsDue: waterArrearsDue },
           arrears: { amount: arrearsBalance, paid: arrearsPaid, due: arrearsDue }
         }
       };
@@ -239,30 +264,38 @@ class BillingService {
       let remainingAmount = parseFloat(amount);
       const allocation = {
         toArrears: 0,
+        toWaterArrears: 0,
         toWater: 0,
         toRent: 0,
         toAdvance: 0
       };
 
-      // 1. Allocate to arrears first
+      // 1. Allocate to rent arrears first
       if (bill.arrearsDue > 0 && remainingAmount > 0) {
         allocation.toArrears = Math.min(remainingAmount, bill.arrearsDue);
         remainingAmount -= allocation.toArrears;
       }
 
-      // 2. Allocate to water bill
+      // 2. Allocate to water arrears second
+      const waterArrearsDue = bill.waterArrearsDue || 0;
+      if (waterArrearsDue > 0 && remainingAmount > 0) {
+        allocation.toWaterArrears = Math.min(remainingAmount, waterArrearsDue);
+        remainingAmount -= allocation.toWaterArrears;
+      }
+
+      // 3. Allocate to current water bill
       if (bill.waterDue > 0 && remainingAmount > 0) {
         allocation.toWater = Math.min(remainingAmount, bill.waterDue);
         remainingAmount -= allocation.toWater;
       }
 
-      // 3. Allocate to rent
+      // 4. Allocate to rent
       if (bill.rentDue > 0 && remainingAmount > 0) {
         allocation.toRent = Math.min(remainingAmount, bill.rentDue);
         remainingAmount -= allocation.toRent;
       }
 
-      // 4. Any remaining is advance payment
+      // 5. Any remaining is advance payment
       if (remainingAmount > 0) {
         allocation.toAdvance = remainingAmount;
       }
