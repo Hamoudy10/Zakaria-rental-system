@@ -1309,6 +1309,7 @@ const PaymentManagement = () => {
 
   return (
     <div className="space-y-6">
+      <div style={{position:"fixed",top:10,left:10,background:"red",color:"white",padding:10,zIndex:99999,fontSize:14,fontWeight:"bold"}}>FIXED TEST BOX — modal state: {String(showTransferModal)}</div>
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
