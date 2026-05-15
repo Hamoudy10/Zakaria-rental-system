@@ -1303,6 +1303,30 @@ const PaymentManagement = () => {
 
   const monthOptions = useMemo(() => getMonthOptions(), []);
 
+  // AUTO-OPEN TEST: directly manipulate DOM (bypasses React, CSS, everything)
+  useEffect(() => {
+    console.log('🔴 PaymentManagement mounted');
+    const timer = setTimeout(() => {
+      console.log('🔴 Creating DOM test modal directly');
+      const overlay = document.createElement("div");
+      overlay.id = "transfer-test-overlay";
+      overlay.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;font-family:sans-serif";
+      overlay.innerHTML = `<div style="background:white;padding:32px;border-radius:12px;max-width:480px;width:90%">
+        <h2 style="font-size:24px;font-weight:bold;margin-bottom:8px">DOM Test Modal</h2>
+        <p style="color:#666">Direct DOM injection — bypasses React, CSS modules, Tailwind, Vercel, everything.</p>
+        <p style="color:#666;margin-top:8px">If you can see this, the problem is in React rendering.</p>
+        <p style="color:#666;margin-top:8px">If you CANNOT see this, check browser DevTools → Elements tab for #transfer-test-overlay</p>
+        <button onclick="document.getElementById('transfer-test-overlay').remove()" style="margin-top:16px;padding:10px 24px;background:#1d4ed8;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px">Close</button>
+      </div>`;
+      document.body.appendChild(overlay);
+      console.log('🔴 DOM test modal appended to body. Element:', overlay);
+    }, 1500);
+    return () => {
+      const el = document.getElementById("transfer-test-overlay");
+      if (el) el.remove();
+    };
+  }, []);
+
   // ============================================================
   // RENDER
   // ============================================================
