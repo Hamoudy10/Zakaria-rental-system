@@ -429,6 +429,8 @@ export const exportToPDF = async (config) => {
     title = "Report",
     totalsOverride,
     exportSource,
+    visibleColumns,
+    previewData,
   } = config;
 
   if (!data || data.length === 0) {
@@ -458,18 +460,24 @@ export const exportToPDF = async (config) => {
 
     console.log("📋 Final company info for export:", companyInfo);
 
-    // Use landscape for reports with many columns
-    const useLandscape = [
-      "unpaid_tenants",
-      "paid_tenants",
-      "expenses",
-      "water",
-      "sms",
-      "messaging",
-      "complaints",
-      "properties",
-      "audit_logs",
-    ].includes(reportType);
+    // Prepare table data
+    const { headers, rows, columnStyles } = prepareTableData(reportType, data);
+
+    // Auto-detect landscape: use landscape if >= 8 columns or if report is in landscape list
+    const useLandscape =
+      headers.length >= 8 ||
+      [
+        "unpaid_tenants",
+        "paid_tenants",
+        "expenses",
+        "water",
+        "sms",
+        "messaging",
+        "complaints",
+        "properties",
+        "audit_logs",
+        "payments",
+      ].includes(reportType);
     const doc = new jsPDF(useLandscape ? "landscape" : "portrait");
     const pageWidth = doc.internal.pageSize.getWidth();
 
@@ -478,9 +486,6 @@ export const exportToPDF = async (config) => {
 
     // Add report title and metadata
     yPos = addReportMetadata(doc, title, user, filters, data.length, yPos);
-
-    // Prepare table data
-    const { headers, rows, columnStyles } = prepareTableData(reportType, data);
 
     // Calculate totals for financial reports
     const totals = totalsOverride || calculateTotals(reportType, data);
@@ -491,31 +496,50 @@ export const exportToPDF = async (config) => {
     // Generate table
     const isAgentReportsExport = exportSource === "agent_reports";
 
+    // Calculate smart column widths based on available space
+    const availableWidth = pageWidth - 28; // margins (14 left + 14 right)
+    const numCols = headers.length;
+    const baseColWidth = Math.floor(availableWidth / numCols);
+
+    // Create adaptive column styles
+    const adaptiveColumnStyles = {};
+    Object.keys(columnStyles).forEach((colIdx) => {
+      adaptiveColumnStyles[colIdx] = {
+        ...columnStyles[colIdx],
+      };
+      // Don't override explicit cellWidth if set
+      if (!columnStyles[colIdx]?.cellWidth) {
+        adaptiveColumnStyles[colIdx].cellWidth = baseColWidth;
+      }
+    });
+
     autoTable(doc, {
       head: [headers],
       body: rows,
       startY: yPos,
-      margin: { left: 14, right: 14, bottom: 25 },
+      margin: { left: 14, right: 14, bottom: 30 },
       headStyles: {
         fillColor: [30, 64, 175],
         textColor: [255, 255, 255],
         fontSize: useLandscape ? 8 : 9,
         fontStyle: "bold",
         halign: "center",
-        cellPadding: 3,
+        cellPadding: { top: 3, right: 3, bottom: 3, left: 3 },
+        minCellHeight: 8,
       },
       bodyStyles: {
         fontSize: useLandscape ? 7 : 8,
-        cellPadding: 2.5,
+        cellPadding: { top: 2, right: 3, bottom: 2, left: 3 },
         lineColor: [220, 220, 220],
         lineWidth: 0.1,
         overflow: isAgentReportsExport ? "ellipsize" : "linebreak",
         valign: "middle",
+        minCellHeight: 6,
       },
       alternateRowStyles: {
         fillColor: [248, 250, 252],
       },
-      columnStyles: columnStyles,
+      columnStyles: adaptiveColumnStyles,
       theme: "striped",
       showHead: "everyPage",
       tableWidth: "auto",

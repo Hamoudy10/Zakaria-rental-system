@@ -400,6 +400,8 @@ export const exportToExcel = async (config) => {
     user,
     title = "Report",
     totalsOverride,
+    visibleColumns,
+    previewData,
   } = config;
 
   if (!data || data.length === 0) {
@@ -493,31 +495,36 @@ export const exportToExcel = async (config) => {
     // Add footer
     addFooter(worksheet, companyInfo.name || DEFAULT_COMPANY.name, columnCount);
 
-    // Auto-fit columns
+    // Auto-fit columns with smarter defaults
     worksheet.columns.forEach((column, index) => {
       let maxLength = headers[index]?.length || 10;
 
       rows.forEach((row) => {
         const cellValue = row[index];
-        const cellLength = cellValue ? cellValue.toString().length : 0;
+        const cellLength = cellValue ? String(cellValue).length : 0;
         if (cellLength > maxLength) {
           maxLength = cellLength;
         }
       });
 
-      column.width = Math.min(Math.max(maxLength + 2, 10), 80);
+      // Cap column width but ensure minimum readability
+      column.width = Math.min(Math.max(maxLength + 3, 12), 70);
     });
 
     // Report-specific width tuning to keep columns spread and readable.
     const preferredWidthsByReport = {
       sms: [6, 12, 18, 22, 12, 14, 12, 16, 16, 20, 60, 10, 30, 18],
       messaging: [6, 12, 18, 22, 12, 14, 12, 16, 16, 20, 60, 10, 30, 18],
-      complaints: [6, 26, 45, 20, 12, 24, 12, 12, 16, 16],
+      complaints: [6, 26, 45, 20, 16, 14, 12, 24, 14, 14, 16, 16],
       water: [6, 24, 16, 20, 12, 14, 14, 12, 35, 16],
-      payments: [6, 14, 24, 16, 14, 14, 16, 12, 16],
-      properties: [6, 12, 24, 32, 14, 14, 12, 12, 12, 12],
-      tenants: [6, 16, 16, 16, 16, 22, 12, 14, 12],
-      revenue: [6, 14, 18, 14, 12, 12, 18],
+      payments: [6, 16, 26, 18, 16, 14, 14, 16, 14, 14],
+      properties: [6, 12, 26, 32, 14, 14, 14, 12, 12, 12, 12],
+      tenants: [6, 16, 16, 16, 16, 16, 22, 12, 14, 12],
+      revenue: [6, 14, 20, 14, 14, 12, 18],
+      expenses: [6, 14, 16, 16, 28, 20, 12, 16, 14, 16, 16, 14, 16, 28],
+      unpaid_tenants: [6, 18, 16, 18, 12, 14, 14, 14, 14, 14, 14, 14],
+      paid_tenants: [6, 18, 16, 18, 12, 14, 14, 14, 14, 14, 14],
+      tenant_statement: [6, 16, 16, 18, 16, 14, 14],
     };
 
     const preferredWidths = preferredWidthsByReport[reportType];

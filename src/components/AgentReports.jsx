@@ -23,9 +23,12 @@ import {
   Clock,
   XCircle,
   SkipForward,
+  Eye,
+  ChevronDown,
 } from "lucide-react";
 import { exportToPDF } from "../utils/pdfExport";
 import { exportToExcel } from "../utils/excelExport";
+import ReportPreviewModal from "./ReportPreviewModal";
 
 const AgentReports = () => {
   const { user } = useAuth();
@@ -49,6 +52,18 @@ const AgentReports = () => {
     totalCount: 0,
     channelCounts: { sms: 0, whatsapp: 0 },
     statusCounts: { sent: 0, pending: 0, failed: 0, skipped: 0 },
+  });
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState({
+    paymentMethod: "",
+    priority: "",
+    complaintStatus: "",
+    tenantStatus: "",
+    occupancyFilter: "",
+    amountMin: "",
+    amountMax: "",
+    messageType: "",
   });
   const [waterExpenseData, setWaterExpenseData] = useState([]);
   const [waterFinancialSummary, setWaterFinancialSummary] = useState({
@@ -472,12 +487,102 @@ const AgentReports = () => {
             String(messagingFilters.status).toLowerCase(),
         );
       }
-
       if (messagingFilters.channel && messagingFilters.channel !== "all") {
         filtered = filtered.filter(
           (item) =>
             String(item.channel || "").toLowerCase() ===
             String(messagingFilters.channel).toLowerCase(),
+        );
+      }
+      if (advancedFilters.messageType && advancedFilters.messageType !== "all") {
+        filtered = filtered.filter(
+          (item) =>
+            String(item.message_type || "").toLowerCase() ===
+            String(advancedFilters.messageType).toLowerCase(),
+        );
+      }
+    }
+
+    if (reportType === "payments") {
+      if (advancedFilters.paymentMethod) {
+        filtered = filtered.filter(
+          (item) =>
+            String(item.payment_method || "").toLowerCase() ===
+            String(advancedFilters.paymentMethod).toLowerCase(),
+        );
+      }
+      if (advancedFilters.amountMin) {
+        const minVal = parseFloat(advancedFilters.amountMin);
+        if (!isNaN(minVal)) {
+          filtered = filtered.filter((item) => (parseFloat(item.amount) || 0) >= minVal);
+        }
+      }
+      if (advancedFilters.amountMax) {
+        const maxVal = parseFloat(advancedFilters.amountMax);
+        if (!isNaN(maxVal)) {
+          filtered = filtered.filter((item) => (parseFloat(item.amount) || 0) <= maxVal);
+        }
+      }
+    }
+
+    if (reportType === "complaints") {
+      if (advancedFilters.priority) {
+        filtered = filtered.filter(
+          (item) =>
+            String(item.priority || "").toLowerCase() ===
+            String(advancedFilters.priority).toLowerCase(),
+        );
+      }
+      if (advancedFilters.complaintStatus) {
+        filtered = filtered.filter(
+          (item) =>
+            String(item.status || "").toLowerCase() ===
+            String(advancedFilters.complaintStatus).toLowerCase(),
+        );
+      }
+    }
+
+    if (reportType === "tenants") {
+      if (advancedFilters.tenantStatus) {
+        filtered = filtered.filter((item) => {
+          if (advancedFilters.tenantStatus === "paid") {
+            return String(item.payment_status || "").toLowerCase() === "paid";
+          }
+          if (advancedFilters.tenantStatus === "unpaid") {
+            return String(item.payment_status || "").toLowerCase() !== "paid";
+          }
+          if (advancedFilters.tenantStatus === "active") {
+            return item.is_active === true;
+          }
+          if (advancedFilters.tenantStatus === "inactive") {
+            return item.is_active !== true;
+          }
+          return true;
+        });
+      }
+    }
+
+    if (reportType === "properties") {
+      if (advancedFilters.occupancyFilter) {
+        filtered = filtered.filter((item) => {
+          const total = item.total_units || item.unit_count || 0;
+          const occupied = item.occupied_units || 0;
+          if (total === 0) return advancedFilters.occupancyFilter === "vacant";
+          const rate = occupied / total;
+          if (advancedFilters.occupancyFilter === "full") return rate >= 0.95;
+          if (advancedFilters.occupancyFilter === "partial") return rate > 0 && rate < 0.95;
+          if (advancedFilters.occupancyFilter === "vacant") return rate === 0;
+          return true;
+        });
+      }
+    }
+
+    if (reportType === "water") {
+      if (advancedFilters.status) {
+        filtered = filtered.filter(
+          (item) =>
+            String(item.status || "billed").toLowerCase() ===
+            String(advancedFilters.status).toLowerCase(),
         );
       }
     }
@@ -970,6 +1075,66 @@ const AgentReports = () => {
     }
   };
 
+  const openPreview = () => {
+    if (!data || (Array.isArray(data) && data.length === 0)) {
+      const hasWaterData = activeReport === "water" && (
+        (waterFinancialSummary?.monthly?.length > 0) ||
+        (waterExpenseData?.length > 0)
+      );
+      if (!hasWaterData) {
+        alert("No data to preview. Please load a report first.");
+        return;
+      }
+    }
+    setPreviewOpen(true);
+  };
+
+  const handlePreviewExportPDF = async (previewData, activeCols, colVis) => {
+    try {
+      const reportTitle = reportTypes.find((r) => r.id === activeReport)?.name;
+      const exportFilters =
+        activeReport === "sms"
+          ? { ...filters, status: messagingFilters.status, channel: messagingFilters.channel }
+          : { ...filters };
+      await exportToPDF({
+        reportType: activeReport,
+        data: data,
+        filters: exportFilters,
+        companyInfo: companyInfo,
+        user: user,
+        title: reportTitle,
+        exportSource: "agent_reports",
+        visibleColumns: activeCols,
+      });
+    } catch (error) {
+      console.error("PDF export error:", error);
+      alert(`Export failed: ${error.message}`);
+    }
+  };
+
+  const handlePreviewExportExcel = async (previewData, activeCols, colVis) => {
+    try {
+      const reportTitle = reportTypes.find((r) => r.id === activeReport)?.name;
+      const exportFilters =
+        activeReport === "sms"
+          ? { ...filters, status: messagingFilters.status, channel: messagingFilters.channel }
+          : { ...filters };
+      await exportToExcel({
+        reportType: activeReport,
+        data: data,
+        filters: exportFilters,
+        companyInfo: companyInfo,
+        user: user,
+        title: reportTitle,
+        exportSource: "agent_reports",
+        visibleColumns: activeCols,
+      });
+    } catch (error) {
+      console.error("Excel export error:", error);
+      alert(`Export failed: ${error.message}`);
+    }
+  };
+
   // Render messaging status filter tabs
   const renderMessagingFilters = () => {
     const statusTabs = [
@@ -1098,6 +1263,166 @@ const AgentReports = () => {
     );
   };
 
+  const renderAdvancedFilters = () => {
+    const reportType = activeReport;
+
+    return (
+      <div className="mt-3 pt-3 border-t border-gray-200">
+        <div className="flex flex-wrap gap-3 items-end">
+          {reportType === "payments" && (
+            <>
+              <div className="min-w-[150px]">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Payment Method</label>
+                <select
+                  value={advancedFilters.paymentMethod}
+                  onChange={(e) => setAdvancedFilters({ ...advancedFilters, paymentMethod: e.target.value })}
+                  className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="">All Methods</option>
+                  <option value="mpesa">M-Pesa</option>
+                  <option value="manual">Manual</option>
+                  <option value="paybill">Paybill</option>
+                  <option value="carry_forward">Carry Forward</option>
+                </select>
+              </div>
+              <div className="min-w-[120px]">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Min Amount</label>
+                <input
+                  type="number"
+                  value={advancedFilters.amountMin}
+                  onChange={(e) => setAdvancedFilters({ ...advancedFilters, amountMin: e.target.value })}
+                  placeholder="0"
+                  className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                />
+              </div>
+              <div className="min-w-[120px]">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Max Amount</label>
+                <input
+                  type="number"
+                  value={advancedFilters.amountMax}
+                  onChange={(e) => setAdvancedFilters({ ...advancedFilters, amountMax: e.target.value })}
+                  placeholder="999999"
+                  className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                />
+              </div>
+            </>
+          )}
+
+          {reportType === "complaints" && (
+            <>
+              <div className="min-w-[140px]">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Priority</label>
+                <select
+                  value={advancedFilters.priority}
+                  onChange={(e) => setAdvancedFilters({ ...advancedFilters, priority: e.target.value })}
+                  className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="">All Priorities</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div className="min-w-[140px]">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Complaint Status</label>
+                <select
+                  value={advancedFilters.complaintStatus}
+                  onChange={(e) => setAdvancedFilters({ ...advancedFilters, complaintStatus: e.target.value })}
+                  className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="open">Open</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </div>
+            </>
+          )}
+
+          {reportType === "tenants" && (
+            <div className="min-w-[140px]">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Payment Status</label>
+              <select
+                value={advancedFilters.tenantStatus}
+                onChange={(e) => setAdvancedFilters({ ...advancedFilters, tenantStatus: e.target.value })}
+                className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">All Tenants</option>
+                <option value="paid">Paid</option>
+                <option value="unpaid">Unpaid / Overdue</option>
+                <option value="active">Active Only</option>
+                <option value="inactive">Inactive Only</option>
+              </select>
+            </div>
+          )}
+
+          {reportType === "properties" && (
+            <div className="min-w-[140px]">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Occupancy</label>
+              <select
+                value={advancedFilters.occupancyFilter}
+                onChange={(e) => setAdvancedFilters({ ...advancedFilters, occupancyFilter: e.target.value })}
+                className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">All Properties</option>
+                <option value="full">Fully Occupied (95%+)</option>
+                <option value="partial">Partially Occupied</option>
+                <option value="vacant">Vacant</option>
+              </select>
+            </div>
+          )}
+
+          {reportType === "water" && (
+            <div className="min-w-[140px]">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Bill Status</label>
+              <select
+                value={advancedFilters.status}
+                onChange={(e) => setAdvancedFilters({ ...advancedFilters, status: e.target.value })}
+                className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">All Statuses</option>
+                <option value="paid">Paid</option>
+                <option value="billed">Billed</option>
+                <option value="pending">Pending</option>
+              </select>
+            </div>
+          )}
+
+          {reportType === "sms" && (
+            <div className="min-w-[160px]">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Message Type</label>
+              <select
+                value={advancedFilters.messageType}
+                onChange={(e) => setAdvancedFilters({ ...advancedFilters, messageType: e.target.value })}
+                className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="all">All Types</option>
+                <option value="bill_notification">Bill Notification</option>
+                <option value="payment_confirmation">Payment Confirmation</option>
+                <option value="balance_reminder">Balance Reminder</option>
+                <option value="rental_welcome">Welcome</option>
+                <option value="general_announcement">Announcement</option>
+                <option value="monthly_bill_cron">Monthly Bill (Cron)</option>
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={() => setAdvancedFilters({
+              paymentMethod: "", priority: "", complaintStatus: "",
+              tenantStatus: "", occupancyFilter: "", amountMin: "",
+              amountMax: "", messageType: "", status: "",
+            })}
+            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100"
+          >
+            Clear Advanced
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const renderFilters = () => {
     return (
       <div className="bg-gray-50 p-4 rounded-lg mb-6">
@@ -1184,6 +1509,19 @@ const AgentReports = () => {
           </button>
 
           <button
+            onClick={() => setAdvancedFiltersOpen(!advancedFiltersOpen)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md border transition-colors ${
+              advancedFiltersOpen
+                ? "bg-blue-50 border-blue-300 text-blue-700"
+                : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            <Filter className="w-4 h-4" />
+            Advanced
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${advancedFiltersOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          <button
             onClick={() => {
               const clearedFilters = {
                 startDate: "",
@@ -1194,12 +1532,19 @@ const AgentReports = () => {
               };
               setFilters(clearedFilters);
               setMessagingFilters({ status: "all", channel: "all" });
+              setAdvancedFilters({
+                paymentMethod: "", priority: "", complaintStatus: "",
+                tenantStatus: "", occupancyFilter: "", amountMin: "",
+                amountMax: "", messageType: "", status: "",
+              });
             }}
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
           >
-            Clear Filters
+            Clear All
           </button>
         </div>
+
+        {advancedFiltersOpen && renderAdvancedFilters()}
       </div>
     );
   };
@@ -2076,28 +2421,16 @@ const AgentReports = () => {
 
         <div className="flex gap-3 mt-4 md:mt-0">
           <button
-            onClick={() => handleExport("pdf")}
-            disabled={!Array.isArray(data) || data.length === 0 || loading}
+            onClick={openPreview}
+            disabled={(!Array.isArray(data) || data.length === 0) && activeReport !== "water"}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-              !Array.isArray(data) || data.length === 0 || loading
+              (!Array.isArray(data) || data.length === 0) && activeReport !== "water"
                 ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                : "bg-red-600 text-white hover:bg-red-700"
+                : "bg-blue-600 text-white hover:bg-blue-700"
             }`}
           >
-            <FileText className="w-4 h-4" />
-            Export PDF
-          </button>
-          <button
-            onClick={() => handleExport("excel")}
-            disabled={!Array.isArray(data) || data.length === 0 || loading}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-              !Array.isArray(data) || data.length === 0 || loading
-                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                : "bg-green-600 text-white hover:bg-green-700"
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Export Excel
+            <Eye className="w-4 h-4" />
+            Preview & Export
           </button>
         </div>
       </div>
@@ -2257,6 +2590,17 @@ const AgentReports = () => {
           </div>
         </div>
       </div>
+
+      <ReportPreviewModal
+        isOpen={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        reportType={activeReport}
+        reportTitle={reportTypes.find((r) => r.id === activeReport)?.name || "Report"}
+        data={Array.isArray(data) ? data : []}
+        filters={filters}
+        onExportPDF={handlePreviewExportPDF}
+        onExportExcel={handlePreviewExportExcel}
+      />
     </div>
   );
 };
