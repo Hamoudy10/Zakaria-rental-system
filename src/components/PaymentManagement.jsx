@@ -265,28 +265,6 @@ const PaymentManagement = () => {
     useState(false);
   const [editManualPaymentError, setEditManualPaymentError] = useState("");
 
-  // Transfer Transactions Modal
-  const [showTransferModal, setShowTransferModal] = useState(false);
-  const [transferData, setTransferData] = useState({
-    source_tenant_id: "",
-    destination_tenant_id: "",
-    source_unit_id: "",
-    destination_unit_id: "",
-    transfer_payments: true,
-    transfer_water_bills: false,
-  });
-  const [transferLoading, setTransferLoading] = useState(false);
-  const [transferError, setTransferError] = useState("");
-  const [transferResult, setTransferResult] = useState(null);
-  const [transferSourceSearch, setTransferSourceSearch] = useState("");
-  const [transferSourceResults, setTransferSourceResults] = useState([]);
-  const [transferDestSearch, setTransferDestSearch] = useState("");
-  const [transferDestResults, setTransferDestResults] = useState([]);
-  const [transferSourceTenant, setTransferSourceTenant] = useState(null);
-  const [transferDestTenant, setTransferDestTenant] = useState(null);
-  const [transferSourceUnits, setTransferSourceUnits] = useState([]);
-  const [transferDestUnits, setTransferDestUnits] = useState([]);
-
   // SMS Reminder Modal
   const [showSMSModal, setShowSMSModal] = useState(false);
   const [reminderDrafts, setReminderDrafts] = useState([]);
@@ -706,87 +684,6 @@ const PaymentManagement = () => {
       );
     } finally {
       setManualPaymentLoading(false);
-    }
-  };
-
-  // ==================== TRANSFER TRANSACTIONS ====================
-
-  const handleTransferTenantSearch = async (query, setResultsFn) => {
-    if (!query || query.length < 2) { setResultsFn([]); return; }
-    try {
-      const res = await API.tenants.getTenants({ search: query, limit: 10 });
-      const tenants = res.data?.data?.tenants || res.data?.data || [];
-      setResultsFn(Array.isArray(tenants) ? tenants : []);
-    } catch (err) {
-      console.error("Tenant search error:", err);
-      setResultsFn([]);
-    }
-  };
-
-  const handleSelectSourceTenant = async (tenant) => {
-    setTransferSourceTenant(tenant);
-    setTransferData(prev => ({ ...prev, source_tenant_id: tenant.id, source_unit_id: "" }));
-    setTransferSourceResults([]);
-    setTransferSourceSearch("");
-    // Fetch allocations for this tenant to populate unit dropdown
-    try {
-      const res = await API.allocations.getAllocationsByTenantId(tenant.id);
-      const allocs = res.data?.data || [];
-      const activeAllocs = Array.isArray(allocs) ? allocs.filter(a => a.is_active) : [];
-      setTransferSourceUnits(activeAllocs);
-      if (activeAllocs.length === 1) {
-        setTransferData(prev => ({ ...prev, source_unit_id: activeAllocs[0].unit_id }));
-      }
-    } catch { setTransferSourceUnits([]); }
-  };
-
-  const handleSelectDestTenant = async (tenant) => {
-    setTransferDestTenant(tenant);
-    setTransferData(prev => ({ ...prev, destination_tenant_id: tenant.id, destination_unit_id: "" }));
-    setTransferDestResults([]);
-    setTransferDestSearch("");
-    try {
-      const res = await API.allocations.getAllocationsByTenantId(tenant.id);
-      const allocs = res.data?.data || [];
-      const activeAllocs = Array.isArray(allocs) ? allocs.filter(a => a.is_active) : [];
-      setTransferDestUnits(activeAllocs);
-    } catch { setTransferDestUnits([]); }
-  };
-
-  const handleTransferSubmit = async () => {
-    if (!transferData.source_tenant_id || !transferData.destination_tenant_id) {
-      setTransferError("Both source and destination tenants are required");
-      return;
-    }
-    if (!transferData.source_unit_id) {
-      setTransferError("Source unit is required");
-      return;
-    }
-
-    setTransferLoading(true);
-    setTransferError("");
-    setTransferResult(null);
-
-    try {
-      const payload = {
-        source_tenant_id: transferData.source_tenant_id,
-        destination_tenant_id: transferData.destination_tenant_id,
-        source_unit_id: transferData.source_unit_id,
-        destination_unit_id: transferData.destination_unit_id || transferData.source_unit_id,
-        transfer_payments: transferData.transfer_payments,
-        transfer_water_bills: transferData.transfer_water_bills,
-      };
-      const res = await API.payments.transferTenantTransactions(payload);
-      if (res.data?.success) {
-        setTransferResult(res.data);
-        refreshData();
-      } else {
-        setTransferError(res.data?.message || "Transfer failed");
-      }
-    } catch (err) {
-      setTransferError(err.response?.data?.message || err.message || "Transfer failed");
-    } finally {
-      setTransferLoading(false);
     }
   };
 
@@ -1309,7 +1206,6 @@ const PaymentManagement = () => {
 
   return (
     <div className="space-y-6">
-      <div style={{position:"fixed",top:10,left:10,background:"red",color:"white",padding:10,zIndex:99999,fontSize:14,fontWeight:"bold"}}>FIXED TEST BOX — modal state: {String(showTransferModal)}</div>
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -1326,21 +1222,6 @@ const PaymentManagement = () => {
             className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
           >
             <Plus size={16} /> Record Payment
-          </button>
-          <button
-            onClick={() => {
-              console.log('🟠 Transfer button clicked!');
-              setShowTransferModal(prev => {
-                console.log('🟠 Previous showTransferModal:', prev, 'Setting to:', true);
-                return true;
-              });
-              setTransferResult(null);
-              setTransferError("");
-            }}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
-            Transfer{showTransferModal ? " (OPEN)" : ""}
           </button>
         </div>
       </div>
@@ -3326,34 +3207,8 @@ const SMSReminderModal = ({
         </div>
       </div>
 
-      {/* Transfer Transactions Modal - USING MANUAL PAYMENT MODAL PATTERN */}
-      {showTransferModal && (
-        <ManualPaymentModal
-          data={manualPaymentData}
-          setData={setManualPaymentData}
-          loading={false}
-          error="TRANSFER BUTTON CLICKED - ManualPaymentModal rendering with transfer state"
-          onSubmit={(e) => { e.preventDefault(); setShowTransferModal(false); }}
-          onClose={() => setShowTransferModal(false)}
-          monthOptions={monthOptions}
-          tenants={tenantStatus}
-        />
-      )}
     </div>
   );
 };
-
-// Match the EXACT pattern of ManualPaymentModal
-const TransferModalSimple = ({ onClose }) => (
-  <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto" onClick={onClose}>
-    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8 border" onClick={(e) => e.stopPropagation()}>
-      <h3 className="font-bold text-xl text-gray-800 mb-3">Transfer Transactions</h3>
-      <p className="text-gray-500 mb-6">Move payments between tenants. Balances recalculated automatically.</p>
-      <button onClick={onClose} className="w-full px-6 py-2.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700">
-        Close
-      </button>
-    </div>
-  </div>
-);
 
 export default PaymentManagement;
