@@ -1,6 +1,7 @@
 // src/components/PaymentManagement.jsx
 // ENHANCED VERSION - With Unpaid/Paid Tabs, SMS Reminders, Manual Payment, Export
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import ReactDOM from "react-dom";
 import { usePayment } from "../context/PaymentContext";
 import { useProperty } from "../context/PropertyContext";
 import { useAuth } from "../context/AuthContext";
@@ -3325,8 +3326,8 @@ const SMSReminderModal = ({
         </div>
       </div>
 
-      {/* Transfer Transactions Modal */}
-      {showTransferModal && (
+      {/* Transfer Transactions Modal - Portal to body to avoid overflow clipping */}
+      {showTransferModal && ReactDOM.createPortal(
         <div className="fixed inset-0 z-[100] overflow-y-auto bg-black bg-opacity-50" onClick={() => setShowTransferModal(false)}>
           <div className="min-h-screen px-4 flex items-center justify-center">
             <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -3485,7 +3486,8 @@ const SMSReminderModal = ({
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
