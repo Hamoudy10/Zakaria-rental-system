@@ -47,6 +47,7 @@ const AgentReports = lazy(() => import('../components/AgentReports'));
 const AdminExpenseManagement = lazy(() => import('../components/AdminExpenseManagement'));
 const TenantHub = lazy(() => import('../components/TenantHub'));
 const AdminAuditTrail = lazy(() => import('../components/AdminAuditTrail'));
+const TransferTransactions = lazy(() => import('../components/TransferTransactions'));
 
 // Loading spinner component
 const TabLoadingSpinner = () => (
@@ -154,6 +155,7 @@ const { notifications = [], refreshNotifications } = useNotification();
     { id: 'tenants', name: 'Tenant Hub', shortName: 'Tenants' },
     { id: 'agentAllocation', name: 'Agent Allocation', shortName: 'Agents' },
     { id: 'payments', name: 'Payment Management', shortName: 'Payments' },
+    { id: 'transfer', name: 'Transfer Transactions', shortName: 'Transfer' },
     { id: 'complaints', name: 'Complaint Management', shortName: 'Complaints' },
     { id: 'expenses', name: 'Expense Approval', shortName: 'Expenses' },
     { id: 'reports', name: 'Reports', shortName: 'Reports' },
@@ -193,6 +195,8 @@ const { notifications = [], refreshNotifications } = useNotification();
         return <Suspense fallback={<TabLoadingSpinner />}><AgentAllocation /></Suspense>;
       case 'payments':
         return <Suspense fallback={<TabLoadingSpinner />}><PaymentManagement /></Suspense>;
+      case 'transfer':
+        return <Suspense fallback={<TabLoadingSpinner />}><TransferTransactions /></Suspense>;
       case 'complaints':
         return <Suspense fallback={<TabLoadingSpinner />}><ComplaintManagement /></Suspense>;
       case 'reports':
