@@ -3328,54 +3328,11 @@ const SMSReminderModal = ({
 
       {/* Transfer Transactions Modal */}
       {showTransferModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] overflow-y-auto" onClick={() => setShowTransferModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto border" onClick={(e) => e.stopPropagation()}>
-            <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
-              <div>
-                <h3 className="font-bold text-xl text-gray-800">Transfer Transactions</h3>
-                <p className="text-gray-500 text-sm">Move payments between tenants</p>
-              </div>
-              <button onClick={() => setShowTransferModal(false)} className="p-2 rounded-full hover:bg-gray-200"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-            </div>
-            <div className="p-6 space-y-4">
-              {transferError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">{transferError}</div>}
-              {transferResult && (
-                <div className="p-4 bg-green-50 border border-green-200 rounded-lg"><p className="font-medium text-green-800 mb-2">{transferResult.message}</p>
-                  <div className="grid grid-cols-2 gap-2 text-sm"><div><span className="text-gray-500">Payments:</span> <span className="font-medium">{transferResult.data?.payments_transferred || 0}</span></div><div><span className="text-gray-500">Amount:</span> <span className="font-medium">KSh {((transferResult.data?.payments_amount || 0)).toLocaleString()}</span></div></div>
-                </div>
-              )}
-              <div><label className="block text-sm font-medium text-gray-700 mb-1">Source Tenant (from)</label>
-                {transferSourceTenant ? (
-                  <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg"><div><p className="font-medium">{transferSourceTenant.first_name} {transferSourceTenant.last_name}</p><p className="text-xs text-gray-500">{transferSourceTenant.phone_number?.replace(/^254/, "0") || "N/A"}</p></div><button onClick={() => { setTransferSourceTenant(null); setTransferData(prev => ({ ...prev, source_tenant_id: "", source_unit_id: "" })); setTransferSourceUnits([]); }} className="text-red-500 hover:text-red-700 text-sm">Change</button></div>
-                ) : (
-                  <div className="relative"><input type="text" placeholder="Search tenant name/phone..." value={transferSourceSearch} onChange={(e) => { setTransferSourceSearch(e.target.value); handleTransferTenantSearch(e.target.value, setTransferSourceResults); }} className="block w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm" />
-                    {transferSourceResults.length > 0 && <div className="absolute z-30 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto">{transferSourceResults.map(t => <button key={t.id} onClick={() => handleSelectSourceTenant(t)} className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b last:border-0"><p className="font-medium text-sm">{t.first_name} {t.last_name}</p><p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0") || "N/A"}</p></button>)}</div>}
-                  </div>
-                )}
-              </div>
-              {transferSourceTenant && <div><label className="block text-sm font-medium text-gray-700 mb-1">Source Unit</label>
-                {transferSourceUnits.length > 0 ? <select value={transferData.source_unit_id} onChange={(e) => setTransferData(prev => ({ ...prev, source_unit_id: e.target.value }))} className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"><option value="">Select unit...</option>{transferSourceUnits.map(a => <option key={a.id} value={a.unit_id}>{a.unit_code} - KSh {(a.monthly_rent || 0).toLocaleString()}</option>)}</select> : <p className="text-sm text-gray-500 italic">No active allocations found.</p>}
-              </div>}
-              <div><label className="block text-sm font-medium text-gray-700 mb-1">Destination Tenant (to)</label>
-                {transferDestTenant ? (
-                  <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg"><div><p className="font-medium">{transferDestTenant.first_name} {transferDestTenant.last_name}</p><p className="text-xs text-gray-500">{transferDestTenant.phone_number?.replace(/^254/, "0") || "N/A"}</p></div><button onClick={() => { setTransferDestTenant(null); setTransferData(prev => ({ ...prev, destination_tenant_id: "" })); setTransferDestUnits([]); }} className="text-red-500 hover:text-red-700 text-sm">Change</button></div>
-                ) : (
-                  <div className="relative"><input type="text" placeholder="Search destination tenant..." value={transferDestSearch} onChange={(e) => { setTransferDestSearch(e.target.value); handleTransferTenantSearch(e.target.value, setTransferDestResults); }} className="block w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm" />
-                    {transferDestResults.length > 0 && <div className="absolute z-30 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto">{transferDestResults.map(t => <button key={t.id} onClick={() => handleSelectDestTenant(t)} className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b last:border-0"><p className="font-medium text-sm">{t.first_name} {t.last_name}</p><p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0") || "N/A"}</p></button>)}</div>}
-                  </div>
-                )}
-              </div>
-              <div className="bg-gray-50 p-4 rounded-lg space-y-3">
-                <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={transferData.transfer_payments} onChange={(e) => setTransferData(prev => ({ ...prev, transfer_payments: e.target.checked }))} className="w-4 h-4 text-amber-600 rounded" /><div><p className="text-sm font-medium">Transfer rent payments</p><p className="text-xs text-gray-500">All payments for the source unit will be moved</p></div></label>
-                <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={transferData.transfer_water_bills} onChange={(e) => setTransferData(prev => ({ ...prev, transfer_water_bills: e.target.checked }))} className="w-4 h-4 text-amber-600 rounded" /><div><p className="text-sm font-medium">Transfer water bills</p><p className="text-xs text-gray-500">Water bills will also be transferred</p></div></label>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button onClick={() => setShowTransferModal(false)} className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
-                <button onClick={handleTransferSubmit} disabled={transferLoading || !transferData.source_tenant_id || !transferData.destination_tenant_id} className="flex-1 px-4 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50 flex items-center justify-center gap-2">
-                  {transferLoading ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Transferring...</> : "Transfer Transactions"}
-                </button>
-              </div>
-            </div>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]" onClick={() => setShowTransferModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-8" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-2xl font-bold mb-2">Transfer Transactions</h2>
+            <p className="text-gray-600 mb-4">Move payments between tenants</p>
+            <button onClick={() => setShowTransferModal(false)} className="px-6 py-2 bg-amber-600 text-white rounded-lg">Close</button>
           </div>
         </div>
       )}
