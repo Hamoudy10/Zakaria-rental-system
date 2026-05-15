@@ -278,10 +278,14 @@ const PaymentManagement = () => {
   const [transferLoading, setTransferLoading] = useState(false);
   const [transferError, setTransferError] = useState("");
   const [transferResult, setTransferResult] = useState(null);
-  const [transferTenantSearch, setTransferTenantSearch] = useState("");
-  const [transferTenantResults, setTransferTenantResults] = useState([]);
+  const [transferSourceSearch, setTransferSourceSearch] = useState("");
+  const [transferSourceResults, setTransferSourceResults] = useState([]);
+  const [transferDestSearch, setTransferDestSearch] = useState("");
+  const [transferDestResults, setTransferDestResults] = useState([]);
   const [transferSourceTenant, setTransferSourceTenant] = useState(null);
   const [transferDestTenant, setTransferDestTenant] = useState(null);
+  const [transferSourceUnits, setTransferSourceUnits] = useState([]);
+  const [transferDestUnits, setTransferDestUnits] = useState([]);
 
   // SMS Reminder Modal
   const [showSMSModal, setShowSMSModal] = useState(false);
@@ -707,27 +711,46 @@ const PaymentManagement = () => {
 
   // ==================== TRANSFER TRANSACTIONS ====================
 
-  const handleSearchTenantForTransfer = async (query, setFn) => {
-    if (!query || query.length < 2) { setFn([]); return; }
+  const handleTransferTenantSearch = async (query, setResultsFn) => {
+    if (!query || query.length < 2) { setResultsFn([]); return; }
     try {
-      const res = await API.tenants.getAll({ search: query, limit: 10 });
+      const res = await API.tenants.getTenants({ search: query, limit: 10 });
       const tenants = res.data?.data?.tenants || res.data?.data || [];
-      setFn(Array.isArray(tenants) ? tenants : []);
-    } catch { setFn([]); }
+      setResultsFn(Array.isArray(tenants) ? tenants : []);
+    } catch (err) {
+      console.error("Tenant search error:", err);
+      setResultsFn([]);
+    }
   };
 
-  const handleSelectSourceTenant = (tenant) => {
+  const handleSelectSourceTenant = async (tenant) => {
     setTransferSourceTenant(tenant);
-    setTransferData(prev => ({ ...prev, source_tenant_id: tenant.id }));
-    setTransferTenantResults([]);
-    setTransferTenantSearch("");
+    setTransferData(prev => ({ ...prev, source_tenant_id: tenant.id, source_unit_id: "" }));
+    setTransferSourceResults([]);
+    setTransferSourceSearch("");
+    // Fetch allocations for this tenant to populate unit dropdown
+    try {
+      const res = await API.allocations.getAllocationsByTenantId(tenant.id);
+      const allocs = res.data?.data || [];
+      const activeAllocs = Array.isArray(allocs) ? allocs.filter(a => a.is_active) : [];
+      setTransferSourceUnits(activeAllocs);
+      if (activeAllocs.length === 1) {
+        setTransferData(prev => ({ ...prev, source_unit_id: activeAllocs[0].unit_id }));
+      }
+    } catch { setTransferSourceUnits([]); }
   };
 
-  const handleSelectDestTenant = (tenant) => {
+  const handleSelectDestTenant = async (tenant) => {
     setTransferDestTenant(tenant);
-    setTransferData(prev => ({ ...prev, destination_tenant_id: tenant.id }));
-    setTransferTenantResults([]);
-    setTransferTenantSearch("");
+    setTransferData(prev => ({ ...prev, destination_tenant_id: tenant.id, destination_unit_id: "" }));
+    setTransferDestResults([]);
+    setTransferDestSearch("");
+    try {
+      const res = await API.allocations.getAllocationsByTenantId(tenant.id);
+      const allocs = res.data?.data || [];
+      const activeAllocs = Array.isArray(allocs) ? allocs.filter(a => a.is_active) : [];
+      setTransferDestUnits(activeAllocs);
+    } catch { setTransferDestUnits([]); }
   };
 
   const handleTransferSubmit = async () => {
@@ -3321,22 +3344,22 @@ const SMSReminderModal = ({
                     <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg">
                       <div>
                         <p className="font-medium text-gray-900">{transferSourceTenant.first_name} {transferSourceTenant.last_name}</p>
-                        <p className="text-xs text-gray-500">{transferSourceTenant.phone_number?.replace(/^254/, "0")} • {transferSourceTenant.unit_code || "No unit"}</p>
+                        <p className="text-xs text-gray-500">{transferSourceTenant.phone_number?.replace(/^254/, "0") || "N/A"}</p>
                       </div>
-                      <button onClick={() => { setTransferSourceTenant(null); setTransferData(prev => ({ ...prev, source_tenant_id: "", source_unit_id: "" })); }} className="text-red-500 hover:text-red-700 text-sm">Change</button>
+                      <button onClick={() => { setTransferSourceTenant(null); setTransferData(prev => ({ ...prev, source_tenant_id: "", source_unit_id: "" })); setTransferSourceUnits([]); }} className="text-red-500 hover:text-red-700 text-sm">Change</button>
                     </div>
                   ) : (
                     <div className="relative">
-                      <input type="text" placeholder="Search tenant by name or phone..." value={transferTenantSearch}
-                        onChange={(e) => { setTransferTenantSearch(e.target.value); handleSearchTenantForTransfer(e.target.value, setTransferTenantResults); }}
+                      <input type="text" placeholder="Search tenant by name or phone..." value={transferSourceSearch}
+                        onChange={(e) => { setTransferSourceSearch(e.target.value); handleTransferTenantSearch(e.target.value, setTransferSourceResults); }}
                         className="block w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm" />
-                      {transferTenantResults.length > 0 && (
+                      {transferSourceResults.length > 0 && (
                         <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                          {transferTenantResults.map(t => (
+                          {transferSourceResults.map(t => (
                             <button key={t.id} onClick={() => handleSelectSourceTenant(t)}
                               className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b last:border-0">
                               <p className="font-medium text-sm">{t.first_name} {t.last_name}</p>
-                              <p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0")} • {t.unit_code || "No unit"}</p>
+                              <p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0") || "N/A"}</p>
                             </button>
                           ))}
                         </div>
@@ -3349,17 +3372,20 @@ const SMSReminderModal = ({
                 {transferSourceTenant && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Source Unit</label>
-                    <select value={transferData.source_unit_id}
-                      onChange={(e) => setTransferData(prev => ({ ...prev, source_unit_id: e.target.value }))}
-                      className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm">
-                      <option value="">Select unit...</option>
-                      {(transferSourceTenant.active_allocations || []).map(a => (
-                        <option key={a.id} value={a.unit_id || transferSourceTenant.unit_id}>{a.unit_code} - KSh {(a.monthly_rent || 0).toLocaleString()}</option>
-                      ))}
-                      {(!transferSourceTenant.active_allocations || transferSourceTenant.active_allocations.length === 0) && transferSourceTenant.unit_id && (
-                        <option value={transferSourceTenant.unit_id}>{transferSourceTenant.unit_code || "Unit"}</option>
-                      )}
-                    </select>
+                    {transferSourceUnits.length > 0 ? (
+                      <select value={transferData.source_unit_id}
+                        onChange={(e) => setTransferData(prev => ({ ...prev, source_unit_id: e.target.value }))}
+                        className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm">
+                        <option value="">Select unit...</option>
+                        {transferSourceUnits.map(a => (
+                          <option key={a.id} value={a.unit_id}>
+                            {a.unit_code} - KSh {(a.monthly_rent || 0).toLocaleString()}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">No active allocations found for this tenant. Transfer may require a unit assignment first.</p>
+                    )}
                   </div>
                 )}
 
@@ -3370,22 +3396,22 @@ const SMSReminderModal = ({
                     <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
                       <div>
                         <p className="font-medium text-gray-900">{transferDestTenant.first_name} {transferDestTenant.last_name}</p>
-                        <p className="text-xs text-gray-500">{transferDestTenant.phone_number?.replace(/^254/, "0")} • {transferDestTenant.unit_code || "No unit"}</p>
+                        <p className="text-xs text-gray-500">{transferDestTenant.phone_number?.replace(/^254/, "0") || "N/A"}</p>
                       </div>
-                      <button onClick={() => { setTransferDestTenant(null); setTransferData(prev => ({ ...prev, destination_tenant_id: "" })); }} className="text-red-500 hover:text-red-700 text-sm">Change</button>
+                      <button onClick={() => { setTransferDestTenant(null); setTransferData(prev => ({ ...prev, destination_tenant_id: "" })); setTransferDestUnits([]); }} className="text-red-500 hover:text-red-700 text-sm">Change</button>
                     </div>
                   ) : (
                     <div className="relative">
-                      <input type="text" placeholder="Search destination tenant..." value={transferTenantSearch}
-                        onChange={(e) => { setTransferTenantSearch(e.target.value); handleSearchTenantForTransfer(e.target.value, setTransferTenantResults); }}
+                      <input type="text" placeholder="Search destination tenant..." value={transferDestSearch}
+                        onChange={(e) => { setTransferDestSearch(e.target.value); handleTransferTenantSearch(e.target.value, setTransferDestResults); }}
                         className="block w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm" />
-                      {transferTenantResults.length > 0 && (
+                      {transferDestResults.length > 0 && (
                         <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                          {transferTenantResults.map(t => (
+                          {transferDestResults.map(t => (
                             <button key={t.id} onClick={() => handleSelectDestTenant(t)}
                               className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b last:border-0">
                               <p className="font-medium text-sm">{t.first_name} {t.last_name}</p>
-                              <p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0")} • {t.unit_code || "No unit"}</p>
+                              <p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0") || "N/A"}</p>
                             </button>
                           ))}
                         </div>
