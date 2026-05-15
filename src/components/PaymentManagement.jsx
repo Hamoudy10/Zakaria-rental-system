@@ -3327,10 +3327,9 @@ const SMSReminderModal = ({
 
       {/* Transfer Transactions Modal */}
       {showTransferModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex items-center justify-center min-h-screen px-4">
-            <div className="fixed inset-0 bg-black bg-opacity-50" onClick={() => setShowTransferModal(false)} />
-            <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-black bg-opacity-50" onClick={() => setShowTransferModal(false)}>
+          <div className="min-h-screen px-4 flex items-center justify-center">
+            <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="sticky top-0 bg-white border-b px-6 py-4 rounded-t-xl z-10">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
