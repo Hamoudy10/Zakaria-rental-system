@@ -201,6 +201,10 @@ export const paymentAPI = {
   getTenantDepositHistory: (tenantId, params = {}) =>
     api.get(`/payments/deposits/history/${tenantId}`, { params }),
 
+  // Transfer transactions between tenants (admin only)
+  transferTenantTransactions: (transferData) =>
+    api.post("/payments/transfer-transactions", transferData),
+
   // ==================== PAYBILL ====================
   processPaybillPayment: (paymentData) =>
     api.post("/payments/paybill", paymentData),

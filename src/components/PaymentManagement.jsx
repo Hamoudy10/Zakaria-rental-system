@@ -265,6 +265,24 @@ const PaymentManagement = () => {
     useState(false);
   const [editManualPaymentError, setEditManualPaymentError] = useState("");
 
+  // Transfer Transactions Modal
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferData, setTransferData] = useState({
+    source_tenant_id: "",
+    destination_tenant_id: "",
+    source_unit_id: "",
+    destination_unit_id: "",
+    transfer_payments: true,
+    transfer_water_bills: false,
+  });
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [transferError, setTransferError] = useState("");
+  const [transferResult, setTransferResult] = useState(null);
+  const [transferTenantSearch, setTransferTenantSearch] = useState("");
+  const [transferTenantResults, setTransferTenantResults] = useState([]);
+  const [transferSourceTenant, setTransferSourceTenant] = useState(null);
+  const [transferDestTenant, setTransferDestTenant] = useState(null);
+
   // SMS Reminder Modal
   const [showSMSModal, setShowSMSModal] = useState(false);
   const [reminderDrafts, setReminderDrafts] = useState([]);
@@ -684,6 +702,68 @@ const PaymentManagement = () => {
       );
     } finally {
       setManualPaymentLoading(false);
+    }
+  };
+
+  // ==================== TRANSFER TRANSACTIONS ====================
+
+  const handleSearchTenantForTransfer = async (query, setFn) => {
+    if (!query || query.length < 2) { setFn([]); return; }
+    try {
+      const res = await API.tenants.getAll({ search: query, limit: 10 });
+      const tenants = res.data?.data?.tenants || res.data?.data || [];
+      setFn(Array.isArray(tenants) ? tenants : []);
+    } catch { setFn([]); }
+  };
+
+  const handleSelectSourceTenant = (tenant) => {
+    setTransferSourceTenant(tenant);
+    setTransferData(prev => ({ ...prev, source_tenant_id: tenant.id }));
+    setTransferTenantResults([]);
+    setTransferTenantSearch("");
+  };
+
+  const handleSelectDestTenant = (tenant) => {
+    setTransferDestTenant(tenant);
+    setTransferData(prev => ({ ...prev, destination_tenant_id: tenant.id }));
+    setTransferTenantResults([]);
+    setTransferTenantSearch("");
+  };
+
+  const handleTransferSubmit = async () => {
+    if (!transferData.source_tenant_id || !transferData.destination_tenant_id) {
+      setTransferError("Both source and destination tenants are required");
+      return;
+    }
+    if (!transferData.source_unit_id) {
+      setTransferError("Source unit is required");
+      return;
+    }
+
+    setTransferLoading(true);
+    setTransferError("");
+    setTransferResult(null);
+
+    try {
+      const payload = {
+        source_tenant_id: transferData.source_tenant_id,
+        destination_tenant_id: transferData.destination_tenant_id,
+        source_unit_id: transferData.source_unit_id,
+        destination_unit_id: transferData.destination_unit_id || transferData.source_unit_id,
+        transfer_payments: transferData.transfer_payments,
+        transfer_water_bills: transferData.transfer_water_bills,
+      };
+      const res = await API.payments.transferTenantTransactions(payload);
+      if (res.data?.success) {
+        setTransferResult(res.data);
+        refreshData();
+      } else {
+        setTransferError(res.data?.message || "Transfer failed");
+      }
+    } catch (err) {
+      setTransferError(err.response?.data?.message || err.message || "Transfer failed");
+    } finally {
+      setTransferLoading(false);
     }
   };
 
@@ -1222,6 +1302,13 @@ const PaymentManagement = () => {
             className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
           >
             <Plus size={16} /> Record Payment
+          </button>
+          <button
+            onClick={() => { setShowTransferModal(true); setTransferResult(null); setTransferError(""); }}
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+            Transfer
           </button>
         </div>
       </div>
@@ -3206,6 +3293,167 @@ const SMSReminderModal = ({
           </div>
         </div>
       </div>
+
+      {/* Transfer Transactions Modal */}
+      {showTransferModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4">
+            <div className="fixed inset-0 bg-black bg-opacity-50" onClick={() => setShowTransferModal(false)} />
+            <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b px-6 py-4 rounded-t-xl z-10">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+                    Transfer Transactions
+                  </h2>
+                  <button onClick={() => setShowTransferModal(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                <p className="text-sm text-gray-500 mt-1">Move payments and water bills from one tenant to another. Balances are recalculated automatically.</p>
+              </div>
+
+              <div className="p-6 space-y-4">
+                {/* Source Tenant */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Source Tenant (from)</label>
+                  {transferSourceTenant ? (
+                    <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <div>
+                        <p className="font-medium text-gray-900">{transferSourceTenant.first_name} {transferSourceTenant.last_name}</p>
+                        <p className="text-xs text-gray-500">{transferSourceTenant.phone_number?.replace(/^254/, "0")} • {transferSourceTenant.unit_code || "No unit"}</p>
+                      </div>
+                      <button onClick={() => { setTransferSourceTenant(null); setTransferData(prev => ({ ...prev, source_tenant_id: "", source_unit_id: "" })); }} className="text-red-500 hover:text-red-700 text-sm">Change</button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <input type="text" placeholder="Search tenant by name or phone..." value={transferTenantSearch}
+                        onChange={(e) => { setTransferTenantSearch(e.target.value); handleSearchTenantForTransfer(e.target.value, setTransferTenantResults); }}
+                        className="block w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm" />
+                      {transferTenantResults.length > 0 && (
+                        <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                          {transferTenantResults.map(t => (
+                            <button key={t.id} onClick={() => handleSelectSourceTenant(t)}
+                              className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b last:border-0">
+                              <p className="font-medium text-sm">{t.first_name} {t.last_name}</p>
+                              <p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0")} • {t.unit_code || "No unit"}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Source Unit */}
+                {transferSourceTenant && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Source Unit</label>
+                    <select value={transferData.source_unit_id}
+                      onChange={(e) => setTransferData(prev => ({ ...prev, source_unit_id: e.target.value }))}
+                      className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm">
+                      <option value="">Select unit...</option>
+                      {(transferSourceTenant.active_allocations || []).map(a => (
+                        <option key={a.id} value={a.unit_id || transferSourceTenant.unit_id}>{a.unit_code} - KSh {(a.monthly_rent || 0).toLocaleString()}</option>
+                      ))}
+                      {(!transferSourceTenant.active_allocations || transferSourceTenant.active_allocations.length === 0) && transferSourceTenant.unit_id && (
+                        <option value={transferSourceTenant.unit_id}>{transferSourceTenant.unit_code || "Unit"}</option>
+                      )}
+                    </select>
+                  </div>
+                )}
+
+                {/* Destination Tenant */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Destination Tenant (to)</label>
+                  {transferDestTenant ? (
+                    <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+                      <div>
+                        <p className="font-medium text-gray-900">{transferDestTenant.first_name} {transferDestTenant.last_name}</p>
+                        <p className="text-xs text-gray-500">{transferDestTenant.phone_number?.replace(/^254/, "0")} • {transferDestTenant.unit_code || "No unit"}</p>
+                      </div>
+                      <button onClick={() => { setTransferDestTenant(null); setTransferData(prev => ({ ...prev, destination_tenant_id: "" })); }} className="text-red-500 hover:text-red-700 text-sm">Change</button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <input type="text" placeholder="Search destination tenant..." value={transferTenantSearch}
+                        onChange={(e) => { setTransferTenantSearch(e.target.value); handleSearchTenantForTransfer(e.target.value, setTransferTenantResults); }}
+                        className="block w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm" />
+                      {transferTenantResults.length > 0 && (
+                        <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                          {transferTenantResults.map(t => (
+                            <button key={t.id} onClick={() => handleSelectDestTenant(t)}
+                              className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b last:border-0">
+                              <p className="font-medium text-sm">{t.first_name} {t.last_name}</p>
+                              <p className="text-xs text-gray-500">{t.phone_number?.replace(/^254/, "0")} • {t.unit_code || "No unit"}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Transfer Options */}
+                <div className="bg-gray-50 p-4 rounded-lg space-y-3">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={transferData.transfer_payments}
+                      onChange={(e) => setTransferData(prev => ({ ...prev, transfer_payments: e.target.checked }))}
+                      className="w-4 h-4 text-amber-600 rounded" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">Transfer rent payments</p>
+                      <p className="text-xs text-gray-500">All rent payments for the selected source unit will be moved</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={transferData.transfer_water_bills}
+                      onChange={(e) => setTransferData(prev => ({ ...prev, transfer_water_bills: e.target.checked }))}
+                      className="w-4 h-4 text-amber-600 rounded" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">Transfer water bills</p>
+                      <p className="text-xs text-gray-500">Water bills for the source unit will also be transferred</p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Error */}
+                {transferError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{transferError}</div>
+                )}
+
+                {/* Result */}
+                {transferResult && (
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="font-medium text-green-800 mb-2">{transferResult.message}</p>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="flex justify-between"><span className="text-gray-600">Payments transferred:</span> <span className="font-medium">{transferResult.data?.payments_transferred || 0}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600">Amount:</span> <span className="font-medium">KSh {((transferResult.data?.payments_amount || 0)).toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600">Water bills:</span> <span className="font-medium">{transferResult.data?.water_bills_transferred || 0}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600">Source rebalanced:</span> <span className={`font-medium ${transferResult.data?.source_rebalanced ? "text-green-600" : "text-red-600"}`}>{transferResult.data?.source_rebalanced ? "Yes" : "No"}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600">Dest rebalanced:</span> <span className={`font-medium ${transferResult.data?.dest_rebalanced ? "text-green-600" : "text-red-600"}`}>{transferResult.data?.dest_rebalanced ? "Yes" : "No"}</span></div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-3 pt-2">
+                  <button onClick={() => setShowTransferModal(false)} className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">
+                    Cancel
+                  </button>
+                  <button onClick={handleTransferSubmit} disabled={transferLoading || !transferData.source_tenant_id || !transferData.destination_tenant_id}
+                    className="flex-1 px-4 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                    {transferLoading ? (
+                      <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Transferring...</>
+                    ) : (
+                      <>Transfer Transactions</>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

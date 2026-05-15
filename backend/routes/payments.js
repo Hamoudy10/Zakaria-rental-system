@@ -557,6 +557,11 @@ router.get(
 // Record manual payment (admin/agent enters cash/bank payment)
 router.post("/manual", protect, requireAgent, paymentController.recordManualPayment);
 
+// ==================== TRANSFER TRANSACTIONS BETWEEN TENANTS ====================
+
+// Transfer payments/water bills from one tenant to another (admin only) with auto-rebalance
+router.post("/transfer-transactions", protect, requireRole(["admin"]), paymentController.transferTenantTransactions);
+
 // ==================== DEPOSIT PAYMENT ROUTES ====================
 
 // Record manual tenant deposit payment

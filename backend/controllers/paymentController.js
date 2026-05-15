@@ -5051,6 +5051,314 @@ const getTenantPaymentScore = async (req, res) => {
   }
 };
 
+// ==================== TRANSFER TRANSACTIONS BETWEEN TENANTS ====================
+
+/**
+ * Internal rebalance function — resets and re-allocates all payments for a tenant/unit pair.
+ * Reused by transferTenantTransactions and exposed for external use via module.exports.
+ */
+const rebalanceTenantUnitPaymentsInternal = async ({
+  client,
+  tenantId,
+  unitId,
+  actorId = null,
+}) => {
+  if (!tenantId || !unitId) {
+    return { rebalanced: false, reason: "missing_tenant_or_unit" };
+  }
+
+  const allocationExists = await client.query(
+    `SELECT id FROM tenant_allocations WHERE tenant_id = $1 AND unit_id = $2 LIMIT 1`,
+    [tenantId, unitId],
+  );
+  if (allocationExists.rows.length === 0) {
+    return { rebalanced: false, reason: "no_allocation_history" };
+  }
+
+  const sourcePaymentsResult = await client.query(
+    `SELECT
+       rp.id, rp.amount, rp.payment_month, rp.payment_date,
+       rp.mpesa_receipt_number, rp.phone_number,
+       COALESCE(cf.carry_forward_amount, 0) AS carry_forward_amount,
+       COALESCE(rp.amount, 0) + COALESCE(cf.carry_forward_amount, 0) AS received_amount
+     FROM rent_payments rp
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(child.amount), 0) AS carry_forward_amount
+       FROM rent_payments child
+       WHERE child.original_payment_id = rp.id
+         AND child.status = 'completed'
+         AND child.payment_method IN ('carry_forward', 'carry_forward_fix')
+     ) cf ON TRUE
+     WHERE rp.tenant_id = $1 AND rp.unit_id = $2
+       AND rp.status = 'completed'
+       AND rp.payment_method NOT IN ('carry_forward', 'carry_forward_fix')
+       AND COALESCE(rp.original_payment_id, rp.id) = rp.id
+     ORDER BY COALESCE(rp.payment_date, rp.created_at, NOW()) ASC, rp.id ASC`,
+    [tenantId, unitId],
+  );
+
+  const sourcePayments = sourcePaymentsResult.rows;
+  const sourceIds = sourcePayments.map((row) => row.id);
+
+  if (sourceIds.length > 0) {
+    await client.query(
+      `UPDATE rent_payments
+       SET status = 'pending', is_advance_payment = false,
+           original_payment_id = NULL, allocated_to_rent = 0,
+           allocated_to_water = 0, allocated_to_arrears = 0, updated_at = NOW()
+       WHERE id = ANY($1::uuid[])`,
+      [sourceIds],
+    );
+  }
+
+  await client.query(
+    `DELETE FROM rent_payments
+     WHERE tenant_id = $1 AND unit_id = $2
+       AND payment_method IN ('carry_forward', 'carry_forward_fix')`,
+    [tenantId, unitId],
+  );
+
+  for (const row of sourcePayments) {
+    const paymentDate = row.payment_date ? new Date(row.payment_date) : new Date();
+    const targetMonth = row.payment_month
+      ? new Date(row.payment_month).toISOString().slice(0, 7)
+      : paymentDate.toISOString().slice(0, 7);
+
+    const tracking = await trackRentPayment(tenantId, unitId, Number(row.received_amount) || 0, paymentDate, targetMonth, client);
+
+    await client.query(
+      `UPDATE rent_payments
+       SET amount = $1, status = 'completed', is_advance_payment = false,
+           original_payment_id = NULL, allocated_to_rent = $2,
+           allocated_to_water = $3, allocated_to_arrears = $4, updated_at = NOW()
+       WHERE id = $5`,
+      [tracking.allocatedAmount || 0, tracking.allocatedToRent || 0, tracking.allocatedToWater || 0, tracking.allocatedToArrears || 0, row.id],
+    );
+
+    if ((tracking.carryForwardAmount || 0) > 0) {
+      await recordCarryForward(tenantId, unitId, tracking.carryForwardAmount, row.id, paymentDate, row.mpesa_receipt_number || `RB_${row.id}`, row.phone_number || null, actorId, client);
+    }
+  }
+
+  // Recalculate arrears_balance
+  const totalArrearsPaid = await client.query(
+    `SELECT COALESCE(SUM(COALESCE(allocated_to_arrears, 0)), 0) as total
+     FROM rent_payments WHERE tenant_id = $1 AND unit_id = $2 AND status = 'completed'`,
+    [tenantId, unitId],
+  );
+  const allocationResult = await client.query(
+    `SELECT arrears_balance FROM tenant_allocations WHERE tenant_id = $1 AND unit_id = $2 AND is_active = true LIMIT 1`,
+    [tenantId, unitId],
+  );
+  if (allocationResult.rows.length > 0) {
+    const currentArrears = parseFloat(allocationResult.rows[0].arrears_balance) || 0;
+    const totalArrearsPaidValue = parseFloat(totalArrearsPaid.rows[0].total) || 0;
+    const correctArrears = Math.max(0, currentArrears - totalArrearsPaidValue);
+    if (Math.abs(currentArrears - correctArrears) > 0.01) {
+      await client.query(
+        `UPDATE tenant_allocations SET arrears_balance = $1, updated_at = NOW() WHERE tenant_id = $2 AND unit_id = $3 AND is_active = true`,
+        [correctArrears, tenantId, unitId],
+      );
+    }
+  }
+
+  return { rebalanced: true, sourcePayments: sourcePayments.length };
+};
+
+const transferTenantTransactions = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const {
+      source_tenant_id,
+      destination_tenant_id,
+      source_unit_id,
+      destination_unit_id,
+      payment_ids,
+      water_bill_ids,
+      transfer_payments = true,
+      transfer_water_bills = false,
+    } = req.body;
+
+    if (!source_tenant_id || !destination_tenant_id) {
+      return res.status(400).json({
+        success: false,
+        message: "source_tenant_id and destination_tenant_id are required",
+      });
+    }
+
+    if (source_tenant_id === destination_tenant_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Source and destination tenants must be different",
+      });
+    }
+
+    // Verify both tenants exist
+    const tenantsCheck = await client.query(
+      `SELECT id, first_name, last_name FROM tenants WHERE id = ANY($1::uuid[])`,
+      [[source_tenant_id, destination_tenant_id]],
+    );
+    if (tenantsCheck.rows.length < 2) {
+      return res.status(404).json({
+        success: false,
+        message: "One or both tenants not found",
+      });
+    }
+    const sourceTenant = tenantsCheck.rows.find(t => t.id === source_tenant_id);
+    const destTenant = tenantsCheck.rows.find(t => t.id === destination_tenant_id);
+
+    // Determine the unit to use for rebalancing
+    const effectiveSourceUnitId = source_unit_id || null;
+    const effectiveDestUnitId = destination_unit_id || source_unit_id || null;
+
+    if (!effectiveDestUnitId) {
+      return res.status(400).json({
+        success: false,
+        message: "destination_unit_id is required (or source_unit_id must be provided)",
+      });
+    }
+
+    const results = {
+      payments_transferred: 0,
+      water_bills_transferred: 0,
+      payments_amount: 0,
+      water_bills_amount: 0,
+      source_rebalanced: false,
+      dest_rebalanced: false,
+      errors: [],
+    };
+
+    // Build payment filter
+    let paymentWhere = `tenant_id = $1`;
+    const paymentParams = [source_tenant_id];
+    let paramIdx = 2;
+
+    if (payment_ids && Array.isArray(payment_ids) && payment_ids.length > 0) {
+      paymentWhere = `id = ANY($2::uuid[]) AND tenant_id = $1`;
+      paymentParams.push(payment_ids);
+      paramIdx = 3;
+    } else if (effectiveSourceUnitId) {
+      paymentWhere = `tenant_id = $1 AND unit_id = $2`;
+      paymentParams.push(effectiveSourceUnitId);
+      paramIdx = 3;
+    }
+
+    // Transfer rent_payments
+    if (transfer_payments) {
+      // First, sum up what's being transferred for reporting
+      const paymentSumResult = await client.query(
+        `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total_amount
+         FROM rent_payments
+         WHERE ${paymentWhere}`,
+        paymentParams,
+      );
+      results.payments_transferred = parseInt(paymentSumResult.rows[0].count) || 0;
+      results.payments_amount = parseFloat(paymentSumResult.rows[0].total_amount) || 0;
+
+      if (results.payments_transferred > 0) {
+        // Reset allocation on these payments so rebalance can re-allocate
+        await client.query(
+          `UPDATE rent_payments
+           SET tenant_id = $1,
+               unit_id = COALESCE($2, unit_id),
+               status = 'pending',
+               is_advance_payment = false,
+               original_payment_id = NULL,
+               allocated_to_rent = 0,
+               allocated_to_water = 0,
+               allocated_to_arrears = 0,
+               updated_at = NOW()
+           WHERE ${paymentWhere}`,
+          [destination_tenant_id, effectiveDestUnitId, ...paymentParams.slice(1)],
+        );
+
+        // Delete carry-forward children from destination (will be regenerated)
+        await client.query(
+          `DELETE FROM rent_payments
+           WHERE tenant_id = $1
+           AND unit_id = $2
+           AND payment_method IN ('carry_forward', 'carry_forward_fix')`,
+          [destination_tenant_id, effectiveDestUnitId],
+        );
+      }
+    }
+
+    // Transfer water_bills
+    if (transfer_water_bills && water_bill_ids && Array.isArray(water_bill_ids) && water_bill_ids.length > 0) {
+      const waterSumResult = await client.query(
+        `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total_amount
+         FROM water_bills
+         WHERE id = ANY($1::uuid[]) AND tenant_id = $2`,
+        [water_bill_ids, source_tenant_id],
+      );
+      results.water_bills_transferred = parseInt(waterSumResult.rows[0].count) || 0;
+      results.water_bills_amount = parseFloat(waterSumResult.rows[0].total_amount) || 0;
+
+      await client.query(
+        `UPDATE water_bills
+         SET tenant_id = $1,
+             unit_id = COALESCE($2, unit_id)
+         WHERE id = ANY($3::uuid[]) AND tenant_id = $4`,
+        [destination_tenant_id, effectiveDestUnitId, water_bill_ids, source_tenant_id],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    // Rebalance source tenant (outside transaction to use fresh data)
+    if (effectiveSourceUnitId) {
+      const sourceClient = await pool.connect();
+      try {
+        const result = await rebalanceTenantUnitPaymentsInternal({
+          client: sourceClient,
+          tenantId: source_tenant_id,
+          unitId: effectiveSourceUnitId,
+          actorId: req.user?.id,
+        });
+        results.source_rebalanced = result.rebalanced;
+      } catch (err) {
+        results.errors.push(`Source rebalance failed: ${err.message}`);
+      } finally {
+        sourceClient.release();
+      }
+    }
+
+    // Rebalance destination tenant
+    const destClient = await pool.connect();
+    try {
+      const result = await rebalanceTenantUnitPaymentsInternal({
+        client: destClient,
+        tenantId: destination_tenant_id,
+        unitId: effectiveDestUnitId,
+        actorId: req.user?.id,
+      });
+      results.dest_rebalanced = result.rebalanced;
+    } catch (err) {
+      results.errors.push(`Destination rebalance failed: ${err.message}`);
+    } finally {
+      destClient.release();
+    }
+
+    return res.json({
+      success: true,
+      message: `Transferred ${results.payments_transferred} payments and ${results.water_bills_transferred} water bills from ${sourceTenant.first_name} ${sourceTenant.last_name} to ${destTenant.first_name} ${destTenant.last_name}`,
+      data: results,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Transfer transactions error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error during transaction transfer",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  } finally {
+    client.release();
+  }
+};
+
 // ==================== EXPORTS ====================
 
 module.exports = {
@@ -5107,4 +5415,8 @@ module.exports = {
   trackRentPayment,
   recordCarryForward,
   sendPaymentNotifications,
+
+  // Transaction transfer
+  transferTenantTransactions,
+  rebalanceTenantUnitPayments: rebalanceTenantUnitPaymentsInternal,
 };
