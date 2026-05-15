@@ -490,7 +490,7 @@ const Layout = ({ children }) => {
 
       {/* Main content */}
       <main className="responsive-container py-4 safe-area-bottom">
-        <div className="w-full max-w-full overflow-hidden">
+        <div className="w-full max-w-full">
           <Suspense fallback={<LoadingSpinner />}>
             {children}
           </Suspense>
