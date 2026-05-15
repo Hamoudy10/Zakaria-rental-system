@@ -3326,18 +3326,34 @@ const SMSReminderModal = ({
         </div>
       </div>
 
-      {/* Transfer Transactions Modal */}
+      {/* Transfer Transactions Modal - USING MANUAL PAYMENT MODAL PATTERN */}
       {showTransferModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]" onClick={() => setShowTransferModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-8" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-2xl font-bold mb-2">Transfer Transactions</h2>
-            <p className="text-gray-600 mb-4">Move payments between tenants</p>
-            <button onClick={() => setShowTransferModal(false)} className="px-6 py-2 bg-amber-600 text-white rounded-lg">Close</button>
-          </div>
-        </div>
+        <ManualPaymentModal
+          data={manualPaymentData}
+          setData={setManualPaymentData}
+          loading={false}
+          error="TRANSFER BUTTON CLICKED - ManualPaymentModal rendering with transfer state"
+          onSubmit={(e) => { e.preventDefault(); setShowTransferModal(false); }}
+          onClose={() => setShowTransferModal(false)}
+          monthOptions={monthOptions}
+          tenants={tenantStatus}
+        />
       )}
     </div>
   );
 };
+
+// Match the EXACT pattern of ManualPaymentModal
+const TransferModalSimple = ({ onClose }) => (
+  <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto" onClick={onClose}>
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8 border" onClick={(e) => e.stopPropagation()}>
+      <h3 className="font-bold text-xl text-gray-800 mb-3">Transfer Transactions</h3>
+      <p className="text-gray-500 mb-6">Move payments between tenants. Balances recalculated automatically.</p>
+      <button onClick={onClose} className="w-full px-6 py-2.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700">
+        Close
+      </button>
+    </div>
+  </div>
+);
 
 export default PaymentManagement;
